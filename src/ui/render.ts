@@ -160,12 +160,24 @@ export class Renderer {
         g.font = '8px monospace';
         g.fillText(`${b.delivered}/${need}`, ox + b.x * TILE + 2, oy + b.y * TILE + 8);
       }
+      if (b.built && def.maxHp && b.hp < def.maxHp) {
+        this.hpBar(ox + b.x * TILE, oy + b.y * TILE - 3, b.hp / def.maxHp);
+      }
       if (this.cam.selectedBuilding === b.id) this.outline(ox + b.x * TILE, oy + b.y * TILE, def.w * TILE, def.h * TILE);
     }
 
     // Ground items
     for (const it of sim.items) {
       g.drawImage(this.sprites.items[it.kind], ox + it.x * TILE, oy + it.y * TILE);
+    }
+
+    // Raiders
+    for (const r of sim.raiders) {
+      const fr = Math.floor(this.frame / 10) % 2;
+      const px = ox + Math.round(r.pos.x * TILE);
+      const py = oy + Math.round(r.pos.y * TILE) - 4;
+      g.drawImage(this.sprites.raider[fr], px, py);
+      this.hpBar(px, py + 2, r.health / 70);
     }
 
     // Settlers with a 2-frame walk bob
@@ -181,6 +193,12 @@ export class Renderer {
         g.fillText('z', px + 12, py + 2);
       }
       if (s.carrying) g.drawImage(this.sprites.items[s.carrying.kind], px - 2, py - 4);
+      if (s.health < 100) this.hpBar(px, py + 2, s.health / 100);
+      if (s.wound?.untreated || s.infection || s.sickUntil > sim.minute) {
+        g.fillStyle = '#e04444';
+        g.fillRect(px + 12, py + 2, 3, 1);
+        g.fillRect(px + 13, py + 1, 1, 3); // tiny red cross
+      }
       if (this.cam.selectedSettler === s.id) this.outline(px, py + 4, TILE, TILE - 2);
     }
 
@@ -190,6 +208,14 @@ export class Renderer {
       g.fillStyle = `rgba(10,12,30,${(0.45 - d) * 0.9})`;
       g.fillRect(0, 0, this.canvas.width, this.canvas.height);
     }
+  }
+
+  private hpBar(x: number, y: number, frac: number): void {
+    const { g } = this;
+    g.fillStyle = '#1a1410';
+    g.fillRect(x + 2, y, 12, 2);
+    g.fillStyle = frac > 0.5 ? '#7ac26a' : '#e04444';
+    g.fillRect(x + 2, y, Math.max(1, Math.round(12 * frac)), 2);
   }
 
   private outline(x: number, y: number, w: number, h: number): void {

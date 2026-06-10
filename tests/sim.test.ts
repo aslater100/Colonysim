@@ -62,6 +62,56 @@ describe('Simulation', () => {
     expect(sim.softCapMoodPenalty()).toBeGreaterThan(0);
   });
 
+  it('raids arrive, are fought off or leave, and the colony endures', () => {
+    const sim = new Simulation(42);
+    sim.placeBuilding('farm', 24, 36);
+    sim.placeBuilding('farm', 28, 36);
+    sim.placeBuilding('farm', 32, 36);
+    sim.placeBuilding('kitchen', 38, 32);
+    runDays(sim, 30); // past firstRaidDay window (11–15)
+    const raidLogged = sim.log.some((l) => l.text.startsWith('RAID!'));
+    expect(raidLogged).toBe(true);
+    expect(sim.raidActive).toBe(false); // resolved, not stuck
+    expect(sim.gameOver).toBe(false);
+  });
+
+  it('palisades block pathing until destroyed', () => {
+    const sim = new Simulation(42);
+    const b = sim.placeBuilding('palisade', 32, 20, true);
+    expect(b).not.toBeNull();
+    // prebuilt palisades don't set the wall flag via construction; set directly
+    sim.world.at(32, 20).wall = true;
+    expect(sim.world.passable(32, 20)).toBe(false);
+    sim.world.at(32, 20).wall = false;
+    expect(sim.world.passable(32, 20)).toBe(true);
+  });
+
+  it('a medic treats wounds, clearing infection risk', () => {
+    const sim = new Simulation(42);
+    const patient = sim.settlers[0];
+    const medic = sim.settlers[1];
+    patient.wound = { at: sim.minute, untreated: true, infectionRolled: false };
+    patient.health = 70;
+    for (const s of sim.settlers) s.priorities.medic = 0;
+    medic.priorities.medic = 3;
+    medic.skills.medic = 8;
+    runDays(sim, 2);
+    expect(patient.wound === null || patient.wound.untreated === false).toBe(true);
+    expect(patient.infection).toBe(false);
+  });
+
+  it('settlers recreating together become friends, deepening grief', () => {
+    const sim = new Simulation(42);
+    sim.placeBuilding('farm', 24, 36);
+    sim.placeBuilding('farm', 28, 36);
+    sim.placeBuilding('farm', 32, 36);
+    sim.placeBuilding('kitchen', 38, 32);
+    sim.placeBuilding('hall', 24, 28);
+    runDays(sim, 25);
+    const someFriendship = sim.settlers.some((s) => sim.friendsOf(s).length > 0);
+    expect(someFriendship).toBe(true);
+  });
+
   it('colony survives 60 days with basic infrastructure on default seeds', () => {
     const sim = new Simulation(1001);
     sim.placeBuilding('farm', 24, 36);

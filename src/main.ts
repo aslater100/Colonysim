@@ -13,6 +13,8 @@ canvas.id = 'game';
 root.appendChild(canvas);
 
 const sim = new Simulation(Date.now() % 100000);
+// Debug/automation hook (used by headless smoke tests; harmless in play)
+(window as unknown as { sim: Simulation }).sim = sim;
 const cam: Camera = {
   x: (MAP_W * TILE) / 2 - window.innerWidth / 2,
   y: (MAP_H * TILE) / 2 - window.innerHeight / 2,

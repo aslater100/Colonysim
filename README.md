@@ -7,8 +7,8 @@ state scale, Civ at nation scale, all in 8-bit pixel art over lush
 era-evolving backdrops.
 
 - **Design:** [GDD.md](GDD.md) — the full game design document.
-- **Current milestone:** Tier-1 colony prototype
-  ([spec](docs/specs/01-tier1-colony.md)).
+- **Milestones:** [01 Tier-1 colony](docs/specs/01-tier1-colony.md) ·
+  [02 raids, medicine & relationships](docs/specs/02-raids-medicine-relationships.md)
 
 ## Run it
 
@@ -25,6 +25,9 @@ npm run build    # production build
 You start in Spring 1900 with 12 settlers, two cabins, a stockpile, and
 about three weeks of provisions. Build farm plots and a cookhouse before
 the wagon food runs out; mark trees for wood; get cabins up before winter.
+Raiders arrive from week two — your fighters meet them automatically while
+the rest hide indoors; palisades (with deliberate gaps) shape the
+battlefield. Keep a good medic: untreated wounds fester.
 
 - **Build menu** (left): place blueprints; settlers haul wood and build.
   Shift-click to place repeatedly. *Chop Trees* marks trees for felling.
