@@ -38,6 +38,7 @@ export interface Task {
   buildingId?: number;
   itemId?: number;
   patientId?: number;
+  roadTile?: boolean;
   workLeft: number;
   label: string;
 }
@@ -123,7 +124,9 @@ export class Simulation {
   settlers: Settler[] = [];
   buildings: Building[] = [];
   items: GroundItem[] = [];
-  stock: Record<ResourceKind, number> = { wood: 80, grain: 60, meal: 160 };
+  stock: Record<ResourceKind, number> = { wood: 80, grain: 60, meal: 160, stone: 0 };
+  /** transits per tile for the traffic overlay; decays daily */
+  traffic = new Float32Array(MAP_W * MAP_H);
   log: LogEntry[] = [];
   gameOver = false;
   coldSnapUntil = -1;
@@ -316,10 +319,29 @@ export class Simulation {
     this.buildings.splice(i, 1);
   }
 
+  /** Mark trees for felling or rock for quarrying with the same tool. */
   markTree(x: number, y: number): void {
-    if (this.world.inBounds(x, y) && this.world.at(x, y).kind === 'tree') {
-      this.world.at(x, y).marked = !this.world.at(x, y).marked;
+    if (!this.world.inBounds(x, y)) return;
+    const t = this.world.at(x, y);
+    if (t.kind === 'tree' || t.kind === 'rock') t.marked = !t.marked;
+  }
+
+  /** Plan (or unplan) a road tile. Bridges go on water; surfaces on open land. */
+  planRoad(kind: import('./world').RoadKind, x: number, y: number): boolean {
+    if (!this.world.inBounds(x, y)) return false;
+    const t = this.world.at(x, y);
+    if (t.roadPlan === kind) {
+      t.roadPlan = null; // toggle off
+      return true;
     }
+    if (t.road === kind || t.wall || t.buildingId !== null) return false;
+    if (kind === 'bridge') {
+      if (t.kind !== 'water') return false;
+    } else if (t.kind !== 'grass' && t.kind !== 'soil') {
+      return false;
+    }
+    t.roadPlan = kind;
+    return true;
   }
 
   building(id: number | null | undefined): Building | undefined {
@@ -376,6 +398,7 @@ export class Simulation {
   }
 
   private dailyUpdate(): void {
+    for (let i = 0; i < this.traffic.length; i++) this.traffic[i] *= 0.9; // overlay shows recent flow
     if (this.day >= this.nextEventDay) {
       this.fireEvent();
       this.nextEventDay = this.day + 3 + this.rng.int(4);
@@ -883,12 +906,21 @@ export class Simulation {
         push({ kind: 'build', x: b.x, y: b.y, buildingId: b.id, workLeft: b.buildLeft, label: `build ${buildingDef(b.defId).name}` }, 'build');
       }
     }
-    // Chop marked trees.
+    // Chop marked trees, quarry marked rock, lay planned roads.
     for (let y = 0; y < MAP_H; y++) {
       for (let x = 0; x < MAP_W; x++) {
         const tile = this.world.at(x, y);
         if (tile.kind === 'tree' && tile.marked) {
           push({ kind: 'chop', x, y, workLeft: TUNING.treeChopWork, label: 'chop tree' }, 'chop');
+        } else if (tile.kind === 'rock' && tile.marked) {
+          push({ kind: 'chop', x, y, workLeft: TUNING.rockQuarryWork, label: 'quarry stone' }, 'chop');
+        }
+        if (tile.roadPlan) {
+          const cost = TUNING.roadCost[tile.roadPlan];
+          const affordable = (cost.wood ?? 0) <= this.stock.wood && (cost.stone ?? 0) <= this.stock.stone;
+          if (affordable) {
+            push({ kind: 'build', x, y, workLeft: TUNING.roadWork[tile.roadPlan], label: `lay ${tile.roadPlan} road`, roadTile: true }, 'build');
+          }
         }
       }
     }
@@ -951,12 +983,14 @@ export class Simulation {
     switch (task.kind) {
       case 'chop': {
         const tile = this.world.at(task.x, task.y);
-        if (tile.kind !== 'tree') return this.finishTask(s);
+        if (tile.kind !== 'tree' && tile.kind !== 'rock') return this.finishTask(s);
         task.workLeft -= work;
         if (task.workLeft <= 0) {
+          const wasRock = tile.kind === 'rock';
           tile.kind = 'grass';
           tile.marked = false;
-          this.dropItem('wood', TUNING.treeWood, task.x, task.y);
+          if (wasRock) this.dropItem('stone', TUNING.rockStone, task.x, task.y);
+          else this.dropItem('wood', TUNING.treeWood, task.x, task.y);
           this.finishTask(s);
         }
         return;
@@ -995,6 +1029,25 @@ export class Simulation {
         return;
       }
       case 'build': {
+        // Road tiles: small jobs — materials charged on completion.
+        if (task.roadTile) {
+          const tile = this.world.at(task.x, task.y);
+          const plan = tile.roadPlan;
+          if (!plan) return this.finishTask(s);
+          task.workLeft -= work;
+          if (task.workLeft <= 0) {
+            const cost = TUNING.roadCost[plan];
+            if ((cost.wood ?? 0) > this.stock.wood || (cost.stone ?? 0) > this.stock.stone) {
+              return this.finishTask(s); // materials ran out; replanned later
+            }
+            this.stock.wood -= cost.wood ?? 0;
+            this.stock.stone -= cost.stone ?? 0;
+            tile.road = plan;
+            tile.roadPlan = null;
+            this.finishTask(s);
+          }
+          return;
+        }
         const b = this.building(task.buildingId);
         if (!b || b.built) return this.finishTask(s);
         const def = buildingDef(b.defId);
@@ -1103,18 +1156,23 @@ export class Simulation {
   }
 
   private stepAgent(a: { pos: Vec; path: Vec[] }, tilesPerMin: number): void {
+    const raining = ['rain', 'storm'].includes(this.weatherToday().sky);
     let budget = tilesPerMin * MINUTES_PER_TICK;
     while (budget > 0 && a.path.length > 0) {
       const next = a.path[0];
+      // roads speed up the leg toward the next waypoint
+      const mult = this.world.speedMult(next.x, next.y, raining);
       const dx = next.x - a.pos.x;
       const dy = next.y - a.pos.y;
-      const d = Math.hypot(dx, dy);
+      const d = Math.hypot(dx, dy) / mult;
       if (d <= budget) {
         a.pos = { x: next.x, y: next.y };
         a.path.shift();
         budget -= d;
+        this.traffic[next.y * MAP_W + next.x] += 1;
       } else {
-        a.pos = { x: a.pos.x + (dx / d) * budget, y: a.pos.y + (dy / d) * budget };
+        const frac = budget / d;
+        a.pos = { x: a.pos.x + dx * frac, y: a.pos.y + dy * frac };
         budget = 0;
       }
     }

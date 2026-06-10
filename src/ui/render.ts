@@ -13,7 +13,9 @@ export interface Camera {
   x: number; // pixels
   y: number;
   placing: string | null; // building def id when in placement mode
+  placingRoad: import('../sim/world').RoadKind | null;
   chopMode: boolean;
+  overlay: 'none' | 'traffic';
   mouseTile: { x: number; y: number };
   selectedSettler: number | null;
   selectedBuilding: number | null;
@@ -128,23 +130,50 @@ export class Renderer {
     const { ox, oy } = this.mapOrigin();
     const anim = Math.floor(this.frame / 30) % 2;
 
+    // Pass 1: ground (grass clusters via coarse hash so tones form patches),
+    // water, soil, roads. Trees draw in pass 2 so canopies overlap properly.
     for (let y = 0; y < MAP_H; y++) {
       for (let x = 0; x < MAP_W; x++) {
         const t = sim.world.at(x, y);
         const px = ox + x * TILE;
         const py = oy + y * TILE;
-        if (px < -TILE || py < -TILE || px > this.canvas.width || py > this.canvas.height) continue;
-        let img: HTMLCanvasElement;
-        switch (t.kind) {
-          case 'grass': img = sprites.grass[(x * 31 + y * 17) % 2]; break;
-          case 'tree': img = t.marked ? sprites.treeMarked : sprites.tree; break;
-          case 'water': img = sprites.water[anim]; break;
-          case 'rock': img = sprites.rock; break;
-          case 'soil':
-            img = t.growth >= 100 ? sprites.soilRipe : t.growth > 40 ? sprites.soilGrown : t.sown ? sprites.soilSown : sprites.soil;
-            break;
+        if (px < -TILE * 2 || py < -TILE * 2 || px > this.canvas.width || py > this.canvas.height) continue;
+        if (t.kind === 'water') {
+          g.drawImage(sprites.water[anim], px, py);
+        } else if (t.kind === 'soil') {
+          const img = t.growth >= 100 ? sprites.soilRipe : t.growth > 40 ? sprites.soilGrown : t.sown ? sprites.soilSown : sprites.soil;
+          g.drawImage(img, px, py);
+        } else {
+          // patchy grass: coarse 3×3 cluster hash picks the variant; rare worn dirt
+          const cl = (Math.floor(x / 3) * 73 + Math.floor(y / 3) * 31) % 5;
+          const worn = (x * 53 + y * 97) % 89 === 0;
+          g.drawImage(worn ? sprites.dirtPatch : sprites.grass[cl % 4], px, py);
         }
-        g.drawImage(img, px, py);
+        if (t.road) g.drawImage(sprites.roads[t.road], px, py);
+        else if (t.roadPlan) g.drawImage(sprites.roadPlans[t.roadPlan], px, py);
+      }
+    }
+    // Pass 2: standing terrain (rocks, then trees with overhanging canopies)
+    for (let y = 0; y < MAP_H; y++) {
+      for (let x = 0; x < MAP_W; x++) {
+        const t = sim.world.at(x, y);
+        const px = ox + x * TILE;
+        const py = oy + y * TILE;
+        if (px < -TILE * 2 || py < -TILE * 2 || px > this.canvas.width || py > this.canvas.height) continue;
+        if (t.kind === 'rock') g.drawImage(t.marked ? sprites.rockMarked : sprites.rock, px, py);
+        else if (t.kind === 'tree') g.drawImage(t.marked ? sprites.treeMarked : sprites.tree, px - 2, py - 6);
+      }
+    }
+
+    // Traffic overlay: warm heatmap of recent transits
+    if (this.cam.overlay === 'traffic') {
+      for (let y = 0; y < MAP_H; y++) {
+        for (let x = 0; x < MAP_W; x++) {
+          const v = sim.traffic[y * MAP_W + x];
+          if (v < 0.5) continue;
+          g.fillStyle = `rgba(232,150,60,${Math.min(0.65, v / 40)})`;
+          g.fillRect(ox + x * TILE, oy + y * TILE, TILE, TILE);
+        }
       }
     }
 
@@ -253,6 +282,11 @@ export class Renderer {
       const def = buildingDef(cam.placing);
       g.strokeStyle = ok ? '#7ac26a' : '#c25b2e';
       g.strokeRect(ox + cam.mouseTile.x * TILE + 0.5, oy + cam.mouseTile.y * TILE + 0.5, def.w * TILE - 1, def.h * TILE - 1);
+    } else if (cam.placingRoad) {
+      const ok = sim.world.inBounds(cam.mouseTile.x, cam.mouseTile.y);
+      if (ok) g.drawImage(this.sprites.roadPlans[cam.placingRoad], ox + cam.mouseTile.x * TILE, oy + cam.mouseTile.y * TILE);
+      g.strokeStyle = '#9cc4e4';
+      g.strokeRect(ox + cam.mouseTile.x * TILE + 0.5, oy + cam.mouseTile.y * TILE + 0.5, TILE - 1, TILE - 1);
     } else if (cam.chopMode) {
       g.strokeStyle = '#c25b2e';
       g.strokeRect(ox + cam.mouseTile.x * TILE + 0.5, oy + cam.mouseTile.y * TILE + 0.5, TILE - 1, TILE - 1);

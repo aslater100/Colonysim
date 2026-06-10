@@ -9,7 +9,10 @@ era-evolving backdrops.
 - **Design:** [GDD.md](GDD.md) — the full game design document.
 - **Milestones:** [01 Tier-1 colony](docs/specs/01-tier1-colony.md) ·
   [02 raids, medicine & relationships](docs/specs/02-raids-medicine-relationships.md) ·
-  [03 the flip — town #2, cohorts & Notables](docs/specs/03-the-flip.md)
+  [03 the flip — town #2, cohorts & Notables](docs/specs/03-the-flip.md) ·
+  [04 State layer & procedural world](docs/specs/04-procedural-world.md) ·
+  [05 roads, bridges & the art pass](docs/specs/05-roads-and-art.md)
+- **Design docs:** [transportation](docs/design/transportation.md)
 
 ## Run it
 

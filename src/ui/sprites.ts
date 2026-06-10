@@ -1,243 +1,426 @@
 /**
- * Procedural 8-bit sprites (GDD §3.1): every gameplay object is drawn on a
- * 16×16 grid, max 4 colors, 1px outlines, no anti-aliasing. Drawn once into
- * offscreen canvases at load.
+ * Pixel sprites, RimWorld-leaning (per art direction note): soft blended
+ * terrain (no glyph-y per-tile flecks), drop shadows under everything that
+ * stands, full rounded tree canopies that overlap into woods, capsule-ish
+ * pawns, and readable top-down buildings. Still strictly pixel art — drawn
+ * once into offscreen canvases at load.
  */
 export const TILE = 16;
 
 type Px = string | null;
 
-function sheet(pixels: Px[][], scale = 1): HTMLCanvasElement {
+function sheet(pixels: Px[][]): HTMLCanvasElement {
   const h = pixels.length;
   const w = pixels[0].length;
   const c = document.createElement('canvas');
-  c.width = w * scale;
-  c.height = h * scale;
+  c.width = w;
+  c.height = h;
   const g = c.getContext('2d')!;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const col = pixels[y][x];
       if (!col) continue;
       g.fillStyle = col;
-      g.fillRect(x * scale, y * scale, scale, scale);
+      g.fillRect(x, y, 1, 1);
     }
   }
   return c;
 }
 
-/** Build a pixel grid from an ASCII template and a palette map. */
 function grid(rows: string[], pal: Record<string, string>): Px[][] {
   return rows.map((r) => [...r].map((ch) => (ch === '.' ? null : pal[ch] ?? null)));
 }
 
-function rect(w: number, h: number, fill: (x: number, y: number) => Px): Px[][] {
-  const out: Px[][] = [];
-  for (let y = 0; y < h; y++) {
-    const row: Px[] = [];
-    for (let x = 0; x < w; x++) row.push(fill(x, y));
-    out.push(row);
-  }
-  return out;
-}
-
-// 1900s era palette: soot, timber, sepia (GDD §3.2).
+// Muted, naturalistic palette (RimWorld reads earthy, not saturated)
 const P = {
-  outline: '#1a1410',
-  timber: '#6e4a2f',
-  timberDark: '#4d3320',
-  roof: '#3a2e26',
-  roofLight: '#564439',
-  grass1: '#4a5d33',
-  grass2: '#52682f',
-  soil: '#5c4126',
-  soilWet: '#4a3017',
-  crop: '#7a8c3a',
-  cropRipe: '#b89b3e',
-  water1: '#2e4a5c',
-  water2: '#3a5a70',
-  rock: '#5b5852',
-  rockDark: '#403e3a',
-  treeLeaf: '#33502c',
-  treeLeafDark: '#243c20',
-  trunk: '#4d3320',
+  outline: '#26201a',
+  shadow: 'rgba(20,16,10,0.35)',
+  grassA: '#566445',
+  grassB: '#5d6b4a',
+  grassC: '#515f42',
+  blade: '#6b7a52',
+  dirtPatch: '#6b5a40',
+  soil: '#6b5138',
+  soilDark: '#5a4129',
+  crop: '#7e8c4a',
+  cropRipe: '#c2a14d',
+  water1: '#3d586b',
+  water2: '#446076',
+  waterGlint: '#5d7d94',
+  rock: '#787469',
+  rockDark: '#5e5a50',
+  rockLight: '#8c887c',
+  treeLeafLight: '#55703f',
+  treeLeaf: '#466034',
+  treeLeafDark: '#364d28',
+  trunk: '#4d3a26',
   skin: '#c9a07a',
-  cloth1: '#7a5c44',
+  skinB: '#a87f5c',
+  hairA: '#3a2c1c',
+  hairB: '#6b4a2a',
+  hairC: '#8c8478',
+  cloth1: '#7a6248',
   cloth2: '#5d6b6e',
   cloth3: '#735a66',
+  clothRaider: '#8c3a2c',
   wood: '#9c7544',
+  woodDark: '#7a5a32',
   grain: '#c2a14d',
   meal: '#a86e3c',
+  stone: '#8c887c',
+  wall: '#7a6248',
+  wallDark: '#5d4936',
+  roofWood: '#4a3a2c',
+  roofLight: '#5d4a38',
+  floor: '#8c7454',
+  plank: '#8c6c44',
+  plankDark: '#6e5434',
+  gravelA: '#8a857a',
+  gravelB: '#76716a',
+  rutBrown: '#6e5a40',
+  rutDark: '#5a4830',
 };
 
 export interface SpriteSet {
   grass: HTMLCanvasElement[];
+  dirtPatch: HTMLCanvasElement;
   tree: HTMLCanvasElement;
   treeMarked: HTMLCanvasElement;
   water: HTMLCanvasElement[];
   rock: HTMLCanvasElement;
+  rockMarked: HTMLCanvasElement;
   soil: HTMLCanvasElement;
   soilSown: HTMLCanvasElement;
   soilGrown: HTMLCanvasElement;
   soilRipe: HTMLCanvasElement;
-  settler: HTMLCanvasElement[][]; // [variant][frame]
-  raider: HTMLCanvasElement[]; // [frame]
-  items: Record<'wood' | 'grain' | 'meal', HTMLCanvasElement>;
+  roads: Record<string, HTMLCanvasElement>;
+  roadPlans: Record<string, HTMLCanvasElement>;
+  settler: HTMLCanvasElement[][];
+  raider: HTMLCanvasElement[];
+  items: Record<'wood' | 'grain' | 'meal' | 'stone', HTMLCanvasElement>;
   buildings: Record<string, HTMLCanvasElement>;
   blueprints: Record<string, HTMLCanvasElement>;
 }
 
-function tileNoise(base: string, fleck: string, seedMod: number): HTMLCanvasElement {
-  return sheet(
-    rect(TILE, TILE, (x, y) => ((x * 7 + y * 13 + seedMod) % 11 === 0 ? fleck : base)),
-  );
-}
-
-function treeSprite(marked: boolean): HTMLCanvasElement {
-  const rows = [
-    '......OOOO......',
-    '....OOLLLLOO....',
-    '...OLLDLLLLLO...',
-    '..OLLLLLDLLLLO..',
-    '..OLDLLLLLLDLO..',
-    '..OLLLLDLLLLLO..',
-    '...OLLLLLLDLO...',
-    '....OLLDLLLO....',
-    '.....OOLLOO.....',
-    '.......TT.......',
-    '.......TT.......',
-    '.......TT.......',
-    '......TTTT......',
-    '................',
-    '................',
-    '................',
-  ];
-  const pal: Record<string, string> = {
-    O: P.outline, L: P.treeLeaf, D: P.treeLeafDark, T: marked ? '#c25b2e' : P.trunk,
-  };
-  const c = tileNoise(P.grass1, P.grass2, 3);
+/** Soft ground: two close tones blended in irregular patches + sparse blades. */
+function grassTile(variant: number): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE;
+  c.height = TILE;
   const g = c.getContext('2d')!;
-  g.drawImage(sheet(grid(rows, pal)), 0, 0);
+  g.fillStyle = variant % 2 === 0 ? P.grassA : P.grassB;
+  g.fillRect(0, 0, TILE, TILE);
+  // irregular tone patches (organic, not checkered)
+  g.fillStyle = variant % 2 === 0 ? P.grassB : P.grassC;
+  const blobs = [[2, 3, 6, 4], [9, 8, 7, 5], [1, 11, 5, 4], [11, 1, 5, 4]];
+  for (const [x, y, w, h] of blobs) {
+    g.fillRect((x + variant * 3) % 12, (y + variant * 5) % 12, w, h);
+  }
+  // a few grass blades
+  g.fillStyle = P.blade;
+  for (let i = 0; i < 4; i++) {
+    const bx = (i * 5 + variant * 7) % 14 + 1;
+    const by = (i * 9 + variant * 3) % 13 + 1;
+    g.fillRect(bx, by, 1, 2);
+  }
   return c;
 }
 
-function settlerSprite(cloth: string, frame: number, armed = false): HTMLCanvasElement {
+function dirtPatchTile(): HTMLCanvasElement {
+  const c = grassTile(0);
+  const g = c.getContext('2d')!;
+  g.fillStyle = P.dirtPatch;
+  g.fillRect(3, 4, 10, 8);
+  g.fillRect(5, 2, 6, 12);
+  g.fillStyle = P.rutBrown;
+  g.fillRect(5, 5, 6, 5);
+  return c;
+}
+
+function waterTile(frame: number): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE;
+  c.height = TILE;
+  const g = c.getContext('2d')!;
+  g.fillStyle = P.water1;
+  g.fillRect(0, 0, TILE, TILE);
+  g.fillStyle = P.water2;
+  for (let i = 0; i < 3; i++) {
+    g.fillRect((i * 6 + frame * 3) % 13, 3 + i * 5, 5, 2);
+  }
+  g.fillStyle = P.waterGlint;
+  g.fillRect((4 + frame * 5) % 12, (7 + frame * 3) % 12, 3, 1);
+  return c;
+}
+
+/** Big rounded canopy overhanging the tile (20×22, drawn offset by renderer). */
+function treeSprite(marked: boolean): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = 20;
+  c.height = 22;
+  const g = c.getContext('2d')!;
+  // ground shadow
+  g.fillStyle = P.shadow;
+  g.fillRect(4, 17, 12, 4);
+  // trunk
+  g.fillStyle = marked ? '#c25b2e' : P.trunk;
+  g.fillRect(8, 13, 4, 6);
+  // canopy: stacked rounded layers, lit from upper-left
+  const layers: [number, number, number, number, string][] = [
+    [3, 4, 14, 10, P.treeLeafDark],
+    [2, 3, 13, 9, P.treeLeaf],
+    [4, 1, 11, 8, P.treeLeaf],
+    [4, 2, 8, 5, P.treeLeafLight],
+  ];
+  for (const [x, y, w, h, col] of layers) {
+    g.fillStyle = col;
+    g.fillRect(x + 1, y, w - 2, h);
+    g.fillRect(x, y + 1, w, h - 2);
+  }
+  if (marked) {
+    g.fillStyle = '#c25b2e';
+    g.fillRect(15, 0, 4, 4);
+  }
+  return c;
+}
+
+function rockSprite(marked: boolean): HTMLCanvasElement {
+  const c = grassTile(2);
+  const g = c.getContext('2d')!;
+  g.fillStyle = P.shadow;
+  g.fillRect(2, 11, 13, 4);
+  g.fillStyle = P.rockDark;
+  g.fillRect(2, 5, 12, 9);
+  g.fillStyle = P.rock;
+  g.fillRect(3, 4, 10, 8);
+  g.fillStyle = P.rockLight;
+  g.fillRect(4, 4, 5, 3);
+  if (marked) {
+    g.fillStyle = '#c25b2e';
+    g.fillRect(12, 1, 4, 4);
+  }
+  return c;
+}
+
+function soilTile(stage: 'bare' | 'sown' | 'grown' | 'ripe'): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE;
+  c.height = TILE;
+  const g = c.getContext('2d')!;
+  g.fillStyle = P.soil;
+  g.fillRect(0, 0, TILE, TILE);
+  g.fillStyle = P.soilDark;
+  for (let y = 2; y < TILE; y += 4) g.fillRect(0, y, TILE, 2);
+  if (stage !== 'bare') {
+    const col = stage === 'sown' ? P.treeLeafDark : stage === 'grown' ? P.crop : P.cropRipe;
+    g.fillStyle = col;
+    for (let y = 3; y < TILE; y += 4) {
+      for (let x = 2; x < TILE - 1; x += 4) {
+        const hgt = stage === 'sown' ? 2 : stage === 'grown' ? 3 : 4;
+        g.fillRect(x, y - hgt + 2, 2, hgt);
+        if (stage === 'ripe') {
+          g.fillStyle = P.grain;
+          g.fillRect(x, y - hgt + 1, 2, 1);
+          g.fillStyle = col;
+        }
+      }
+    }
+  }
+  return c;
+}
+
+function roadTile(kind: string, plan: boolean): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE;
+  c.height = TILE;
+  const g = c.getContext('2d')!;
+  switch (kind) {
+    case 'dirt': {
+      g.fillStyle = P.rutBrown;
+      g.fillRect(0, 0, TILE, TILE);
+      g.fillStyle = P.rutDark;
+      g.fillRect(3, 0, 2, TILE);
+      g.fillRect(11, 0, 2, TILE);
+      break;
+    }
+    case 'plank': {
+      g.fillStyle = P.plank;
+      g.fillRect(0, 0, TILE, TILE);
+      g.fillStyle = P.plankDark;
+      for (let y = 0; y < TILE; y += 4) g.fillRect(0, y, TILE, 1);
+      g.fillRect(7, 0, 1, TILE);
+      break;
+    }
+    case 'gravel': {
+      g.fillStyle = P.gravelB;
+      g.fillRect(0, 0, TILE, TILE);
+      g.fillStyle = P.gravelA;
+      for (let i = 0; i < 14; i++) {
+        g.fillRect((i * 7) % 15, (i * 11) % 15, 2, 1);
+      }
+      break;
+    }
+    case 'bridge': {
+      g.fillStyle = P.plank;
+      g.fillRect(0, 1, TILE, TILE - 2);
+      g.fillStyle = P.plankDark;
+      for (let x = 0; x < TILE; x += 4) g.fillRect(x, 1, 1, TILE - 2);
+      g.fillStyle = P.woodDark;
+      g.fillRect(0, 0, TILE, 2);
+      g.fillRect(0, TILE - 2, TILE, 2);
+      break;
+    }
+  }
+  if (plan) {
+    const gg = c.getContext('2d')!;
+    gg.globalAlpha = 0.45;
+    gg.fillStyle = '#9cc4e4';
+    gg.fillRect(0, 0, TILE, TILE);
+    gg.globalAlpha = 1;
+  }
+  return c;
+}
+
+/** Capsule pawn, RimWorld-ish: round body, big head, hair, drop shadow. */
+function pawnSprite(cloth: string, frame: number, skin: string, hair: string, armed = false): HTMLCanvasElement {
   const legL = frame === 0 ? 'L.' : '.L';
   const legR = frame === 0 ? '.L' : 'L.';
   const arm = armed ? 'W' : '.';
   const rows = [
     '................',
-    '......OOO.......',
-    '.....OHHHO......',
-    '.....OHHHO......',
-    '......OOO.......',
-    `.....OCCCO${arm}.....`,
-    `....OCCCCCO${arm}....`,
-    `....OCCCCCO${arm}....`,
-    '.....OCCCO......',
-    `.....O${legL}${legR}O......`,
-    `.....O${legL}${legR}O......`,
-    '................',
-    '................',
-    '................',
+    '.....HHHHH......',
+    '....HHHHHHH.....',
+    '....FFFFFFF.....',
+    '....FFFFFFF.....',
+    '.....FFFFF......',
+    `....CCCCCCC${arm}....`,
+    `...CCCCCCCCC${arm}...`,
+    `...CCCCCCCCC${arm}...`,
+    '...CCCCCCCCC....',
+    '....CCCCCCC.....',
+    `....O${legL}.${legR}O.....`,
+    `....O${legL}.${legR}O.....`,
+    '....SSSSSSS.....',
     '................',
     '................',
   ];
-  return sheet(grid(rows, { O: P.outline, H: P.skin, C: cloth, L: P.timberDark, W: '#b8b4ac' }));
+  return sheet(
+    grid(rows, {
+      O: P.outline,
+      F: skin,
+      H: hair,
+      C: cloth,
+      L: P.wallDark,
+      W: '#b8b4ac',
+      S: 'rgba(20,16,10,0.3)',
+    }),
+  );
 }
 
 function buildingSprite(defId: string, w: number, h: number, ghost: boolean): HTMLCanvasElement {
   const c = document.createElement('canvas');
-  c.width = w * TILE;
-  c.height = h * TILE;
+  c.width = w * TILE + 3;
+  c.height = h * TILE + 3;
   const g = c.getContext('2d')!;
-  const W = c.width;
-  const H = c.height;
-  const wall = ghost ? 'rgba(140,180,220,0.45)' : P.timber;
-  const wallD = ghost ? 'rgba(110,150,190,0.45)' : P.timberDark;
-  const roof = ghost ? 'rgba(160,200,240,0.45)' : P.roof;
-  const roofL = ghost ? 'rgba(180,210,245,0.45)' : P.roofLight;
-  const ol = ghost ? 'rgba(60,90,130,0.6)' : P.outline;
+  const W = w * TILE;
+  const H = h * TILE;
+  const a = ghost ? 0.5 : 1;
+  g.globalAlpha = a;
+  // drop shadow to the lower-right
+  if (!ghost) {
+    g.fillStyle = P.shadow;
+    g.fillRect(3, 3, W, H);
+  }
+  const wall = ghost ? '#7a93ab' : P.wall;
+  const wallD = ghost ? '#5d7690' : P.wallDark;
+  const roof = ghost ? '#8aa3bb' : P.roofWood;
+  const roofL = ghost ? '#9ab3c8' : P.roofLight;
 
-  g.fillStyle = ol;
+  g.fillStyle = P.outline;
   g.fillRect(0, 0, W, H);
   if (defId === 'palisade') {
-    // vertical sharpened logs
     g.fillStyle = wallD;
     g.fillRect(1, 1, W - 2, H - 2);
     g.fillStyle = wall;
     for (let x = 2; x < W - 2; x += 5) {
       g.fillRect(x, 3, 3, H - 4);
-      g.fillRect(x + 1, 1, 1, 2); // point
+      g.fillRect(x + 1, 1, 1, 2);
     }
   } else if (defId === 'stockpile') {
-    g.fillStyle = wallD;
+    g.fillStyle = P.floor;
     g.fillRect(1, 1, W - 2, H - 2);
-    g.fillStyle = wall;
-    for (let i = 0; i < W / 8; i++) g.fillRect(2 + i * 8, 2, 5, H - 4); // pallet slats
+    g.fillStyle = P.woodDark;
+    g.fillRect(1, 1, W - 2, 2);
+    g.fillRect(1, H - 3, W - 2, 2);
+    g.fillStyle = P.wood;
+    for (let i = 0; i < 3; i++) g.fillRect(4 + i * 14, 6, 9, 6); // crates
+    g.fillStyle = P.grain;
+    g.fillRect(8, 14, 7, 5);
   } else if (defId === 'farm') {
     g.fillStyle = P.soil;
     g.fillRect(1, 1, W - 2, H - 2);
-    g.fillStyle = P.soilWet;
-    for (let y = 3; y < H; y += 5) g.fillRect(1, y, W - 2, 2); // furrows
+    g.fillStyle = P.soilDark;
+    for (let y = 3; y < H; y += 5) g.fillRect(1, y, W - 2, 2);
   } else {
-    // roofed structures: house / kitchen / hall
-    const roofH = Math.floor(H * 0.45);
+    // walls visible at the base, roof above — reads as a structure, not a blob
+    const roofH = Math.floor(H * 0.55);
+    g.fillStyle = wall;
+    g.fillRect(1, roofH, W - 2, H - roofH - 1);
+    g.fillStyle = wallD;
+    g.fillRect(1, roofH, W - 2, 2);
     g.fillStyle = roof;
     g.fillRect(1, 1, W - 2, roofH);
     g.fillStyle = roofL;
-    for (let x = 2; x < W - 2; x += 4) g.fillRect(x, 2, 2, roofH - 2); // shingles
-    g.fillStyle = wall;
-    g.fillRect(1, roofH + 1, W - 2, H - roofH - 2);
+    for (let x = 3; x < W - 3; x += 5) g.fillRect(x, 2, 2, roofH - 3); // shingle rows
+    g.fillRect(1, 1, W - 2, 1);
+    // door
+    g.fillStyle = P.outline;
+    g.fillRect(Math.floor(W / 2) - 3, H - 9, 7, 8);
     g.fillStyle = wallD;
-    g.fillRect(Math.floor(W / 2) - 3, H - 9, 6, 8); // door
+    g.fillRect(Math.floor(W / 2) - 2, H - 8, 5, 7);
     if (defId === 'kitchen') {
-      g.fillStyle = '#888078';
-      g.fillRect(W - 7, 1, 4, 6); // chimney
+      g.fillStyle = P.rock;
+      g.fillRect(W - 8, 1, 5, 7); // chimney
+      g.fillStyle = P.rockLight;
+      g.fillRect(W - 7, 1, 3, 2);
     }
     if (defId === 'hall') {
-      g.fillStyle = wallD;
-      g.fillRect(4, roofH + 3, 4, 4);
-      g.fillRect(W - 8, roofH + 3, 4, 4); // windows
+      g.fillStyle = '#d8c478';
+      g.fillRect(5, roofH + 4, 4, 4);
+      g.fillRect(W - 9, roofH + 4, 4, 4); // lit windows
     }
   }
+  g.globalAlpha = 1;
   return c;
 }
 
-function itemSprite(kind: 'wood' | 'grain' | 'meal'): HTMLCanvasElement {
-  const col = kind === 'wood' ? P.wood : kind === 'grain' ? P.grain : P.meal;
-  const rows = [
-    '................',
-    '................',
-    '................',
-    '................',
-    '................',
-    '....OOOOOO......',
-    '...OXXXXXXO.....',
-    '...OXXXXXXO.....',
-    '...OXXXXXXO.....',
-    '....OOOOOO......',
-    '................',
-    '................',
-    '................',
-    '................',
-    '................',
-    '................',
-  ];
-  return sheet(grid(rows, { O: P.outline, X: col }));
-}
-
-function soilTile(stage: 'bare' | 'sown' | 'grown' | 'ripe'): HTMLCanvasElement {
-  const c = tileNoise(P.soil, P.soilWet, 5);
+function itemSprite(kind: 'wood' | 'grain' | 'meal' | 'stone'): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE;
+  c.height = TILE;
   const g = c.getContext('2d')!;
-  if (stage !== 'bare') {
-    const col = stage === 'sown' ? P.treeLeafDark : stage === 'grown' ? P.crop : P.cropRipe;
+  g.fillStyle = P.shadow;
+  g.fillRect(3, 10, 10, 3);
+  if (kind === 'wood') {
+    g.fillStyle = P.woodDark;
+    g.fillRect(3, 6, 10, 3);
+    g.fillStyle = P.wood;
+    g.fillRect(4, 4, 10, 3);
+    g.fillRect(2, 8, 10, 3);
+  } else if (kind === 'stone') {
+    g.fillStyle = P.rockDark;
+    g.fillRect(4, 7, 8, 5);
+    g.fillStyle = P.rock;
+    g.fillRect(5, 5, 6, 5);
+    g.fillStyle = P.rockLight;
+    g.fillRect(6, 5, 3, 2);
+  } else {
+    const col = kind === 'grain' ? P.grain : P.meal;
     g.fillStyle = col;
-    for (let y = 2; y < TILE; y += 5) {
-      for (let x = 2; x < TILE; x += 4) {
-        const hgt = stage === 'sown' ? 2 : stage === 'grown' ? 4 : 6;
-        g.fillRect(x, y - (hgt - 2), 2, hgt);
-      }
-    }
+    g.fillRect(4, 6, 8, 5);
+    g.fillRect(6, 4, 4, 2);
+    g.fillStyle = P.outline;
+    g.fillRect(4, 11, 8, 1);
   }
   return c;
 }
@@ -249,19 +432,39 @@ export function buildSprites(buildingDefs: { id: string; w: number; h: number }[
     buildings[d.id] = buildingSprite(d.id, d.w, d.h, false);
     blueprints[d.id] = buildingSprite(d.id, d.w, d.h, true);
   }
+  const roads: Record<string, HTMLCanvasElement> = {};
+  const roadPlans: Record<string, HTMLCanvasElement> = {};
+  for (const k of ['dirt', 'plank', 'gravel', 'bridge']) {
+    roads[k] = roadTile(k, false);
+    roadPlans[k] = roadTile(k, true);
+  }
+  const pawnLooks: [string, string, string][] = [
+    [P.cloth1, P.skin, P.hairA],
+    [P.cloth2, P.skinB, P.hairB],
+    [P.cloth3, P.skin, P.hairC],
+  ];
   return {
-    grass: [tileNoise(P.grass1, P.grass2, 0), tileNoise(P.grass1, P.grass2, 4)],
+    grass: [0, 1, 2, 3].map(grassTile),
+    dirtPatch: dirtPatchTile(),
     tree: treeSprite(false),
     treeMarked: treeSprite(true),
-    water: [tileNoise(P.water1, P.water2, 0), tileNoise(P.water1, P.water2, 6)],
-    rock: tileNoise(P.rock, P.rockDark, 2),
+    water: [waterTile(0), waterTile(1)],
+    rock: rockSprite(false),
+    rockMarked: rockSprite(true),
     soil: soilTile('bare'),
     soilSown: soilTile('sown'),
     soilGrown: soilTile('grown'),
     soilRipe: soilTile('ripe'),
-    settler: [P.cloth1, P.cloth2, P.cloth3].map((c) => [settlerSprite(c, 0), settlerSprite(c, 1)]),
-    raider: [settlerSprite('#8c3226', 0, true), settlerSprite('#8c3226', 1, true)],
-    items: { wood: itemSprite('wood'), grain: itemSprite('grain'), meal: itemSprite('meal') },
+    roads,
+    roadPlans,
+    settler: pawnLooks.map(([c, s, h]) => [pawnSprite(c, 0, s, h), pawnSprite(c, 1, s, h)]),
+    raider: [pawnSprite(P.clothRaider, 0, P.skinB, P.hairA, true), pawnSprite(P.clothRaider, 1, P.skinB, P.hairA, true)],
+    items: {
+      wood: itemSprite('wood'),
+      grain: itemSprite('grain'),
+      meal: itemSprite('meal'),
+      stone: itemSprite('stone'),
+    },
     buildings,
     blueprints,
   };

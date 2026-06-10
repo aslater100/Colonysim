@@ -4,7 +4,7 @@ import namesJson from '../data/names.json';
 
 /** All content defs load from JSON so they are moddable without touching code (GDD §8.8). */
 
-export type ResourceKind = 'wood' | 'grain' | 'meal';
+export type ResourceKind = 'wood' | 'grain' | 'meal' | 'stone';
 export type Provides = 'storage' | 'sleep' | 'farm' | 'cook' | 'recreation' | 'wall';
 export type WorkKind = 'build' | 'farm' | 'chop' | 'cook' | 'haul' | 'medic';
 export const WORK_KINDS: WorkKind[] = ['build', 'farm', 'chop', 'cook', 'haul', 'medic'];
@@ -74,6 +74,14 @@ export const TUNING = {
   healthRegenPerHour: 0.5,
   treeWood: 5,
   treeChopWork: 60,
+  rockStone: 4,
+  rockQuarryWork: 90,
+  // Roads (design: docs/design/transportation.md §2)
+  roadCost: { dirt: {}, plank: { wood: 1 }, gravel: { stone: 1 }, bridge: { wood: 4 } } as Record<
+    string,
+    Partial<Record<'wood' | 'stone', number>>
+  >,
+  roadWork: { dirt: 10, plank: 25, gravel: 40, bridge: 120 } as Record<string, number>,
   farmGrowDays: 10, // effective ~12 after fertility & weather drag
   farmYieldPerTile: 10,
   cookWorkPerMeal: 20,

@@ -21,7 +21,9 @@ const cam: Camera = {
   x: (MAP_W * TILE) / 2 - window.innerWidth / 2,
   y: (MAP_H * TILE) / 2 - window.innerHeight / 2,
   placing: null,
+  placingRoad: null,
   chopMode: false,
+  overlay: 'none',
   mouseTile: { x: 0, y: 0 },
   selectedSettler: null,
   selectedBuilding: null,
@@ -67,6 +69,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === '3') hud.speed = 8;
   if (e.key === 'Escape') {
     cam.placing = null;
+    cam.placingRoad = null;
     cam.chopMode = false;
     cam.selectedSettler = null;
     cam.selectedBuilding = null;
@@ -77,7 +80,21 @@ window.addEventListener('keyup', (e) => keys.delete(e.key));
 
 canvas.addEventListener('mousemove', (e) => {
   cam.mouseTile = renderer.tileAt(e.clientX, e.clientY);
+  // drag-paint roads and chop/quarry marks
+  if (e.buttons === 1 && mode === 'town') {
+    const t = cam.mouseTile;
+    if (cam.placingRoad && !paintedTiles.has(`${t.x},${t.y}`)) {
+      paintedTiles.add(`${t.x},${t.y}`);
+      sim.planRoad(cam.placingRoad, t.x, t.y);
+    } else if (cam.chopMode && !paintedTiles.has(`${t.x},${t.y}`)) {
+      paintedTiles.add(`${t.x},${t.y}`);
+      sim.markTree(t.x, t.y);
+    }
+  }
 });
+
+const paintedTiles = new Set<string>();
+canvas.addEventListener('mousedown', () => paintedTiles.clear());
 
 canvas.addEventListener('click', (e) => {
   if (mode === 'region' && !dioramaOpen) {
@@ -95,8 +112,12 @@ canvas.addEventListener('click', (e) => {
     }
     return;
   }
+  if (cam.placingRoad) {
+    if (!paintedTiles.has(`${t.x},${t.y}`)) sim.planRoad(cam.placingRoad, t.x, t.y);
+    return;
+  }
   if (cam.chopMode) {
-    sim.markTree(t.x, t.y);
+    if (!paintedTiles.has(`${t.x},${t.y}`)) sim.markTree(t.x, t.y);
     return;
   }
   // Selection: settler first (within half a tile), then building

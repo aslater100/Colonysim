@@ -4,6 +4,16 @@ import type { TownSite } from './worldgen';
 
 export type TileKind = 'grass' | 'tree' | 'water' | 'soil' | 'rock';
 
+export type RoadKind = 'dirt' | 'plank' | 'gravel' | 'bridge';
+
+/** Speed multiplier walking this road type (design: docs/design/transportation.md §2). */
+export const ROAD_SPEED: Record<RoadKind, number> = {
+  dirt: 1.3,
+  plank: 1.6,
+  gravel: 1.8,
+  bridge: 1.4,
+};
+
 export interface Tile {
   kind: TileKind;
   /** farm soil growth 0..100; for trees, regrowth marker (unused in slice) */
@@ -16,6 +26,10 @@ export interface Tile {
   wall: boolean;
   /** soil productivity multiplier from the land itself (0.3–1.5) */
   fertility: number;
+  /** built road surface (bridges make water walkable) */
+  road: RoadKind | null;
+  /** road planned by the player, awaiting construction */
+  roadPlan: RoadKind | null;
   buildingId: number | null;
 }
 
@@ -38,7 +52,10 @@ export class World {
   constructor(rng: Rng, site: TownSite = DEFAULT_SITE) {
     this.site = site;
     for (let i = 0; i < MAP_W * MAP_H; i++) {
-      this.tiles.push({ kind: 'grass', growth: 0, sown: false, marked: false, wall: false, fertility: 1, buildingId: null });
+      this.tiles.push({
+        kind: 'grass', growth: 0, sown: false, marked: false, wall: false,
+        fertility: 1, road: null, roadPlan: null, buildingId: null,
+      });
     }
     this.generate(rng);
   }
@@ -54,7 +71,17 @@ export class World {
   passable(x: number, y: number): boolean {
     if (!this.inBounds(x, y)) return false;
     const t = this.at(x, y);
-    return t.kind !== 'water' && t.kind !== 'rock' && t.kind !== 'tree' && !t.wall;
+    if (t.wall) return false;
+    if (t.kind === 'water') return t.road === 'bridge';
+    return t.kind !== 'rock' && t.kind !== 'tree';
+  }
+
+  /** Walking speed multiplier on a tile (muddy dirt loses its edge in rain). */
+  speedMult(x: number, y: number, raining: boolean): number {
+    const t = this.inBounds(x, y) ? this.at(x, y) : null;
+    if (!t?.road) return 1;
+    if (t.road === 'dirt' && raining) return 1;
+    return ROAD_SPEED[t.road];
   }
 
   /**
@@ -147,36 +174,96 @@ export class World {
     }
   }
 
-  /** BFS path on the tile grid (water/rock/trees block). Returns waypoints excluding start. */
+  /**
+   * Uniform-cost path on the tile grid (water/rock/trees block; bridges open
+   * water). Tile cost = 1/speedMult, so agents — settlers and raiders alike —
+   * prefer roads automatically. Returns waypoints excluding start.
+   */
   findPath(from: Vec, to: Vec): Vec[] | null {
     const key = (x: number, y: number) => y * MAP_W + x;
     if (from.x === to.x && from.y === to.y) return [];
     const target = this.passable(to.x, to.y) ? to : this.nearestPassable(to);
     if (!target) return null;
     const prev = new Int32Array(MAP_W * MAP_H).fill(-1);
-    const queue: Vec[] = [from];
-    prev[key(from.x, from.y)] = key(from.x, from.y);
+    // Float64 — float32 rounding of road costs (e.g. 1/1.8) made popped
+    // entries compare as stale and killed the search entirely.
+    const dist = new Float64Array(MAP_W * MAP_H).fill(Infinity);
+    const startK = key(from.x, from.y);
+    dist[startK] = 0;
+    prev[startK] = startK;
+    // A*: admissible heuristic = manhattan × cheapest possible step.
+    // With no roads on the map the heuristic is exact (BFS-like speed).
+    let anyRoad = false;
+    for (let i = 0; i < this.tiles.length; i++) {
+      if (this.tiles[i].road) {
+        anyRoad = true;
+        break;
+      }
+    }
+    const minStep = anyRoad ? 1 / 1.8 : 1;
+    const hCost = (k: number) =>
+      (Math.abs((k % MAP_W) - target.x) + Math.abs(Math.floor(k / MAP_W) - target.y)) * minStep;
+    // binary min-heap keyed on f = g + h; d carries g for stale checks
+    const heap: { k: number; d: number; f: number }[] = [{ k: startK, d: 0, f: hCost(startK) }];
+    const push = (item: { k: number; d: number; f: number }) => {
+      heap.push(item);
+      let i = heap.length - 1;
+      while (i > 0) {
+        const p = (i - 1) >> 1;
+        if (heap[p].f <= heap[i].f) break;
+        [heap[p], heap[i]] = [heap[i], heap[p]];
+        i = p;
+      }
+    };
+    const pop = (): { k: number; d: number; f: number } => {
+      const top = heap[0];
+      const last = heap.pop()!;
+      if (heap.length > 0) {
+        heap[0] = last;
+        let i = 0;
+        for (;;) {
+          const l = i * 2 + 1;
+          const r = l + 1;
+          let m = i;
+          if (l < heap.length && heap[l].f < heap[m].f) m = l;
+          if (r < heap.length && heap[r].f < heap[m].f) m = r;
+          if (m === i) break;
+          [heap[m], heap[i]] = [heap[i], heap[m]];
+          i = m;
+        }
+      }
+      return top;
+    };
     const dirs = [
       [1, 0], [-1, 0], [0, 1], [0, -1],
     ];
-    while (queue.length > 0) {
-      const cur = queue.shift()!;
-      if (cur.x === target.x && cur.y === target.y) {
+    const targetK = key(target.x, target.y);
+    while (heap.length > 0) {
+      const cur = pop();
+      if (cur.d > dist[cur.k]) continue;
+      if (cur.k === targetK) {
         const path: Vec[] = [];
-        let k = key(cur.x, cur.y);
-        const startK = key(from.x, from.y);
+        let k = cur.k;
         while (k !== startK) {
           path.push({ x: k % MAP_W, y: Math.floor(k / MAP_W) });
           k = prev[k];
         }
         return path.reverse();
       }
+      const cx = cur.k % MAP_W;
+      const cy = Math.floor(cur.k / MAP_W);
       for (const [dx, dy] of dirs) {
-        const nx = cur.x + dx;
-        const ny = cur.y + dy;
-        if (!this.passable(nx, ny) || prev[key(nx, ny)] !== -1) continue;
-        prev[key(nx, ny)] = key(cur.x, cur.y);
-        queue.push({ x: nx, y: ny });
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (!this.passable(nx, ny)) continue;
+        const nk = key(nx, ny);
+        const stepCost = 1 / this.speedMult(nx, ny, false);
+        const nd = cur.d + stepCost;
+        if (nd < dist[nk]) {
+          dist[nk] = nd;
+          prev[nk] = cur.k;
+          push({ k: nk, d: nd, f: nd + hCost(nk) });
+        }
       }
     }
     return null;
