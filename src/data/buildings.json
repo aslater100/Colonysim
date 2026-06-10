@@ -1,0 +1,55 @@
+{
+  "buildings": [
+    {
+      "id": "stockpile",
+      "name": "Stockpile",
+      "w": 3,
+      "h": 2,
+      "cost": { "wood": 10 },
+      "buildWork": 120,
+      "provides": "storage",
+      "desc": "Central store for wood, grain and meals."
+    },
+    {
+      "id": "house",
+      "name": "Cabin",
+      "w": 2,
+      "h": 2,
+      "cost": { "wood": 20 },
+      "buildWork": 360,
+      "provides": "sleep",
+      "capacity": 3,
+      "desc": "Sleeping quarters for 3 settlers. Warm at night."
+    },
+    {
+      "id": "farm",
+      "name": "Farm Plot",
+      "w": 3,
+      "h": 3,
+      "cost": { "wood": 5 },
+      "buildWork": 90,
+      "provides": "farm",
+      "desc": "Grain grows in season; sow, tend, harvest."
+    },
+    {
+      "id": "kitchen",
+      "name": "Cookhouse",
+      "w": 2,
+      "h": 2,
+      "cost": { "wood": 30 },
+      "buildWork": 420,
+      "provides": "cook",
+      "desc": "Turns grain into proper meals."
+    },
+    {
+      "id": "hall",
+      "name": "Meeting Hall",
+      "w": 3,
+      "h": 3,
+      "cost": { "wood": 40 },
+      "buildWork": 600,
+      "provides": "recreation",
+      "desc": "Recreation and society. Settlers gather here off-shift."
+    }
+  ]
+}

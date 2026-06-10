@@ -1,0 +1,10 @@
+{
+  "traits": [
+    { "id": "industrious", "name": "Industrious", "workSpeed": 1.15, "desc": "Works 15% faster." },
+    { "id": "lazy", "name": "Lazy", "workSpeed": 0.85, "desc": "Works 15% slower." },
+    { "id": "optimist", "name": "Optimist", "moodBase": 8, "desc": "+8 base mood." },
+    { "id": "pessimist", "name": "Pessimist", "moodBase": -8, "desc": "-8 base mood." },
+    { "id": "hardy", "name": "Hardy", "warmthDecay": 0.6, "desc": "Suffers the cold far less." },
+    { "id": "gourmand", "name": "Gourmand", "foodDecay": 1.3, "desc": "Gets hungry 30% faster." }
+  ]
+}
