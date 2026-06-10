@@ -16,6 +16,8 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: 
 export class Hud {
   speed = 1;
   paused = false;
+  /** set by main when the flip is available/used */
+  onFoundTown: (() => void) | null = null;
   private topBar: HTMLElement;
   private palette: HTMLElement;
   private inspector: HTMLElement;
@@ -23,6 +25,7 @@ export class Hud {
   private prioBox: HTMLElement;
   private showPriorities = false;
   private lastLogLen = 0;
+  private foundBtn: HTMLButtonElement | null = null;
 
   constructor(root: HTMLElement, private sim: Simulation, private cam: Camera) {
     this.topBar = el('div', 'topbar', root);
@@ -62,6 +65,42 @@ export class Hud {
       this.showPriorities = !this.showPriorities;
       this.prioBox.classList.toggle('hidden', !this.showPriorities);
     };
+    // The flip: available once the town has outgrown the valley (GDD §2.3)
+    this.foundBtn = el('button', 'pal-btn pal-found', this.palette);
+    this.foundBtn.textContent = 'Found Town #2';
+    this.foundBtn.onclick = () => {
+      if (this.sim.canFoundSecondTown().ok && this.onFoundTown) this.onFoundTown();
+    };
+  }
+
+  /** Region mode hides the town chrome; the region view brings its own panel. */
+  setRegionMode(on: boolean): void {
+    this.palette.classList.toggle('hidden', on);
+    this.inspector.classList.toggle('hidden', on);
+    this.prioBox.classList.add('hidden');
+    if (on) this.showPriorities = false;
+  }
+
+  drawRegionTopBar(r: import('../sim/region').RegionSim, dioramaOpen: boolean): void {
+    this.topBar.innerHTML =
+      `<span class="tb-date">${r.dateLabel}</span>` +
+      `<span>TOWNS ${r.settlements.length}${r.expeditions.length ? ` (+${r.expeditions.length} en route)` : ''}</span>` +
+      `<span>POP ${r.totalPop()}</span>` +
+      `<span>NOTABLES ${r.notables.filter((n) => n.alive).length}</span>` +
+      (r.stateProclaimed ? `<span class="tb-date">★ STATE</span>` : '') +
+      `<button id="tb-diorama" class="tb-btn">${dioramaOpen ? 'Region Map' : "Visit Founder's Rest"}</button>` +
+      `<span class="tb-speed">${this.paused ? '⏸ PAUSED' : '▶'.repeat(this.speed)} <i>(space, 1-3)</i></span>` +
+      (r.gameOver ? `<span class="tb-over">THE COLONY HAS PERISHED</span>` : '');
+  }
+
+  regionLog(r: import('../sim/region').RegionSim): void {
+    if (r.log.length === this.lastLogLen) return;
+    this.lastLogLen = r.log.length;
+    this.logBox.innerHTML = r.log
+      .slice(-8)
+      .map((l) => `<div class="log-${l.kind}">d${l.day} · ${l.text}</div>`)
+      .reverse()
+      .join('');
   }
 
   refreshPaletteState(): void {
@@ -76,6 +115,11 @@ export class Hud {
     this.drawInspector();
     this.drawLog();
     if (this.showPriorities) this.drawPriorities();
+    if (this.foundBtn) {
+      const can = this.sim.canFoundSecondTown();
+      this.foundBtn.disabled = !can.ok;
+      this.foundBtn.title = can.ok ? 'Send an expedition — and step up to the region map' : can.reason;
+    }
   }
 
   private drawTopBar(): void {

@@ -312,6 +312,36 @@ export class Simulation {
     return this.buildings.filter((b) => b.built && buildingDef(b.defId).provides === provides);
   }
 
+  // ---- the flip trigger (GDD §2.3): outgrow the valley, found town #2 ----
+  canFoundSecondTown(): { ok: boolean; reason: string } {
+    if (this.settlers.length < 20) return { ok: false, reason: `needs 20 settlers (has ${this.settlers.length})` };
+    if (this.stock.wood < 100) return { ok: false, reason: `needs 100 wood (has ${this.stock.wood})` };
+    if (this.stock.meal + this.stock.grain < 120) {
+      return { ok: false, reason: `needs 120 food (has ${this.stock.meal + this.stock.grain})` };
+    }
+    if (this.raidActive) return { ok: false, reason: 'not during a raid' };
+    return { ok: true, reason: '' };
+  }
+
+  /**
+   * After the flip the town keeps rendering as a representative diorama
+   * (GDD §2.4): sprites wander and animate, but nothing here is
+   * authoritative — no needs, no deaths, no stock changes.
+   */
+  tickDiorama(minute: number): void {
+    this.minute = minute;
+    for (const s of this.settlers) {
+      if (s.path.length > 0) {
+        this.step(s);
+      } else if (this.rng.chance(0.04)) {
+        const tx = Math.round(s.pos.x) + this.rng.int(9) - 4;
+        const ty = Math.round(s.pos.y) + this.rng.int(9) - 4;
+        if (this.world.passable(tx, ty)) this.setDestination(s, { x: tx, y: ty });
+      }
+      s.state = this.hour >= 22 || this.hour < 6 ? 'sleeping' : 'idle';
+    }
+  }
+
   // ---- main loop ----
   tick(): void {
     if (this.gameOver) return;
