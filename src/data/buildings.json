@@ -50,6 +50,17 @@
       "buildWork": 600,
       "provides": "recreation",
       "desc": "Recreation and society. Settlers gather here off-shift."
+    },
+    {
+      "id": "palisade",
+      "name": "Palisade",
+      "w": 1,
+      "h": 1,
+      "cost": { "wood": 3 },
+      "buildWork": 30,
+      "provides": "wall",
+      "maxHp": 80,
+      "desc": "A log wall segment. Blocks raiders — leave a gap or they'll make one."
     }
   ]
 }

@@ -23,7 +23,8 @@ export interface Thought {
 }
 
 export type SettlerState =
-  | 'idle' | 'moving' | 'working' | 'sleeping' | 'eating' | 'warming' | 'recreating' | 'breakdown';
+  | 'idle' | 'moving' | 'working' | 'sleeping' | 'eating' | 'warming' | 'recreating' | 'breakdown'
+  | 'fighting' | 'fleeing';
 
 export interface Task {
   kind: WorkKind;
@@ -32,8 +33,25 @@ export interface Task {
   y: number;
   buildingId?: number;
   itemId?: number;
+  patientId?: number;
   workLeft: number;
   label: string;
+}
+
+export interface Wound {
+  at: number; // minute inflicted
+  untreated: boolean;
+  infectionRolled: boolean;
+}
+
+export interface Raider {
+  id: number;
+  pos: Vec;
+  path: Vec[];
+  health: number;
+  combat: number;
+  state: 'attack' | 'flee';
+  repathAt: number;
 }
 
 export interface Settler {
@@ -43,9 +61,13 @@ export interface Settler {
   traits: string[];
   skills: Record<WorkKind, number>;
   priorities: Record<WorkKind, number>; // 0 = off, 3 = highest
+  combat: number; // 0–10, separate from work skills
   needs: Needs;
   mood: number;
   health: number;
+  wound: Wound | null;
+  infection: boolean;
+  sickUntil: number; // minute; > now means feverish
   thoughts: Thought[];
   pos: Vec; // tile coords, fractional while moving
   path: Vec[];
@@ -65,6 +87,7 @@ export interface Building {
   delivered: number; // wood delivered toward cost
   buildLeft: number; // work minutes remaining
   cookProgress: number;
+  hp: number; // only meaningful for defs with maxHp
 }
 
 export interface GroundItem {
@@ -97,6 +120,12 @@ export class Simulation {
   log: LogEntry[] = [];
   gameOver = false;
   coldSnapUntil = -1;
+  raiders: Raider[] = [];
+  raidActive = false;
+  /** pairwise relationship scores, keyed "lowId:highId" */
+  opinions = new Map<string, number>();
+  private raidUntil = 0;
+  private nextRaidDay: number;
   private nextId = 1;
   private nextEventDay: number;
   private reserved = new Set<string>(); // task target keys
@@ -105,6 +134,7 @@ export class Simulation {
     this.rng = new Rng(seed);
     this.world = new World(this.rng);
     this.nextEventDay = 4 + this.rng.int(3);
+    this.nextRaidDay = TUNING.firstRaidDay + this.rng.int(5);
     this.foundColony();
   }
 
@@ -194,9 +224,13 @@ export class Simulation {
       traits,
       skills,
       priorities,
+      combat: this.rng.int(7),
       needs: { food: 80, rest: 80, warmth: 80, recreation: 70, social: 70 },
       mood: 60,
       health: 100,
+      wound: null,
+      infection: false,
+      sickUntil: 0,
       thoughts: [],
       pos: { x, y },
       path: [],
@@ -235,6 +269,7 @@ export class Simulation {
       delivered: prebuilt ? (def.cost.wood ?? 0) : 0,
       buildLeft: prebuilt ? 0 : def.buildWork,
       cookProgress: 0,
+      hp: def.maxHp ?? 0,
     };
     this.buildings.push(b);
     for (let dy = 0; dy < def.h; dy++) {
@@ -284,6 +319,7 @@ export class Simulation {
     const newDay = this.minute % MINUTES_PER_DAY < MINUTES_PER_TICK;
     if (newDay) this.dailyUpdate();
     this.updateFarms();
+    this.updateRaiders();
     for (const s of [...this.settlers]) this.updateSettler(s);
     if (this.settlers.length === 0 && !this.gameOver) {
       this.gameOver = true;
@@ -295,6 +331,10 @@ export class Simulation {
     if (this.day >= this.nextEventDay) {
       this.fireEvent();
       this.nextEventDay = this.day + 3 + this.rng.int(4);
+    }
+    if (this.day >= this.nextRaidDay && !this.raidActive) {
+      this.startRaid();
+      this.nextRaidDay = this.day + TUNING.raidIntervalDays + this.rng.int(5);
     }
     // Winter kills the standing crop.
     if (!this.growingSeason) {
@@ -326,10 +366,176 @@ export class Simulation {
         this.stock.grain -= lost;
         this.addLog(`Rats in the stores — ${lost} grain lost.`, 'bad');
       }
-    } else {
+    } else if (roll < 0.85) {
       for (const s of this.settlers) this.addThought(s, 'Festival night', 8, 2 * MINUTES_PER_DAY);
       this.addLog('The settlers hold an impromptu festival. Spirits lift.', 'good');
+    } else {
+      const n = 1 + this.rng.int(3);
+      const victims = [...this.settlers].sort(() => this.rng.next() - 0.5).slice(0, n);
+      for (const v of victims) {
+        v.sickUntil = this.minute + (2 + this.rng.int(2)) * MINUTES_PER_DAY;
+        this.addThought(v, 'Feverish', -6, v.sickUntil - this.minute);
+      }
+      this.addLog(`A fever spreads through camp — ${victims.map((v) => v.name.split(' ')[0]).join(', ')} fall ill.`, 'bad');
     }
+  }
+
+  /** Colony wealth drives raid size: prosperity attracts trouble (GDD §8.4). */
+  wealth(): number {
+    const stocks = this.stock.wood * 0.2 + this.stock.grain + this.stock.meal;
+    const built = this.buildings.filter((b) => b.built).length;
+    return stocks + this.settlers.length * 8 + built * 15;
+  }
+
+  private startRaid(): void {
+    const byWealth = 2 + Math.floor(this.wealth() / TUNING.raidWealthPerRaider);
+    const byTime = 2 + Math.floor(Math.max(0, this.day - TUNING.firstRaidDay) / TUNING.raidRampDays);
+    const n = Math.max(2, Math.min(TUNING.raidMaxRaiders, byWealth, byTime));
+    const side = this.rng.int(4);
+    for (let i = 0; i < n; i++) {
+      const along = 4 + this.rng.int(MAP_W - 8);
+      const edge: Vec =
+        side === 0 ? { x: along, y: 0 } : side === 1 ? { x: along, y: MAP_H - 1 } :
+        side === 2 ? { x: 0, y: along } : { x: MAP_W - 1, y: along };
+      const spot = this.world.passable(edge.x, edge.y) ? edge : this.world.nearestPassable(edge);
+      if (!spot) continue;
+      this.raiders.push({
+        id: this.nextId++,
+        pos: { ...spot },
+        path: [],
+        health: TUNING.raiderHealth,
+        combat: 1 + this.rng.int(4),
+        state: 'attack',
+        repathAt: 0,
+      });
+    }
+    this.raidActive = true;
+    this.raidUntil = this.minute + TUNING.raidTimeoutHours * 60;
+    const dir = ['north', 'south', 'west', 'east'][side];
+    this.addLog(`RAID! ${this.raiders.length} raiders approach from the ${dir}!`, 'bad');
+  }
+
+  private updateRaiders(): void {
+    if (this.raiders.length === 0) {
+      if (this.raidActive) {
+        this.raidActive = false;
+        this.addLog('The raid is over.', 'good');
+      }
+      return;
+    }
+    const hours = MINUTES_PER_TICK / 60;
+    if (this.minute >= this.raidUntil) {
+      for (const r of this.raiders) r.state = 'flee';
+    }
+    for (const r of [...this.raiders]) {
+      if (r.health <= 0) {
+        this.raiders = this.raiders.filter((o) => o !== r);
+        this.addLog('A raider falls.', 'good');
+        continue;
+      }
+      if (r.state === 'flee') {
+        if (r.path.length === 0) {
+          const exit = this.world.nearestPassable({ x: r.pos.x < MAP_W / 2 ? 0 : MAP_W - 1, y: Math.round(r.pos.y) });
+          const p = exit ? this.world.findPath({ x: Math.round(r.pos.x), y: Math.round(r.pos.y) }, exit) : null;
+          if (!p || p.length === 0) {
+            this.raiders = this.raiders.filter((o) => o !== r);
+            continue;
+          }
+          r.path = p;
+        }
+        this.stepAgent(r, 0.5);
+        if (r.path.length === 0) this.raiders = this.raiders.filter((o) => o !== r);
+        continue;
+      }
+      // Attack: melee any adjacent settler, else advance on the nearest one.
+      // Raiders engage whoever stands against them before hunting those who hide.
+      const target = this.nearestSettler(r.pos, true) ?? this.nearestSettler(r.pos, false);
+      if (!target) {
+        r.state = 'flee';
+        continue;
+      }
+      const d = Math.hypot(target.pos.x - r.pos.x, target.pos.y - r.pos.y);
+      if (d <= 1.3) {
+        this.damageSettler(target, (TUNING.combatDamagePerHour + r.combat * TUNING.combatDamagePerSkill) * hours);
+        continue;
+      }
+      if (r.path.length === 0 || this.minute >= r.repathAt) {
+        const p = this.world.findPath(
+          { x: Math.round(r.pos.x), y: Math.round(r.pos.y) },
+          { x: Math.round(target.pos.x), y: Math.round(target.pos.y) },
+        );
+        r.repathAt = this.minute + 60;
+        if (p && p.length > 0) {
+          r.path = p;
+        } else {
+          // Walled out: break the nearest palisade.
+          const wall = this.nearestWall(r.pos);
+          if (!wall) {
+            r.state = 'flee';
+            continue;
+          }
+          const wd = Math.hypot(wall.x + 0.5 - r.pos.x - 0.5, wall.y + 0.5 - r.pos.y - 0.5);
+          if (wd <= 1.4) {
+            wall.hp -= TUNING.wallDamagePerHour * hours;
+            if (wall.hp <= 0) this.destroyBuilding(wall);
+            continue;
+          }
+          const wp = this.world.findPath({ x: Math.round(r.pos.x), y: Math.round(r.pos.y) }, { x: wall.x, y: wall.y });
+          if (wp) r.path = wp;
+          else r.state = 'flee';
+          continue;
+        }
+      }
+      this.stepAgent(r, 0.4);
+    }
+  }
+
+  private nearestSettler(p: Vec, excludeHiding: boolean): Settler | null {
+    let best: Settler | null = null;
+    let bd = Infinity;
+    for (const s of this.settlers) {
+      if (excludeHiding && s.state === 'fleeing') continue;
+      const d = Math.hypot(s.pos.x - p.x, s.pos.y - p.y);
+      if (d < bd) {
+        bd = d;
+        best = s;
+      }
+    }
+    return best;
+  }
+
+  private nearestWall(p: Vec): Building | null {
+    let best: Building | null = null;
+    let bd = Infinity;
+    for (const b of this.buildings) {
+      if (!b.built || buildingDef(b.defId).provides !== 'wall') continue;
+      const d = Math.hypot(b.x - p.x, b.y - p.y);
+      if (d < bd) {
+        bd = d;
+        best = b;
+      }
+    }
+    return best;
+  }
+
+  private destroyBuilding(b: Building): void {
+    const def = buildingDef(b.defId);
+    for (let dy = 0; dy < def.h; dy++) {
+      for (let dx = 0; dx < def.w; dx++) {
+        const t = this.world.at(b.x + dx, b.y + dy);
+        t.buildingId = null;
+        t.wall = false;
+        if (t.kind === 'soil') t.kind = 'grass';
+      }
+    }
+    this.buildings = this.buildings.filter((o) => o !== b);
+    this.addLog(`${def.name} destroyed by raiders!`, 'bad');
+  }
+
+  private damageSettler(s: Settler, dmg: number): void {
+    s.health -= dmg;
+    if (!s.wound) s.wound = { at: this.minute, untreated: true, infectionRolled: false };
+    if (s.health <= 0) this.kill(s, "a raider's blade");
   }
 
   // ---- settler update ----
@@ -358,11 +564,27 @@ export class Simulation {
     // Health
     if (s.needs.food <= 0) s.health -= t.starvationHealthPerHour * hours;
     if (s.needs.warmth <= 0) s.health -= t.freezingHealthPerHour * hours;
+    if (s.wound?.untreated) {
+      s.health -= t.woundBleedPerHour * hours;
+      if (this.minute - s.wound.at > t.woundSelfHealHours * 60) {
+        s.wound = null; // scarred over on its own
+      } else if (!s.wound.infectionRolled && this.minute - s.wound.at > t.infectionWindowHours * 60) {
+        s.wound.infectionRolled = true;
+        if (this.rng.chance(t.infectionChance)) {
+          s.infection = true;
+          this.addLog(`${s.name}'s wound has festered — they need treatment.`, 'bad');
+        }
+      }
+    }
+    if (s.infection) s.health -= t.infectionHealthPerHour * hours;
+    if (s.sickUntil > this.minute) s.health -= t.sickHealthPerHour * hours;
     if (s.needs.food > 30 && s.needs.warmth > 30 && s.health < 100) {
       s.health = Math.min(100, s.health + t.healthRegenPerHour * hours);
     }
     if (s.health <= 0) {
-      this.kill(s, s.needs.food <= 0 ? 'starvation' : 'exposure');
+      const cause = s.infection ? 'infection' : s.sickUntil > this.minute ? 'fever'
+        : s.wound ? 'their wounds' : s.needs.food <= 0 ? 'starvation' : 'exposure';
+      this.kill(s, cause);
       return;
     }
 
@@ -394,7 +616,57 @@ export class Simulation {
 
   private act(s: Settler, hours: number): void {
     const t = TUNING;
+    // A raid interrupts everything except an ongoing breakdown.
+    if (this.raidActive && !['fighting', 'fleeing', 'breakdown'].includes(s.state)) {
+      this.releaseTask(s);
+      s.bedId = null;
+      if (s.combat >= t.fightMinCombat && s.health > 50) {
+        s.state = 'fighting';
+      } else {
+        s.state = 'fleeing';
+        const shelter = this.builtOf('sleep')[0] ?? this.builtOf('recreation')[0];
+        if (shelter) this.setDestination(s, this.buildingCenter(shelter));
+      }
+    }
     switch (s.state) {
+      case 'fighting': {
+        if (!this.raidActive || this.raiders.length === 0) {
+          s.state = 'idle';
+          return;
+        }
+        let target: Raider | null = null;
+        let bd = Infinity;
+        for (const r of this.raiders) {
+          const d = Math.hypot(r.pos.x - s.pos.x, r.pos.y - s.pos.y);
+          if (d < bd) {
+            bd = d;
+            target = r;
+          }
+        }
+        if (!target) {
+          s.state = 'idle';
+          return;
+        }
+        if (bd <= 1.3) {
+          target.health -= (t.combatDamagePerHour + s.combat * t.combatDamagePerSkill) * hours;
+          s.combat = Math.min(10, s.combat + 0.2 * hours);
+          return;
+        }
+        if (s.path.length === 0) {
+          this.setDestination(s, { x: Math.round(target.pos.x), y: Math.round(target.pos.y) });
+          if (s.path.length === 0) return; // unreachable (walled apart) — hold position
+        }
+        this.step(s);
+        return;
+      }
+      case 'fleeing': {
+        if (!this.raidActive) {
+          s.state = 'idle';
+          return;
+        }
+        if (!this.arrived(s)) this.step(s);
+        return;
+      }
       case 'breakdown': {
         if (this.minute >= s.stateUntil) s.state = 'idle';
         else this.wander(s);
@@ -410,6 +682,8 @@ export class Simulation {
         }
         const inBed = s.bedId !== null;
         s.needs.rest = Math.min(100, s.needs.rest + (inBed ? t.sleepRestPerHour.bed : t.sleepRestPerHour.ground) * hours);
+        // Bed rest: the badly hurt stay down until they're out of danger.
+        if (s.health < t.bedRestThreshold) return;
         if (s.needs.rest >= 95 || (this.hour >= 6 && this.hour < 22 && s.needs.rest > 55)) {
           if (!inBed) this.addThought(s, 'Slept on the ground', -6, MINUTES_PER_DAY);
           s.bedId = null;
@@ -440,6 +714,13 @@ export class Simulation {
         if (!this.arrived(s)) return this.step(s);
         s.needs.recreation = Math.min(100, s.needs.recreation + t.recreationPerHour * hours);
         s.needs.social = Math.min(100, s.needs.social + t.socialPerHour * hours);
+        // Friendships form around the fire (process each pair once, lower id side).
+        for (const o of this.settlers) {
+          if (o.id <= s.id || o.state !== 'recreating') continue;
+          if (Math.hypot(o.pos.x - s.pos.x, o.pos.y - s.pos.y) <= 3) {
+            this.bond(s, o, t.bondPerHourTogether * hours);
+          }
+        }
         if (s.needs.recreation >= 90 || this.minute >= s.stateUntil) s.state = 'idle';
         return;
       }
@@ -457,6 +738,7 @@ export class Simulation {
 
   private decide(s: Settler): void {
     const night = this.hour >= 22 || this.hour < 6;
+    if (s.health < TUNING.bedRestThreshold) return this.goSleep(s); // bed rest
     if (s.needs.rest < 25 || (night && s.needs.rest < 80)) return this.goSleep(s);
     if (s.needs.food < 30 && (this.stock.meal > 0 || this.stock.grain > 0)) {
       const sp = this.builtOf('storage')[0];
@@ -553,6 +835,16 @@ export class Simulation {
     if (kitchen && this.stock.grain > 0 && this.stock.meal < this.settlers.length * 3) {
       push({ kind: 'cook', x: kitchen.x, y: kitchen.y, buildingId: kitchen.id, workLeft: TUNING.cookWorkPerMeal * TUNING.cookBatch, label: 'cook meals' }, 'cook');
     }
+    // Treat the wounded, infected, and feverish.
+    for (const p of this.settlers) {
+      if (p.id === s.id) continue;
+      if (p.wound?.untreated || p.infection || p.sickUntil > this.minute) {
+        push({
+          kind: 'medic', x: Math.round(p.pos.x), y: Math.round(p.pos.y), patientId: p.id,
+          workLeft: TUNING.treatWork, label: `treat ${p.name.split(' ')[0]}`,
+        }, 'medic');
+      }
+    }
 
     if (candidates.length === 0) return null;
     candidates.sort((a, b) => b.prio - a.prio || a.dist - b.dist);
@@ -571,8 +863,9 @@ export class Simulation {
       if (!this.arrived(s)) return this.step(s);
       s.state = 'working';
     }
+    const sickMult = s.sickUntil > this.minute ? TUNING.sickWorkMult : 1;
     const speed =
-      (0.5 + s.skills[task.kind] * 0.1) * this.traitMult(s, 'workSpeed') * this.softCapWorkMult();
+      (0.5 + s.skills[task.kind] * 0.1) * this.traitMult(s, 'workSpeed') * this.softCapWorkMult() * sickMult;
     const work = hours * 60 * speed;
     s.skills[task.kind] = Math.min(10, s.skills[task.kind] + hours * 0.06);
 
@@ -645,7 +938,34 @@ export class Simulation {
         b.buildLeft -= work;
         if (b.buildLeft <= 0) {
           b.built = true;
-          this.addLog(`${def.name} finished.`, 'good');
+          if (def.provides === 'wall') {
+            for (let dy = 0; dy < def.h; dy++) {
+              for (let dx = 0; dx < def.w; dx++) this.world.at(b.x + dx, b.y + dy).wall = true;
+            }
+          } else {
+            this.addLog(`${def.name} finished.`, 'good');
+          }
+          this.finishTask(s);
+        }
+        return;
+      }
+      case 'medic': {
+        const p = this.settlers.find((o) => o.id === task.patientId);
+        if (!p || !(p.wound?.untreated || p.infection || p.sickUntil > this.minute)) {
+          return this.finishTask(s);
+        }
+        // Patients move; follow them.
+        if (Math.hypot(p.pos.x - s.pos.x, p.pos.y - s.pos.y) > 1.5) {
+          s.state = 'moving';
+          this.setDestination(s, { x: Math.round(p.pos.x), y: Math.round(p.pos.y) });
+          return;
+        }
+        task.workLeft -= work;
+        if (task.workLeft <= 0) {
+          if (p.wound) p.wound.untreated = false;
+          p.infection = false;
+          if (p.sickUntil > this.minute) p.sickUntil = Math.min(p.sickUntil, this.minute + 12 * 60);
+          this.addThought(p, 'Tended by a medic', 4, MINUTES_PER_DAY);
           this.finishTask(s);
         }
         return;
@@ -667,7 +987,7 @@ export class Simulation {
   }
 
   private taskKey(t: Task): string {
-    return `${t.kind}:${t.buildingId ?? t.itemId ?? `${t.x},${t.y}`}`;
+    return `${t.kind}:${t.buildingId ?? t.itemId ?? t.patientId ?? `${t.x},${t.y}`}`;
   }
 
   private finishTask(s: Settler): void {
@@ -700,18 +1020,22 @@ export class Simulation {
   }
 
   private step(s: Settler): void {
-    let budget = SETTLER_SPEED * MINUTES_PER_TICK;
-    while (budget > 0 && s.path.length > 0) {
-      const next = s.path[0];
-      const dx = next.x - s.pos.x;
-      const dy = next.y - s.pos.y;
+    this.stepAgent(s, SETTLER_SPEED);
+  }
+
+  private stepAgent(a: { pos: Vec; path: Vec[] }, tilesPerMin: number): void {
+    let budget = tilesPerMin * MINUTES_PER_TICK;
+    while (budget > 0 && a.path.length > 0) {
+      const next = a.path[0];
+      const dx = next.x - a.pos.x;
+      const dy = next.y - a.pos.y;
       const d = Math.hypot(dx, dy);
       if (d <= budget) {
-        s.pos = { x: next.x, y: next.y };
-        s.path.shift();
+        a.pos = { x: next.x, y: next.y };
+        a.path.shift();
         budget -= d;
       } else {
-        s.pos = { x: s.pos.x + (dx / d) * budget, y: s.pos.y + (dy / d) * budget };
+        a.pos = { x: a.pos.x + (dx / d) * budget, y: a.pos.y + (dy / d) * budget };
         budget = 0;
       }
     }
@@ -775,11 +1099,39 @@ export class Simulation {
     s.thoughts.push({ label, delta, expiresAt: this.minute + durationMin });
   }
 
+  // ---- relationships ----
+  private pairKey(a: Settler, b: Settler): string {
+    return a.id < b.id ? `${a.id}:${b.id}` : `${b.id}:${a.id}`;
+  }
+
+  bond(a: Settler, b: Settler, amount: number): void {
+    const k = this.pairKey(a, b);
+    this.opinions.set(k, Math.min(100, (this.opinions.get(k) ?? 0) + amount));
+  }
+
+  opinionBetween(a: Settler, b: Settler): number {
+    return this.opinions.get(this.pairKey(a, b)) ?? 0;
+  }
+
+  friendsOf(s: Settler): Settler[] {
+    return this.settlers
+      .filter((o) => o.id !== s.id && this.opinionBetween(s, o) >= TUNING.friendThreshold)
+      .sort((a, b) => this.opinionBetween(s, b) - this.opinionBetween(s, a));
+  }
+
   private kill(s: Settler, cause: string): void {
     this.settlers = this.settlers.filter((o) => o !== s);
     this.releaseTask(s);
     this.addLog(`${s.name} has died of ${cause}.`, 'bad');
-    for (const o of this.settlers) this.addThought(o, `${s.name.split(' ')[0]} died`, -10, 4 * MINUTES_PER_DAY);
+    for (const o of this.settlers) {
+      const friend = this.opinionBetween(s, o) >= TUNING.friendThreshold;
+      this.addThought(
+        o,
+        friend ? `${s.name.split(' ')[0]} — my friend — died` : `${s.name.split(' ')[0]} died`,
+        friend ? -18 : -8,
+        (friend ? 6 : 4) * MINUTES_PER_DAY,
+      );
+    }
   }
 
   private updateFarms(): void {

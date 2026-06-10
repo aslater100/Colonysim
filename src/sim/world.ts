@@ -10,6 +10,8 @@ export interface Tile {
   sown: boolean;
   /** tree marked for chopping by the player */
   marked: boolean;
+  /** a built palisade stands here (blocks movement) */
+  wall: boolean;
   buildingId: number | null;
 }
 
@@ -26,7 +28,7 @@ export class World {
 
   constructor(rng: Rng) {
     for (let i = 0; i < MAP_W * MAP_H; i++) {
-      this.tiles.push({ kind: 'grass', growth: 0, sown: false, marked: false, buildingId: null });
+      this.tiles.push({ kind: 'grass', growth: 0, sown: false, marked: false, wall: false, buildingId: null });
     }
     this.generate(rng);
   }
@@ -41,8 +43,8 @@ export class World {
 
   passable(x: number, y: number): boolean {
     if (!this.inBounds(x, y)) return false;
-    const k = this.at(x, y).kind;
-    return k !== 'water' && k !== 'rock' && k !== 'tree';
+    const t = this.at(x, y);
+    return t.kind !== 'water' && t.kind !== 'rock' && t.kind !== 'tree' && !t.wall;
   }
 
   private generate(rng: Rng): void {

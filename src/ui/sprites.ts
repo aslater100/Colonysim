@@ -80,6 +80,7 @@ export interface SpriteSet {
   soilGrown: HTMLCanvasElement;
   soilRipe: HTMLCanvasElement;
   settler: HTMLCanvasElement[][]; // [variant][frame]
+  raider: HTMLCanvasElement[]; // [frame]
   items: Record<'wood' | 'grain' | 'meal', HTMLCanvasElement>;
   buildings: Record<string, HTMLCanvasElement>;
   blueprints: Record<string, HTMLCanvasElement>;
@@ -119,18 +120,19 @@ function treeSprite(marked: boolean): HTMLCanvasElement {
   return c;
 }
 
-function settlerSprite(cloth: string, frame: number): HTMLCanvasElement {
+function settlerSprite(cloth: string, frame: number, armed = false): HTMLCanvasElement {
   const legL = frame === 0 ? 'L.' : '.L';
   const legR = frame === 0 ? '.L' : 'L.';
+  const arm = armed ? 'W' : '.';
   const rows = [
     '................',
     '......OOO.......',
     '.....OHHHO......',
     '.....OHHHO......',
     '......OOO.......',
-    '.....OCCCO......',
-    '....OCCCCCO.....',
-    '....OCCCCCO.....',
+    `.....OCCCO${arm}.....`,
+    `....OCCCCCO${arm}....`,
+    `....OCCCCCO${arm}....`,
     '.....OCCCO......',
     `.....O${legL}${legR}O......`,
     `.....O${legL}${legR}O......`,
@@ -140,7 +142,7 @@ function settlerSprite(cloth: string, frame: number): HTMLCanvasElement {
     '................',
     '................',
   ];
-  return sheet(grid(rows, { O: P.outline, H: P.skin, C: cloth, L: P.timberDark }));
+  return sheet(grid(rows, { O: P.outline, H: P.skin, C: cloth, L: P.timberDark, W: '#b8b4ac' }));
 }
 
 function buildingSprite(defId: string, w: number, h: number, ghost: boolean): HTMLCanvasElement {
@@ -158,7 +160,16 @@ function buildingSprite(defId: string, w: number, h: number, ghost: boolean): HT
 
   g.fillStyle = ol;
   g.fillRect(0, 0, W, H);
-  if (defId === 'stockpile') {
+  if (defId === 'palisade') {
+    // vertical sharpened logs
+    g.fillStyle = wallD;
+    g.fillRect(1, 1, W - 2, H - 2);
+    g.fillStyle = wall;
+    for (let x = 2; x < W - 2; x += 5) {
+      g.fillRect(x, 3, 3, H - 4);
+      g.fillRect(x + 1, 1, 1, 2); // point
+    }
+  } else if (defId === 'stockpile') {
     g.fillStyle = wallD;
     g.fillRect(1, 1, W - 2, H - 2);
     g.fillStyle = wall;
@@ -249,6 +260,7 @@ export function buildSprites(buildingDefs: { id: string; w: number; h: number }[
     soilGrown: soilTile('grown'),
     soilRipe: soilTile('ripe'),
     settler: [P.cloth1, P.cloth2, P.cloth3].map((c) => [settlerSprite(c, 0), settlerSprite(c, 1)]),
+    raider: [settlerSprite('#8c3226', 0, true), settlerSprite('#8c3226', 1, true)],
     items: { wood: itemSprite('wood'), grain: itemSprite('grain'), meal: itemSprite('meal') },
     buildings,
     blueprints,

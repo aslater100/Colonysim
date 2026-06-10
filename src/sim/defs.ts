@@ -5,9 +5,9 @@ import namesJson from '../data/names.json';
 /** All content defs load from JSON so they are moddable without touching code (GDD §8.8). */
 
 export type ResourceKind = 'wood' | 'grain' | 'meal';
-export type Provides = 'storage' | 'sleep' | 'farm' | 'cook' | 'recreation';
-export type WorkKind = 'build' | 'farm' | 'chop' | 'cook' | 'haul';
-export const WORK_KINDS: WorkKind[] = ['build', 'farm', 'chop', 'cook', 'haul'];
+export type Provides = 'storage' | 'sleep' | 'farm' | 'cook' | 'recreation' | 'wall';
+export type WorkKind = 'build' | 'farm' | 'chop' | 'cook' | 'haul' | 'medic';
+export const WORK_KINDS: WorkKind[] = ['build', 'farm', 'chop', 'cook', 'haul', 'medic'];
 
 export interface BuildingDef {
   id: string;
@@ -18,6 +18,7 @@ export interface BuildingDef {
   buildWork: number; // settler-minutes at skill 5
   provides: Provides;
   capacity?: number;
+  maxHp?: number; // only damageable structures define this
   desc: string;
 }
 
@@ -82,4 +83,29 @@ export const TUNING = {
   softCapWorkPenaltyPer: 0.0075,
   softCapMoodPenaltyPer10: 1,
   hardCapPop: 150,
+  // Raids & combat
+  firstRaidDay: 11,
+  raidIntervalDays: 8,
+  raidWealthPerRaider: 400,
+  raidMaxRaiders: 9,
+  raidRampDays: 15, // raid size cap grows by 1 per this many days
+  raidTimeoutHours: 18,
+  raiderHealth: 55,
+  combatDamagePerHour: 30, // + combat skill × 6
+  combatDamagePerSkill: 6,
+  fightMinCombat: 3, // settlers below this flee instead
+  wallDamagePerHour: 50,
+  // Medical
+  woundBleedPerHour: 0.8,
+  woundSelfHealHours: 24,
+  infectionWindowHours: 12,
+  infectionChance: 0.25,
+  infectionHealthPerHour: 1.2,
+  treatWork: 30,
+  bedRestThreshold: 50,
+  sickHealthPerHour: 0.5,
+  sickWorkMult: 0.6,
+  // Relationships
+  friendThreshold: 15,
+  bondPerHourTogether: 0.8,
 };

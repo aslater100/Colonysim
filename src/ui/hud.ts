@@ -90,6 +90,7 @@ export class Hud {
       `<span>POP ${s.settlers.length}${capWarn}</span>` +
       `<span>wood ${s.stock.wood} · grain ${s.stock.grain} · meals ${s.stock.meal}</span>` +
       `<span title="average of all settler moods">MOOD ${Math.round(s.avgMood())}</span>` +
+      (s.raidActive ? `<span class="tb-over">⚔ RAID — ${s.raiders.length} raiders!</span>` : '') +
       `<span class="tb-speed">${this.paused ? '⏸ PAUSED' : '▶'.repeat(this.speed)} <i>(space, 1-3)</i></span>` +
       (s.gameOver ? `<span class="tb-over">THE COLONY HAS PERISHED</span>` : '');
   }
@@ -127,13 +128,23 @@ export class Hud {
     const thoughts = p.thoughts.map((t) => `<li>${t.label} (${t.delta > 0 ? '+' : ''}${t.delta})</li>`).join('');
     const traits = p.traits.map((t) => `<abbr title="${traitDef(t).desc}">${traitDef(t).name}</abbr>`).join(', ');
     const skills = WORK_KINDS.map((k) => `${k} ${p.skills[k].toFixed(1)}`).join(' · ');
+    const conditions = [
+      p.wound?.untreated ? 'wounded' : p.wound ? 'wound (treated)' : '',
+      p.infection ? 'INFECTED' : '',
+      p.sickUntil > this.sim.minute ? 'fever' : '',
+    ].filter(Boolean).join(' · ');
+    const friends = this.sim.friendsOf(p).slice(0, 3)
+      .map((f) => `${f.name.split(' ')[0]} (${Math.round(this.sim.opinionBetween(p, f))})`)
+      .join(', ');
     return (
       `<h3>${p.name}, ${p.age}</h3>` +
-      `<p class="insp-state">${p.state}${p.task ? ` — ${p.task.label}` : ''} · hp ${Math.round(p.health)}</p>` +
+      `<p class="insp-state">${p.state}${p.task ? ` — ${p.task.label}` : ''} · hp ${Math.round(p.health)} · combat ${p.combat.toFixed(1)}</p>` +
+      (conditions ? `<p class="insp-cond">${conditions}</p>` : '') +
       `<p>${traits}</p>` +
       bar('mood', p.mood) + bar('food', p.needs.food) + bar('rest', p.needs.rest) +
       bar('warmth', p.needs.warmth) + bar('rec', p.needs.recreation) + bar('social', p.needs.social) +
       `<p class="insp-skills">${skills}</p>` +
+      (friends ? `<p class="insp-skills">friends: ${friends}</p>` : '') +
       (thoughts ? `<ul class="thoughts">${thoughts}</ul>` : '')
     );
   }

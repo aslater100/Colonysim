@@ -127,6 +127,11 @@ body {
   font-size: 11px;
 }
 
+.insp-cond {
+  color: #e07a5a;
+  font-weight: bold;
+}
+
 .inspector button {
   margin-top: 4px;
   background: #5d2a1e;
