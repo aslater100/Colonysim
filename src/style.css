@@ -96,6 +96,46 @@ body {
   border-color: #e8d27a;
 }
 
+.pal-btn:disabled {
+  color: #666;
+  cursor: not-allowed;
+}
+
+.pal-found {
+  margin-top: 8px;
+  border-color: #e8d27a;
+  color: #e8d27a;
+}
+
+.tb-btn {
+  background: #2a2620;
+  color: #e8d27a;
+  border: 1px solid #6e4a2f;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.region-panel {
+  width: 280px;
+}
+
+.region-panel button {
+  margin-top: 6px;
+  background: #2a2620;
+  color: #dfe6ee;
+  border: 1px solid #6e4a2f;
+  font-family: inherit;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.region-panel button:disabled {
+  color: #666;
+  cursor: not-allowed;
+}
+
 .inspector {
   position: fixed;
   right: 8px;

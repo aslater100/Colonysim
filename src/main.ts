@@ -1,10 +1,12 @@
 import './style.css';
 import { Simulation } from './sim/sim';
+import { RegionSim } from './sim/region';
 import { TICKS_PER_SECOND } from './sim/defs';
 import { MAP_W, MAP_H } from './sim/world';
 import { Renderer } from './ui/render';
 import type { Camera } from './ui/render';
 import { Hud } from './ui/hud';
+import { RegionView } from './ui/regionview';
 import { TILE } from './ui/sprites';
 
 const root = document.getElementById('app')!;
@@ -37,6 +39,21 @@ window.addEventListener('resize', resize);
 const renderer = new Renderer(canvas, sim, cam);
 const hud = new Hud(root, sim, cam);
 
+// ---- the flip: town → region (GDD §2.4) ----
+let mode: 'town' | 'region' = 'town';
+let dioramaOpen = false;
+let region: RegionSim | null = null;
+let regionView: RegionView | null = null;
+
+hud.onFoundTown = () => {
+  region = RegionSim.fromTown(sim, 8, 80, 80);
+  (window as unknown as { region: RegionSim }).region = region;
+  regionView = new RegionView(canvas, region, root);
+  mode = 'region';
+  dioramaOpen = false;
+  hud.setRegionMode(true);
+};
+
 // ---- input ----
 const keys = new Set<string>();
 window.addEventListener('keydown', (e) => {
@@ -63,6 +80,11 @@ canvas.addEventListener('mousemove', (e) => {
 });
 
 canvas.addEventListener('click', (e) => {
+  if (mode === 'region' && !dioramaOpen) {
+    regionView?.click(e.clientX, e.clientY);
+    return;
+  }
+  if (mode === 'region') return; // diorama is look-only
   const t = renderer.tileAt(e.clientX, e.clientY);
   if (cam.placing) {
     if (sim.placeBuilding(cam.placing, t.x, t.y)) {
@@ -112,12 +134,28 @@ function loop(now: number): void {
     acc += dt * TICKS_PER_SECOND * hud.speed;
     let guard = 0;
     while (acc >= 1 && guard++ < 64) {
-      sim.tick();
+      if (mode === 'town') sim.tick();
+      else region?.tick();
       acc -= 1;
     }
   }
-  renderer.draw();
-  hud.update();
+  if (mode === 'town') {
+    renderer.draw();
+    hud.update();
+  } else if (region) {
+    if (dioramaOpen) {
+      sim.tickDiorama(region.minute);
+      renderer.draw();
+    } else {
+      regionView?.draw();
+    }
+    hud.drawRegionTopBar(region, dioramaOpen);
+    hud.regionLog(region);
+    const btn = document.getElementById('tb-diorama');
+    if (btn) (btn as HTMLButtonElement).onclick = () => {
+      dioramaOpen = !dioramaOpen;
+    };
+  }
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);

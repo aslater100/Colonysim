@@ -8,7 +8,8 @@ era-evolving backdrops.
 
 - **Design:** [GDD.md](GDD.md) — the full game design document.
 - **Milestones:** [01 Tier-1 colony](docs/specs/01-tier1-colony.md) ·
-  [02 raids, medicine & relationships](docs/specs/02-raids-medicine-relationships.md)
+  [02 raids, medicine & relationships](docs/specs/02-raids-medicine-relationships.md) ·
+  [03 the flip — town #2, cohorts & Notables](docs/specs/03-the-flip.md)
 
 ## Run it
 
@@ -28,6 +29,12 @@ the wagon food runs out; mark trees for wood; get cabins up before winter.
 Raiders arrive from week two — your fighters meet them automatically while
 the rest hide indoors; palisades (with deliberate gaps) shape the
 battlefield. Keep a good medic: untreated wounds fester.
+
+At 20 settlers you can **found a second town** — the moment you do, the
+game flips (GDD §2.4): the population becomes cohort statistics on a
+region map, your ten most storied settlers become named **Notables** with
+roles, and the road to Statehood (3 towns, 500 citizens, a charter)
+begins. The old town remains visitable as a living diorama.
 
 - **Build menu** (left): place blueprints; settlers haul wood and build.
   Shift-click to place repeatedly. *Chop Trees* marks trees for felling.
