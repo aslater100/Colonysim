@@ -1234,7 +1234,7 @@ export class RegionSim {
     const d = JSON.parse(json);
     const r = new RegionSim(sim.rng, d.minute, sim.regionMap, sim.weather);
     // pre-market saves carry no prices: open those towns at the base rates
-    r.settlements = d.settlements.map((s: Settlement) => ({ prices: defaultPrices(), ...s }));
+    r.settlements = (d.settlements as Settlement[]).map((s) => ({ ...s, prices: s.prices ?? defaultPrices() }));
     r.notables = d.notables;
     r.expeditions = d.expeditions;
     r.routes = d.routes;
