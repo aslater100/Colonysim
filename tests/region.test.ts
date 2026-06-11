@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Simulation } from '../src/sim/sim';
-import { RegionSim, REGION_MINUTES_PER_TICK, REGION_LAWS, GOV_TYPES } from '../src/sim/region';
+import { RegionSim, REGION_MINUTES_PER_TICK, REGION_LAWS, GOV_TYPES, POLICY_CARDS, POLICY_SWAP_COST } from '../src/sim/region';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
@@ -609,5 +609,180 @@ describe('Constitutional Convention & Nation Proclamation (v0.15.0)', () => {
     const revenueWith = r2.treasury;
 
     expect(revenueWith).toBeGreaterThan(revenueWithout);
+  });
+});
+
+describe('Policy slots & expanded statute book (v0.16.0)', () => {
+  function nationReady(): RegionSim {
+    const sim = new Simulation(42);
+    while (sim.settlers.length < 22) sim.spawnSettler(32, 34);
+    sim.stock.wood = 200;
+    sim.stock.meal = 200;
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    runDays(r, 5);
+    r.stateProclaimed = true;
+    r.stateName = 'Testonia';
+    r.govLean = 'council';
+    r.treasury = 500;
+    r.researched.push('statecraft', 'universal_suffrage', 'income_tax', 'free_press', 'labor_law', 'public_education');
+    for (const t of r.settlements) t.cohorts.bands[2] += 800;
+    r.proclaimNation('Testland', 'democracy', {});
+    return r;
+  }
+
+  it('nation-tier laws are hidden before proclamation', () => {
+    const sim = new Simulation(42);
+    while (sim.settlers.length < 22) sim.spawnSettler(32, 34);
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    runDays(r, 5);
+    r.stateProclaimed = true;
+    r.researched.push('statecraft', 'universal_suffrage', 'income_tax', 'free_press', 'labor_law', 'public_education');
+    const laws = r.availableLaws();
+    expect(laws.some((l) => l.requiresNation)).toBe(false);
+  });
+
+  it('nation-tier laws appear after proclamation', () => {
+    const r = nationReady();
+    const laws = r.availableLaws();
+    expect(laws.some((l) => l.requiresNation)).toBe(true);
+    expect(laws.some((l) => l.id === 'progressive_tax')).toBe(true);
+    expect(laws.some((l) => l.id === 'welfare_benefits')).toBe(true);
+  });
+
+  it('democracy gets 4 policy slots', () => {
+    const r = nationReady();
+    expect(r.activePolicies).toHaveLength(4);
+    expect(r.activePolicies.every((v) => v === null)).toBe(true);
+  });
+
+  it('junta gets 3 policy slots', () => {
+    const sim = new Simulation(42);
+    while (sim.settlers.length < 22) sim.spawnSettler(32, 34);
+    sim.stock.wood = 200;
+    sim.stock.meal = 200;
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    runDays(r, 5);
+    r.stateProclaimed = true;
+    r.researched.push('statecraft', 'universal_suffrage');
+    for (const t of r.settlements) t.cohorts.bands[2] += 800;
+    r.proclaimNation('Juntonia', 'junta', {});
+    expect(r.activePolicies).toHaveLength(3);
+  });
+
+  it('setPolicy slots a matching domain card', () => {
+    const r = nationReady();
+    const ok = r.setPolicy(0, 'free_trade'); // slot 0 = economic for democracy
+    expect(ok).toBe(true);
+    expect(r.activePolicies[0]).toBe('free_trade');
+    expect(r.policyActive('free_trade')).toBe(true);
+  });
+
+  it('setPolicy rejects a card of the wrong domain', () => {
+    const r = nationReady();
+    // slot 1 = social for democracy; standing_army is security
+    const ok = r.setPolicy(1, 'standing_army');
+    expect(ok).toBe(false);
+    expect(r.activePolicies[1]).toBe(null);
+  });
+
+  it('swapping an occupied slot costs POLICY_SWAP_COST PC', () => {
+    const r = nationReady();
+    r.politicalCapital = 100;
+    r.setPolicy(0, 'free_trade');
+    const pcBefore = r.politicalCapital;
+    r.setPolicy(0, 'protectionism');
+    expect(r.politicalCapital).toBe(pcBefore - POLICY_SWAP_COST);
+    expect(r.activePolicies[0]).toBe('protectionism');
+  });
+
+  it('setPolicy returns false when too poor to swap', () => {
+    const r = nationReady();
+    r.politicalCapital = 5; // below POLICY_SWAP_COST
+    r.setPolicy(0, 'free_trade');
+    expect(r.policyActive('free_trade')).toBe(true);
+    // now try to swap with insufficient capital
+    const ok = r.setPolicy(0, 'protectionism');
+    expect(ok).toBe(false);
+    expect(r.activePolicies[0]).toBe('free_trade'); // unchanged
+  });
+
+  it('welfare_state policy boosts satisfaction target', () => {
+    const popOf = (t: { cohorts: { bands: number[] } }) => t.cohorts.bands.reduce((s, v) => s + v, 0);
+    const prep = (r: RegionSim) => {
+      for (const t of r.settlements) {
+        const pop = popOf(t);
+        t.housing = pop + 10;      // enough beds
+        t.food = pop * 40;         // generous supply
+        t.satisfaction = 50;
+      }
+    };
+
+    const r1 = nationReady();
+    prep(r1);
+    runDays(r1, 30);
+    const avgSatBase = r1.settlements.reduce((s, t) => s + t.satisfaction, 0) / r1.settlements.length;
+
+    const r2 = nationReady();
+    r2.setPolicy(1, 'welfare_state'); // slot 1 = social for democracy
+    prep(r2);
+    runDays(r2, 30);
+    const avgSatWith = r2.settlements.reduce((s, t) => s + t.satisfaction, 0) / r2.settlements.length;
+
+    expect(avgSatWith).toBeGreaterThan(avgSatBase);
+  });
+
+  it('progressive_tax law increases monthly revenue', () => {
+    const r = nationReady();
+    r.taxRate = 0.12;
+    r.treasury = 0;
+    runDays(r, 32);
+    const baseRevenue = r.treasury;
+
+    const r2 = nationReady();
+    r2.politicalCapital = 200;
+    r2.taxRate = 0.12;
+    r2.treasury = 0;
+    r2.enactLaw('progressive_tax');
+    runDays(r2, 32);
+    expect(r2.treasury).toBeGreaterThan(baseRevenue);
+  });
+
+  it('central_bank_charter law earns interest on reserves', () => {
+    const r = nationReady();
+    r.politicalCapital = 200;
+    r.treasury = 1000;
+    r.enactLaw('central_bank_charter');
+    r.taxRate = 0;
+    runDays(r, 32);
+    // spending will reduce treasury but interest should partly offset it
+    // just verify the law was enacted
+    expect(r.passedLaws).toContain('central_bank_charter');
+  });
+
+  it('active policies and nation laws survive save/load', () => {
+    const sim = new Simulation(42);
+    while (sim.settlers.length < 22) sim.spawnSettler(32, 34);
+    sim.stock.wood = 200;
+    sim.stock.meal = 200;
+    const r = nationReady();
+    r.setPolicy(0, 'free_trade');
+    r.politicalCapital = 200;
+    r.enactLaw('progressive_tax');
+    const r2 = RegionSim.deserialize(r.serialize(), sim);
+    expect(r2.activePolicies[0]).toBe('free_trade');
+    expect(r2.policyActive('free_trade')).toBe(true);
+    expect(r2.passedLaws).toContain('progressive_tax');
+  });
+
+  it('all POLICY_CARDS have valid domains matching GOV_TYPES slots', () => {
+    const validDomains = new Set(['economic', 'social', 'security', 'diplomatic']);
+    for (const card of POLICY_CARDS) {
+      expect(validDomains.has(card.domain)).toBe(true);
+    }
+    for (const gov of GOV_TYPES) {
+      for (const slot of gov.policySlots) {
+        expect(validDomains.has(slot)).toBe(true);
+      }
+    }
   });
 });

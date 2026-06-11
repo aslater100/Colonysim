@@ -4,7 +4,7 @@
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
 import type { RegionSim, Settlement, GovLean, GovType, MinisterRoleId } from '../sim/region';
-import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, TECH_TREE, REGION_LAWS } from '../sim/region';
+import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST } from '../sim/region';
 
 export class RegionView {
   selectedId: number | null = null;
@@ -18,6 +18,8 @@ export class RegionView {
   researchOpen = false;
   private ceremony: HTMLElement;
   private convention: HTMLElement;
+  private policyModal: HTMLElement;
+  private policySlotIndex = -1;
   private frame = 0;
 
   constructor(private canvas: HTMLCanvasElement, private region: RegionSim, root: HTMLElement) {
@@ -37,6 +39,9 @@ export class RegionView {
     this.convention = document.createElement('div');
     this.convention.className = 'ceremony hidden';
     root.appendChild(this.convention);
+    this.policyModal = document.createElement('div');
+    this.policyModal.className = 'ceremony hidden';
+    root.appendChild(this.policyModal);
   }
 
   destroyPanel(): void {
@@ -45,6 +50,7 @@ export class RegionView {
     this.researchPanel.remove();
     this.ceremony.remove();
     this.convention.remove();
+    this.policyModal.remove();
   }
 
   private toPx(x: number, y: number): { px: number; py: number } {
@@ -474,6 +480,12 @@ export class RegionView {
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.law-btn')) {
       btn.onclick = () => r.enactLaw(btn.dataset.id!);
     }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.policy-slot-btn')) {
+      btn.onclick = () => {
+        this.policySlotIndex = Number(btn.dataset.slot);
+        this.renderPolicyModal();
+      };
+    }
   }
 
   /** Politics section: political capital, elections, faction bars, law cards. */
@@ -500,15 +512,20 @@ export class RegionView {
       : `<p class="insp-skills">factions form next month</p>`;
 
     const laws = r.availableLaws();
-    const lawButtons = laws.length > 0
-      ? `<p class="insp-skills">LAWS (costs political capital)</p>` +
-        laws.map((l) =>
-          `<p><button class="mini law-btn" data-id="${l.id}" ${l.canAfford ? '' : 'disabled'} ` +
-          `title="${l.desc}">${l.name} (${l.cost} PC)</button></p>`,
-        ).join('')
-      : r.passedLaws.length > 0
-        ? `<p class="insp-skills">all available laws enacted</p>`
+    const stateLaws = laws.filter((l) => !l.requiresNation);
+    const nationLaws = laws.filter((l) => l.requiresNation);
+    const renderLawButtons = (list: typeof laws, header: string) =>
+      list.length > 0
+        ? `<p class="insp-skills">${header}</p>` +
+          list.map((l) =>
+            `<p><button class="mini law-btn" data-id="${l.id}" ${l.canAfford ? '' : 'disabled'} ` +
+            `title="${l.desc}">${l.name} (${l.cost} PC)</button></p>`,
+          ).join('')
         : '';
+    const lawButtons =
+      renderLawButtons(stateLaws, 'STATE LAWS') +
+      (r.nationProclaimed ? renderLawButtons(nationLaws, 'NATION LAWS') : '') ||
+      (r.passedLaws.length > 0 ? `<p class="insp-skills">all available laws enacted</p>` : '');
     const enacted = r.passedLaws.length > 0
       ? `<p class="insp-skills">enacted: ${r.passedLaws.map((id) => REGION_LAWS.find((l) => l.id === id)?.name ?? id).join(', ')}</p>`
       : '';
@@ -522,7 +539,7 @@ export class RegionView {
       enacted;
   }
 
-  /** Nation-tier header: legitimacy bar + minister roster (GDD §2.2). */
+  /** Nation-tier header: legitimacy bar + minister roster + policy slots (GDD §2.2). */
   private nationHtml(): string {
     const r = this.region;
     const legPct = Math.round(r.legitimacy);
@@ -533,12 +550,75 @@ export class RegionView {
       const n = r.ministerFor(mr.id);
       return `<span class="insp-skills">${mr.title}: <b>${n ? n.name : '—'}</b></span>`;
     }).join('<br>');
+
+    const govDef = GOV_TYPES.find((g) => g.id === r.govType);
+    const policyRows = govDef ? govDef.policySlots.map((domain, i) => {
+      const activeId = r.activePolicies[i] ?? null;
+      const card = activeId ? POLICY_CARDS.find((c) => c.id === activeId) : null;
+      const label = card ? card.name : `— empty —`;
+      const upkeepNote = card && card.upkeep > 0 ? ` (£${card.upkeep}/mo)` : '';
+      const canSwap = !card || r.politicalCapital >= POLICY_SWAP_COST;
+      return `<p><span class="insp-skills">${domain}: </span>` +
+        `<button class="mini policy-slot-btn" data-slot="${i}" ${canSwap ? '' : 'disabled'} ` +
+        `title="${card ? card.desc : 'Choose a policy card for this slot'}">${label}${upkeepNote}</button></p>`;
+    }).join('') : '';
+
     return `<p class="insp-skills">NATION</p>` +
       `<div class="bar-row" title="Legitimacy — the regime's right to rule (GDD §5.3)">` +
       `<span style="width:80px;display:inline-block">legitimacy</span>` +
       legBar + `<span>${legPct}</span></div>` +
       `<p class="insp-skills">CABINET</p>` +
-      `<p>${ministerLines}</p>`;
+      `<p>${ministerLines}</p>` +
+      `<p class="insp-skills">POLICY SLOTS</p>` +
+      policyRows;
+  }
+
+  private renderPolicyModal(): void {
+    const r = this.region;
+    const i = this.policySlotIndex;
+    if (i < 0 || !r.govType) return;
+    const govDef = GOV_TYPES.find((g) => g.id === r.govType)!;
+    const domain = govDef.policySlots[i];
+    const cards = r.availablePoliciesFor(domain);
+    const activeId = r.activePolicies[i] ?? null;
+    const cardRows = cards.map((c) => {
+      const isActive = c.id === activeId;
+      const canAfford = !activeId || r.politicalCapital >= POLICY_SWAP_COST;
+      return `<p><button class="policy-pick-btn${isActive ? ' active' : ''}" data-card="${c.id}" ` +
+        `${canAfford ? '' : 'disabled'} title="${c.desc}">` +
+        `<b>${c.name}</b>${c.upkeep > 0 ? ` £${c.upkeep}/mo` : ''}` +
+        (isActive ? ' ✓' : '') + `</button>` +
+        `<span class="insp-skills"> — ${c.desc}</span></p>`;
+    }).join('');
+    const noCards = cards.length === 0 ? `<p class="insp-skills">No eligible cards yet — research the prerequisite civics.</p>` : '';
+    const swapNote = activeId ? `<p class="insp-skills">Changing an active policy costs ${POLICY_SWAP_COST} PC (you have ${r.politicalCapital}).</p>` : '';
+
+    this.policyModal.innerHTML =
+      `<div class="ceremony-box">` +
+      `<h2>POLICY — ${domain.toUpperCase()} SLOT</h2>` +
+      swapNote +
+      cardRows + noCards +
+      (activeId ? `<p><button id="policy-clear-btn">Clear slot</button></p>` : '') +
+      `<button id="policy-cancel-btn" class="mini">Cancel</button>` +
+      `</div>`;
+    this.policyModal.classList.remove('hidden');
+
+    for (const btn of this.policyModal.querySelectorAll<HTMLButtonElement>('.policy-pick-btn')) {
+      btn.onclick = () => {
+        r.setPolicy(i, btn.dataset.card!);
+        this.policyModal.classList.add('hidden');
+        this.policySlotIndex = -1;
+      };
+    }
+    this.policyModal.querySelector<HTMLButtonElement>('#policy-clear-btn')?.addEventListener('click', () => {
+      r.setPolicy(i, null);
+      this.policyModal.classList.add('hidden');
+      this.policySlotIndex = -1;
+    });
+    this.policyModal.querySelector<HTMLButtonElement>('#policy-cancel-btn')!.onclick = () => {
+      this.policyModal.classList.add('hidden');
+      this.policySlotIndex = -1;
+    };
   }
 
   /** Freight overlay (M6b): what the caravans actually moved, per route. */

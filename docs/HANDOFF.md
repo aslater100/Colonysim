@@ -1,4 +1,4 @@
-# Session Handoff — 2026-06-11 (post-soundscape)
+# Session Handoff — 2026-06-11 (post-policy-slots)
 
 ## Where things stand
 
@@ -96,10 +96,25 @@ tension < 0.2, no builders, grievance < 35). Independent `Ambience: ON/OFF`
 toggle in the menu under `centuria-soundscape`. Unlocked alongside Sfx and
 Music on the first user gesture.
 
+National Policy Slots & Expanded Statute Book shipped (v0.16.0):
+- **Policy slots**: each gov type grants 3–4 domain-specific slots (economic/social/security/diplomatic).
+  9 policy cards can be socketed; swapping an occupied slot costs 20 PC. Democracy: 4 slots;
+  republic: 2 economic + security + diplomatic; junta: 2 security + economic; monarchy: economic +
+  security + social. Policies have ongoing monthly effects (upkeep in `monthlyEconomy`): free_trade
+  zeroes levy; protectionism +£3/mo; public_investment +2 route condition/mo; welfare_state +6 sat;
+  public_health_policy mortality ×0.8; standing_army militia +2; border_constabulary grievance ×0.75;
+  open_borders immigration ×1.3; isolationism event gap ×1.35.
+- **Statute book expanded** 4→12 laws: 8 new nation-tier laws gated behind `nationProclaimed`:
+  progressive_tax, welfare_benefits, national_education_act (research ×1.3), central_bank_charter
+  (treasury 0.5% interest/mo), military_reform (militia ×1.2), press_freedom_act (legitimacy decay
+  ×0.7), healthcare_act (mortality ×0.85), land_reform (food +5%, landowners −30). All faction effects
+  wired into `updateFactions`.
+- **UI**: POLICY SLOTS section below CABINET in state panel; slot buttons open modal with eligible
+  cards for the slot's domain; STATE LAWS / NATION LAWS split in politics section.
+
 Open ideas consistent with the GDD: maglev/automated freight (2000+,
-speculative-era, transportation.md §5), technology/civics research tree
-(GDD §5.6 — the twin trees that gate era unlocks beyond the current
-year+state hard-gates).
+speculative-era, transportation.md §5); AI rival nations + diplomacy basics
+(the world has no other nations — the biggest remaining gap for Nation-tier play).
 
 ## Architecture notes for M6c
 

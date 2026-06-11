@@ -84,23 +84,27 @@ export interface Faction {
   demand: string;  // what they want (text hint for the player)
 }
 
-/** One-time policy acts funded with political capital (GDD §5.3). */
+/** One-time permanent statute acts funded with political capital (GDD §5.3). */
 export interface RegionLaw {
   id: string;
   name: string;
   cost: number;       // political capital
   prereqs: string[];  // tech/civics node ids
   requiresState: boolean;
+  requiresNation?: boolean; // gates nation-tier laws behind Proclamation
+  domain: 'economic' | 'social' | 'security' | 'information';
   desc: string;
 }
 
 export const REGION_LAWS: RegionLaw[] = [
+  // ---- State-tier laws (unlock at Incorporation) ----
   {
     id: 'workers_charter',
     name: 'Workers Charter',
     cost: 30,
     prereqs: [],
     requiresState: true,
+    domain: 'social',
     desc: 'Fund services. Services +1. Workers support +20, Merchants/Landowners −10.',
   },
   {
@@ -109,6 +113,7 @@ export const REGION_LAWS: RegionLaw[] = [
     cost: 25,
     prereqs: [],
     requiresState: true,
+    domain: 'economic',
     desc: 'Lower trade levy 5%→3%. Merchants support +25, Workers −5.',
   },
   {
@@ -117,6 +122,7 @@ export const REGION_LAWS: RegionLaw[] = [
     cost: 35,
     prereqs: ['income_tax'],
     requiresState: true,
+    domain: 'economic',
     desc: 'Monthly levy on land wealth adds £0.1/citizen. Landowners −25, Workers +10.',
   },
   {
@@ -125,7 +131,89 @@ export const REGION_LAWS: RegionLaw[] = [
     cost: 20,
     prereqs: [],
     requiresState: true,
+    domain: 'security',
     desc: 'Mandatory service. Militia +1. Workers support −5.',
+  },
+  // ---- Nation-tier laws (unlock at Proclamation) ----
+  {
+    id: 'progressive_tax',
+    name: 'Progressive Taxation',
+    cost: 40,
+    prereqs: ['income_tax'],
+    requiresState: true,
+    requiresNation: true,
+    domain: 'economic',
+    desc: 'Graduated bands on higher incomes. Additional revenue: +2% of GDP/month. Workers +15, Landowners −10, Merchants −10.',
+  },
+  {
+    id: 'welfare_benefits',
+    name: 'Welfare Benefits',
+    cost: 35,
+    prereqs: ['labor_law'],
+    requiresState: true,
+    requiresNation: true,
+    domain: 'social',
+    desc: 'Unemployment and relief payments. Satisfaction +5 in all towns. Treasury −£1/month per 100 citizens.',
+  },
+  {
+    id: 'national_education_act',
+    name: 'National Education Act',
+    cost: 45,
+    prereqs: ['public_education', 'statecraft'],
+    requiresState: true,
+    requiresNation: true,
+    domain: 'social',
+    desc: 'Universal state schooling funded by the treasury. Research rate +30%. Workers +10.',
+  },
+  {
+    id: 'central_bank_charter',
+    name: 'Central Bank Charter',
+    cost: 50,
+    prereqs: ['statecraft', 'income_tax'],
+    requiresState: true,
+    requiresNation: true,
+    domain: 'economic',
+    desc: 'A national bank holds reserves and smooths the boom-bust. Treasury earns 0.5% interest/month.',
+  },
+  {
+    id: 'military_reform',
+    name: 'Military Reform',
+    cost: 30,
+    prereqs: ['statecraft'],
+    requiresState: true,
+    requiresNation: true,
+    domain: 'security',
+    desc: 'Professional officer corps replaces frontier militias. Militia effectiveness +20%.',
+  },
+  {
+    id: 'press_freedom_act',
+    name: 'Press Freedom Act',
+    cost: 25,
+    prereqs: ['free_press'],
+    requiresState: true,
+    requiresNation: true,
+    domain: 'information',
+    desc: 'Constitutional press rights. Legitimacy decay −30% slower. Merchants +10.',
+  },
+  {
+    id: 'healthcare_act',
+    name: 'Healthcare Act',
+    cost: 40,
+    prereqs: ['public_education'],
+    requiresState: true,
+    requiresNation: true,
+    domain: 'social',
+    desc: 'State-funded clinics in every settlement. Settlement mortality −15%. Workers +10.',
+  },
+  {
+    id: 'land_reform',
+    name: 'Land Reform',
+    cost: 50,
+    prereqs: ['universal_suffrage'],
+    requiresState: true,
+    requiresNation: true,
+    domain: 'economic',
+    desc: 'Redistribution of concentrated landholdings. Food production +5%. Workers +20, Landowners −30.',
   },
 ];
 
@@ -148,6 +236,9 @@ export const GOV_LEANS: Record<GovLean, { name: string; desc: string }> = {
 
 export type GovType = 'democracy' | 'republic' | 'junta' | 'monarchy';
 
+/** The four domains of national policy — each gov type gets a different mix. */
+export type PolicyDomain = 'economic' | 'social' | 'security' | 'diplomatic';
+
 export interface GovTypeDef {
   id: GovType;
   name: string;
@@ -156,6 +247,8 @@ export interface GovTypeDef {
   taxCap: number;
   militiaBonus: number;
   startingLegitimacy: number;
+  /** Ordered list of policy slot domains granted by this government type. */
+  policySlots: PolicyDomain[];
 }
 
 export const GOV_TYPES: GovTypeDef[] = [
@@ -167,6 +260,7 @@ export const GOV_TYPES: GovTypeDef[] = [
     taxCap: 25,
     militiaBonus: 0,
     startingLegitimacy: 80,
+    policySlots: ['economic', 'social', 'security', 'diplomatic'],
   },
   {
     id: 'republic',
@@ -176,6 +270,7 @@ export const GOV_TYPES: GovTypeDef[] = [
     taxCap: 28,
     militiaBonus: 0,
     startingLegitimacy: 78,
+    policySlots: ['economic', 'economic', 'security', 'diplomatic'],
   },
   {
     id: 'junta',
@@ -185,6 +280,7 @@ export const GOV_TYPES: GovTypeDef[] = [
     taxCap: 30,
     militiaBonus: 2,
     startingLegitimacy: 70,
+    policySlots: ['security', 'security', 'economic'],
   },
   {
     id: 'monarchy',
@@ -194,6 +290,7 @@ export const GOV_TYPES: GovTypeDef[] = [
     taxCap: 22,
     militiaBonus: 1,
     startingLegitimacy: 75,
+    policySlots: ['economic', 'security', 'social'],
   },
 ];
 
@@ -210,6 +307,62 @@ export const MINISTER_ROLES: { id: MinisterRoleId; title: string; bonus: string 
   { id: 'treasury', title: 'Treasury Secretary', bonus: 'tax collection +10%' },
   { id: 'defence', title: 'Defence Minister', bonus: 'militia 20% stronger' },
 ];
+
+// ---- Nation-tier: policy slots (GDD §5.3) ----
+
+/** Ongoing focus cards socketed into government policy slots. Unlike laws (one-time
+ *  permanent), policies can be swapped for a political-capital cost. Each card
+ *  applies a continuous bonus while slotted. */
+export interface PolicyCard {
+  id: string;
+  name: string;
+  domain: PolicyDomain;
+  prereqs: string[];
+  desc: string;
+  upkeep: number; // £/month treasury cost while active
+}
+
+export const POLICY_CARDS: PolicyCard[] = [
+  {
+    id: 'free_trade', name: 'Free Trade', domain: 'economic', prereqs: [], upkeep: 0,
+    desc: 'Open markets. Trade levy removed (0%), caravan throughput +15%.',
+  },
+  {
+    id: 'protectionism', name: 'Protectionism', domain: 'economic', prereqs: ['income_tax'], upkeep: 0,
+    desc: 'Tariff barriers. Treasury +£3/month.',
+  },
+  {
+    id: 'public_investment', name: 'Public Investment', domain: 'economic', prereqs: ['statecraft'], upkeep: 2,
+    desc: 'State-funded infrastructure bonds. Route conditions +2/month. Cost £2/month.',
+  },
+  {
+    id: 'welfare_state', name: 'Welfare State', domain: 'social', prereqs: ['labor_law'], upkeep: 3,
+    desc: 'Universal safety net. Satisfaction +6 everywhere. Cost £3/month.',
+  },
+  {
+    id: 'public_health_policy', name: 'Public Health', domain: 'social', prereqs: ['public_education'], upkeep: 2,
+    desc: 'State-funded clinics. Population mortality −20%. Cost £2/month.',
+  },
+  {
+    id: 'standing_army', name: 'Standing Army', domain: 'security', prereqs: [], upkeep: 3,
+    desc: 'Professional soldiers. Militia strength +2. Cost £3/month.',
+  },
+  {
+    id: 'border_constabulary', name: 'Border Constabulary', domain: 'security', prereqs: ['labor_law'], upkeep: 1,
+    desc: 'Trained officers ease tensions. Grievance 25% slower. Cost £1/month.',
+  },
+  {
+    id: 'open_borders', name: 'Open Borders', domain: 'diplomatic', prereqs: ['universal_suffrage'], upkeep: 0,
+    desc: 'Welcoming newcomers. Migration flows +30%.',
+  },
+  {
+    id: 'isolationism', name: 'Isolationism', domain: 'diplomatic', prereqs: [], upkeep: 0,
+    desc: 'Self-reliance. Regional incident frequency −35%.',
+  },
+];
+
+/** Political capital cost to swap a policy card out of an occupied slot. */
+export const POLICY_SWAP_COST = 20;
 
 export type NotableRole = 'Mayor' | 'Doctor' | 'Captain' | 'Granger' | 'Forewoman' | 'Reeve';
 
@@ -353,6 +506,8 @@ export class RegionSim {
   /** 0–100: regime's right to rule; distinct from approval (GDD §5.3). */
   legitimacy = 0;
   ministers: MinisterAssignment[] = MINISTER_ROLES.map((r) => ({ role: r.id, title: r.title, notableId: null }));
+  /** Active policy card id per slot (null = empty). Length matches govType.policySlots. */
+  activePolicies: (string | null)[] = [];
   private droughtAnnounced = false;
   private railAnnounced = false;
   private highwayAnnounced = false;
@@ -494,6 +649,7 @@ export class RegionSim {
     let mult = 1;
     if (this.has('public_education')) mult *= 1.5;
     if (this.has('electrical_grid')) mult *= 1.25;
+    if (this.passedLaws.includes('national_education_act')) mult *= 1.3;
     return base * mult;
   }
 
@@ -706,13 +862,14 @@ export class RegionSim {
   /** Monthly upkeep on built links from the treasury — an unmaintained
    *  empire rots. Rail crews cost more than road gangs. */
   private maintainRoutes(): void {
+    const investmentBonus = this.policyActive('public_investment') ? 2 : 0;
     let rotting = false;
     for (const r of this.routes) {
       if (r.kind === 'trail') continue;
       const bill = r.path.length * ROUTE_SPECS[r.kind].maintPerCell;
       if (this.treasury >= bill) {
         this.treasury -= bill;
-        r.condition = Math.min(100, r.condition + 8);
+        r.condition = Math.min(100, r.condition + 8 + investmentBonus);
       } else {
         r.condition = Math.max(ROUTE_CONDITION_FLOOR, r.condition - 6);
         rotting = true;
@@ -876,8 +1033,12 @@ export class RegionSim {
         ? -this.taxRate * 40 +
           this.servicesLevel * 4 +
           (this.govLean === 'council' ? 6 : this.govLean === 'mayor' ? -6 : 0) -
-          (this.day < t.strikeUntil ? 5 : 0)
+          (this.day < t.strikeUntil ? 5 : 0) +
+          (this.policyActive('welfare_state') ? 6 : 0) +
+          (this.passedLaws.includes('welfare_benefits') ? 5 : 0)
         : 0;
+      // Land Reform (nation law) boosts food production 5%
+      if (this.passedLaws.includes('land_reform')) t.food += workers * 1.15 * seasonMult * t.landQuality * weatherMult * granger * strike * 0.05;
       const target =
         50 +
         Math.min(20, foodDays * 1.5) -
@@ -888,11 +1049,12 @@ export class RegionSim {
         stateTerms;
       t.satisfaction += (Math.max(0, Math.min(100, target)) - t.satisfaction) * 0.08;
       // Grievance: heavy taxes build pressure daily; services and contentment vent it.
-      // Labor Standards research (labor_law) slows the build by 30%.
+      // Labor Standards research slows buildup 30%; Border Constabulary policy adds another 25%.
       if (this.stateProclaimed) {
         const laborFactor = this.has('labor_law') ? 0.7 : 1;
+        const constabFactor = this.policyActive('border_constabulary') ? 0.75 : 1;
         const pressure =
-          (Math.max(0, this.taxRate - 0.15) * 35 - this.servicesLevel * 0.4 - Math.max(0, t.satisfaction - 55) * 0.05) * laborFactor;
+          (Math.max(0, this.taxRate - 0.15) * 35 - this.servicesLevel * 0.4 - Math.max(0, t.satisfaction - 55) * 0.05) * laborFactor * constabFactor;
         t.grievance = Math.max(0, Math.min(100, t.grievance + pressure));
       }
       this.updateMarket(t);
@@ -936,7 +1098,9 @@ export class RegionSim {
     if (this.day % 30 === 0) this.monthlyUpdate();
     if (this.day >= this.nextEventDay) {
       this.fireEvent();
-      this.nextEventDay = this.day + 4 + this.rng.int(5);
+      // Isolationism policy reduces incident frequency by 35%
+      const eventGap = this.policyActive('isolationism') ? 7 + this.rng.int(8) : 4 + this.rng.int(5);
+      this.nextEventDay = this.day + eventGap;
     }
     this.updateExpeditions();
     this.updateCharter();
@@ -958,18 +1122,21 @@ export class RegionSim {
         b[i] -= moved;
         b[i + 1] += moved;
       }
-      // Mortality (doctor and funded services help); elders carry most of it
+      // Mortality: doctor, services, Public Health policy, and Healthcare Act law all help
       const doctor = this.roleMult(t, 'Doctor') ? 0.85 : 1;
       // Interior Minister makes services 15% more effective (GDD §8.7)
       const interiorBonus = this.ministerFor('interior') ? 1.15 : 1;
       const services = this.stateProclaimed ? 1 - 0.05 * this.servicesLevel * interiorBonus : 1;
+      const healthPolicy = this.policyActive('public_health_policy') ? 0.8 : 1;
+      const healthcareLaw = this.passedLaws.includes('healthcare_act') ? 0.85 : 1;
       for (let i = 0; i < b.length; i++) {
-        b[i] -= b[i] * (BASE_MORTALITY_PER_YEAR[i] / 12) * doctor * services;
+        b[i] -= b[i] * (BASE_MORTALITY_PER_YEAR[i] / 12) * doctor * services * healthPolicy * healthcareLaw;
       }
       // Immigration: the frontier draws people to fed, content towns
       const reeve = 1 + 0.1 * this.roleMult(t, 'Reeve');
+      const openBorders = this.policyActive('open_borders') ? 1.3 : 1;
       if (t.satisfaction > 55 && t.food > this.popOf(t) * 2) {
-        const arrivals = (this.popOf(t) * 0.02 + 2) * reeve;
+        const arrivals = (this.popOf(t) * 0.02 + 2) * reeve * openBorders;
         b[1] += arrivals * 0.6;
         b[2] += arrivals * 0.3;
         b[0] += arrivals * 0.1;
@@ -1049,7 +1216,9 @@ export class RegionSim {
     }
     this.tradeValueLastMonth = turnover;
     if (this.stateProclaimed && turnover > 0) {
-      this.treasury += turnover * this.tradeLevyRate; // the market levy
+      // Free Trade policy removes the levy entirely; otherwise use the configured rate
+      const effectiveLevyRate = this.policyActive('free_trade') ? 0 : this.tradeLevyRate;
+      this.treasury += turnover * effectiveLevyRate;
     }
   }
 
@@ -1113,12 +1282,21 @@ export class RegionSim {
     const spending =
       pop * 0.05 * this.servicesLevel * serviceCost +
       pop * 0.03 * this.militiaLevel +
-      this.settlements.length * 5; // administration
+      this.settlements.length * 5 + // administration
+      this.policyUpkeep() + // active policy running costs
+      (this.passedLaws.includes('welfare_benefits') ? pop * 0.01 : 0); // welfare relief payments
     // Income Tax (civic research): a progressive levy adds 3% of GDP on top
     const incomeTaxBonus = this.has('income_tax') ? this.gdpLastMonth * 0.03 : 0;
     // Estate Tax law: a wealth levy on the land
     const estateLevyBonus = this.estateTaxActive ? this.totalPop() * 0.1 : 0;
-    this.treasury += revenue - spending + incomeTaxBonus + estateLevyBonus;
+    // Progressive Taxation law: graduated bands yield 2% extra of GDP
+    const progressiveTaxBonus = this.passedLaws.includes('progressive_tax') ? this.gdpLastMonth * 0.02 : 0;
+    // Protectionism policy: tariff wall adds flat £3/month
+    const protectionismBonus = this.policyActive('protectionism') ? 3 : 0;
+    // Central Bank Charter law: treasury reserves earn 0.5% interest/month
+    const bankInterest = this.passedLaws.includes('central_bank_charter') ? this.treasury * 0.005 : 0;
+    this.treasury += revenue - spending + incomeTaxBonus + estateLevyBonus +
+      progressiveTaxBonus + protectionismBonus + bankInterest;
     if (this.treasury < 0) {
       this.treasury = 0;
       if (this.servicesLevel > 0) {
@@ -1213,7 +1391,12 @@ export class RegionSim {
     const captain = 1 + 0.25 * this.roleMult(t, 'Captain');
     // Defence Minister adds 20% militia effectiveness (GDD §8.7)
     const defenceBonus = this.ministerFor('defence') ? 1.2 : 1;
-    const funded = this.stateProclaimed ? (1 + 0.2 * this.militiaLevel + (this.govLean === 'mayor' ? 0.2 : 0)) * defenceBonus : 1;
+    // Military Reform law: professional officers +20%; Standing Army policy: +2 effective militia
+    const militaryReformBonus = this.passedLaws.includes('military_reform') ? 1.2 : 1;
+    const standingArmyBonus = this.policyActive('standing_army') ? 2 : 0;
+    const funded = this.stateProclaimed
+      ? (1 + 0.2 * (this.militiaLevel + standingArmyBonus) + (this.govLean === 'mayor' ? 0.2 : 0)) * defenceBonus * militaryReformBonus
+      : 1;
     // M6c: the network is defense — a built link to a bigger town brings relief
     const relief = this.reliefLine(t);
     const militia = this.workersOf(t) * 0.12 * captain * funded * (relief ? 1.25 : 1);
@@ -1474,21 +1657,30 @@ export class RegionSim {
       - Math.max(0, this.taxRate - 0.15) * 100
       + (this.passedLaws.includes('workers_charter') ? 20 : 0)
       - (this.passedLaws.includes('conscription_act') ? 5 : 0)
-      + (this.passedLaws.includes('estate_tax') ? 10 : 0),
+      + (this.passedLaws.includes('estate_tax') ? 10 : 0)
+      + (this.passedLaws.includes('progressive_tax') ? 15 : 0)
+      + (this.passedLaws.includes('welfare_benefits') ? 10 : 0)
+      + (this.passedLaws.includes('national_education_act') ? 10 : 0)
+      + (this.passedLaws.includes('healthcare_act') ? 10 : 0)
+      + (this.passedLaws.includes('land_reform') ? 20 : 0),
     ));
 
     const landownerPower = Math.min(50, 15 + food * 0.005);
     const landownerSupport = Math.max(0, Math.min(100,
       70 - this.taxRate * 160
       - (this.passedLaws.includes('estate_tax') ? 25 : 0)
-      - (this.passedLaws.includes('workers_charter') ? 10 : 0),
+      - (this.passedLaws.includes('workers_charter') ? 10 : 0)
+      - (this.passedLaws.includes('progressive_tax') ? 10 : 0)
+      - (this.passedLaws.includes('land_reform') ? 30 : 0),
     ));
 
     const merchantPower = Math.min(40, 10 + trade * 0.12);
     const merchantSupport = Math.max(0, Math.min(100,
       50 + trade * 0.05
       + (this.passedLaws.includes('merchants_charter') ? 25 : 0)
-      - (this.passedLaws.includes('workers_charter') ? 10 : 0),
+      - (this.passedLaws.includes('workers_charter') ? 10 : 0)
+      - (this.passedLaws.includes('progressive_tax') ? 10 : 0)
+      + (this.passedLaws.includes('press_freedom_act') ? 10 : 0),
     ));
 
     this.factions = [
@@ -1548,16 +1740,57 @@ export class RegionSim {
 
   // ---- Law system (GDD §5.3) ----
 
-  /** Laws available to be enacted: not yet passed, prereqs met, state if required. */
+  /** Laws available to be enacted: not yet passed, prereqs met, tier gates satisfied. */
   availableLaws(): (RegionLaw & { canAfford: boolean })[] {
     return REGION_LAWS
       .filter(
         (l) =>
           !this.passedLaws.includes(l.id) &&
           (!l.requiresState || this.stateProclaimed) &&
+          (!l.requiresNation || this.nationProclaimed) &&
           l.prereqs.every((p) => this.has(p)),
       )
       .map((l) => ({ ...l, canAfford: this.politicalCapital >= l.cost }));
+  }
+
+  /** Policy cards eligible for a given slot domain (prereqs met, nation proclaimed). */
+  availablePoliciesFor(domain: PolicyDomain): PolicyCard[] {
+    if (!this.nationProclaimed) return [];
+    return POLICY_CARDS.filter(
+      (c) => c.domain === domain && c.prereqs.every((p) => this.has(p)),
+    );
+  }
+
+  /** Socket or clear a policy slot. Swapping an occupied slot costs POLICY_SWAP_COST PC. */
+  setPolicy(slotIndex: number, cardId: string | null): boolean {
+    if (!this.nationProclaimed || this.govType === null) return false;
+    const govDef = GOV_TYPES.find((g) => g.id === this.govType)!;
+    if (slotIndex < 0 || slotIndex >= govDef.policySlots.length) return false;
+    if (cardId !== null) {
+      const card = POLICY_CARDS.find((c) => c.id === cardId);
+      if (!card) return false;
+      if (card.domain !== govDef.policySlots[slotIndex]) return false;
+      if (!card.prereqs.every((p) => this.has(p))) return false;
+      if (this.activePolicies[slotIndex] !== null && this.politicalCapital < POLICY_SWAP_COST) return false;
+      if (this.activePolicies[slotIndex] !== null) this.politicalCapital -= POLICY_SWAP_COST;
+      this.activePolicies[slotIndex] = cardId;
+      this.addLog(`POLICY: "${card.name}" is now national policy (${govDef.policySlots[slotIndex]} slot).`, 'good');
+    } else {
+      this.activePolicies[slotIndex] = null;
+      this.addLog('Policy slot cleared.', 'info');
+    }
+    return true;
+  }
+
+  policyActive(id: string): boolean {
+    return this.activePolicies.includes(id);
+  }
+
+  private policyUpkeep(): number {
+    return this.activePolicies.reduce((sum, id) => {
+      if (!id) return sum;
+      return sum + (POLICY_CARDS.find((c) => c.id === id)?.upkeep ?? 0);
+    }, 0);
   }
 
   /** Enact a law: spend political capital and apply the permanent effect. */
@@ -1614,6 +1847,7 @@ export class RegionSim {
     this.govType = gov;
     this.legitimacy = def.startingLegitimacy;
     this.nationProclaimed = true;
+    this.activePolicies = new Array(def.policySlots.length).fill(null);
     this.militiaLevel = Math.min(4, this.militiaLevel + def.militiaBonus);
     for (const m of this.ministers) {
       m.notableId = assignments[m.role] ?? null;
@@ -1636,7 +1870,9 @@ export class RegionSim {
   /** Monthly legitimacy tick (GDD §5.3). */
   private tickLegitimacy(): void {
     if (!this.nationProclaimed) return;
-    this.legitimacy = Math.max(0, this.legitimacy - 0.5);
+    // Press Freedom Act law slows legitimacy decay by 30%
+    const decayRate = this.passedLaws.includes('press_freedom_act') ? 0.35 : 0.5;
+    this.legitimacy = Math.max(0, this.legitimacy - decayRate);
     if (this.govType === 'junta') {
       const ws = this.factions.find((f) => f.id === 'workers')?.support ?? 50;
       const ls = this.factions.find((f) => f.id === 'landowners')?.support ?? 50;
@@ -1709,6 +1945,7 @@ export class RegionSim {
       govType: this.govType,
       legitimacy: this.legitimacy,
       ministers: this.ministers,
+      activePolicies: this.activePolicies,
       nextId: this.nextId,
       nextEventDay: this.nextEventDay,
       townNamePool: this.townNamePool,
@@ -1755,6 +1992,12 @@ export class RegionSim {
     r.govType = d.govType ?? null;
     r.legitimacy = d.legitimacy ?? 0;
     r.ministers = d.ministers ?? MINISTER_ROLES.map((x) => ({ role: x.id, title: x.title, notableId: null }));
+    if (d.activePolicies) {
+      r.activePolicies = d.activePolicies;
+    } else if (d.govType) {
+      const govDef = GOV_TYPES.find((g) => g.id === d.govType);
+      r.activePolicies = new Array(govDef?.policySlots.length ?? 0).fill(null);
+    }
     r.nextId = d.nextId;
     r.nextEventDay = d.nextEventDay;
     r.townNamePool = d.townNamePool;
