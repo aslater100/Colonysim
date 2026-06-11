@@ -4,12 +4,12 @@ import namesJson from '../data/names.json';
 
 /** All content defs load from JSON so they are moddable without touching code (GDD §8.8). */
 
-export type ResourceKind = 'wood' | 'grain' | 'meal' | 'stone' | 'clothes';
+export type ResourceKind = 'wood' | 'grain' | 'meal' | 'stone' | 'clothes' | 'weapons';
 export type Provides =
   | 'storage' | 'sleep' | 'cook' | 'recreation' | 'warmth' | 'craft' | 'burial'
-  | 'hunt' | 'trade' | 'forestry' | 'granary' | 'medical' | 'fishing';
-export type WorkKind = 'build' | 'farm' | 'chop' | 'cook' | 'haul' | 'medic' | 'craft' | 'bury' | 'hunt' | 'plant' | 'fish';
-export const WORK_KINDS: WorkKind[] = ['build', 'farm', 'chop', 'cook', 'haul', 'medic', 'craft', 'bury', 'hunt', 'plant', 'fish'];
+  | 'hunt' | 'trade' | 'forestry' | 'granary' | 'medical' | 'fishing' | 'forge';
+export type WorkKind = 'build' | 'farm' | 'chop' | 'cook' | 'haul' | 'medic' | 'craft' | 'bury' | 'hunt' | 'plant' | 'fish' | 'forge';
+export const WORK_KINDS: WorkKind[] = ['build', 'farm', 'chop', 'cook', 'haul', 'medic', 'craft', 'bury', 'hunt', 'plant', 'fish', 'forge'];
 
 export interface UpgradeLevel {
   cost: Partial<Record<ResourceKind, number>>;
@@ -162,6 +162,13 @@ export const TUNING = {
   // Armed pawns: fighters grab a spear from the stores when the horn sounds
   spearWoodCost: 3,
   spearDamageBonus: 12,
+  // Armoury: forged weapons cost wood, deal more damage than improvised spears
+  forgeWoodCost: 4,        // wood per forged weapon
+  forgeWorkPerWeapon: 90,  // settler-minutes at skill 5
+  forgedWeaponBonus: 22,   // damage bonus (vs spearDamageBonus 12)
+  // Spike traps: painted tiles that damage raiders on contact, one-shot
+  trapWoodCost: 2,         // wood deducted immediately when painted
+  trapDamage: 45,          // damage dealt when a raider triggers the trap
   // Animals: deer to hunt, wolves to fear
   deerStartCount: 8,
   deerMaxCount: 10,

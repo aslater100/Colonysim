@@ -164,7 +164,7 @@ export class Simulation {
   items: GroundItem[] = [];
   corpses: Corpse[] = [];
   graves: Grave[] = [];
-  stock: Record<ResourceKind, number> = { wood: 80, grain: 60, meal: 160, stone: 0, clothes: 0 };
+  stock: Record<ResourceKind, number> = { wood: 80, grain: 60, meal: 160, stone: 0, clothes: 0, weapons: 0 };
   /** transits per tile for the traffic overlay; decays daily */
   traffic = new Float32Array(MAP_W * MAP_H);
   log: LogEntry[] = [];
@@ -556,6 +556,13 @@ export class Simulation {
       if (t.buildingId !== null || t.wall || t.wallPlan || t.gate) return false;
       t.gatePlan = true;
       return true;
+    } else if (kind === 'trap') {
+      if (t.trapZone) { t.trapZone = false; this.stock.wood += TUNING.trapWoodCost; return true; }
+      if (t.kind === 'water' || t.kind === 'rock' || t.wall || t.gate || t.buildingId !== null) return false;
+      if (this.stock.wood < TUNING.trapWoodCost) return false;
+      this.stock.wood -= TUNING.trapWoodCost;
+      t.trapZone = true;
+      return true;
     }
     return false;
   }
@@ -602,6 +609,11 @@ export class Simulation {
     if (t.gate) {
       t.gate = false;
       t.wallHp = 0;
+      return;
+    }
+    if (t.trapZone) {
+      t.trapZone = false;
+      this.stock.wood += TUNING.trapWoodCost;
       return;
     }
   }
@@ -1052,6 +1064,14 @@ export class Simulation {
         }
       }
       this.stepAgent(r, 0.4);
+      // Spike trap: damages raider on contact, one-shot
+      const rt = this.world.inBounds(Math.round(r.pos.x), Math.round(r.pos.y))
+        ? this.world.at(Math.round(r.pos.x), Math.round(r.pos.y)) : null;
+      if (rt?.trapZone) {
+        rt.trapZone = false;
+        r.health -= TUNING.trapDamage;
+        this.addLog('A raider hits a spike trap!', 'good');
+      }
     }
   }
 
@@ -1092,8 +1112,11 @@ export class Simulation {
 
   /** Melee damage a settler deals per hour: base + skill, more with a spear in hand. */
   private settlerDamagePerHour(s: Settler): number {
-    return TUNING.combatDamagePerHour + s.combat * TUNING.combatDamagePerSkill +
-      (s.armed ? TUNING.spearDamageBonus : 0);
+    const armoury = this.builtOf('forge')[0];
+    const armedBonus = s.armed
+      ? (armoury ? TUNING.forgedWeaponBonus + (armoury.level >= 3 ? 10 : 0) : TUNING.spearDamageBonus)
+      : 0;
+    return TUNING.combatDamagePerHour + s.combat * TUNING.combatDamagePerSkill + armedBonus;
   }
 
   // ---- wildlife ----
@@ -1310,10 +1333,16 @@ export class Simulation {
       this.releaseTask(s);
       s.bedId = null;
       if (s.combat >= t.fightMinCombat && s.health > 50) {
-        // Fighters grab a spear from the stores on the way out (kept for good).
-        if (!s.armed && this.stock.wood >= t.spearWoodCost) {
-          this.stock.wood -= t.spearWoodCost;
-          s.armed = true;
+        // Arm: draw a forged weapon first (better), fall back to improvised spear.
+        if (!s.armed) {
+          if (this.stock.weapons > 0) {
+            this.stock.weapons--;
+            s.armed = true;
+            s.combat = Math.min(10, s.combat + 1); // forged weapon = sharper edge
+          } else if (this.stock.wood >= t.spearWoodCost) {
+            this.stock.wood -= t.spearWoodCost;
+            s.armed = true;
+          }
         }
         s.state = 'fighting';
       } else {
@@ -1599,6 +1628,12 @@ export class Simulation {
       const spot = this.saplingSpot(f);
       if (spot) {
         push({ kind: 'plant', x: spot.x, y: spot.y, workLeft: TUNING.plantWork, label: 'plant sapling' }, 'plant');
+      }
+    }
+    // Armoury: forge weapons when wood is available (one job per armoury).
+    for (const a of this.builtOf('forge')) {
+      if (this.stock.wood >= TUNING.forgeWoodCost) {
+        push({ kind: 'forge', x: a.x, y: a.y, buildingId: a.id, workLeft: TUNING.forgeWorkPerWeapon, label: 'forge weapon' }, 'forge');
       }
     }
     // Weave clothes while anyone goes threadbare — but never eat the seed grain.
@@ -1911,6 +1946,18 @@ export class Simulation {
         }
         return;
       }
+      case 'forge': {
+        const forge = this.building(task.buildingId);
+        if (!forge?.built || this.stock.wood < TUNING.forgeWoodCost) return this.finishTask(s);
+        const speedMult = forge.level >= 2 ? 1.5 : 1;
+        task.workLeft -= work * speedMult;
+        if (task.workLeft <= 0) {
+          this.stock.wood -= TUNING.forgeWoodCost;
+          this.stock.weapons++;
+          this.finishTask(s);
+        }
+        return;
+      }
       case 'bury': {
         const c = this.corpses.find((o) => o.id === task.itemId);
         if (!c) return this.finishTask(s);
@@ -1947,12 +1994,14 @@ export class Simulation {
       : { workPerMeal: TUNING.cookWorkPerMeal, batch: TUNING.cookBatch };
   }
 
-  /** Nearest free, unreserved grass tile in the forester's range, or null when saturated. */
+  /** Farthest free, unreserved grass tile in the forester's range (outermost first so the
+   *  lodge never gets boxed in). Requires a min clearance of 2 tiles from the lodge center
+   *  and at least one passable neighbour so the worker can actually reach the spot. */
   private saplingSpot(f: Building): Vec | null {
     const c = this.buildingCenter(f);
     const r = TUNING.foresterRadius;
     let best: Vec | null = null;
-    let bd = Infinity;
+    let bd = -Infinity;
     for (let y = c.y - r; y <= c.y + r; y++) {
       for (let x = c.x - r; x <= c.x + r; x++) {
         if (!this.world.inBounds(x, y)) continue;
@@ -1961,7 +2010,14 @@ export class Simulation {
             t.wall || t.wallPlan || t.gate || t.gatePlan || t.farmZone || t.stockpileZone) continue;
         if (this.reserved.has(`plant:${x},${y}`)) continue;
         const d = Math.hypot(x - c.x, y - c.y);
-        if (d <= r && d < bd) { bd = d; best = { x, y }; }
+        if (d < 2 || d > r) continue; // keep a 2-tile clear zone around the lodge
+        // Require at least one passable neighbour so the worker can reach the spot
+        const reachable = [[-1,0],[1,0],[0,-1],[0,1]].some(([dx, dy]) => {
+          const nx = x + dx, ny = y + dy;
+          return this.world.inBounds(nx, ny) && this.world.passable(nx, ny);
+        });
+        if (!reachable) continue;
+        if (d > bd) { bd = d; best = { x, y }; }
       }
     }
     return best;
@@ -2309,7 +2365,7 @@ export class Simulation {
     sim.items = d.items;
     sim.corpses = d.corpses;
     sim.graves = d.graves;
-    sim.stock = d.stock;
+    sim.stock = { ...d.stock, weapons: d.stock.weapons ?? 0 };
     sim.traffic = Float32Array.from(d.traffic);
     sim.log = d.log;
     sim.gameOver = d.gameOver;

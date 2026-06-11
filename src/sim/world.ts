@@ -5,7 +5,7 @@ import type { TownSite } from './worldgen';
 export type TileKind = 'grass' | 'tree' | 'water' | 'soil' | 'rock';
 
 export type RoadKind = 'dirt' | 'plank' | 'gravel' | 'bridge';
-export type ZoneKind = 'farm' | 'stockpile' | 'wall' | 'gate';
+export type ZoneKind = 'farm' | 'stockpile' | 'wall' | 'gate' | 'trap';
 export type PaintKind = RoadKind | ZoneKind;
 
 /** Speed multiplier walking this road type (design: docs/design/transportation.md §2). */
@@ -44,6 +44,8 @@ export interface Tile {
   gatePlan: boolean;
   /** forester-planted sapling growing here (reuses growth; matures into a tree) */
   sapling: boolean;
+  /** player-placed spike trap: damages raiders on contact, then consumed */
+  trapZone: boolean;
   /** HP of built wall or gate on this tile */
   wallHp: number;
   buildingId: number | null;
@@ -74,7 +76,7 @@ export class World {
         kind: 'grass', growth: 0, sown: false, marked: false, wall: false,
         fertility: 1, road: null, roadPlan: null,
         farmZone: false, stockpileZone: false, wallPlan: false,
-        gate: false, gatePlan: false, sapling: false, wallHp: 0,
+        gate: false, gatePlan: false, sapling: false, trapZone: false, wallHp: 0,
         buildingId: null, explored: false,
       });
     }

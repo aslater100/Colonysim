@@ -96,6 +96,7 @@ export interface SpriteSet {
   roads: Record<string, HTMLCanvasElement>;
   roadPlans: Record<string, HTMLCanvasElement>;
   stockpileZone: HTMLCanvasElement;
+  trapZone: HTMLCanvasElement;
   wallPlan: HTMLCanvasElement;
   palisade: HTMLCanvasElement;
   palisadeVariants: HTMLCanvasElement[]; // 16 variants indexed by N=1,E=2,S=4,W=8 bitmask
@@ -107,7 +108,7 @@ export interface SpriteSet {
   raider: HTMLCanvasElement[];
   deer: HTMLCanvasElement[];
   wolf: HTMLCanvasElement[];
-  items: Record<'wood' | 'grain' | 'meal' | 'stone' | 'clothes', HTMLCanvasElement>;
+  items: Record<'wood' | 'grain' | 'meal' | 'stone' | 'clothes' | 'weapons', HTMLCanvasElement>;
   grave: HTMLCanvasElement;
   corpse: HTMLCanvasElement;
   buildings: Record<string, HTMLCanvasElement>;
@@ -458,6 +459,20 @@ function buildingSprite(defId: string, w: number, h: number, ghost: boolean): HT
   return c;
 }
 
+function weaponSprite(): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE;
+  c.height = TILE;
+  const g = c.getContext('2d')!;
+  g.fillStyle = P.wood;
+  g.fillRect(7, 4, 2, 9); // shaft
+  g.fillStyle = P.rockLight;
+  g.fillRect(6, 2, 4, 3); // tip body
+  g.fillStyle = '#d4c070';
+  g.fillRect(7, 1, 2, 2); // tip point
+  return c;
+}
+
 function itemSprite(kind: 'wood' | 'grain' | 'meal' | 'stone' | 'clothes'): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = TILE;
@@ -552,6 +567,28 @@ function stockpileZoneTile(): HTMLCanvasElement {
   }
   for (let i = 0; i < 32; i += 4) {
     g.fillRect(0, i, TILE, 1);
+  }
+  g.globalAlpha = 1;
+  return c;
+}
+
+/** Spike trap zone: crossed stakes pattern with danger-red tint. */
+function trapZoneTile(): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE;
+  c.height = TILE;
+  const g = c.getContext('2d')!;
+  g.globalAlpha = 0.55;
+  g.fillStyle = '#8b1a1a';
+  g.fillRect(0, 0, TILE, TILE);
+  g.globalAlpha = 0.9;
+  g.fillStyle = '#c0392b';
+  // Crossed diagonal spikes
+  const pts = [[4, 4], [12, 4], [8, 8], [4, 12], [12, 12]];
+  for (const [x, y] of pts) {
+    g.fillRect(x - 1, y - 3, 2, 6);
+    g.fillRect(x - 3, y - 1, 6, 2);
+    g.fillRect(x, y - 3, 1, 1); // spike tip
   }
   g.globalAlpha = 1;
   return c;
@@ -817,6 +854,7 @@ export function buildSprites(buildingDefs: { id: string; w: number; h: number }[
     roads,
     roadPlans,
     stockpileZone: stockpileZoneTile(),
+    trapZone: trapZoneTile(),
     wallPlan: wallPlanTile(),
     palisade: palisadeTile(),
     palisadeVariants: Array.from({ length: 16 }, (_, i) => palisadeVariantTile(i)),
@@ -834,6 +872,7 @@ export function buildSprites(buildingDefs: { id: string; w: number; h: number }[
       meal: itemSprite('meal'),
       stone: itemSprite('stone'),
       clothes: itemSprite('clothes'),
+      weapons: weaponSprite(),
     },
     grave: graveSprite(),
     corpse: corpseSprite(),

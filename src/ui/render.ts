@@ -164,6 +164,7 @@ export class Renderer {
         if (t.road) g.drawImage(sprites.roads[t.road], px, py);
         else if (t.roadPlan) g.drawImage(sprites.roadPlans[t.roadPlan], px, py);
         if (t.stockpileZone && !t.road) g.drawImage(sprites.stockpileZone, px, py);
+        if (t.trapZone) g.drawImage(sprites.trapZone, px, py);
         if (t.wallPlan) g.drawImage(sprites.wallPlan, px, py);
         if (t.gatePlan) g.drawImage(sprites.gatePlan, px, py);
       }
@@ -395,7 +396,7 @@ export class Renderer {
         g.strokeStyle = '#9cc4e4';
       } else {
         g.globalAlpha = 0.6;
-        const zoneColors: Record<string, string> = { farm: '#7ac26a', stockpile: '#e8d27a', wall: '#c25b2e', gate: '#9c7544' };
+        const zoneColors: Record<string, string> = { farm: '#7ac26a', stockpile: '#e8d27a', wall: '#c25b2e', gate: '#9c7544', trap: '#8b1a1a' };
         g.fillStyle = zoneColors[cam.placingZone] || '#999';
         g.fillRect(ox + cam.mouseTile.x * TILE, oy + cam.mouseTile.y * TILE, TILE, TILE);
         g.globalAlpha = 1;

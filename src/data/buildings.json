@@ -183,6 +183,20 @@
         { "cost": { "wood": 15 }, "capacityBonus": 0, "desc": "Extended pier: fishing yield +1 meal." },
         { "cost": { "wood": 20 }, "capacityBonus": 0, "desc": "Net fishing: yield +2 meals per trip." }
       ]
+    },
+    {
+      "id": "armory",
+      "name": "Armoury",
+      "w": 2,
+      "h": 2,
+      "cost": { "wood": 30 },
+      "buildWork": 300,
+      "provides": "forge",
+      "desc": "Smiths forge proper weapons from timber. Fighters draw from the arsenal before a raid — no scrambling for sticks when the horn sounds.",
+      "upgrades": [
+        { "cost": { "wood": 20, "stone": 8 }, "capacityBonus": 0, "desc": "Stone anvil: weapons forged faster (+50% output)." },
+        { "cost": { "wood": 30, "stone": 15 }, "capacityBonus": 0, "desc": "Armourer's guild: forged weapons deal +10 more damage." }
+      ]
     }
   ]
 }

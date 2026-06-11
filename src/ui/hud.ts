@@ -84,6 +84,8 @@ const BUILD_CATEGORIES: BuildCategory[] = [
     items: [
       { kind: 'zone', id: 'wall', label: 'Palisade [L]', cost: '3w/tile', hotkey: 'l', desc: 'Wooden wall — blocks raiders.' },
       { kind: 'zone', id: 'gate', label: 'Gate [G]', cost: '5w/tile', hotkey: 'g', desc: 'Settlers pass; raiders must break it.' },
+      { kind: 'zone', id: 'trap', label: 'Spike Trap [X]', cost: '2w/tile', hotkey: 'x', desc: 'One-shot spike trap. Damages raiders on contact.' },
+      { kind: 'building', id: 'armory', label: 'Armoury', cost: '30w', desc: 'Forges weapons from wood. Armed settlers deal more damage.' },
     ],
   },
   {
@@ -374,7 +376,7 @@ export class Hud {
       return k.length === 1;
     }
     const zoneMap: Record<string, PaintKind> = {
-      f: 'farm', t: 'stockpile', l: 'wall', g: 'gate',
+      f: 'farm', t: 'stockpile', l: 'wall', g: 'gate', x: 'trap',
       '4': 'dirt', '5': 'plank', '6': 'gravel', '7': 'bridge',
     };
     if (zoneMap[k]) {
@@ -384,7 +386,7 @@ export class Hud {
       this.refreshBuildBarState();
       // Auto-open defense/roads/zones category
       const catForZone: Record<string, string> = {
-        wall: 'defense', gate: 'defense',
+        wall: 'defense', gate: 'defense', trap: 'defense',
         dirt: 'roads', plank: 'roads', gravel: 'roads', bridge: 'roads',
         farm: 'zones', stockpile: 'zones',
       };
@@ -502,7 +504,7 @@ export class Hud {
       `<span class="tb-date">${s.dateLabel} ${hh}:${mm}</span>` +
       `<span>${skyIcon} ${Math.round(s.temperature())}°C${drought}</span>` +
       `<span>POP ${s.settlers.length}${capWarn}</span>` +
-      `<span>🪵${s.stock.wood} ⛏${s.stock.stone} 🌾${s.stock.grain} 🍖${s.stock.meal} 👕${s.stock.clothes}</span>` +
+      `<span>🪵${s.stock.wood} ⛏${s.stock.stone} 🌾${s.stock.grain} 🍖${s.stock.meal} 👕${s.stock.clothes}${s.stock.weapons ? ` ⚔${s.stock.weapons}` : ''}</span>` +
       `<span title="average mood">♥${Math.round(s.avgMood())}</span>` +
       (s.raidActive ? `<span class="tb-over">⚔ RAID ${s.raiders.length}!</span>` : '') +
       `<span class="tb-speed">${this.paused ? '⏸' : '▶'.repeat(this.speed)} <i>(space 1-3)</i></span>`);
@@ -537,6 +539,7 @@ export class Hud {
       ['Grain', s.stock.grain, '∞'],
       ['Meals', s.stock.meal, mealCap],
       ['Clothes', s.stock.clothes, '∞'],
+      ['Weapons', s.stock.weapons, '∞'],
     ].map(([label, val, cap]) =>
       `<div class="bar-row"><span>${label}</span><div class="bar"><div class="bar-fill" style="width:${cap === '∞' ? 50 : Math.min(100, Math.round(Number(val) / Number(cap) * 100))}%"></div></div><span>${val}/${cap}</span></div>`
     ).join('');
