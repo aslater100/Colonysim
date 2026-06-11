@@ -41,6 +41,18 @@ export interface Settlement {
   lastFloodDay: number;
   strikeUntil: number; // day; > now means production strike
   grievance: number; // 0–100 pressure gauge (GDD §5.5 unrest ladder)
+  prices: MarketPrices; // local market, £/unit (GDD §5.2 first slice)
+}
+
+/** Local markets (GDD §5.2, first slice): each town prices the two goods
+ *  it actually stocks. Traders arbitrage the gaps along the route network —
+ *  regional price convergence emerges from the rule, not from script. */
+export type TradeGood = 'food' | 'wood';
+export const TRADE_GOODS: TradeGood[] = ['food', 'wood'];
+export type MarketPrices = Record<TradeGood, number>;
+export const BASE_PRICE: MarketPrices = { food: 0.08, wood: 0.12 };
+export function defaultPrices(): MarketPrices {
+  return { ...BASE_PRICE };
 }
 
 /** Provisional government lean chosen at the Incorporation ceremony. */
@@ -499,6 +511,7 @@ export class RegionSim {
       lastFloodDay: -99,
       strikeUntil: -1,
       grievance: 0,
+      prices: defaultPrices(),
     };
     region.settlements.push(home);
 
@@ -628,6 +641,7 @@ export class RegionSim {
           Math.max(0, this.taxRate - 0.15) * 35 - this.servicesLevel * 0.4 - Math.max(0, t.satisfaction - 55) * 0.05;
         t.grievance = Math.max(0, Math.min(100, t.grievance + pressure));
       }
+      this.updateMarket(t);
       // Starvation
       if (t.food < 0) {
         const starved = Math.min(pop * 0.02, -t.food / 10);
@@ -697,8 +711,79 @@ export class RegionSim {
     }
     this.migrate();
     this.caravans();
+    this.traders();
     this.ageNotables();
     if (this.stateProclaimed) this.monthlyEconomy();
+  }
+
+  // ---- local markets & trade (GDD §5.2, first slice) ----
+  /** A month's worth of demand: what this town wants on hand. */
+  private monthNeed(t: Settlement, g: TradeGood): number {
+    const pop = this.popOf(t);
+    return Math.max(1, g === 'food' ? pop * 0.75 * 30 : pop * 0.1 * 30);
+  }
+
+  private stockOf(t: Settlement, g: TradeGood): number {
+    return g === 'food' ? t.food : t.wood;
+  }
+
+  private addStock(t: Settlement, g: TradeGood, v: number): void {
+    if (g === 'food') t.food += v;
+    else t.wood += v;
+  }
+
+  /** The GDD §5.2 price rule, verbatim at this altitude:
+   *  Δp = p × 0.05 × (demand − supply) / max(supply, ε), clamped ±2%/day. */
+  private updateMarket(t: Settlement): void {
+    for (const g of TRADE_GOODS) {
+      const supply = Math.max(1, this.stockOf(t, g));
+      const demand = this.monthNeed(t, g);
+      const raw = t.prices[g] * 0.05 * ((demand - supply) / supply);
+      const delta = Math.max(-t.prices[g] * 0.02, Math.min(t.prices[g] * 0.02, raw));
+      t.prices[g] = Math.max(BASE_PRICE[g] * 0.25, Math.min(BASE_PRICE[g] * 4, t.prices[g] + delta));
+    }
+  }
+
+  /** Traders run the routes once a month, after the relief caravans: buy
+   *  where a good is cheap, sell where it is dear, whenever the margin
+   *  beats the freight. Convergence emerges; nobody scripts it. The State,
+   *  once it exists, takes a levy on the turnover. Public so tests can
+   *  run a trade season directly (same deal as caravans). */
+  tradeValueLastMonth = 0;
+
+  traders(): void {
+    if (this.settlements.length < 2) return;
+    let turnover = 0;
+    for (const g of TRADE_GOODS) {
+      // dearest market first: traders chase the widest margin
+      const dear = [...this.settlements].sort((a, b) => b.prices[g] - a.prices[g]);
+      for (const buyer of dear) {
+        const seller = [...this.settlements]
+          .filter((s) => s !== buyer)
+          .sort((a, b) => a.prices[g] - b.prices[g])[0];
+        if (!seller) continue;
+        const legs = this.routePath(seller.id, buyer.id);
+        if (!legs || legs.length === 0) continue; // traders need a route
+        const freightRate = 0.01 * legs.length; // £/unit per hop on the wagon
+        const margin = buyer.prices[g] - seller.prices[g];
+        if (margin <= freightRate * 1.5) continue; // not worth the trip
+        const surplus = this.stockOf(seller, g) - this.monthNeed(seller, g);
+        const capLeft = Math.min(...legs.map((r) => this.effectiveCapacity(r) - r.freight));
+        const volume = Math.min(surplus * 0.25, capLeft, 80);
+        if (volume < 1) continue;
+        this.addStock(seller, g, -volume);
+        this.addStock(buyer, g, volume * 0.95); // handling and spillage
+        for (const r of legs) r.freight += volume;
+        turnover += volume * (seller.prices[g] + buyer.prices[g]) / 2;
+        if (volume > 30 && this.rng.chance(0.25)) {
+          this.addLog(`${g === 'food' ? 'Grain' : 'Timber'} is dear in ${buyer.name} — traders run the route from ${seller.name}.`, 'info');
+        }
+      }
+    }
+    this.tradeValueLastMonth = turnover;
+    if (this.stateProclaimed && turnover > 0) {
+      this.treasury += turnover * 0.05; // the market levy
+    }
   }
 
   /** Grain caravans ride the route network (M6b): surplus towns provision
@@ -752,6 +837,7 @@ export class RegionSim {
       const strike = this.day < t.strikeUntil ? 0.6 : 1;
       gdp += this.workersOf(t) * 1.2 * (0.8 + t.landQuality * 0.2) * incomeMult * strike;
     }
+    gdp += this.tradeValueLastMonth; // commerce counts (GDD §5.2)
     this.gdpLastMonth = gdp;
     const revenue = gdp * this.taxRate * collection;
     const pop = this.totalPop();
@@ -1042,6 +1128,7 @@ export class RegionSim {
           lastFloodDay: -99,
           strikeUntil: -1,
           grievance: 0,
+          prices: defaultPrices(),
         };
         this.settlements.push(town);
         this.expeditions = this.expeditions.filter((o) => o !== e);
@@ -1131,6 +1218,7 @@ export class RegionSim {
       servicesLevel: this.servicesLevel,
       militiaLevel: this.militiaLevel,
       gdpLastMonth: this.gdpLastMonth,
+      tradeValueLastMonth: this.tradeValueLastMonth,
       gameOver: this.gameOver,
       droughtAnnounced: this.droughtAnnounced,
       railAnnounced: this.railAnnounced,
@@ -1145,7 +1233,8 @@ export class RegionSim {
   static deserialize(json: string, sim: Simulation): RegionSim {
     const d = JSON.parse(json);
     const r = new RegionSim(sim.rng, d.minute, sim.regionMap, sim.weather);
-    r.settlements = d.settlements;
+    // pre-market saves carry no prices: open those towns at the base rates
+    r.settlements = d.settlements.map((s: Settlement) => ({ prices: defaultPrices(), ...s }));
     r.notables = d.notables;
     r.expeditions = d.expeditions;
     r.routes = d.routes;
@@ -1160,6 +1249,7 @@ export class RegionSim {
     r.servicesLevel = d.servicesLevel;
     r.militiaLevel = d.militiaLevel;
     r.gdpLastMonth = d.gdpLastMonth;
+    r.tradeValueLastMonth = d.tradeValueLastMonth ?? 0;
     r.gameOver = d.gameOver;
     r.droughtAnnounced = d.droughtAnnounced;
     r.railAnnounced = d.railAnnounced;

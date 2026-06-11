@@ -336,6 +336,7 @@ export class RegionView {
       `<p class="insp-skills">${r.govLean ? GOV_LEANS[r.govLean].name : ''}</p>` +
       `<p>treasury £${Math.floor(r.treasury)}</p>` +
       `<p>GDP £${Math.floor(r.gdpLastMonth)}/mo</p>` +
+      `<p>trade £${Math.floor(r.tradeValueLastMonth)}/mo turnover</p>` +
       `<p>tax <span id="tax-val">${Math.round(r.taxRate * 100)}%</span></p>` +
       `<input id="tax-slider" type="range" min="0" max="30" value="${Math.round(r.taxRate * 100)}">` +
       `<p>services: <b>${lvl(r.servicesLevel)}</b> <button class="mini" id="svc-up">+</button><button class="mini" id="svc-dn">−</button></p>` +
@@ -460,6 +461,7 @@ export class RegionView {
         ? `<p class="${t.grievance > 50 ? 'insp-cond' : 'insp-skills'}">grievance ${Math.round(t.grievance)}${this.region.day < t.strikeUntil ? ' · ON STRIKE' : ''}</p>`
         : '') +
       `<p>food ${Math.floor(t.food)} · wood ${Math.floor(t.wood)} · land ${t.landQuality.toFixed(2)}</p>` +
+      `<p class="insp-skills">market: grain £${t.prices.food.toFixed(2)} · timber £${t.prices.wood.toFixed(2)} /unit</p>` +
       `<p class="insp-skills">${[
         t.site.river ? 'river (fishery, flood risk)' : '',
         t.site.coastal ? 'coastal (fishery)' : '',

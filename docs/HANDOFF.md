@@ -59,11 +59,18 @@ keeps writing), town fires (a funded State brigade holds damage down),
 and prospectors (£ to the treasury post-State, timber rights before).
 Deck balance kept at the original 45/55 bad-to-good with wagon trains
 generous — statehood paces on population; the seed-42 18-year harness
-is the guard. Open ideas consistent with the GDD (minus whatever the
+is the guard. Region markets shipped (v0.8.0 PR): the GDD §5.2 price
+rule verbatim per town for food/wood (±2%/day clamp, 0.25×–4× band
+around BASE_PRICE), monthly `traders()` (public, like `caravans()`)
+arbitraging cheap→dear along `routePath` when margin > 1.5× freight
+(£0.01/unit/hop), clamped to remaining route capacity after caravans,
+turnover into GDP and a 5% State levy into the treasury. Watch-out:
+the levy can part-fund road upkeep — the M6b rot test now gluts all
+markets to kill margins. Old saves migrate (prices default in
+deserialize). Open ideas consistent with the GDD (minus whatever the
 two in-flight PRs land): town-tier fishing jobs, music/ambience, town-
-tier event variety, Tier-2 goods markets along routes (arbitrage, GDD
-§5.2), paved-highway era (1945+, ×2.2 — the rail stranded-asset lesson,
-transportation.md §5).
+tier event variety, paved-highway era (1945+, ×2.2 — the rail
+stranded-asset lesson, transportation.md §5).
 
 ## Architecture notes for M6c
 

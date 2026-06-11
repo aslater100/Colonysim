@@ -147,11 +147,16 @@ describe('Roads & the treasury (M6b)', () => {
     route.condition = 50;
     runDays(r, 35); // one maintenance cycle, funded
     expect(route.condition).toBeGreaterThan(52);
-    // now starve the treasury: no taxes, no reserves
+    // now starve the treasury: no taxes, no reserves — and glut every
+    // market so the trade levy can't quietly fund the road gangs either
     r.taxRate = 0;
     r.servicesLevel = 0;
     r.militiaLevel = 0;
     r.treasury = 0;
+    for (const t of r.settlements) {
+      t.food = 1e6;
+      t.wood = 1e6;
+    }
     route.condition = 80;
     runDays(r, 95); // three unfunded cycles
     expect(route.condition).toBeLessThan(70);
