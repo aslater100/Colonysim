@@ -3,8 +3,8 @@
  * operating altitude after the flip (GDD §2.5). Painterly backdrop, town
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
-import type { RegionSim, Settlement, GovLean, GovType, MinisterRoleId, TreatyKind } from '../sim/region';
-import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS } from '../sim/region';
+import type { RegionSim, Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm } from '../sim/region';
+import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR } from '../sim/region';
 
 export class RegionView {
   selectedId: number | null = null;
@@ -540,6 +540,16 @@ export class RegionView {
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-decline-btn')) {
       btn.onclick = () => r.declineOffer(Number(btn.dataset.rival));
     }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-war-btn')) {
+      btn.onclick = () => r.declareWar(Number(btn.dataset.rival), btn.dataset.cb as CasusBelli);
+    }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.war-mob-btn')) {
+      btn.onclick = () => r.setMobilization(btn.dataset.mob as Mobilization);
+    }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.war-peace-btn')) {
+      btn.onclick = () => r.offerPeace(btn.dataset.term as PeaceTerm);
+    }
+    this.statePanel.querySelector<HTMLButtonElement>('.war-capitulate-btn')?.addEventListener('click', () => r.capitulate());
   }
 
   /** Diplomacy section (GDD §5.4): the rival ledger, treaties, and verbs. */
@@ -574,17 +584,27 @@ export class RegionView {
           `<button class="mini dip-prop-btn" data-rival="${rv.id}" data-kind="${k}" ` +
           `title="${TREATY_DEFS[k].desc} (their ask: relations ≥ ${r.treatyAsk(rv, k)})">${short[k]}</button>`)
         .join(' ');
+      // War is the diplomacy verb of last resort (GDD §7.1)
+      const cbs = r.nationProclaimed && !r.playerWar ? r.availableCasusBelli(rv) : [];
+      const warBtn = cbs.length > 0
+        ? ` <button class="mini dip-war-btn" data-rival="${rv.id}" data-cb="${cbs[0]}" ` +
+          `title="${CASUS_BELLI_DEFS[cbs[0]].name}: ${CASUS_BELLI_DEFS[cbs[0]].desc} ` +
+          `(war support starts at ${CASUS_BELLI_DEFS[cbs[0]].support})">⚔ war</button>`
+        : '';
+      const verbs = r.playerWar?.rivalId === rv.id
+        ? `<p class="insp-skills">⚔ AT WAR — terms are set at the peace table above</p>`
+        : `<p><button class="mini dip-envoy-btn" data-rival="${rv.id}" ${canEnvoy ? '' : 'disabled'} ` +
+          `title="A paid mission to warm relations (${ENVOY_COOLDOWN_DAYS}-day turnaround)">envoy £${ENVOY_COST}</button> ` +
+          `<button class="mini dip-gift-btn" data-rival="${rv.id}" ${canGift ? '' : 'disabled'} ` +
+          `title="A state gift — dearer, faster">gift £${GIFT_COST}</button> ` +
+          proposals + warBtn + `</p>`;
       return `<div class="bar-row" title="${RIVAL_ARCHETYPES[rv.archetype].name} — agenda: ${rv.agenda}. ${recentHistory}">` +
         `<span style="width:80px;display:inline-block"><b>${rv.name}</b></span>` +
         `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${pct}%;background:${col}"></div></div>` +
         `<span>${rel}</span></div>` +
         `<p class="insp-skills" title="${recentHistory}">${gov} · ${treaties}</p>` +
         offerRow +
-        `<p><button class="mini dip-envoy-btn" data-rival="${rv.id}" ${canEnvoy ? '' : 'disabled'} ` +
-        `title="A paid mission to warm relations (${ENVOY_COOLDOWN_DAYS}-day turnaround)">envoy £${ENVOY_COST}</button> ` +
-        `<button class="mini dip-gift-btn" data-rival="${rv.id}" ${canGift ? '' : 'disabled'} ` +
-        `title="A state gift — dearer, faster">gift £${GIFT_COST}</button> ` +
-        proposals + `</p>`;
+        verbs;
     }).join('');
     // World affairs: what the powers are doing to each other (GDD §6.4)
     const name = (id: number) => r.rival(id)?.name ?? '?';
@@ -600,7 +620,43 @@ export class RegionView {
     const world = wars || pacts ? `<p class="insp-skills">WORLD AFFAIRS</p>` + wars + pacts : '';
     const boom = r.day < r.warBoomUntil ? `<p class="insp-skills">WAR ABROAD — export prices booming</p>` : '';
     const exports = r.exportEarningsLastMonth > 0 ? `<p>exports £${Math.floor(r.exportEarningsLastMonth)}/mo</p>` : '';
-    return `<p class="insp-skills">DIPLOMACY (relations −100..+100)</p>` + boom + exports + rows + world;
+    return `<p class="insp-skills">DIPLOMACY (relations −100..+100)</p>` + this.warHtml() + boom + exports + rows + world;
+  }
+
+  /** The war room (GDD §7): score, support, mobilization, and the peace table. */
+  private warHtml(): string {
+    const r = this.region;
+    const w = r.playerWar;
+    const rv = w ? r.rival(w.rivalId) : undefined;
+    if (!w || !rv) return '';
+    const scorePct = Math.round((w.score + 100) / 2);
+    const scoreCol = w.score >= 15 ? '#4e9' : w.score >= -15 ? '#ca4' : '#e55';
+    const floor = WAR_SUPPORT_FLOOR[r.govType ?? 'democracy'];
+    const supCol = w.support >= floor + 15 ? '#4e9' : w.support >= floor ? '#ca4' : '#e55';
+    const mobBtns = (Object.keys(MOBILIZATION_DEFS) as Mobilization[])
+      .map((m) =>
+        `<button class="mini war-mob-btn" data-mob="${m}" ${m === w.mobilization ? 'disabled' : ''} ` +
+        `title="${MOBILIZATION_DEFS[m].desc}">${MOBILIZATION_DEFS[m].name}</button>`)
+      .join(' ');
+    const peaceBtns = (Object.keys(PEACE_TERMS) as PeaceTerm[])
+      .map((t) => {
+        const ask = r.peaceAsk(rv, t);
+        return `<button class="mini war-peace-btn" data-term="${t}" ${w.score >= ask ? '' : 'disabled'} ` +
+          `title="${PEACE_TERMS[t].desc} (needs war score ≥ ${ask})">${PEACE_TERMS[t].name}</button>`;
+      })
+      .join(' ');
+    return `<p class="insp-skills">⚔ WAR — vs ${rv.name} (${CASUS_BELLI_DEFS[w.cb].name.toLowerCase()}${w.defensive ? ', defensive' : ''})</p>` +
+      `<div class="bar-row" title="War score −100..+100: the front line, in one number">` +
+      `<span style="width:70px;display:inline-block">war score</span>` +
+      `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${scorePct}%;background:${scoreCol}"></div></div>` +
+      `<span>${Math.round(w.score)}</span></div>` +
+      `<div class="bar-row" title="Home-front consent. Below ${floor} (your regime's floor) the war eats the government">` +
+      `<span style="width:70px;display:inline-block">support</span>` +
+      `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${Math.round(w.support)}%;background:${supCol}"></div></div>` +
+      `<span>${Math.round(w.support)}</span></div>` +
+      `<p class="insp-skills">casualties ${Math.round(w.casualties)} · combat power ${Math.round(r.warPower())} vs ${Math.round(r.rivalWarPower(rv))}</p>` +
+      `<p>${mobBtns}</p>` +
+      `<p>${peaceBtns} <button class="mini war-capitulate-btn" title="End the war on their terms — reparations and a stripped treasury">capitulate</button></p>`;
   }
 
   /** Politics section: political capital, elections, faction bars, law cards. */
