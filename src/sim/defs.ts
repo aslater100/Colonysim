@@ -7,9 +7,9 @@ import namesJson from '../data/names.json';
 export type ResourceKind = 'wood' | 'grain' | 'meal' | 'stone' | 'clothes';
 export type Provides =
   | 'storage' | 'sleep' | 'cook' | 'recreation' | 'warmth' | 'craft' | 'burial'
-  | 'hunt' | 'trade' | 'forestry' | 'granary' | 'medical';
-export type WorkKind = 'build' | 'farm' | 'chop' | 'cook' | 'haul' | 'medic' | 'craft' | 'bury' | 'hunt' | 'plant';
-export const WORK_KINDS: WorkKind[] = ['build', 'farm', 'chop', 'cook', 'haul', 'medic', 'craft', 'bury', 'hunt', 'plant'];
+  | 'hunt' | 'trade' | 'forestry' | 'granary' | 'medical' | 'fishing';
+export type WorkKind = 'build' | 'farm' | 'chop' | 'cook' | 'haul' | 'medic' | 'craft' | 'bury' | 'hunt' | 'plant' | 'fish';
+export const WORK_KINDS: WorkKind[] = ['build', 'farm', 'chop', 'cook', 'haul', 'medic', 'craft', 'bury', 'hunt', 'plant', 'fish'];
 
 export interface BuildingDef {
   id: string;
@@ -93,6 +93,9 @@ export const TUNING = {
   bakeBatch: 8,
   huntTripWork: 240, // an abstract trip into the woods…
   huntMealYield: 3, // …comes back with game enough for a few meals
+  fishTripWork: 180,
+  fishMealYield: 4,
+  fishRange: 8,
   plantWork: 20,
   saplingGrowDays: 8,
   foresterRadius: 6,

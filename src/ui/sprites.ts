@@ -406,6 +406,24 @@ function buildingSprite(defId: string, w: number, h: number, ghost: boolean): HT
       g.fillRect(1, y, 3, 1);
       g.fillRect(W - 4, y, 3, 1);
     }
+  } else if (defId === 'fishing_dock') {
+    // wooden planks over teal water — a simple jetty
+    g.fillStyle = P.water1;
+    g.fillRect(1, H - 6, W - 2, 5);
+    g.fillStyle = P.water2;
+    g.fillRect(3, H - 5, 4, 2);
+    g.fillRect(W - 7, H - 5, 4, 2);
+    g.fillStyle = P.plank;
+    g.fillRect(1, 1, W - 2, H - 6);
+    g.fillStyle = P.plankDark;
+    for (let x = 3; x < W - 2; x += 5) g.fillRect(x, 1, 1, H - 6);
+    g.fillRect(1, H - 7, W - 2, 1);
+    g.fillStyle = P.woodDark;
+    g.fillRect(1, 1, W - 2, 1);
+    // dock posts at the water edge
+    g.fillStyle = P.trunk;
+    g.fillRect(2, H - 6, 2, 5);
+    g.fillRect(W - 4, H - 6, 2, 5);
   } else {
     // walls visible at the base, roof above — reads as a structure, not a blob
     const roofH = Math.floor(H * 0.55);

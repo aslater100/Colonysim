@@ -121,6 +121,16 @@
       "provides": "medical",
       "capacity": 2,
       "desc": "Two cots and clean bandages. The badly hurt heal twice as fast resting here."
+    },
+    {
+      "id": "fishing_dock",
+      "name": "Fishing Dock",
+      "w": 2,
+      "h": 1,
+      "cost": { "wood": 15 },
+      "buildWork": 240,
+      "provides": "fishing",
+      "desc": "Settlers fish from the dock; meals without grain. Must be built near water."
     }
   ]
 }

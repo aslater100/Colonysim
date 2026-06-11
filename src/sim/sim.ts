@@ -1381,6 +1381,19 @@ export class Simulation {
         }
       }
     }
+    if (this.stock.meal < this.settlers.length * 3) {
+      for (const dock of this.builtOf('fishing')) {
+        const c = this.buildingCenter(dock);
+        const waterSpot = this.nearestWaterTile(c, TUNING.fishRange);
+        if (!waterSpot) continue;
+        const fishSpot = this.world.nearestPassable(waterSpot) ?? c;
+        push({
+          kind: 'fish', x: fishSpot.x, y: fishSpot.y,
+          buildingId: dock.id,
+          workLeft: TUNING.fishTripWork, label: 'fish',
+        }, 'fish');
+      }
+    }
     // Foresters replant: one sapling order at a time per lodge, on free grass nearby.
     for (const f of this.builtOf('forestry')) {
       const spot = this.saplingSpot(f);
@@ -1442,7 +1455,7 @@ export class Simulation {
     const sky = this.weatherToday().sky;
     const outdoorWork =
       task.kind === 'farm' || task.kind === 'chop' || task.kind === 'build' || task.kind === 'haul' ||
-      task.kind === 'bury' || task.kind === 'hunt' || task.kind === 'plant';
+      task.kind === 'bury' || task.kind === 'hunt' || task.kind === 'plant' || task.kind === 'fish';
     const rainMult = outdoorWork && (sky === 'rain' || sky === 'storm' || sky === 'snow') ? 0.85 : 1;
     const speed =
       (0.5 + s.skills[task.kind] * 0.1) * this.traitMult(s, 'workSpeed') * this.softCapWorkMult() * sickMult * rainMult;
@@ -1654,6 +1667,28 @@ export class Simulation {
         }
         return;
       }
+      case 'fish': {
+        const dock = this.building(task.buildingId);
+        if (!dock?.built) return this.finishTask(s);
+        if (s.carrying) {
+          this.stock[s.carrying.kind] += s.carrying.qty;
+          s.carrying = null;
+          return this.finishTask(s);
+        }
+        task.workLeft -= work;
+        if (task.workLeft <= 0) {
+          const qty = TUNING.fishMealYield;
+          const spTile = this.nearestStockpileTile(s.pos);
+          if (!spTile) {
+            this.stock.meal += qty;
+            return this.finishTask(s);
+          }
+          s.carrying = { kind: 'meal', qty };
+          s.state = 'moving';
+          this.setDestination(s, spTile);
+        }
+        return;
+      }
       case 'plant': {
         const tile = this.world.at(task.x, task.y);
         if (tile.kind !== 'grass' || tile.sapling || tile.buildingId !== null) return this.finishTask(s);
@@ -1844,6 +1879,20 @@ export class Simulation {
       const y = Math.floor(idx / MAP_W);
       const d = Math.hypot(x - pos.x, y - pos.y);
       if (d < bd) { bd = d; best = { x, y }; }
+    }
+    return best;
+  }
+
+  private nearestWaterTile(pos: Vec, maxRange: number): Vec | null {
+    let best: Vec | null = null;
+    let bd = Infinity;
+    for (let idx = 0; idx < this.world.tiles.length; idx++) {
+      const t = this.world.tiles[idx];
+      if (t.kind !== 'water') continue;
+      const x = idx % MAP_W;
+      const y = Math.floor(idx / MAP_W);
+      const d = Math.hypot(x - pos.x, y - pos.y);
+      if (d < bd && d <= maxRange) { bd = d; best = { x, y }; }
     }
     return best;
   }
