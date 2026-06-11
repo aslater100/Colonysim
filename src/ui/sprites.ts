@@ -98,6 +98,7 @@ export interface SpriteSet {
   stockpileZone: HTMLCanvasElement;
   wallPlan: HTMLCanvasElement;
   palisade: HTMLCanvasElement;
+  palisadeVariants: HTMLCanvasElement[]; // 16 variants indexed by N=1,E=2,S=4,W=8 bitmask
   gate: HTMLCanvasElement;
   gatePlan: HTMLCanvasElement;
   sapling: HTMLCanvasElement;
@@ -571,6 +572,79 @@ function wallPlanTile(): HTMLCanvasElement {
   return c;
 }
 
+/**
+ * Palisade tile variant based on 4-bit bitmask of connected neighbors: N=1, E=2, S=4, W=8.
+ * Arms extend in each connected direction; the center block is always drawn.
+ */
+function palisadeVariantTile(mask: number): HTMLCanvasElement {
+  const hasN = (mask & 1) !== 0;
+  const hasE = (mask & 2) !== 0;
+  const hasS = (mask & 4) !== 0;
+  const hasW = (mask & 8) !== 0;
+  const c = document.createElement('canvas');
+  c.width = TILE; c.height = TILE;
+  const g = c.getContext('2d')!;
+
+  // Band geometry: horizontal band at y=[5,12], vertical band at x=[5,11]
+  const HY1 = 5, HY2 = 12;
+  const VX1 = 5, VX2 = 11;
+
+  // Draw shadows first (below horizontal band and right of vertical band)
+  g.fillStyle = P.shadow;
+  if (hasE || hasW || (!hasN && !hasS)) {
+    const sx1 = hasW ? 0 : VX1, sx2 = hasE ? TILE : VX2;
+    g.fillRect(sx1 + 1, HY2, sx2 - sx1, 2);
+  }
+  if (hasS) g.fillRect(VX1 + 1, HY2, VX2 - VX1, TILE - HY2);
+
+  const drawHPlanks = (x1: number, x2: number, y1: number, y2: number) => {
+    const w = x2 - x1, h = y2 - y1;
+    if (w <= 0 || h <= 0) return;
+    g.fillStyle = P.woodDark;
+    g.fillRect(x1, y1, w, h);
+    g.fillStyle = P.wood;
+    for (let px = x1 + 1; px < x2 - 1; px += 3) g.fillRect(px, y1 + 1, 2, h - 1);
+    g.fillStyle = P.rockLight;
+    g.fillRect(x1, y1, w, 1);
+  };
+
+  const drawVPlanks = (x1: number, x2: number, y1: number, y2: number) => {
+    const w = x2 - x1, h = y2 - y1;
+    if (w <= 0 || h <= 0) return;
+    g.fillStyle = P.woodDark;
+    g.fillRect(x1, y1, w, h);
+    g.fillStyle = P.wood;
+    for (let py = y1 + 1; py < y2 - 1; py += 3) g.fillRect(x1 + 1, py, w - 1, 2);
+    g.fillStyle = P.rockLight;
+    g.fillRect(x1, y1, 1, h);
+  };
+
+  // Arms extending to edges
+  if (hasW) drawHPlanks(0, VX1, HY1, HY2);
+  if (hasE) drawHPlanks(VX2, TILE, HY1, HY2);
+  if (hasN) drawVPlanks(VX1, VX2, 0, HY1);
+  if (hasS) drawVPlanks(VX1, VX2, HY2, TILE);
+
+  // Center block — use intersection post when both H and V are present
+  const hActive = hasE || hasW || (!hasN && !hasS);
+  const vActive = hasN || hasS;
+  if (hActive && vActive) {
+    g.fillStyle = P.woodDark;
+    g.fillRect(VX1, HY1, VX2 - VX1, HY2 - HY1);
+    g.fillStyle = P.wood;
+    g.fillRect(VX1 + 1, HY1 + 1, VX2 - VX1 - 2, HY2 - HY1 - 2);
+    g.fillStyle = P.rockLight;
+    g.fillRect(VX1, HY1, VX2 - VX1, 1);
+    g.fillRect(VX1, HY1, 1, HY2 - HY1);
+  } else if (vActive) {
+    drawVPlanks(VX1, VX2, HY1, HY2);
+  } else {
+    drawHPlanks(VX1, VX2, HY1, HY2);
+  }
+
+  return c;
+}
+
 /** Built palisade wall: wooden vertical planks. */
 function palisadeTile(): HTMLCanvasElement {
   const c = document.createElement('canvas');
@@ -745,6 +819,7 @@ export function buildSprites(buildingDefs: { id: string; w: number; h: number }[
     stockpileZone: stockpileZoneTile(),
     wallPlan: wallPlanTile(),
     palisade: palisadeTile(),
+    palisadeVariants: Array.from({ length: 16 }, (_, i) => palisadeVariantTile(i)),
     gate: gateTile(),
     gatePlan: gatePlanTile(),
     sapling: saplingSprite(),

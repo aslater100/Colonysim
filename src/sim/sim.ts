@@ -128,6 +128,9 @@ export interface Building {
   buildLeft: number; // work minutes remaining
   cookProgress: number;
   hp: number; // only meaningful for defs with maxHp
+  level: number; // 1-indexed upgrade level
+  rotation: number; // 0-3 clockwise 90° turns
+  workerLimit: number | null; // null = auto-assign
 }
 
 export interface GroundItem {
@@ -260,8 +263,8 @@ export class Simulation {
         this.planZone('stockpile', cx - 1 + dx, cy - 1 + dy);
       }
     }
-    this.placeBuilding('house', cx - 5, cy - 2, true);
-    this.placeBuilding('house', cx + 3, cy - 2, true);
+    this.placeBuilding('house', cx - 5, cy - 2, 0, true);
+    this.placeBuilding('house', cx + 3, cy - 2, 0, true);
     for (let i = 0; i < 12; i++) {
       this.spawnSettler(cx - 3 + (i % 6), cy + 3 + Math.floor(i / 6));
     }
@@ -354,10 +357,36 @@ export class Simulation {
   }
 
   // ---- player verbs ----
-  canPlace(defId: string, x: number, y: number): boolean {
+  /** Effective width after rotation (odd rotations swap w and h). */
+  buildingW(b: Building): number {
+    const def = buildingDef(b.defId);
+    return (b.rotation ?? 0) % 2 === 1 ? def.h : def.w;
+  }
+
+  /** Effective height after rotation (odd rotations swap w and h). */
+  buildingH(b: Building): number {
+    const def = buildingDef(b.defId);
+    return (b.rotation ?? 0) % 2 === 1 ? def.w : def.h;
+  }
+
+  /** Capacity adjusted by upgrade level. */
+  buildingEffectiveCapacity(b: Building): number {
+    const def = buildingDef(b.defId);
+    let cap = def.capacity ?? 0;
+    if (def.upgrades) {
+      for (let i = 0; i < (b.level ?? 1) - 1 && i < def.upgrades.length; i++) {
+        cap += def.upgrades[i].capacityBonus ?? 0;
+      }
+    }
+    return cap;
+  }
+
+  canPlace(defId: string, x: number, y: number, rotation = 0): boolean {
     const def = buildingDef(defId);
-    for (let dy = 0; dy < def.h; dy++) {
-      for (let dx = 0; dx < def.w; dx++) {
+    const w = rotation % 2 === 1 ? def.h : def.w;
+    const h = rotation % 2 === 1 ? def.w : def.h;
+    for (let dy = 0; dy < h; dy++) {
+      for (let dx = 0; dx < w; dx++) {
         if (!this.world.inBounds(x + dx, y + dy)) return false;
         const t = this.world.at(x + dx, y + dy);
         if (t.kind !== 'grass' || t.buildingId !== null || t.wall || t.wallPlan ||
@@ -367,9 +396,11 @@ export class Simulation {
     return true;
   }
 
-  placeBuilding(defId: string, x: number, y: number, prebuilt = false): Building | null {
-    if (!this.canPlace(defId, x, y)) return null;
+  placeBuilding(defId: string, x: number, y: number, rotation = 0, prebuilt = false): Building | null {
+    if (!this.canPlace(defId, x, y, rotation)) return null;
     const def = buildingDef(defId);
+    const w = rotation % 2 === 1 ? def.h : def.w;
+    const h = rotation % 2 === 1 ? def.w : def.h;
     const b: Building = {
       id: this.nextId++,
       defId,
@@ -380,10 +411,13 @@ export class Simulation {
       buildLeft: prebuilt ? 0 : def.buildWork,
       cookProgress: 0,
       hp: def.maxHp ?? 0,
+      level: 1,
+      rotation,
+      workerLimit: null,
     };
     this.buildings.push(b);
-    for (let dy = 0; dy < def.h; dy++) {
-      for (let dx = 0; dx < def.w; dx++) {
+    for (let dy = 0; dy < h; dy++) {
+      for (let dx = 0; dx < w; dx++) {
         const t = this.world.at(x + dx, y + dy);
         t.buildingId = b.id;
       }
@@ -395,16 +429,56 @@ export class Simulation {
     const i = this.buildings.findIndex((b) => b.id === id && !b.built);
     if (i < 0) return;
     const b = this.buildings[i];
-    const def = buildingDef(b.defId);
     this.stock.wood += b.delivered;
-    for (let dy = 0; dy < def.h; dy++) {
-      for (let dx = 0; dx < def.w; dx++) {
+    const w = this.buildingW(b);
+    const h = this.buildingH(b);
+    for (let dy = 0; dy < h; dy++) {
+      for (let dx = 0; dx < w; dx++) {
         const t = this.world.at(b.x + dx, b.y + dy);
         t.buildingId = null;
         if (t.kind === 'soil') t.kind = 'grass';
       }
     }
     this.buildings.splice(i, 1);
+  }
+
+  destroyBuilding(id: number): void {
+    const b = this.buildings.find((x) => x.id === id && x.built);
+    if (!b) return;
+    const def = buildingDef(b.defId);
+    // Refund half the base wood cost
+    this.stock.wood += Math.floor((def.cost.wood ?? 0) / 2);
+    const w = this.buildingW(b);
+    const h = this.buildingH(b);
+    for (let dy = 0; dy < h; dy++) {
+      for (let dx = 0; dx < w; dx++) {
+        this.world.at(b.x + dx, b.y + dy).buildingId = null;
+      }
+    }
+    for (const s of this.settlers) {
+      if (s.bedId === id) s.bedId = null;
+    }
+    this.buildings = this.buildings.filter((x) => x.id !== id);
+    this.addLog(`${def.name} demolished; recovered ${Math.floor((def.cost.wood ?? 0) / 2)} wood.`, 'info');
+  }
+
+  upgradeBuilding(id: number): boolean {
+    const b = this.buildings.find((x) => x.id === id && x.built);
+    if (!b) return false;
+    const def = buildingDef(b.defId);
+    if (!def.upgrades) return false;
+    const lvl = b.level ?? 1;
+    const upgrade = def.upgrades[lvl - 1];
+    if (!upgrade) return false;
+    for (const [res, amt] of Object.entries(upgrade.cost)) {
+      if ((this.stock[res as keyof typeof this.stock] ?? 0) < (amt as number)) return false;
+    }
+    for (const [res, amt] of Object.entries(upgrade.cost)) {
+      (this.stock as Record<string, number>)[res] -= amt as number;
+    }
+    b.level = lvl + 1;
+    this.addLog(`${def.name} upgraded to level ${b.level}!`, 'good');
+    return true;
   }
 
   /** Mark trees for felling or rock for quarrying with the same tool. */
@@ -536,9 +610,13 @@ export class Simulation {
     return true;
   }
 
-  /** Meals the stores can keep without spoiling. */
+  /** Meals the stores can keep without spoiling (granary level bonuses add capacity). */
   mealCap(): number {
-    return TUNING.mealCapBase + TUNING.mealCapPerGranary * this.builtOf('granary').length;
+    let cap = TUNING.mealCapBase;
+    for (const g of this.builtOf('granary')) {
+      cap += TUNING.mealCapPerGranary + this.buildingEffectiveCapacity(g);
+    }
+    return cap;
   }
 
   building(id: number | null | undefined): Building | undefined {
@@ -1955,7 +2033,7 @@ export class Simulation {
     // The badly hurt take a clinic cot first: supervised rest heals faster.
     if (s.health < TUNING.bedRestThreshold) {
       for (const c of this.builtOf('medical')) {
-        const cap = buildingDef(c.defId).capacity ?? 0;
+        const cap = this.buildingEffectiveCapacity(c);
         const used = this.settlers.filter((o) => o.bedId === c.id).length;
         if (used < cap) {
           s.bedId = c.id;
@@ -1967,7 +2045,7 @@ export class Simulation {
     }
     const houses = this.builtOf('sleep');
     for (const h of houses) {
-      const cap = buildingDef(h.defId).capacity ?? 0;
+      const cap = this.buildingEffectiveCapacity(h);
       const used = this.settlers.filter((o) => o.bedId === h.id).length;
       if (used < cap) {
         s.bedId = h.id;
@@ -2059,9 +2137,8 @@ export class Simulation {
   /** First free plot in any built burial ground, or null when the yards are full. */
   graveSite(): { yard: Building; at: Vec } | null {
     for (const yard of this.builtOf('burial')) {
-      const def = buildingDef(yard.defId);
-      for (let dy = 0; dy < def.h; dy++) {
-        for (let dx = 0; dx < def.w; dx++) {
+      for (let dy = 0; dy < this.buildingH(yard); dy++) {
+        for (let dx = 0; dx < this.buildingW(yard); dx++) {
           const gx = yard.x + dx;
           const gy = yard.y + dy;
           if (!this.graves.some((gr) => gr.x === gx && gr.y === gy)) return { yard, at: { x: gx, y: gy } };
@@ -2078,8 +2155,7 @@ export class Simulation {
   }
 
   private buildingCenter(b: Building): Vec {
-    const def = buildingDef(b.defId);
-    return { x: b.x + Math.floor(def.w / 2), y: b.y + Math.floor(def.h / 2) };
+    return { x: b.x + Math.floor(this.buildingW(b) / 2), y: b.y + Math.floor(this.buildingH(b) / 2) };
   }
 
   private dropItem(kind: ResourceKind, qty: number, x: number, y: number): void {
@@ -2217,7 +2293,12 @@ export class Simulation {
     sim.minute = d.minute;
     sim.world.tiles = d.tiles;
     sim.settlers = d.settlers;
-    sim.buildings = d.buildings;
+    sim.buildings = d.buildings.map((b: Building) => ({
+      ...b,
+      level: b.level ?? 1,
+      rotation: b.rotation ?? 0,
+      workerLimit: b.workerLimit ?? null,
+    }));
     sim.items = d.items;
     sim.corpses = d.corpses;
     sim.graves = d.graves;

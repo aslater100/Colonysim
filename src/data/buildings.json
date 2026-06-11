@@ -9,7 +9,11 @@
       "buildWork": 360,
       "provides": "sleep",
       "capacity": 3,
-      "desc": "Sleeping quarters for 3 settlers. Warm at night."
+      "desc": "Sleeping quarters for 3 settlers. Warm at night.",
+      "upgrades": [
+        { "cost": { "wood": 15 }, "capacityBonus": 2, "desc": "Loft added: houses 5 settlers." },
+        { "cost": { "wood": 20, "stone": 8 }, "capacityBonus": 2, "desc": "Stone-reinforced walls: houses 7 settlers." }
+      ]
     },
     {
       "id": "kitchen",
@@ -19,7 +23,11 @@
       "cost": { "wood": 30 },
       "buildWork": 420,
       "provides": "cook",
-      "desc": "Turns grain into proper meals."
+      "desc": "Turns grain into proper meals.",
+      "upgrades": [
+        { "cost": { "wood": 20 }, "capacityBonus": 0, "desc": "Larger hearth: cooks 30% faster." },
+        { "cost": { "wood": 25, "stone": 10 }, "capacityBonus": 0, "desc": "Stone oven: cooks 60% faster." }
+      ]
     },
     {
       "id": "hall",
@@ -29,7 +37,11 @@
       "cost": { "wood": 40 },
       "buildWork": 600,
       "provides": "recreation",
-      "desc": "Recreation and society. Settlers gather here off-shift."
+      "desc": "Recreation and society. Settlers gather here off-shift.",
+      "upgrades": [
+        { "cost": { "wood": 30 }, "capacityBonus": 0, "desc": "Extended hall: recreation fills 30% faster." },
+        { "cost": { "wood": 40, "stone": 15 }, "capacityBonus": 0, "desc": "Grand hall: recreation fills 60% faster." }
+      ]
     },
     {
       "id": "hearth",
@@ -39,7 +51,11 @@
       "cost": { "wood": 10 },
       "buildWork": 90,
       "provides": "warmth",
-      "desc": "An open stone fire. Warms everyone within a few tiles — winter's answer."
+      "desc": "An open stone fire. Warms everyone within a few tiles — winter's answer.",
+      "upgrades": [
+        { "cost": { "wood": 8, "stone": 5 }, "capacityBonus": 0, "desc": "Stone chimney: warmth radius +2 tiles." },
+        { "cost": { "stone": 15 }, "capacityBonus": 0, "desc": "Masonry furnace: warmth radius +4 tiles." }
+      ]
     },
     {
       "id": "tailor",
@@ -49,7 +65,11 @@
       "cost": { "wood": 25 },
       "buildWork": 360,
       "provides": "craft",
-      "desc": "Weaves flax and straw into warm clothing (2 grain per set)."
+      "desc": "Weaves flax and straw into warm clothing (2 grain per set).",
+      "upgrades": [
+        { "cost": { "wood": 20 }, "capacityBonus": 0, "desc": "Better looms: crafts 30% faster." },
+        { "cost": { "wood": 25, "stone": 8 }, "capacityBonus": 0, "desc": "Workshop expansion: crafts 60% faster." }
+      ]
     },
     {
       "id": "graveyard",
@@ -59,7 +79,11 @@
       "cost": { "wood": 5 },
       "buildWork": 90,
       "provides": "burial",
-      "desc": "A fenced plot with simple rites. The dead rest here — and the living rest easier."
+      "desc": "A fenced plot with simple rites. The dead rest here — and the living rest easier.",
+      "upgrades": [
+        { "cost": { "wood": 10, "stone": 5 }, "capacityBonus": 0, "desc": "Stone markers: mood bonus +4." },
+        { "cost": { "stone": 20 }, "capacityBonus": 0, "desc": "Consecrated ground: mood bonus +8." }
+      ]
     },
     {
       "id": "bakery",
@@ -69,7 +93,11 @@
       "cost": { "wood": 45 },
       "buildWork": 540,
       "provides": "cook",
-      "desc": "Big ovens, bigger batches. Cooks faster than the cookhouse — preferred when built."
+      "desc": "Big ovens, bigger batches. Cooks faster than the cookhouse — preferred when built.",
+      "upgrades": [
+        { "cost": { "wood": 30, "stone": 10 }, "capacityBonus": 0, "desc": "Second oven: batch size +50%." },
+        { "cost": { "stone": 25 }, "capacityBonus": 0, "desc": "Master bakehouse: batch size doubled." }
+      ]
     },
     {
       "id": "lodge",
@@ -79,7 +107,11 @@
       "cost": { "wood": 30 },
       "buildWork": 420,
       "provides": "hunt",
-      "desc": "One hunter per lodge ranges out for game — meals without grain."
+      "desc": "One hunter per lodge ranges out for game — meals without grain.",
+      "upgrades": [
+        { "cost": { "wood": 20 }, "capacityBonus": 0, "desc": "Trained trackers: hunt trips 20% faster." },
+        { "cost": { "wood": 30 }, "capacityBonus": 0, "desc": "Master hunters: yield +1 meal per trip." }
+      ]
     },
     {
       "id": "market",
@@ -89,7 +121,11 @@
       "cost": { "wood": 50 },
       "buildWork": 600,
       "provides": "trade",
-      "desc": "Passing traders barter at fixed rates. Select it to swap wood, stone and grain."
+      "desc": "Passing traders barter at fixed rates. Select it to swap wood, stone and grain.",
+      "upgrades": [
+        { "cost": { "wood": 40 }, "capacityBonus": 0, "desc": "Trade network: better exchange rates." },
+        { "cost": { "wood": 50, "stone": 20 }, "capacityBonus": 0, "desc": "Commerce hub: enables selling buildings." }
+      ]
     },
     {
       "id": "forester",
@@ -99,7 +135,11 @@
       "cost": { "wood": 25 },
       "buildWork": 360,
       "provides": "forestry",
-      "desc": "Plants saplings on nearby grass; they mature into harvestable trees."
+      "desc": "Plants saplings on nearby grass; they mature into harvestable trees.",
+      "upgrades": [
+        { "cost": { "wood": 15 }, "capacityBonus": 0, "desc": "Wider range: planting radius +3 tiles." },
+        { "cost": { "wood": 20, "stone": 5 }, "capacityBonus": 0, "desc": "Nursery: saplings mature 30% faster." }
+      ]
     },
     {
       "id": "granary",
@@ -109,7 +149,11 @@
       "cost": { "wood": 35 },
       "buildWork": 480,
       "provides": "granary",
-      "desc": "Cool dry storage: each granary lets 150 more meals keep without spoiling."
+      "desc": "Cool dry storage: each granary lets 150 more meals keep without spoiling.",
+      "upgrades": [
+        { "cost": { "wood": 25 }, "capacityBonus": 100, "desc": "Extended cellars: +100 meal capacity." },
+        { "cost": { "wood": 30, "stone": 12 }, "capacityBonus": 150, "desc": "Stone vault: +150 more meal capacity." }
+      ]
     },
     {
       "id": "clinic",
@@ -120,7 +164,11 @@
       "buildWork": 540,
       "provides": "medical",
       "capacity": 2,
-      "desc": "Two cots and clean bandages. The badly hurt heal twice as fast resting here."
+      "desc": "Two cots and clean bandages. The badly hurt heal twice as fast resting here.",
+      "upgrades": [
+        { "cost": { "wood": 25 }, "capacityBonus": 1, "desc": "Extra ward: +1 patient cot." },
+        { "cost": { "wood": 30, "stone": 10 }, "capacityBonus": 2, "desc": "Field hospital: +2 more cots, heal rate +50%." }
+      ]
     },
     {
       "id": "fishing_dock",
@@ -130,7 +178,11 @@
       "cost": { "wood": 15 },
       "buildWork": 240,
       "provides": "fishing",
-      "desc": "Settlers fish from the dock; meals without grain. Must be built near water."
+      "desc": "Settlers fish from the dock; meals without grain. Must be built near water.",
+      "upgrades": [
+        { "cost": { "wood": 15 }, "capacityBonus": 0, "desc": "Extended pier: fishing yield +1 meal." },
+        { "cost": { "wood": 20 }, "capacityBonus": 0, "desc": "Net fishing: yield +2 meals per trip." }
+      ]
     }
   ]
 }

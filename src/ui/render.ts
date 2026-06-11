@@ -12,15 +12,18 @@ import type { RegionMap } from '../sim/worldgen';
 import type { TownSite } from '../sim/worldgen';
 
 export interface Camera {
-  x: number; // pixels
+  x: number; // pixels (world-space, unzoomed)
   y: number;
+  zoom: number; // display scale factor (0.5–4.0)
   placing: string | null; // building def id when in placement mode
+  placingRotation: number; // 0-3 clockwise 90° turns for placement ghost
   placingZone: import('../sim/world').PaintKind | null;
   chopMode: boolean;
   overlay: 'none' | 'traffic';
   mouseTile: { x: number; y: number };
   selectedSettler: number | null;
   selectedBuilding: number | null;
+  selectedStockpile: { x: number; y: number } | null;
 }
 
 const SKY_DAY = [104, 144, 170];
@@ -56,8 +59,12 @@ export class Renderer {
     const W = this.canvas.width;
     const H = this.canvas.height;
     this.drawBackdrop(W, H);
+    const zoom = this.cam.zoom;
+    this.g.save();
+    this.g.scale(zoom, zoom);
     this.drawMap();
     this.drawPlacementGhost();
+    this.g.restore();
   }
 
   private drawBackdrop(W: number, H: number): void {
@@ -123,8 +130,11 @@ export class Renderer {
   }
 
   tileAt(px: number, py: number): { x: number; y: number } {
-    const { ox, oy } = this.mapOrigin();
-    return { x: Math.floor((px - ox) / TILE), y: Math.floor((py - oy) / TILE) };
+    const zoom = this.cam.zoom;
+    return {
+      x: Math.floor((px / zoom + this.cam.x) / TILE),
+      y: Math.floor((py / zoom + this.cam.y) / TILE),
+    };
   }
 
   private drawMap(): void {
@@ -166,8 +176,14 @@ export class Renderer {
         const py = oy + y * TILE;
         if (px < -TILE * 2 || py < -TILE * 2 || px > this.canvas.width || py > this.canvas.height) continue;
         if (t.kind === 'rock') g.drawImage(t.marked ? sprites.rockMarked : sprites.rock, px, py);
-        else if (t.wall) g.drawImage(sprites.palisade, px, py);
-        else if (t.gate) g.drawImage(sprites.gate, px, py);
+        else if (t.wall) {
+          const mask =
+            (sim.world.inBounds(x, y - 1) && (sim.world.at(x, y - 1).wall || sim.world.at(x, y - 1).gate) ? 1 : 0) |
+            (sim.world.inBounds(x + 1, y) && (sim.world.at(x + 1, y).wall || sim.world.at(x + 1, y).gate) ? 2 : 0) |
+            (sim.world.inBounds(x, y + 1) && (sim.world.at(x, y + 1).wall || sim.world.at(x, y + 1).gate) ? 4 : 0) |
+            (sim.world.inBounds(x - 1, y) && (sim.world.at(x - 1, y).wall || sim.world.at(x - 1, y).gate) ? 8 : 0);
+          g.drawImage(sprites.palisadeVariants[mask], px, py);
+        } else if (t.gate) g.drawImage(sprites.gate, px, py);
         else if (t.kind === 'tree') g.drawImage(t.marked ? sprites.treeMarked : sprites.tree, px - 2, py - 6);
         else if (t.sapling) g.drawImage(sprites.sapling, px, py);
       }
@@ -203,17 +219,30 @@ export class Renderer {
     for (const b of sim.buildings) {
       const def = buildingDef(b.defId);
       const img = b.built ? this.sprites.buildings[b.defId] : this.sprites.blueprints[b.defId];
-      g.drawImage(img, ox + b.x * TILE, oy + b.y * TILE);
+      const rot = b.rotation ?? 0;
+      const rw = rot % 2 === 1 ? def.h : def.w;
+      const rh = rot % 2 === 1 ? def.w : def.h;
+      const bx = ox + b.x * TILE;
+      const by = oy + b.y * TILE;
+      if (rot !== 0) {
+        g.save();
+        g.translate(bx + rw * TILE / 2, by + rh * TILE / 2);
+        g.rotate(rot * Math.PI / 2);
+        g.drawImage(img, -def.w * TILE / 2, -def.h * TILE / 2);
+        g.restore();
+      } else {
+        g.drawImage(img, bx, by);
+      }
       if (!b.built) {
         const need = (def.cost.wood ?? 0);
         g.fillStyle = '#dfe6ee';
         g.font = '8px monospace';
-        g.fillText(`${b.delivered}/${need}`, ox + b.x * TILE + 2, oy + b.y * TILE + 8);
+        g.fillText(`${b.delivered}/${need}`, bx + 2, by + 8);
       }
       if (b.built && def.maxHp && b.hp < def.maxHp) {
-        this.hpBar(ox + b.x * TILE, oy + b.y * TILE - 3, b.hp / def.maxHp);
+        this.hpBar(bx, by - 3, b.hp / def.maxHp);
       }
-      if (this.cam.selectedBuilding === b.id) this.outline(ox + b.x * TILE, oy + b.y * TILE, def.w * TILE, def.h * TILE);
+      if (this.cam.selectedBuilding === b.id) this.outline(bx, by, rw * TILE, rh * TILE);
     }
 
     // Graves (over the burial-ground plot), then ground items, then the unburied
@@ -269,18 +298,22 @@ export class Renderer {
     }
 
     // Weather: precipitation streaks and storm gloom over the whole scene
+    // (canvas dimensions divided by zoom since we're inside the scaled context)
+    const zoom = this.cam.zoom;
+    const vw = this.canvas.width / zoom;
+    const vh = this.canvas.height / zoom;
     const wx = sim.weatherToday();
     if (wx.sky === 'overcast' || wx.sky === 'rain' || wx.sky === 'storm') {
       g.fillStyle = `rgba(40,48,60,${wx.sky === 'storm' ? 0.28 : wx.sky === 'rain' ? 0.18 : 0.1})`;
-      g.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      g.fillRect(0, 0, vw, vh);
     }
     if (wx.sky === 'rain' || wx.sky === 'storm' || wx.sky === 'snow') {
       const snow = wx.sky === 'snow';
       g.fillStyle = snow ? 'rgba(235,240,250,0.7)' : 'rgba(170,200,230,0.45)';
       const n = wx.sky === 'storm' ? 260 : 140;
       for (let i = 0; i < n; i++) {
-        const x = (i * 97 + this.frame * (snow ? 1 : 9)) % this.canvas.width;
-        const y = (i * 61 + this.frame * (snow ? 2 : 13)) % this.canvas.height;
+        const x = (i * 97 + this.frame * (snow ? 1 : 9)) % vw;
+        const y = (i * 61 + this.frame * (snow ? 2 : 13)) % vh;
         if (snow) g.fillRect(x, y, 2, 2);
         else g.fillRect(x, y, 1, 6);
       }
@@ -290,7 +323,7 @@ export class Renderer {
     const d = daylight(sim.hour);
     if (d < 0.45) {
       g.fillStyle = `rgba(10,12,30,${(0.45 - d) * 0.9})`;
-      g.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      g.fillRect(0, 0, vw, vh);
     }
 
     // Fog of war: hard black over unexplored tiles
@@ -300,7 +333,7 @@ export class Renderer {
         if (sim.world.at(x, y).explored) continue;
         const px = ox + x * TILE;
         const py = oy + y * TILE;
-        if (px < -TILE || py < -TILE || px > this.canvas.width || py > this.canvas.height) continue;
+        if (px < -TILE || py < -TILE || px > vw || py > vh) continue;
         g.fillRect(px, py, TILE, TILE);
       }
     }
@@ -329,13 +362,31 @@ export class Renderer {
     const { cam, g, sim } = this;
     const { ox, oy } = this.mapOrigin();
     if (cam.placing) {
-      const ok = sim.canPlace(cam.placing, cam.mouseTile.x, cam.mouseTile.y);
-      g.globalAlpha = 0.8;
-      g.drawImage(this.sprites.blueprints[cam.placing], ox + cam.mouseTile.x * TILE, oy + cam.mouseTile.y * TILE);
-      g.globalAlpha = 1;
+      const rot = cam.placingRotation ?? 0;
       const def = buildingDef(cam.placing);
+      const rw = rot % 2 === 1 ? def.h : def.w;
+      const rh = rot % 2 === 1 ? def.w : def.h;
+      const ok = sim.canPlace(cam.placing, cam.mouseTile.x, cam.mouseTile.y, rot);
+      const bx = ox + cam.mouseTile.x * TILE;
+      const by = oy + cam.mouseTile.y * TILE;
+      g.globalAlpha = 0.8;
+      if (rot !== 0) {
+        g.save();
+        g.translate(bx + rw * TILE / 2, by + rh * TILE / 2);
+        g.rotate(rot * Math.PI / 2);
+        g.drawImage(this.sprites.blueprints[cam.placing], -def.w * TILE / 2, -def.h * TILE / 2);
+        g.restore();
+      } else {
+        g.drawImage(this.sprites.blueprints[cam.placing], bx, by);
+      }
+      g.globalAlpha = 1;
       g.strokeStyle = ok ? '#7ac26a' : '#c25b2e';
-      g.strokeRect(ox + cam.mouseTile.x * TILE + 0.5, oy + cam.mouseTile.y * TILE + 0.5, def.w * TILE - 1, def.h * TILE - 1);
+      g.strokeRect(bx + 0.5, by + 0.5, rw * TILE - 1, rh * TILE - 1);
+      if (rot !== 0) {
+        g.fillStyle = '#e8d27a';
+        g.font = '8px monospace';
+        g.fillText(`↻${rot * 90}°`, bx + 2, by + rh * TILE - 2);
+      }
     } else if (cam.placingZone) {
       const isRoad = cam.placingZone === 'dirt' || cam.placingZone === 'plank' ||
                      cam.placingZone === 'gravel' || cam.placingZone === 'bridge';

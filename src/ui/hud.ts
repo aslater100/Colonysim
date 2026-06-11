@@ -1,9 +1,9 @@
 /**
- * DOM HUD: top bar, build palette, inspector, work priorities, event log.
- * Pixel-crisp data presentation (GDD §8.5): every number explains itself.
+ * DOM HUD: top bar, bottom build toolbar (Cities-Skylines style with categories),
+ * inspector panel, work priorities, event log.
  */
-import type { Simulation, Settler } from '../sim/sim';
-import { BUILDING_DEFS, buildingDef, traitDef, WORK_KINDS, TUNING } from '../sim/defs';
+import type { Simulation, Settler, Building } from '../sim/sim';
+import { buildingDef, traitDef, WORK_KINDS, TUNING } from '../sim/defs';
 import type { ResourceKind, WorkKind } from '../sim/defs';
 import type { Camera } from './render';
 import type { PaintKind } from '../sim/world';
@@ -18,43 +18,212 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: 
   return e;
 }
 
+// Build menu categories
+interface BuildCategory {
+  id: string;
+  icon: string;
+  label: string;
+  items: BuildItem[];
+}
+
+interface BuildItem {
+  kind: 'building' | 'zone' | 'tool';
+  id: string; // defId for buildings, PaintKind for zones, 'chop'/'overlay'/'priorities' for tools
+  label: string;
+  cost?: string;
+  hotkey?: string;
+  desc: string;
+}
+
+const BUILD_CATEGORIES: BuildCategory[] = [
+  {
+    id: 'shelter',
+    icon: '⌂',
+    label: 'SHELTER',
+    items: [
+      { kind: 'building', id: 'house', label: 'Cabin', cost: '20w', desc: 'Sleeping quarters for 3 settlers.' },
+      { kind: 'building', id: 'clinic', label: 'Clinic', cost: '40w', desc: 'Two cots — the badly hurt heal here.' },
+    ],
+  },
+  {
+    id: 'food',
+    icon: '◈',
+    label: 'FOOD',
+    items: [
+      { kind: 'building', id: 'kitchen', label: 'Cookhouse', cost: '30w', desc: 'Turns grain into meals.' },
+      { kind: 'building', id: 'bakery', label: 'Bakery', cost: '45w', desc: 'Faster batch cooking.' },
+      { kind: 'building', id: 'granary', label: 'Granary', cost: '35w', desc: '+150 meal storage cap.' },
+      { kind: 'building', id: 'lodge', label: 'Hunt Lodge', cost: '30w', desc: 'Hunters bring back game.' },
+      { kind: 'building', id: 'fishing_dock', label: 'Fish Dock', cost: '15w', desc: 'Fish for meals near water.' },
+    ],
+  },
+  {
+    id: 'craft',
+    icon: '⚙',
+    label: 'CRAFT',
+    items: [
+      { kind: 'building', id: 'tailor', label: 'Tailor', cost: '25w', desc: 'Weaves clothing (2g/set).' },
+      { kind: 'building', id: 'forester', label: 'Forester', cost: '25w', desc: 'Plants and harvests trees.' },
+    ],
+  },
+  {
+    id: 'civil',
+    icon: '⚑',
+    label: 'CIVIL',
+    items: [
+      { kind: 'building', id: 'hall', label: 'Meeting Hall', cost: '40w', desc: 'Recreation and society.' },
+      { kind: 'building', id: 'hearth', label: 'Hearth', cost: '10w', desc: 'Keeps settlers warm in winter.' },
+      { kind: 'building', id: 'market', label: 'Market', cost: '50w', desc: 'Trade with passing merchants.' },
+      { kind: 'building', id: 'graveyard', label: 'Burial Ground', cost: '5w', desc: 'The dead rest here.' },
+    ],
+  },
+  {
+    id: 'defense',
+    icon: '▮',
+    label: 'WALLS',
+    items: [
+      { kind: 'zone', id: 'wall', label: 'Palisade [L]', cost: '3w/tile', hotkey: 'l', desc: 'Wooden wall — blocks raiders.' },
+      { kind: 'zone', id: 'gate', label: 'Gate [G]', cost: '5w/tile', hotkey: 'g', desc: 'Settlers pass; raiders must break it.' },
+    ],
+  },
+  {
+    id: 'roads',
+    icon: '═',
+    label: 'ROADS',
+    items: [
+      { kind: 'zone', id: 'dirt', label: 'Dirt [4]', cost: 'free', hotkey: '4', desc: '×1.3 speed, muddy in rain.' },
+      { kind: 'zone', id: 'plank', label: 'Plank [5]', cost: '1w/tile', hotkey: '5', desc: '×1.6 speed, all-weather.' },
+      { kind: 'zone', id: 'gravel', label: 'Gravel [6]', cost: '1s/tile', hotkey: '6', desc: '×1.8 speed, best surface.' },
+      { kind: 'zone', id: 'bridge', label: 'Bridge [7]', cost: '4w/tile', hotkey: '7', desc: 'Cross water.' },
+    ],
+  },
+  {
+    id: 'zones',
+    icon: '⬡',
+    label: 'ZONES',
+    items: [
+      { kind: 'zone', id: 'farm', label: 'Farm [F]', cost: 'free', hotkey: 'f', desc: 'Paint farmable soil tiles.' },
+      { kind: 'zone', id: 'stockpile', label: 'Stockpile [T]', cost: 'free', hotkey: 't', desc: 'Settlers haul resources here.' },
+      { kind: 'tool', id: 'chop', label: 'Chop [C]', hotkey: 'c', desc: 'Mark trees and rock for harvesting.' },
+    ],
+  },
+];
+
 export class Hud {
   speed = 1;
   paused = false;
-  /** set by main when the flip is available/used */
   onFoundTown: (() => void) | null = null;
-  /** set by main: restart after a colony loss */
   onRestart: (() => void) | null = null;
-  /** set by main: persist / restore the sim (in-game menu) */
   onSave: (() => boolean) | null = null;
   onLoad: (() => void) | null = null;
   hasSave: (() => boolean) | null = null;
   menuOpen = false;
   private pausedBeforeMenu = false;
   private topBar: HTMLElement;
-  private palette: HTMLElement;
+  private buildBar: HTMLElement;
+  private buildSubmenu: HTMLElement;
+  private buildTabs: HTMLElement;
   private inspector: HTMLElement;
   private logBox: HTMLElement;
   private prioBox: HTMLElement;
   private gameOverBox: HTMLElement;
   private menuBox: HTMLElement;
   private showPriorities = false;
+  private activeCat: string | null = null;
   private lastLogLen = 0;
   private foundBtn: HTMLButtonElement | null = null;
-  /** last innerHTML per panel — skip DOM writes when nothing changed */
   private htmlCache = new Map<HTMLElement, string>();
 
-  constructor(root: HTMLElement, private sim: Simulation, private cam: Camera, private sfx?: Sfx, private music?: Music, private soundscape?: Soundscape) {
+  constructor(
+    root: HTMLElement,
+    private sim: Simulation,
+    private cam: Camera,
+    private sfx?: Sfx,
+    private music?: Music,
+    private soundscape?: Soundscape,
+  ) {
     this.topBar = el('div', 'topbar', root);
-    this.palette = el('div', 'palette', root);
-    this.inspector = el('div', 'inspector', root);
+    // Build bar (bottom-center)
+    this.buildBar = el('div', 'buildbar', root);
+    this.buildSubmenu = el('div', 'buildbar-submenu hidden', this.buildBar);
+    this.buildTabs = el('div', 'buildbar-tabs', this.buildBar);
+    this.inspector = el('div', 'inspector hidden', root);
     this.logBox = el('div', 'eventlog', root);
     this.prioBox = el('div', 'priorities hidden', root);
     this.gameOverBox = el('div', 'gameover hidden', root);
     this.menuBox = el('div', 'menu hidden', root);
-    this.buildPalette();
-    this.palette.addEventListener('mousedown', () => this.sfx?.click());
-    // Menu contents are rebuilt on every open, so delegate like the panels.
+
+    this.buildBuildBar();
+
+    // Delegate clicks on the submenu
+    this.buildSubmenu.addEventListener('mousedown', (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLElement>('.build-item-btn');
+      if (!btn) return;
+      this.sfx?.click();
+      const kind = btn.dataset.kind as 'building' | 'zone' | 'tool';
+      const id = btn.dataset.id!;
+      this.handleBuildItemClick(kind, id);
+    });
+
+    // Delegate clicks on inspector
+    this.inspector.addEventListener('mousedown', (e) => {
+      const trade = (e.target as HTMLElement).closest<HTMLElement>('.trade-btn');
+      if (trade) {
+        this.sim.trade(trade.dataset.give as ResourceKind, trade.dataset.get as ResourceKind);
+        return;
+      }
+      const btn = (e.target as HTMLElement).closest<HTMLElement>('button[data-action]');
+      if (!btn) return;
+      this.sfx?.click();
+      const action = btn.dataset.action!;
+      const bid = Number(btn.dataset.bid);
+      switch (action) {
+        case 'cancel':
+          this.sim.cancelBuilding(bid);
+          this.cam.selectedBuilding = null;
+          break;
+        case 'destroy':
+          if (confirm('Demolish this building? You will recover half the wood.')) {
+            this.sim.destroyBuilding(bid);
+            this.cam.selectedBuilding = null;
+          }
+          break;
+        case 'sell':
+          if (confirm('Sell this building to passing merchants?')) {
+            this.sim.destroyBuilding(bid); // use destroy for now (sell = better refund TODO)
+            this.cam.selectedBuilding = null;
+          }
+          break;
+        case 'upgrade':
+          this.sim.upgradeBuilding(bid);
+          break;
+        case 'worker-dec': {
+          const b = this.sim.buildings.find((x) => x.id === bid);
+          if (b) b.workerLimit = b.workerLimit === null ? 4 : Math.max(0, b.workerLimit - 1);
+          break;
+        }
+        case 'worker-inc': {
+          const b = this.sim.buildings.find((x) => x.id === bid);
+          if (b) b.workerLimit = b.workerLimit === null ? 4 : b.workerLimit + 1;
+          break;
+        }
+        case 'worker-auto': {
+          const b = this.sim.buildings.find((x) => x.id === bid);
+          if (b) b.workerLimit = null;
+          break;
+        }
+      }
+    });
+
+    this.prioBox.addEventListener('mousedown', (e) => {
+      const td = (e.target as HTMLElement).closest<HTMLElement>('.prio');
+      if (!td) return;
+      const p = this.sim.settlers.find((x) => x.id === Number(td.dataset.sid));
+      if (!p) return;
+      const k = td.dataset.work as WorkKind;
+      p.priorities[k] = (p.priorities[k] + 1) % 4;
+    });
+
     this.menuBox.addEventListener('mousedown', (e) => {
       const btn = (e.target as HTMLElement).closest<HTMLElement>('button');
       if (!btn) return;
@@ -66,47 +235,13 @@ export class Hud {
           else this.renderMenu('Save failed.');
           break;
         case 'menu-load': this.onLoad?.(); break;
-        case 'menu-mute':
-          this.sfx?.toggleMuted();
-          this.renderMenu();
-          break;
-        case 'menu-music':
-          this.music?.toggle();
-          this.music?.unlock();
-          this.renderMenu();
-          break;
-        case 'menu-soundscape':
-          this.soundscape?.toggle();
-          this.soundscape?.unlock();
-          this.renderMenu();
-          break;
+        case 'menu-mute': this.sfx?.toggleMuted(); this.renderMenu(); break;
+        case 'menu-music': this.music?.toggle(); this.music?.unlock(); this.renderMenu(); break;
+        case 'menu-soundscape': this.soundscape?.toggle(); this.soundscape?.unlock(); this.renderMenu(); break;
         case 'menu-restart':
           if (confirm('Abandon this colony and start over?')) this.onRestart?.();
           break;
       }
-    });
-    // Panels whose innerHTML is rebuilt while open handle clicks by
-    // delegation on mousedown: a per-frame rebuild destroys child elements
-    // between mousedown and mouseup, so plain onclick handlers never fire
-    // (this is what broke the cancel button and the priorities table).
-    this.inspector.addEventListener('mousedown', (e) => {
-      const trade = (e.target as HTMLElement).closest<HTMLElement>('.trade-btn');
-      if (trade) {
-        this.sim.trade(trade.dataset.give as ResourceKind, trade.dataset.get as ResourceKind);
-        return;
-      }
-      const btn = (e.target as HTMLElement).closest<HTMLElement>('#insp-cancel');
-      if (!btn) return;
-      this.sim.cancelBuilding(Number(btn.dataset.bid));
-      this.cam.selectedBuilding = null;
-    });
-    this.prioBox.addEventListener('mousedown', (e) => {
-      const td = (e.target as HTMLElement).closest<HTMLElement>('.prio');
-      if (!td) return;
-      const p = this.sim.settlers.find((x) => x.id === Number(td.dataset.sid));
-      if (!p) return;
-      const k = td.dataset.work as WorkKind;
-      p.priorities[k] = (p.priorities[k] + 1) % 4;
     });
   }
 
@@ -116,119 +251,153 @@ export class Hud {
     box.innerHTML = html;
   }
 
-  private buildPalette(): void {
-    const title = el('div', 'pal-title', this.palette);
-    title.textContent = 'BUILD';
-    for (const def of BUILDING_DEFS) {
-      const b = el('button', 'pal-btn', this.palette);
-      b.textContent = `${def.name} (${def.cost.wood ?? 0}w)`;
-      b.title = def.desc;
-      b.onclick = () => {
-        this.cam.placing = this.cam.placing === def.id ? null : def.id;
-        this.cam.chopMode = false;
-        this.refreshPaletteState();
-      };
-      b.dataset.def = def.id;
+  private buildBuildBar(): void {
+    // Category tabs
+    for (const cat of BUILD_CATEGORIES) {
+      const btn = document.createElement('button');
+      btn.className = 'build-cat-btn';
+      btn.dataset.cat = cat.id;
+      btn.innerHTML = `<span class="cat-icon">${cat.icon}</span><span>${cat.label}</span>`;
+      btn.title = cat.items.map((i) => i.label).join(', ');
+      btn.addEventListener('mousedown', () => {
+        this.sfx?.click();
+        this.toggleCategory(cat.id);
+      });
+      this.buildTabs.appendChild(btn);
     }
-    const chop = el('button', 'pal-btn', this.palette);
-    chop.textContent = 'Chop / Quarry [C]';
-    chop.title = 'Mark trees for felling and rock for quarrying (stone)';
-    chop.dataset.def = 'chop';
-    chop.onclick = () => this.toggleChop();
-    // Zones and roads (drag to paint); the bracketed letter is the hotkey
-    const zoneDefs: [PaintKind, string, string][] = [
-      ['farm', 'Farm Zone [F]', 'Paint farmable soil tiles; settlers sow and harvest automatically'],
-      ['stockpile', 'Stockpile Zone [T]', 'Designate tiles as storage; settlers haul here'],
-      ['wall', 'Palisade Wall [L]', 'Paint wall tiles; workers build them with wood'],
-      ['gate', 'Gate (5w) [G]', 'A door in the palisade: settlers walk through, raiders and wolves must break it'],
-      ['dirt', 'Dirt Path (free) [4]', 'Quick ruts: ×1.3 speed, mud in rain'],
-      ['plank', 'Plank Road (1w) [5]', 'All-weather timber: ×1.6 speed'],
-      ['gravel', 'Gravel Road (1s) [6]', 'Best surface: ×1.8 speed (needs quarried stone)'],
-      ['bridge', 'Bridge (4w) [7]', 'The only way across water'],
-    ];
-    for (const [kind, label, desc] of zoneDefs) {
-      const b = el('button', 'pal-btn', this.palette);
-      b.textContent = label;
-      b.title = desc;
-      b.dataset.def = `zone-${kind}`;
-      b.onclick = () => this.toggleZone(kind);
-    }
-    const overlay = el('button', 'pal-btn', this.palette);
-    overlay.textContent = 'Traffic Overlay [O]';
-    overlay.title = 'Heatmap of where settlers actually walk';
-    overlay.dataset.def = 'overlay-traffic';
-    overlay.onclick = () => this.toggleOverlay();
-    const prio = el('button', 'pal-btn', this.palette);
-    prio.textContent = 'Work Priorities [P]';
-    prio.onclick = () => this.togglePriorities();
-    const menu = el('button', 'pal-btn', this.palette);
-    menu.textContent = 'Menu [M]';
-    menu.title = 'Pause, save, load, restart, sound';
-    menu.onclick = () => this.toggleMenu();
-    // The flip: available once the town has outgrown the valley (GDD §2.3)
-    this.foundBtn = el('button', 'pal-btn pal-found', this.palette);
-    this.foundBtn.textContent = 'Found Town #2';
-    this.foundBtn.onclick = () => {
+
+    // Extra: work priorities and overlay
+    const prioBtn = document.createElement('button');
+    prioBtn.className = 'build-cat-btn';
+    prioBtn.innerHTML = `<span class="cat-icon">☰</span><span>WORK</span>`;
+    prioBtn.title = 'Work Priorities [P]';
+    prioBtn.addEventListener('mousedown', () => { this.sfx?.click(); this.togglePriorities(); });
+    this.buildTabs.appendChild(prioBtn);
+
+    const menuBtn = document.createElement('button');
+    menuBtn.className = 'build-cat-btn';
+    menuBtn.innerHTML = `<span class="cat-icon">≡</span><span>MENU</span>`;
+    menuBtn.title = 'Menu [M]';
+    menuBtn.addEventListener('mousedown', () => { this.sfx?.click(); this.toggleMenu(); });
+    this.buildTabs.appendChild(menuBtn);
+
+    // Found Town button (hidden by default)
+    this.foundBtn = document.createElement('button');
+    this.foundBtn.className = 'build-cat-btn pal-found-tab';
+    this.foundBtn.innerHTML = `<span class="cat-icon">★</span><span>FOUND</span>`;
+    this.foundBtn.title = 'Found Town #2';
+    this.foundBtn.addEventListener('mousedown', () => {
       if (this.sim.canFoundSecondTown().ok && this.onFoundTown) this.onFoundTown();
-    };
+    });
+    this.buildTabs.appendChild(this.foundBtn);
   }
 
-  private toggleChop(): void {
-    this.cam.chopMode = !this.cam.chopMode;
-    this.cam.placing = null;
-    this.cam.placingZone = null;
-    this.refreshPaletteState();
+  private toggleCategory(catId: string): void {
+    if (this.activeCat === catId) {
+      this.activeCat = null;
+      this.buildSubmenu.classList.add('hidden');
+    } else {
+      this.activeCat = catId;
+      this.buildSubmenu.classList.remove('hidden');
+      this.renderSubmenu();
+    }
+    this.refreshBuildBarState();
   }
 
-  private toggleZone(kind: PaintKind): void {
-    this.cam.placingZone = this.cam.placingZone === kind ? null : kind;
-    this.cam.placing = null;
-    this.cam.chopMode = false;
-    this.refreshPaletteState();
+  private renderSubmenu(): void {
+    if (!this.activeCat) return;
+    const cat = BUILD_CATEGORIES.find((c) => c.id === this.activeCat);
+    if (!cat) return;
+    this.buildSubmenu.innerHTML = '';
+    for (const item of cat.items) {
+      const btn = document.createElement('button');
+      btn.className = 'build-item-btn';
+      btn.dataset.kind = item.kind;
+      btn.dataset.id = item.id;
+      let label = item.label;
+      if (item.cost) label += ` (${item.cost})`;
+      btn.textContent = label;
+      btn.title = item.desc + (item.hotkey ? ` [${item.hotkey.toUpperCase()}]` : '');
+      // Mark active
+      const active =
+        (item.kind === 'building' && this.cam.placing === item.id) ||
+        (item.kind === 'zone' && this.cam.placingZone === item.id) ||
+        (item.kind === 'tool' && item.id === 'chop' && this.cam.chopMode);
+      btn.classList.toggle('active', active);
+      this.buildSubmenu.appendChild(btn);
+    }
   }
 
-  private toggleOverlay(): void {
-    this.cam.overlay = this.cam.overlay === 'traffic' ? 'none' : 'traffic';
-    this.refreshPaletteState();
+  private handleBuildItemClick(kind: 'building' | 'zone' | 'tool', id: string): void {
+    if (kind === 'building') {
+      this.cam.placing = this.cam.placing === id ? null : id;
+      this.cam.placingZone = null;
+      this.cam.chopMode = false;
+      if (this.cam.placing === null) this.cam.placingRotation = 0;
+    } else if (kind === 'zone') {
+      const zoneId = id as PaintKind;
+      this.cam.placingZone = this.cam.placingZone === zoneId ? null : zoneId;
+      this.cam.placing = null;
+      this.cam.chopMode = false;
+    } else if (kind === 'tool' && id === 'chop') {
+      this.cam.chopMode = !this.cam.chopMode;
+      this.cam.placing = null;
+      this.cam.placingZone = null;
+    } else if (kind === 'tool' && id === 'overlay') {
+      this.cam.overlay = this.cam.overlay === 'traffic' ? 'none' : 'traffic';
+    }
+    this.refreshBuildBarState();
+    if (this.activeCat) this.renderSubmenu();
   }
 
-  private togglePriorities(): void {
-    this.showPriorities = !this.showPriorities;
-    this.prioBox.classList.toggle('hidden', !this.showPriorities);
+  refreshBuildBarState(): void {
+    for (const btn of this.buildTabs.querySelectorAll<HTMLButtonElement>('.build-cat-btn')) {
+      const id = btn.dataset.cat;
+      btn.classList.toggle('active', id === this.activeCat);
+    }
+    if (this.activeCat) this.renderSubmenu();
   }
 
-  /** Palette hotkeys (the bracketed letters on the buttons). True if handled. */
+  // Palette hotkey support (letters on zone/tool items)
   handleKey(key: string): boolean {
     const k = key.toLowerCase();
     if (this.menuOpen) {
-      if (k === 'm' || k === 'escape') {
-        this.closeMenu();
-        return true;
-      }
-      return k.length === 1; // swallow stray keys while the menu is up
+      if (k === 'm' || k === 'escape') { this.closeMenu(); return true; }
+      return k.length === 1;
     }
-    switch (k) {
-      case 'c': this.toggleChop(); return true;
-      case 'f': this.toggleZone('farm'); return true;
-      case 't': this.toggleZone('stockpile'); return true;
-      case 'l': this.toggleZone('wall'); return true;
-      case 'g': this.toggleZone('gate'); return true;
-      case '4': this.toggleZone('dirt'); return true;
-      case '5': this.toggleZone('plank'); return true;
-      case '6': this.toggleZone('gravel'); return true;
-      case '7': this.toggleZone('bridge'); return true;
-      case 'o': this.toggleOverlay(); return true;
-      case 'p': this.togglePriorities(); return true;
-      case 'm': this.toggleMenu(); return true;
-      default: return false;
+    const zoneMap: Record<string, PaintKind> = {
+      f: 'farm', t: 'stockpile', l: 'wall', g: 'gate',
+      '4': 'dirt', '5': 'plank', '6': 'gravel', '7': 'bridge',
+    };
+    if (zoneMap[k]) {
+      this.cam.placingZone = this.cam.placingZone === zoneMap[k] ? null : zoneMap[k];
+      this.cam.placing = null;
+      this.cam.chopMode = false;
+      this.refreshBuildBarState();
+      // Auto-open defense/roads/zones category
+      const catForZone: Record<string, string> = {
+        wall: 'defense', gate: 'defense',
+        dirt: 'roads', plank: 'roads', gravel: 'roads', bridge: 'roads',
+        farm: 'zones', stockpile: 'zones',
+      };
+      const cat = catForZone[k] ?? catForZone[zoneMap[k]];
+      if (cat && this.activeCat !== cat) this.toggleCategory(cat);
+      return true;
     }
+    if (k === 'c') {
+      this.cam.chopMode = !this.cam.chopMode;
+      this.cam.placing = null;
+      this.cam.placingZone = null;
+      this.refreshBuildBarState();
+      return true;
+    }
+    if (k === 'o') { this.cam.overlay = this.cam.overlay === 'traffic' ? 'none' : 'traffic'; return true; }
+    if (k === 'p') { this.togglePriorities(); return true; }
+    if (k === 'm') { this.toggleMenu(); return true; }
+    return false;
   }
 
-  // ---- in-game menu ----
-  toggleMenu(): void {
-    if (this.menuOpen) this.closeMenu();
-    else this.openMenu();
-  }
+  toggleMenu(): void { this.menuOpen ? this.closeMenu() : this.openMenu(); }
 
   openMenu(): void {
     this.menuOpen = true;
@@ -244,6 +413,11 @@ export class Hud {
     this.menuBox.classList.add('hidden');
   }
 
+  private togglePriorities(): void {
+    this.showPriorities = !this.showPriorities;
+    this.prioBox.classList.toggle('hidden', !this.showPriorities);
+  }
+
   private renderMenu(note = ''): void {
     const canSave = this.onSave !== null;
     const canLoad = (this.hasSave?.() ?? false) && this.onLoad !== null;
@@ -252,8 +426,8 @@ export class Hud {
       `<h2>CENTURIA</h2>` +
       `<p class="menu-note">${note || 'The colony waits.'}</p>` +
       `<button id="menu-resume">Resume [M]</button>` +
-      `<button id="menu-save"${canSave ? '' : ' disabled title="Saving works on the town map"'}>Save Game</button>` +
-      `<button id="menu-load"${canLoad ? '' : ' disabled title="No saved game yet"'}>Load Game</button>` +
+      `<button id="menu-save"${canSave ? '' : ' disabled'}>Save Game</button>` +
+      `<button id="menu-load"${canLoad ? '' : ' disabled'}>Load Game</button>` +
       `<button id="menu-mute">${this.sfx?.muted ? 'Sound: OFF' : 'Sound: ON'}</button>` +
       `<button id="menu-music">${this.music?.enabled ? 'Music: ON' : 'Music: OFF'}</button>` +
       `<button id="menu-soundscape">${this.soundscape?.enabled ? 'Ambience: ON' : 'Ambience: OFF'}</button>` +
@@ -261,9 +435,8 @@ export class Hud {
       `</div>`);
   }
 
-  /** Region mode hides the town chrome; the region view brings its own panel. */
   setRegionMode(on: boolean): void {
-    this.palette.classList.toggle('hidden', on);
+    this.buildBar.classList.toggle('hidden', on);
     this.inspector.classList.toggle('hidden', on);
     this.prioBox.classList.add('hidden');
     if (on) this.showPriorities = false;
@@ -291,22 +464,7 @@ export class Hud {
   regionLog(r: import('../sim/region').RegionSim): void {
     if (r.log.length === this.lastLogLen) return;
     this.lastLogLen = r.log.length;
-    this.setHtml(this.logBox, r.log
-      .slice(-8)
-      .map((l) => `<div class="log-${l.kind}">d${l.day} · ${l.text}</div>`)
-      .reverse()
-      .join(''));
-  }
-
-  refreshPaletteState(): void {
-    for (const b of this.palette.querySelectorAll<HTMLButtonElement>('.pal-btn')) {
-      const active =
-        b.dataset.def === this.cam.placing ||
-        (b.dataset.def === 'chop' && this.cam.chopMode) ||
-        b.dataset.def === `zone-${this.cam.placingZone}` ||
-        (b.dataset.def === 'overlay-traffic' && this.cam.overlay === 'traffic');
-      b.classList.toggle('active', active);
-    }
+    this.setHtml(this.logBox, r.log.slice(-6).map((l) => `<div class="log-${l.kind}">d${l.day} · ${l.text}</div>`).reverse().join(''));
   }
 
   update(): void {
@@ -318,7 +476,7 @@ export class Hud {
     if (this.foundBtn) {
       const can = this.sim.canFoundSecondTown();
       this.foundBtn.disabled = !can.ok;
-      this.foundBtn.title = can.ok ? 'Send an expedition — and step up to the region map' : can.reason;
+      this.foundBtn.title = can.ok ? 'Send an expedition — step up to the region map' : can.reason;
     }
   }
 
@@ -327,18 +485,17 @@ export class Hud {
     const hh = String(Math.floor(s.hour)).padStart(2, '0');
     const mm = String(Math.floor((s.hour % 1) * 60)).padStart(2, '0');
     const over = s.settlers.length - TUNING.softCapPop;
-    const capWarn = over > 0 ? ` ⚠ growing pains −${Math.round((1 - s.softCapWorkMult()) * 100)}% work` : '';
+    const capWarn = over > 0 ? ` ⚠ −${Math.round((1 - s.softCapWorkMult()) * 100)}%` : '';
     const skyIcon = { clear: '☀', overcast: '☁', rain: '☔', storm: '⛈', snow: '❄' }[s.weatherToday().sky];
     const drought = s.weather.isDrought(s.day) && s.growingSeason ? ' <span class="tb-over">DROUGHT</span>' : '';
     this.setHtml(this.topBar,
       `<span class="tb-date">${s.dateLabel} ${hh}:${mm}</span>` +
       `<span>${skyIcon} ${Math.round(s.temperature())}°C${drought}</span>` +
       `<span>POP ${s.settlers.length}${capWarn}</span>` +
-      `<span>wood ${s.stock.wood} · stone ${s.stock.stone} · grain ${s.stock.grain} · meals ${s.stock.meal} · clothes ${s.stock.clothes}</span>` +
-      `<span title="average of all settler moods">MOOD ${Math.round(s.avgMood())}</span>` +
-      (s.raidActive ? `<span class="tb-over">⚔ RAID — ${s.raiders.length} raiders!</span>` : '') +
-      `<span class="tb-speed">${this.paused ? '⏸ PAUSED' : '▶'.repeat(this.speed)} <i>(space, 1-3)</i></span>` +
-      (s.gameOver ? `<span class="tb-over">THE COLONY HAS PERISHED</span>` : ''));
+      `<span>🪵${s.stock.wood} ⛏${s.stock.stone} 🌾${s.stock.grain} 🍖${s.stock.meal} 👕${s.stock.clothes}</span>` +
+      `<span title="average mood">♥${Math.round(s.avgMood())}</span>` +
+      (s.raidActive ? `<span class="tb-over">⚔ RAID ${s.raiders.length}!</span>` : '') +
+      `<span class="tb-speed">${this.paused ? '⏸' : '▶'.repeat(this.speed)} <i>(space 1-3)</i></span>`);
   }
 
   private drawInspector(): void {
@@ -349,42 +506,113 @@ export class Hud {
       this.setHtml(this.inspector, this.settlerCard(settler));
       this.inspector.classList.remove('hidden');
     } else if (building) {
-      const def = buildingDef(building.defId);
-      this.setHtml(this.inspector,
-        `<h3>${def.name}${building.built ? '' : ' (blueprint)'}</h3>` +
-        `<p>${def.desc}</p>` +
-        (building.built
-          ? (def.provides === 'trade' ? this.tradePanel() : '')
-          : `<p>wood ${building.delivered}/${def.cost.wood ?? 0} · work left ${Math.max(0, Math.round(building.buildLeft))}</p>` +
-            `<button id="insp-cancel" data-bid="${building.id}">Cancel</button>`));
+      this.setHtml(this.inspector, this.buildingCard(building));
+      this.inspector.classList.remove('hidden');
+    } else if (this.cam.selectedStockpile) {
+      this.setHtml(this.inspector, this.stockpileCard());
       this.inspector.classList.remove('hidden');
     } else {
       this.inspector.classList.add('hidden');
     }
   }
 
-  /** Barter buttons for a selected market; clicks land on the mousedown delegate. */
+  private stockpileCard(): string {
+    const s = this.sim;
+    const tileCount = s.world.tiles.filter((t) => t.stockpileZone).length;
+    const mealCap = s.mealCap();
+    const granaryCount = s.builtOf('granary').length;
+    const rows = [
+      ['Wood', s.stock.wood, '∞'],
+      ['Stone', s.stock.stone, '∞'],
+      ['Grain', s.stock.grain, '∞'],
+      ['Meals', s.stock.meal, mealCap],
+      ['Clothes', s.stock.clothes, '∞'],
+    ].map(([label, val, cap]) =>
+      `<div class="bar-row"><span>${label}</span><div class="bar"><div class="bar-fill" style="width:${cap === '∞' ? 50 : Math.min(100, Math.round(Number(val) / Number(cap) * 100))}%"></div></div><span>${val}/${cap}</span></div>`
+    ).join('');
+    return (
+      `<h3>Stockpile</h3>` +
+      `<p class="insp-state">${tileCount} tile${tileCount !== 1 ? 's' : ''} designated</p>` +
+      rows +
+      (granaryCount > 0 ? `<p class="insp-skills">Meal cap: ${TUNING.mealCapBase} base + ${granaryCount} granary = ${mealCap}</p>` : `<p class="insp-skills">Build a Granary to extend meal storage.</p>`)
+    );
+  }
+
+  private buildingCard(b: Building): string {
+    const s = this.sim;
+    const def = buildingDef(b.defId);
+    const hasMarket = s.builtOf('trade').length > 0;
+    const lvl = b.level ?? 1;
+    const maxLvl = (def.upgrades?.length ?? 0) + 1;
+    const nextUpgrade = def.upgrades?.[lvl - 1];
+    const canUpgrade = nextUpgrade && Object.entries(nextUpgrade.cost).every(
+      ([res, amt]) => (s.stock[res as ResourceKind] ?? 0) >= (amt as number),
+    );
+    const upgradeCostStr = nextUpgrade
+      ? Object.entries(nextUpgrade.cost).map(([r, a]) => `${a}${r[0]}`).join(' ')
+      : '';
+
+    const workerCount = s.settlers.filter((p) => {
+      const task = p.task;
+      return task?.buildingId === b.id || (p.bedId === b.id && p.state === 'sleeping');
+    }).length;
+    const wl = b.workerLimit;
+    const wlStr = wl === null ? 'Auto' : String(wl);
+
+    let details = '';
+    if (b.built) {
+      const cap = s.buildingEffectiveCapacity(b);
+      if (cap > 0) {
+        const used = s.settlers.filter((p) => p.bedId === b.id).length;
+        details += `<p class="insp-state">Occupancy: ${used}/${cap}</p>`;
+      }
+      if (def.provides === 'trade') details += this.tradePanel();
+      if (def.provides === 'granary') {
+        details += `<p class="insp-state">Adds ${TUNING.mealCapPerGranary + s.buildingEffectiveCapacity(b)} meal capacity</p>`;
+      }
+      if (def.provides === 'warmth') {
+        const radius = TUNING.hearthRadius + (lvl >= 2 ? 2 : 0) + (lvl >= 3 ? 2 : 0);
+        details += `<p class="insp-state">Warmth radius: ${radius} tiles</p>`;
+      }
+    }
+
+    return (
+      `<h3>${def.name}${b.built ? '' : ' <i>(building)</i>'}</h3>` +
+      (b.built ? `<p class="insp-lvl">Level ${lvl}/${maxLvl}</p>` : '') +
+      `<p>${def.desc}</p>` +
+      (b.built ? details : `<p class="insp-state">wood ${b.delivered}/${def.cost.wood ?? 0} · work ${Math.max(0, Math.round(b.buildLeft))} min left</p>`) +
+      (b.built
+        ? `<p class="insp-workers">Workers: ${workerCount} active · Limit: ${wlStr}</p>` +
+          `<button data-action="worker-dec" data-bid="${b.id}">−</button>` +
+          `<button data-action="worker-auto" data-bid="${b.id}">Auto</button>` +
+          `<button data-action="worker-inc" data-bid="${b.id}">+</button><br>`
+        : '') +
+      (nextUpgrade && b.built
+        ? `<button class="upgrade" data-action="upgrade" data-bid="${b.id}"${canUpgrade ? '' : ' disabled'}>Upgrade (${upgradeCostStr}) → ${nextUpgrade.desc}</button>`
+        : '') +
+      (b.built
+        ? `<button class="danger" data-action="destroy" data-bid="${b.id}">Demolish</button>` +
+          (hasMarket ? `<button data-action="sell" data-bid="${b.id}">Sell</button>` : '')
+        : `<button data-action="cancel" data-bid="${b.id}">Cancel</button>`)
+    );
+  }
+
   private tradePanel(): string {
     const offers = Object.entries(TUNING.tradeRates).map(([key, r]) => {
       const [give, get] = key.split('->');
       const can = this.sim.stock[give as ResourceKind] >= r.give;
-      return `<button class="trade-btn" data-give="${give}" data-get="${get}"${can ? '' : ' disabled'}>` +
-        `${r.give} ${give} → ${r.get} ${get}</button>`;
+      return `<button class="trade-btn" data-give="${give}" data-get="${get}"${can ? '' : ' disabled'}>${r.give}${give[0]}→${r.get}${get[0]}</button>`;
     }).join(' ');
-    return `<p class="insp-skills">BARTER — fixed rates:</p><p>${offers}</p>`;
+    return `<p class="insp-skills">BARTER:</p><p>${offers}</p>`;
   }
 
-  /** The end of the line: a big retro banner and a way back in (F18). */
   private drawGameOver(): void {
-    if (!this.sim.gameOver) {
-      this.gameOverBox.classList.add('hidden');
-      return;
-    }
+    if (!this.sim.gameOver) { this.gameOverBox.classList.add('hidden'); return; }
     if (this.gameOverBox.classList.contains('hidden')) {
       this.setHtml(this.gameOverBox,
         `<div class="gameover-box">` +
         `<h1>YOU LOSE</h1>` +
-        `<p>The colony has perished. ${this.sim.dateLabel} — ${this.sim.graves.length} graves, none left to dig more.</p>` +
+        `<p>The colony has perished. ${this.sim.dateLabel} — ${this.sim.graves.length} graves.</p>` +
         `<button id="go-restart">RESTART</button>` +
         `</div>`);
       this.gameOverBox.classList.remove('hidden');
@@ -393,10 +621,6 @@ export class Hud {
     }
   }
 
-  /**
-   * Mood, itemized (GDD §8.5: every number explains itself): each weighted
-   * need, trait, thought and penalty that the mood is drifting toward.
-   */
   private moodBreakdown(p: Settler): string {
     const w = TUNING.moodWeights;
     const parts: [string, number][] = [
@@ -406,19 +630,12 @@ export class Hud {
       ['recreation', p.needs.recreation * w.recreation],
       ['social', p.needs.social * w.social],
     ];
-    for (const id of p.traits) {
-      const mb = traitDef(id).moodBase ?? 0;
-      if (mb !== 0) parts.push([traitDef(id).name, mb]);
-    }
+    for (const id of p.traits) { const mb = traitDef(id).moodBase ?? 0; if (mb !== 0) parts.push([traitDef(id).name, mb]); }
     for (const th of p.thoughts) parts.push([th.label, th.delta]);
     const cap = this.sim.softCapMoodPenalty();
-    if (cap > 0) parts.push(['crowding (soft cap)', -cap]);
+    if (cap > 0) parts.push(['crowding', -cap]);
     const total = Math.max(0, Math.min(100, parts.reduce((s, [, v]) => s + v, 0)));
-    return (
-      'MOOD — what feeds it:\n' +
-      parts.map(([l, v]) => `${v >= 0 ? '+' : ''}${Math.round(v)}  ${l}`).join('\n') +
-      `\n= drifting toward ${Math.round(total)}`
-    );
+    return 'MOOD:\n' + parts.map(([l, v]) => `${v >= 0 ? '+' : ''}${Math.round(v)}  ${l}`).join('\n') + `\n= ${Math.round(total)}`;
   }
 
   private settlerCard(p: Settler): string {
@@ -431,14 +648,14 @@ export class Hud {
       p.wound?.untreated ? 'wounded' : p.wound ? 'wound (treated)' : '',
       p.infection ? 'INFECTED' : '',
       p.sickUntil > this.sim.minute ? 'fever' : '',
-      p.clothedUntil > this.sim.minute ? '' : 'threadbare (+cold)',
+      p.clothedUntil > this.sim.minute ? '' : 'threadbare',
     ].filter(Boolean).join(' · ');
     const friends = this.sim.friendsOf(p).slice(0, 3)
       .map((f) => `${f.name.split(' ')[0]} (${Math.round(this.sim.opinionBetween(p, f))})`)
       .join(', ');
     return (
       `<h3>${p.name}, ${p.age}</h3>` +
-      `<p class="insp-state">${p.state}${p.task ? ` — ${p.task.label}` : ''} · hp ${Math.round(p.health)} · combat ${p.combat.toFixed(1)}</p>` +
+      `<p class="insp-state">${p.state}${p.task ? ` — ${p.task.label}` : ''} · hp ${Math.round(p.health)}</p>` +
       (conditions ? `<p class="insp-cond">${conditions}</p>` : '') +
       `<p>${traits}</p>` +
       bar('mood', p.mood, this.moodBreakdown(p)) + bar('food', p.needs.food) + bar('rest', p.needs.rest) +
@@ -452,25 +669,17 @@ export class Hud {
   private drawLog(): void {
     if (this.sim.log.length === this.lastLogLen) return;
     this.lastLogLen = this.sim.log.length;
-    this.setHtml(this.logBox, this.sim.log
-      .slice(-8)
-      .map((l) => `<div class="log-${l.kind}">d${l.day} · ${l.text}</div>`)
-      .reverse()
-      .join(''));
+    this.setHtml(this.logBox, this.sim.log.slice(-6).map((l) => `<div class="log-${l.kind}">d${l.day} · ${l.text}</div>`).reverse().join(''));
   }
 
   private drawPriorities(): void {
-    // Clicks are handled by the mousedown delegate in the constructor.
-    const rows = this.sim.settlers
-      .map((p) => {
-        const cells = WORK_KINDS.map(
-          (k) =>
-            `<td class="prio prio-${p.priorities[k]}" data-sid="${p.id}" data-work="${k}">${p.priorities[k] || '·'}</td>`,
-        ).join('');
-        return `<tr><td class="prio-name">${p.name.split(' ')[0]}</td>${cells}</tr>`;
-      })
-      .join('');
+    const rows = this.sim.settlers.map((p) => {
+      const cells = WORK_KINDS.map(
+        (k) => `<td class="prio prio-${p.priorities[k]}" data-sid="${p.id}" data-work="${k}">${p.priorities[k] || '·'}</td>`,
+      ).join('');
+      return `<tr><td class="prio-name">${p.name.split(' ')[0]}</td>${cells}</tr>`;
+    }).join('');
     this.setHtml(this.prioBox,
-      `<table><tr><th>WORK (click to cycle 0–3)</th>${WORK_KINDS.map((k) => `<th>${k}</th>`).join('')}</tr>${rows}</table>`);
+      `<table><tr><th>Work (click=cycle)</th>${WORK_KINDS.map((k) => `<th>${k}</th>`).join('')}</tr>${rows}</table>`);
   }
 }

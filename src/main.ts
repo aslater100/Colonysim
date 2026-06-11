@@ -61,13 +61,16 @@ const sim = boot.sim;
 const cam: Camera = {
   x: (MAP_W * TILE) / 2 - window.innerWidth / 2,
   y: (MAP_H * TILE) / 2 - window.innerHeight / 2,
+  zoom: 1,
   placing: null,
+  placingRotation: 0,
   placingZone: null,
   chopMode: false,
   overlay: 'none',
   mouseTile: { x: 0, y: 0 },
   selectedSettler: null,
   selectedBuilding: null,
+  selectedStockpile: null,
 };
 
 function resize(): void {
@@ -188,14 +191,22 @@ window.addEventListener('keydown', (e) => {
     // First escape clears whatever tool/selection is live; a bare escape
     // with nothing active opens the menu.
     const anythingActive = cam.placing !== null || cam.placingZone !== null || cam.chopMode ||
-      cam.selectedSettler !== null || cam.selectedBuilding !== null;
+      cam.selectedSettler !== null || cam.selectedBuilding !== null || cam.selectedStockpile !== null;
     cam.placing = null;
+    cam.placingRotation = 0;
     cam.placingZone = null;
     cam.chopMode = false;
     cam.selectedSettler = null;
     cam.selectedBuilding = null;
-    hud.refreshPaletteState();
+    cam.selectedStockpile = null;
+    hud.refreshBuildBarState();
     if (!anythingActive && mode === 'town') hud.openMenu();
+    return;
+  }
+  // R rotates placement ghost
+  if (mode === 'town' && (e.key === 'r' || e.key === 'R') && cam.placing) {
+    cam.placingRotation = ((cam.placingRotation ?? 0) + 1) % 4;
+    e.preventDefault();
     return;
   }
   // Palette hotkeys (the bracketed letters on the buttons)
@@ -267,10 +278,11 @@ canvas.addEventListener('click', (e) => {
   if (mode === 'region') return; // diorama is look-only
   const t = renderer.tileAt(e.clientX, e.clientY);
   if (cam.placing) {
-    if (sim.placeBuilding(cam.placing, t.x, t.y)) {
+    if (sim.placeBuilding(cam.placing, t.x, t.y, cam.placingRotation ?? 0)) {
       if (!e.shiftKey) {
         cam.placing = null;
-        hud.refreshPaletteState();
+        cam.placingRotation = 0;
+        hud.refreshBuildBarState();
       }
     }
     return;
@@ -288,9 +300,10 @@ canvas.addEventListener('click', (e) => {
     if (!paintedTiles.has(`${t.x},${t.y}`)) sim.markTree(t.x, t.y);
     return;
   }
-  // Selection: settler first (within half a tile), then building
+  // Selection: settler first (within half a tile), then building, then stockpile zone
   cam.selectedSettler = null;
   cam.selectedBuilding = null;
+  cam.selectedStockpile = null;
   let best = 0.8;
   for (const s of sim.settlers) {
     const d = Math.hypot(s.pos.x - t.x, s.pos.y - t.y);
@@ -300,8 +313,12 @@ canvas.addEventListener('click', (e) => {
     }
   }
   if (cam.selectedSettler === null && sim.world.inBounds(t.x, t.y)) {
-    const id = sim.world.at(t.x, t.y).buildingId;
-    if (id !== null) cam.selectedBuilding = id;
+    const tile = sim.world.at(t.x, t.y);
+    if (tile.buildingId !== null) {
+      cam.selectedBuilding = tile.buildingId;
+    } else if (tile.stockpileZone) {
+      cam.selectedStockpile = { x: t.x, y: t.y };
+    }
   }
 });
 
@@ -316,6 +333,17 @@ minimapCanvas.addEventListener('click', () => {
     dioramaOpen = false;
   }
 });
+
+// Scroll wheel: zoom in/out around mouse cursor
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+  const newZoom = Math.max(0.4, Math.min(4.0, cam.zoom * factor));
+  // Zoom toward/away from mouse position
+  cam.x = e.clientX / cam.zoom + cam.x - e.clientX / newZoom;
+  cam.y = e.clientY / cam.zoom + cam.y - e.clientY / newZoom;
+  cam.zoom = newZoom;
+}, { passive: false });
 
 // Right-click to bulldoze/cancel zones
 canvas.addEventListener('contextmenu', (e) => {
@@ -336,8 +364,8 @@ function loop(now: number): void {
   if (keys.has('ArrowRight') || keys.has('d')) cam.x += panSpeed;
   if (keys.has('ArrowUp') || keys.has('w')) cam.y -= panSpeed;
   if (keys.has('ArrowDown') || keys.has('s')) cam.y += panSpeed;
-  cam.x = Math.max(-200, Math.min(MAP_W * TILE - canvas.width + 200, cam.x));
-  cam.y = Math.max(-200, Math.min(MAP_H * TILE - canvas.height + 200, cam.y));
+  cam.x = Math.max(-200, Math.min(MAP_W * TILE - canvas.width / cam.zoom + 200, cam.x));
+  cam.y = Math.max(-200, Math.min(MAP_H * TILE - canvas.height / cam.zoom + 200, cam.y));
 
   if (!hud.paused) {
     acc += dt * TICKS_PER_SECOND * hud.speed;

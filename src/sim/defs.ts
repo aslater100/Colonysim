@@ -11,6 +11,12 @@ export type Provides =
 export type WorkKind = 'build' | 'farm' | 'chop' | 'cook' | 'haul' | 'medic' | 'craft' | 'bury' | 'hunt' | 'plant' | 'fish';
 export const WORK_KINDS: WorkKind[] = ['build', 'farm', 'chop', 'cook', 'haul', 'medic', 'craft', 'bury', 'hunt', 'plant', 'fish'];
 
+export interface UpgradeLevel {
+  cost: Partial<Record<ResourceKind, number>>;
+  capacityBonus: number;
+  desc: string;
+}
+
 export interface BuildingDef {
   id: string;
   name: string;
@@ -22,6 +28,7 @@ export interface BuildingDef {
   capacity?: number;
   maxHp?: number; // only damageable structures define this
   desc: string;
+  upgrades?: UpgradeLevel[];
 }
 
 export interface TraitDef {
