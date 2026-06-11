@@ -1,8 +1,8 @@
-# Session Handoff — 2026-06-11 (v0.17.0)
+# Session Handoff — 2026-06-11 (v0.18.0)
 
 ## Current state
 
-Version **v0.17.0** (rival nations + diplomacy). Transportation arc, governance stack, audio layer, and the first external-actor slice are complete.
+Version **v0.18.0** (war). Transportation arc, governance stack, audio layer, rival nations + diplomacy, and the casus-belli → mobilization → war-score → negotiated-peace loop are complete.
 
 ## Shipped
 
@@ -25,6 +25,7 @@ Version **v0.17.0** (rival nations + diplomacy). Transportation arc, governance 
 | 0.15 | Constitutional Convention; Nation proclamation; 13 government types (democracy→fascism) |
 | 0.16 | Policy slots (3–4/gov type, 9 cards, 20 PC to swap); statute book 4→12 laws (8 nation-tier laws) |
 | 0.17 | Rival nations + diplomacy: ≤6 powers emerge 1922+, §6.3 personality archetypes, 10 era-gated regimes in 4 blocs, generated founding histories, player relations ledger + 3 treaty types + envoys/gifts/AI offers, pairwise rival relations with alliances/customs unions/ultimatums, foreign wars (refugee waves, export booms, dictated peaces, defeat-toppled regimes), sponsored raids |
+| 0.18 | War (GDD §7): nation-tier `playerWar` — 3 casus belli (CB quality sets war support; fabrication costs legitimacy + reputation), 3 mobilization levels (GDP stimulus + £/pop drain + rationing), monthly front resolution on `manpower^0.6 × quality` power ratio, attrition scars cohorts, support floors per regime (home front breaks → capitulation), peace table priced in war score (status quo/reparations/annex/regime change) with grudge premium + Versailles trap; hostile rivals can declare on the player |
 
 ## Ship loop
 
@@ -38,10 +39,9 @@ User merges and play-tests; CI validates (test.yml — do not run the suite loca
 
 ## What's next
 
-**Biggest gap:** War (GDD §7) — rivals and treaties now exist, but hostility tops out at sponsored raids and border friction. A casus-belli → mobilization → war-score → negotiated-peace loop (priced with the §6.3 engine) is the natural next slice.
-
-Other GDD-aligned open items:
-- Negotiation depth: multi-item treaty baskets with counter-offers (GDD §6.3; acceptance is currently a single personality-priced threshold)
+GDD-aligned open items (roughly in order of pull):
+- Negotiation depth: multi-item treaty baskets with counter-offers (GDD §6.3; treaty acceptance and the peace table are both single personality-priced thresholds today)
+- War depth: blockade/trade interdiction during wars (routes exist), allied co-belligerence (defensive pacts only add power now), occupation/resistance (GDD §7.4)
 - Maglev/automated freight (transportation.md §5, 2000+ speculative era)
 - Eras 7–8 (2040–2100: solarpunk / dystopia / drowned endings)
 - Full climate system (CO₂ ledger framework exists; impacts currently simplified to events)
@@ -63,3 +63,4 @@ Other GDD-aligned open items:
 - **Region events:** `routePath` for highwaymen — freight gate means quiet routes carry nothing worth robbing; earlier draft robbed subsistence and starved the harness.
 - **Diplomacy:** rivals emerge in `updateDiplomacy` (monthly) from 1922, ≤6, archetype presets over §6.3 weights; regimes from `RIVAL_REGIMES` (10, era-gated, 4 blocs; `blocAffinity` feeds both player and pair baselines); treaty acceptance = `relations ≥ treatyAsk()` (personality-priced, +15/breach reputation penalty); hostile = relations < −40 with no NAP → sponsored raids (×1.3 strength, 50% per raid) and border friction; trade agreements pay `exportEarningsLastMonth` in `monthlyEconomy` (×1.5 during `warBoomUntil`).
 - **The world's own politics:** `rivalPairs` (keyed `minId:maxId`) drift in `tickForeignRelations`; pairs > 45 + honor ally, > 25 + commerce open customs unions, < −20 trade ultimatums, < −50 → `startForeignWar` (240–720 days; refugee waves 20%/mo; peace bleeds the loser ~10–15% pop, sets the pair at −60, 50% defeat-topples its regime via era-gated `pickRegime`). Alliances block war within the pair and harden sides when wars start. Rival `history[]` accrues beats (capped 16, founding line kept).
+- **Player war (GDD §7):** one front at a time (`playerWar`), nation-tier only. CBs earned by hostility (`availableCasusBelli`: raids < −40 w/o NAP, border < −20, fabricated always at −10 legitimacy + breach). `warPower` = `totalPop^0.6 × quality(militia/standing army/defence minister/military reform/junta) × mobilization(1/1.6/2.3)` + defensive-pact allies at `pop^0.6 × 0.25`; rival = `pop^0.6 × (0.5 + exp×0.04 + risk×0.015)`. Monthly in `tickPlayerWar`: score ±16×ratio+rng, attrition bleeds bands 1–2 (`casualties` accrues), support decays/rallies; floors 45/45/35/25 (dem/rep/mon/junta) — below: legitimacy −2 + grievance; floor−15 → forced `capitulate` (treasury ×0.6, pop −4%, legitimacy −15/−25 junta), same as score ≤ −60. `offerPeace` ask = term score (0/30/55/80) + grudge×2; victory pays legitimacy +10 (+15 defensive), treasury ×0.9 demobilization, enemy pop ×0.92; annexation = grudge+3, relations −80 (Versailles trap); regime change → `changeRegime('defeat')`, relations 15. War pins enemy relations ≤ −60 and blocks envoy/gift/treaty verbs. Hostile rivals (< −60, no NAP) declare on the player risk/expansion-weighted; democracies need 6 months at war for Total mobilization unless defensive. Mobilization economics live in `monthlyEconomy` (`gdpMult` stimulus, `upkeepPerPop` drain).

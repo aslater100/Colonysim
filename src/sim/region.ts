@@ -486,6 +486,78 @@ export const MAX_RIVALS = 6;
 /** Each treaty the player breaks raises every future ask (GDD §5.4 reputation). */
 export const TREATY_BREACH_PENALTY = 15;
 
+// ---- War (GDD §7): casus belli → mobilization → war score → negotiated peace ----
+
+/** Why we fight (GDD §7.1): CB quality sets home-front war support at declaration. */
+export type CasusBelli = 'sponsored_raids' | 'border_dispute' | 'fabricated';
+
+export const CASUS_BELLI_DEFS: Record<CasusBelli, { name: string; support: number; desc: string }> = {
+  sponsored_raids: {
+    name: 'Sponsored Raids', support: 80,
+    desc: 'Their rifles armed the raiders at your gates — a war the public already wants.',
+  },
+  border_dispute: {
+    name: 'Border Dispute', support: 60,
+    desc: 'Disputed surveys and seized caravans: a grievance the home front understands.',
+  },
+  fabricated: {
+    name: 'Fabricated Incident', support: 40,
+    desc: 'A staged provocation. Legitimacy −10 at home, and every chancery prices the lie like a broken seal.',
+  },
+};
+
+/** Mobilization levels (GDD §7.2): war is a stimulus first and a drain after. */
+export type Mobilization = 'peacetime' | 'partial' | 'total';
+
+export const MOBILIZATION_DEFS: Record<Mobilization, {
+  name: string;
+  power: number;        // combat power multiplier
+  gdpMult: number;      // armaments stimulus while it lasts
+  upkeepPerPop: number; // £/person/month war spending
+  satMonthly: number;   // rationing and absence bite the towns
+  desc: string;
+}> = {
+  peacetime: {
+    name: 'Peacetime', power: 1.0, gdpMult: 1.0, upkeepPerPop: 0, satMonthly: 0,
+    desc: 'Volunteers only.',
+  },
+  partial: {
+    name: 'Partial', power: 1.6, gdpMult: 1.05, upkeepPerPop: 0.03, satMonthly: -1,
+    desc: '15% of manufacturing turns to armaments — full order books, fuller graveyards.',
+  },
+  total: {
+    name: 'Total', power: 2.3, gdpMult: 1.1, upkeepPerPop: 0.06, satMonthly: -3,
+    desc: 'Mass conscription and rationing. The whole economy is the war.',
+  },
+};
+
+/** Peace terms priced in war score (GDD §7.4). */
+export type PeaceTerm = 'status_quo' | 'reparations' | 'border_province' | 'regime_change';
+
+export const PEACE_TERMS: Record<PeaceTerm, { name: string; score: number; desc: string }> = {
+  status_quo: { name: 'Status Quo', score: 0, desc: 'The guns fall silent; the maps stay as they were.' },
+  reparations: { name: 'Reparations', score: 30, desc: "They pay the war's bill in gold tranches." },
+  border_province: { name: 'Annex Border Province', score: 55, desc: 'The frontier moves. Their revanchists will remember for fifty years.' },
+  regime_change: { name: 'Regime Change', score: 80, desc: 'Their government falls; a friendlier one signs the instrument.' },
+};
+
+export interface PlayerWar {
+  rivalId: number;
+  cb: CasusBelli;
+  defensive: boolean;  // they declared it — the home front rallies harder
+  startedDay: number;
+  support: number;     // 0–100 home-front consent (GDD §7.1, §7.4)
+  score: number;       // −100..+100 war score (GDD §7.4)
+  mobilization: Mobilization;
+  casualties: number;  // running total — the demographic scar (GDD §7.3)
+}
+
+/** Regime × war (GDD §7.5): below this floor the war eats the regime;
+ *  15 below it, the home front breaks and the war ends on dictated terms. */
+export const WAR_SUPPORT_FLOOR: Record<GovType, number> = {
+  democracy: 45, republic: 45, monarchy: 35, junta: 25,
+};
+
 const RIVAL_NAMES = [
   'Vasterholm', 'Karelia', 'Tyrennia', 'Meridia', 'Vossland', 'Cantara',
   'Drovny', 'Ilvermoor', 'Skarov', 'Aldenne',
@@ -681,6 +753,8 @@ export class RegionSim {
   alliances: string[] = [];
   /** Active wars between rival powers. */
   foreignWars: ForeignWar[] = [];
+  /** The nation's own war, if any — one front at a time at this altitude (GDD §7). */
+  playerWar: PlayerWar | null = null;
   private droughtAnnounced = false;
   private railAnnounced = false;
   private highwayAnnounced = false;
@@ -1448,6 +1522,9 @@ export class RegionSim {
       gdp += this.workersOf(t) * 1.2 * (0.8 + t.landQuality * 0.2) * incomeMult * strike;
     }
     gdp += this.tradeValueLastMonth; // commerce counts (GDD §5.2)
+    // War economy (GDD §7.2): armaments demand is a stimulus first…
+    const warMob = this.playerWar ? MOBILIZATION_DEFS[this.playerWar.mobilization] : null;
+    if (warMob) gdp *= warMob.gdpMult;
     this.gdpLastMonth = gdp;
     // Treasury Secretary bonus: +10% tax collection (GDD §8.7)
     const treasuryMult = this.ministerFor('treasury') ? 1.1 : 1;
@@ -1458,7 +1535,8 @@ export class RegionSim {
       pop * 0.03 * this.militiaLevel +
       this.settlements.length * 5 + // administration
       this.policyUpkeep() + // active policy running costs
-      (this.passedLaws.includes('welfare_benefits') ? pop * 0.01 : 0); // welfare relief payments
+      (this.passedLaws.includes('welfare_benefits') ? pop * 0.01 : 0) + // welfare relief payments
+      (warMob ? pop * warMob.upkeepPerPop : 0); // …and the drain runs concurrently (GDD §7.2)
     // Income Tax (civic research): a progressive levy adds 3% of GDP on top
     const incomeTaxBonus = this.has('income_tax') ? this.gdpLastMonth * 0.03 : 0;
     // Estate Tax law: a wealth levy on the land
@@ -2222,6 +2300,7 @@ export class RegionSim {
   sendEnvoy(id: number): boolean {
     const rv = this.rival(id);
     if (!rv || !this.stateProclaimed || this.treasury < ENVOY_COST) return false;
+    if (this.playerWar?.rivalId === id) return false; // no letters cross the front
     if (this.day - rv.lastEnvoyDay < ENVOY_COOLDOWN_DAYS) return false;
     this.treasury -= ENVOY_COST;
     rv.lastEnvoyDay = this.day;
@@ -2235,6 +2314,7 @@ export class RegionSim {
   sendGift(id: number): boolean {
     const rv = this.rival(id);
     if (!rv || !this.stateProclaimed || this.treasury < GIFT_COST) return false;
+    if (this.playerWar?.rivalId === id) return false;
     if (this.day - rv.lastGiftDay < GIFT_COOLDOWN_DAYS) return false;
     this.treasury -= GIFT_COST;
     rv.lastGiftDay = this.day;
@@ -2249,6 +2329,7 @@ export class RegionSim {
   proposeTreaty(id: number, kind: TreatyKind): boolean {
     const rv = this.rival(id);
     if (!rv || !this.stateProclaimed || rv.treaties.includes(kind)) return false;
+    if (this.playerWar?.rivalId === id) return false; // peace is made at the peace table
     if (rv.relations >= this.treatyAsk(rv, kind)) {
       rv.treaties.push(kind);
       rv.relations = this.clampRel(rv.relations + 5);
@@ -2320,6 +2401,10 @@ export class RegionSim {
     const myBloc = this.playerBloc();
     for (const rv of this.rivals) {
       rv.pop *= 1.0015; // they grow whether you watch or not
+      if (this.playerWar?.rivalId === rv.id) {
+        rv.relations = this.clampRel(Math.min(rv.relations, -60)); // war pins the ledger
+        continue; // mischief, offers, and drift all yield to the front
+      }
       // Relations drift toward a baseline set by personality, regime
       // distance (GDD §5.4), and whatever ink is already on the page.
       let base = rv.weights.commerce * 1.2 - rv.weights.expansion * 1.5 - rv.weights.grudge * 0.8;
@@ -2353,10 +2438,20 @@ export class RegionSim {
           this.addLog(`${rv.name}'s customs men shake down caravans at the frontier — £${toll} in seized goods and bribes.`, 'bad');
         }
       }
+      // Beyond mischief (GDD §7.1): an emboldened hostile power declares war outright
+      if (
+        !this.playerWar && this.nationProclaimed && rv.relations < -60 &&
+        !rv.treaties.includes('non_aggression') &&
+        this.rng.chance(0.01 + rv.weights.risk * 0.003 + rv.weights.expansion * 0.002)
+      ) {
+        this.startPlayerWar(rv, 'border_dispute', true);
+        continue;
+      }
       // Regime change abroad is world news the player reads about (GDD §6.3)
       if (this.rng.chance(0.01)) this.changeRegime(rv, 'drift');
     }
     this.tickForeignRelations();
+    this.tickPlayerWar();
   }
 
   /** A nation's bio stays readable: cap the beats, keep the founding line. */
@@ -2488,6 +2583,253 @@ export class RegionSim {
     if (this.rng.chance(0.5)) this.changeRegime(loser, 'defeat');
   }
 
+  // ---- The nation at war (GDD §7) ----
+
+  /** Casus belli on the table against a rival (GDD §7.1): fabrication is
+   *  always available; honest grievances must be earned by their hostility. */
+  availableCasusBelli(rv: RivalNation): CasusBelli[] {
+    const list: CasusBelli[] = [];
+    if (rv.relations < -40 && !rv.treaties.includes('non_aggression')) list.push('sponsored_raids');
+    if (rv.relations < -20) list.push('border_dispute');
+    list.push('fabricated');
+    return list;
+  }
+
+  /** Declare war (GDD §7.1). Nation-tier only — war is fought with industry
+   *  and politics, and only a proclaimed nation has either at scale. */
+  declareWar(id: number, cb: CasusBelli): boolean {
+    const rv = this.rival(id);
+    if (!rv || !this.nationProclaimed || this.playerWar) return false;
+    if (!this.availableCasusBelli(rv).includes(cb)) return false;
+    if (rv.treaties.length > 0) {
+      rv.treaties = [];
+      this.treatiesBroken++; // ink torn up on the way to war
+    }
+    if (cb === 'fabricated') {
+      this.legitimacy = Math.max(0, this.legitimacy - 10);
+      this.treatiesBroken++; // the lie is priced like a broken seal
+    }
+    this.startPlayerWar(rv, cb, false);
+    return true;
+  }
+
+  private startPlayerWar(rv: RivalNation, cb: CasusBelli, defensive: boolean): void {
+    this.playerWar = {
+      rivalId: rv.id, cb, defensive, startedDay: this.day,
+      support: defensive ? 85 : CASUS_BELLI_DEFS[cb].support, // a defensive war starts at 85 (§7.1)
+      score: 0, mobilization: 'peacetime', casualties: 0,
+    };
+    rv.relations = this.clampRel(Math.min(rv.relations, -60));
+    // Their allies turn cold toward you — sides harden (as in startForeignWar)
+    for (const key of this.alliances) {
+      const [x, y] = key.split(':').map(Number);
+      const ally = x === rv.id ? this.rival(y) : y === rv.id ? this.rival(x) : undefined;
+      if (ally) ally.relations = this.clampRel(ally.relations - 20);
+    }
+    const nation = this.nationName || this.stateName || 'the nation';
+    this.noteHistory(rv, defensive ? `Declared war on ${nation}, ${this.year}.` : `Attacked by ${nation}, ${this.year}.`);
+    this.addLog(
+      defensive
+        ? `WAR: ${rv.name} declares war on ${nation}! A defensive war — the home front rallies (support ${this.playerWar.support}).`
+        : `WAR DECLARED on ${rv.name} — casus belli: ${CASUS_BELLI_DEFS[cb].name.toLowerCase()} (support ${this.playerWar.support}).`,
+      'bad',
+    );
+  }
+
+  /** Combat power (GDD §7.3): manpower^0.6 × quality × mobilization — the
+   *  sub-linear exponent makes funding and industry matter more than mass. */
+  warPower(): number {
+    const quality =
+      (1 + 0.25 * this.militiaLevel + (this.policyActive('standing_army') ? 0.5 : 0)) *
+      (this.ministerFor('defence') ? 1.2 : 1) *
+      (this.passedLaws.includes('military_reform') ? 1.2 : 1) *
+      (this.govType === 'junta' ? 1.15 : 1);
+    const mob = this.playerWar ? MOBILIZATION_DEFS[this.playerWar.mobilization].power : 1;
+    // Defensive pacts put allied arms on your front (GDD §5.4)
+    const allies = this.rivals.reduce(
+      (s, rv) =>
+        rv.treaties.includes('defensive_pact') && rv.id !== this.playerWar?.rivalId
+          ? s + Math.pow(rv.pop, 0.6) * 0.25
+          : s,
+      0,
+    );
+    return Math.pow(Math.max(1, this.totalPop()), 0.6) * quality * mob + allies;
+  }
+
+  /** The other side of the front: their mass, discounted by their appetite. */
+  rivalWarPower(rv: RivalNation): number {
+    return Math.pow(rv.pop, 0.6) * (0.5 + rv.weights.expansion * 0.04 + rv.weights.risk * 0.015);
+  }
+
+  /** Set the mobilization level (GDD §7.2, §7.5: democracies mobilize slowly —
+   *  Total needs six months at war unless the war is defensive). */
+  setMobilization(m: Mobilization): boolean {
+    const w = this.playerWar;
+    if (!w || m === w.mobilization) return false;
+    if (
+      m === 'total' && !w.defensive &&
+      (this.govType === 'democracy' || this.govType === 'republic') &&
+      this.day - w.startedDay < 180
+    ) {
+      this.addLog('The chamber refuses total mobilization for a war of choice — not six months in.', 'info');
+      return false;
+    }
+    w.mobilization = m;
+    this.addLog(`MOBILIZATION: ${MOBILIZATION_DEFS[m].name.toLowerCase()} — ${MOBILIZATION_DEFS[m].desc}`, 'info');
+    return true;
+  }
+
+  /** What the enemy wants on the scoreboard before signing — the §6.3
+   *  pricing engine at the peace table: proud nations fight past reason. */
+  peaceAsk(rv: RivalNation, term: PeaceTerm): number {
+    return Math.round(PEACE_TERMS[term].score + rv.weights.grudge * 2);
+  }
+
+  /** Offer peace (GDD §7.4), priced in war score. Overreach is punished:
+   *  a humiliated rival is a revanchist for fifty years — the Versailles trap. */
+  offerPeace(term: PeaceTerm): boolean {
+    const w = this.playerWar;
+    const rv = w ? this.rival(w.rivalId) : undefined;
+    if (!w || !rv) return false;
+    if (w.score < this.peaceAsk(rv, term)) {
+      this.addLog(`${rv.name} rejects the terms — "the front does not say you may ask for that."`, 'bad');
+      return false;
+    }
+    const nation = this.nationName || 'the nation';
+    this.playerWar = null;
+    rv.pop *= 0.92; // the war's bill abroad
+    this.treasury *= 0.9; // demobilization and pensions — the drain after (GDD §7.2)
+    this.legitimacy = Math.min(100, this.legitimacy + (w.defensive ? 15 : 10));
+    switch (term) {
+      case 'status_quo':
+        rv.relations = this.clampRel(Math.max(rv.relations, -40));
+        this.noteHistory(rv, `Made peace with ${nation}, ${this.year} — status quo.`);
+        this.addLog(`PEACE: the guns fall silent. Status quo with ${rv.name}; the maps stay as they were.`, 'good');
+        break;
+      case 'reparations': {
+        const tranche = Math.round(120 + rv.pop * 0.03);
+        this.treasury += tranche;
+        rv.relations = this.clampRel(rv.relations - 10);
+        this.noteHistory(rv, `Paid reparations to ${nation} after defeat, ${this.year}.`);
+        this.addLog(`PEACE: ${rv.name} signs — and pays. £${tranche} in reparations reaches the treasury.`, 'good');
+        break;
+      }
+      case 'border_province': {
+        const t = [...this.settlements].sort((a, b) => this.popOf(b) - this.popOf(a))[0];
+        const absorbed = Math.round(rv.pop * 0.012);
+        if (t) {
+          t.cohorts.bands[1] += absorbed * 0.5;
+          t.cohorts.bands[2] += absorbed * 0.3;
+          t.cohorts.bands[0] += absorbed * 0.2;
+        }
+        rv.pop *= 0.9;
+        rv.weights.grudge = Math.min(10, rv.weights.grudge + 3);
+        rv.relations = -80; // the Versailles trap, signed and sealed
+        this.noteHistory(rv, `Ceded its border province to ${nation}, ${this.year}. The revanchists vow return.`);
+        this.addLog(
+          `PEACE: the frontier moves — ${rv.name}'s border province (${absorbed} souls) joins ${nation}. ` +
+          `Its revanchists will remember.`,
+          'good',
+        );
+        break;
+      }
+      case 'regime_change':
+        this.changeRegime(rv, 'defeat');
+        rv.relations = 15; // a friendlier government signs the instrument
+        this.addLog(`PEACE: ${rv.name}'s government falls with the war — the new ministry signs whatever is put before it.`, 'good');
+        break;
+    }
+    return true;
+  }
+
+  /** Sue for terms you cannot refuse — or be made to (GDD §7.4). */
+  capitulate(): boolean {
+    const w = this.playerWar;
+    const rv = w ? this.rival(w.rivalId) : undefined;
+    if (!w || !rv) return false;
+    this.playerWar = null;
+    const nation = this.nationName || 'the nation';
+    this.treasury *= 0.6; // reparations, paid the other way
+    for (const t of this.settlements) this.removePop(t, this.popOf(t) * 0.04);
+    // Defeat is existential for a junta (GDD §7.5)
+    this.legitimacy = Math.max(0, this.legitimacy - (this.govType === 'junta' ? 25 : 15));
+    rv.relations = this.clampRel(Math.min(rv.relations, -60));
+    rv.pop *= 1.02;
+    this.noteHistory(rv, `Dictated peace to ${nation}, ${this.year}.`);
+    this.addLog(
+      `DEFEAT: ${rv.name} dictates the peace — reparations, a stripped treasury, ` +
+      `and a generation that will not forget.`,
+      'bad',
+    );
+    return true;
+  }
+
+  /** Monthly war resolution (GDD §7.3–7.4): the front moves on the power
+   *  ratio, attrition bleeds the cohorts, and the home front keeps score. */
+  private tickPlayerWar(): void {
+    const w = this.playerWar;
+    if (!w) return;
+    const rv = this.rival(w.rivalId);
+    if (!rv) {
+      this.playerWar = null;
+      return;
+    }
+    const mob = MOBILIZATION_DEFS[w.mobilization];
+    const P = this.warPower();
+    const R = this.rivalWarPower(rv);
+    const delta = 16 * ((P - R) / (P + R)) + this.rng.int(9) - 4;
+    w.score = Math.max(-100, Math.min(100, w.score + delta));
+    // Attrition (GDD §7.3): burns even on quiet fronts; the pyramid keeps the scar
+    const lossRate =
+      (w.mobilization === 'total' ? 0.006 : w.mobilization === 'partial' ? 0.004 : 0.003) +
+      (delta < 0 ? 0.002 : 0);
+    let lost = 0;
+    for (const t of this.settlements) {
+      const l = (t.cohorts.bands[1] + t.cohorts.bands[2]) * lossRate;
+      t.cohorts.bands[1] -= l * 0.7;
+      t.cohorts.bands[2] -= l * 0.3;
+      t.satisfaction = Math.max(0, t.satisfaction + mob.satMonthly); // rationing bites
+      lost += l;
+    }
+    w.casualties += lost;
+    rv.pop *= 1 - lossRate * (delta > 0 ? 1.2 : 0.8);
+    // War support (GDD §7.4): decays with duration and defeat, rallies on victories
+    w.support += delta > 4 ? 2 : delta < -4 ? -4 : -1.5;
+    if (w.mobilization === 'total') w.support -= 1.5;
+    w.support = Math.max(0, Math.min(100, w.support));
+    if (this.rng.chance(0.35)) {
+      this.addLog(
+        delta > 4
+          ? `The front moves: our columns push into ${rv.name}'s marches.`
+          : delta < -4
+            ? `Bad news from the front: ${rv.name}'s offensive gains ground.`
+            : `Stalemate on the ${rv.name} front. The shells fall; the line holds.`,
+        delta < -4 ? 'bad' : 'info',
+      );
+    }
+    // The regime's consent floor (GDD §7.5)
+    const floor = WAR_SUPPORT_FLOOR[this.govType ?? 'democracy'];
+    if (w.support < floor) {
+      this.legitimacy = Math.max(0, this.legitimacy - 2);
+      for (const t of this.settlements) t.grievance = Math.min(100, t.grievance + 4);
+      if (this.rng.chance(0.3)) this.addLog('War weariness: draft riots and strike talk — the home front is buckling.', 'bad');
+      if (w.support <= floor - 15) {
+        this.addLog('THE HOME FRONT BREAKS: the government cannot continue the war.', 'bad');
+        this.capitulate();
+        return;
+      }
+    }
+    // The enemy dictates when the scoreboard is theirs
+    if (w.score <= -60) {
+      this.capitulate();
+      return;
+    }
+    // A beaten enemy lets you know the table is set (GDD §7.4)
+    if (w.score >= 60 && this.rng.chance(0.25)) {
+      this.addLog(`${rv.name} sues for peace — its envoys ask what the guns will cost to stop.`, 'info');
+    }
+  }
+
   private removePop(t: Settlement, count: number): void {
     const pop = this.popOf(t);
     if (pop <= 0) return;
@@ -2550,6 +2892,7 @@ export class RegionSim {
       rivalPairs: this.rivalPairs,
       alliances: this.alliances,
       foreignWars: this.foreignWars,
+      playerWar: this.playerWar,
       nextId: this.nextId,
       nextEventDay: this.nextEventDay,
       townNamePool: this.townNamePool,
@@ -2611,6 +2954,7 @@ export class RegionSim {
     r.rivalPairs = d.rivalPairs ?? {};
     r.alliances = d.alliances ?? [];
     r.foreignWars = d.foreignWars ?? [];
+    r.playerWar = d.playerWar ?? null;
     r.nextId = d.nextId;
     r.nextEventDay = d.nextEventDay;
     r.townNamePool = d.townNamePool;
