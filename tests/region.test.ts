@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Simulation } from '../src/sim/sim';
-import { RegionSim, REGION_MINUTES_PER_TICK, REGION_LAWS } from '../src/sim/region';
+import { RegionSim, REGION_MINUTES_PER_TICK, REGION_LAWS, GOV_TYPES } from '../src/sim/region';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
@@ -434,5 +434,180 @@ describe('Elections & faction politics (v0.14.0)', () => {
     expect(r2.passedLaws).toContain('conscription_act');
     expect(r2.tradeLevyRate).toBe(0.03);
     expect(r2.estateTaxActive).toBe(true);
+  });
+});
+
+describe('Constitutional Convention & Nation Proclamation (v0.15.0)', () => {
+  function nationReady(): RegionSim {
+    const sim = new Simulation(42);
+    while (sim.settlers.length < 22) sim.spawnSettler(32, 34);
+    sim.stock.wood = 200;
+    sim.stock.meal = 200;
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    runDays(r, 5);
+    r.stateProclaimed = true;
+    r.stateName = 'Testonia';
+    r.govLean = 'council';
+    r.treasury = 200;
+    r.researched.push('statecraft', 'universal_suffrage', 'income_tax', 'free_press', 'labor_law', 'public_education');
+    // Force population above threshold
+    for (const t of r.settlements) {
+      t.cohorts.bands[2] += 800;
+    }
+    return r;
+  }
+
+  it('canCallConvention() false before stateProclaimed', () => {
+    const sim = new Simulation(42);
+    while (sim.settlers.length < 22) sim.spawnSettler(32, 34);
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    r.researched.push('statecraft');
+    for (const t of r.settlements) t.cohorts.bands[2] += 800;
+    expect(r.canCallConvention()).toBe(false);
+  });
+
+  it('canCallConvention() false without statecraft research', () => {
+    const r = nationReady();
+    r.researched = r.researched.filter((id) => id !== 'statecraft');
+    expect(r.canCallConvention()).toBe(false);
+  });
+
+  it('canCallConvention() false if population below threshold', () => {
+    const r = nationReady();
+    for (const t of r.settlements) t.cohorts.bands = [0, 0, 0, 0, 0];
+    expect(r.canCallConvention()).toBe(false);
+  });
+
+  it('canCallConvention() true when all conditions met', () => {
+    const r = nationReady();
+    expect(r.canCallConvention()).toBe(true);
+  });
+
+  it('proclaimNation() sets nationProclaimed, nationName, govType', () => {
+    const r = nationReady();
+    r.proclaimNation('The Republic of Testonia', 'democracy', {});
+    expect(r.nationProclaimed).toBe(true);
+    expect(r.nationName).toBe('The Republic of Testonia');
+    expect(r.govType).toBe('democracy');
+  });
+
+  it('democracy starts at correct legitimacy', () => {
+    const r = nationReady();
+    r.proclaimNation('Test Nation', 'democracy', {});
+    const def = GOV_TYPES.find((g) => g.id === 'democracy')!;
+    expect(r.legitimacy).toBe(def.startingLegitimacy);
+  });
+
+  it('junta gets free militia bonus', () => {
+    const r = nationReady();
+    const before = r.militiaLevel;
+    r.proclaimNation('Test Nation', 'junta', {});
+    expect(r.militiaLevel).toBe(before + 2);
+  });
+
+  it('monarchy gets free militia bonus of 1', () => {
+    const r = nationReady();
+    const before = r.militiaLevel;
+    r.proclaimNation('Test Nation', 'monarchy', {});
+    expect(r.militiaLevel).toBe(before + 1);
+  });
+
+  it('democracy elections continue after proclamation', () => {
+    const r = nationReady();
+    r.proclaimNation('Test Nation', 'democracy', {});
+    r.nextElectionDay = -1; // reset
+    runDays(r, 5);
+    // election should be scheduled since universal_suffrage is researched
+    expect(r.nextElectionDay).toBeGreaterThan(0);
+  });
+
+  it('junta elections are cancelled after proclamation', () => {
+    const r = nationReady();
+    r.proclaimNation('Test Nation', 'junta', {});
+    r.nextElectionDay = -1;
+    runDays(r, 10);
+    expect(r.nextElectionDay).toBe(-1); // no election for a junta
+  });
+
+  it('legitimacy decays monthly', () => {
+    const r = nationReady();
+    r.proclaimNation('Test Nation', 'democracy', {});
+    const before = r.legitimacy;
+    runDays(r, 35); // just over a month
+    expect(r.legitimacy).toBeLessThan(before);
+  });
+
+  it('democracy election win restores legitimacy', () => {
+    const r = nationReady();
+    r.proclaimNation('Test Nation', 'democracy', {});
+    // Force good satisfaction so election is a win
+    for (const t of r.settlements) t.satisfaction = 80;
+    r.legitimacy = 50;
+    r.runElectionForTest?.();
+    // If not exposed, just check via tick
+    // Instead, force election via nextElectionDay
+    r.nextElectionDay = r.day;
+    runDays(r, 2);
+    // After a landslide (sat=80), legitimacy should have increased
+    expect(r.legitimacy).toBeGreaterThan(50);
+  });
+
+  it('minister assignment persists', () => {
+    const r = nationReady();
+    const notable = r.notables.find((n) => n.alive);
+    const notableId = notable?.id ?? null;
+    r.proclaimNation('Test Nation', 'republic', { interior: notableId });
+    const minister = r.ministerFor('interior');
+    if (notableId !== null) {
+      expect(minister?.id).toBe(notableId);
+    }
+  });
+
+  it('nation fields survive save/load round-trip', () => {
+    const sim = new Simulation(42);
+    while (sim.settlers.length < 22) sim.spawnSettler(32, 34);
+    sim.stock.wood = 200;
+    sim.stock.meal = 200;
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    r.stateProclaimed = true;
+    r.proclaimNation('Saved Nation', 'monarchy', {});
+    r.legitimacy = 72;
+    const r2 = RegionSim.deserialize(r.serialize(), sim);
+    expect(r2.nationProclaimed).toBe(true);
+    expect(r2.nationName).toBe('Saved Nation');
+    expect(r2.govType).toBe('monarchy');
+    expect(r2.legitimacy).toBe(72);
+    expect(r2.ministers).toHaveLength(3);
+  });
+
+  it('treasury minister boosts tax revenue', () => {
+    const r = nationReady();
+    r.proclaimNation('Test Nation', 'democracy', {});
+    r.treasury = 0;
+    r.taxRate = 0.15;
+    runDays(r, 32);
+    const revenueWithout = r.treasury;
+
+    // Reset and add treasury minister
+    const sim2 = new Simulation(42);
+    while (sim2.settlers.length < 22) sim2.spawnSettler(32, 34);
+    sim2.stock.wood = 200;
+    sim2.stock.meal = 200;
+    const r2 = RegionSim.fromTown(sim2, 8, 80, 80);
+    runDays(r2, 5);
+    r2.stateProclaimed = true;
+    r2.stateName = 'Testonia';
+    r2.govLean = 'council';
+    r2.treasury = 200;
+    r2.researched.push('statecraft', 'universal_suffrage', 'income_tax', 'free_press', 'labor_law', 'public_education');
+    for (const t of r2.settlements) t.cohorts.bands[2] += 800;
+    const notable2 = r2.notables.find((n) => n.alive);
+    r2.proclaimNation('Test Nation', 'democracy', { treasury: notable2?.id ?? null });
+    r2.treasury = 0;
+    r2.taxRate = 0.15;
+    runDays(r2, 32);
+    const revenueWith = r2.treasury;
+
+    expect(revenueWith).toBeGreaterThan(revenueWithout);
   });
 });

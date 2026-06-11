@@ -3,19 +3,21 @@
  * operating altitude after the flip (GDD §2.5). Painterly backdrop, town
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
-import type { RegionSim, Settlement, GovLean } from '../sim/region';
-import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, RAIL_ERA_YEAR, TECH_TREE, REGION_LAWS } from '../sim/region';
+import type { RegionSim, Settlement, GovLean, GovType, MinisterRoleId } from '../sim/region';
+import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, TECH_TREE, REGION_LAWS } from '../sim/region';
 
 export class RegionView {
   selectedId: number | null = null;
   /** set true by the view while the Incorporation ceremony is on screen */
   ceremonyOpen = false;
+  conventionOpen = false;
   private g: CanvasRenderingContext2D;
   private panel: HTMLElement;
   private statePanel: HTMLElement;
   private researchPanel: HTMLElement;
   researchOpen = false;
   private ceremony: HTMLElement;
+  private convention: HTMLElement;
   private frame = 0;
 
   constructor(private canvas: HTMLCanvasElement, private region: RegionSim, root: HTMLElement) {
@@ -32,6 +34,9 @@ export class RegionView {
     this.ceremony = document.createElement('div');
     this.ceremony.className = 'ceremony hidden';
     root.appendChild(this.ceremony);
+    this.convention = document.createElement('div');
+    this.convention.className = 'ceremony hidden';
+    root.appendChild(this.convention);
   }
 
   destroyPanel(): void {
@@ -39,6 +44,7 @@ export class RegionView {
     this.statePanel.remove();
     this.researchPanel.remove();
     this.ceremony.remove();
+    this.convention.remove();
   }
 
   private toPx(x: number, y: number): { px: number; py: number } {
@@ -213,6 +219,7 @@ export class RegionView {
     this.drawStatePanel();
     this.drawResearchPanel();
     this.drawCeremony();
+    this.drawConvention();
   }
 
   /** Rendering flavor only (transportation.md §7: links-not-vehicles) —
@@ -353,6 +360,61 @@ export class RegionView {
     };
   }
 
+  private drawConvention(): void {
+    if (!this.conventionOpen) return;
+    const r = this.region;
+    const notables = r.notables.filter((n) => n.alive);
+    const notableOptions = (selected: number | null) =>
+      `<option value="">— vacant —</option>` +
+      notables.map((n) =>
+        `<option value="${n.id}" ${n.id === selected ? 'selected' : ''}>${n.name} (${n.role})</option>`,
+      ).join('');
+
+    const govCards = GOV_TYPES.map((g) =>
+      `<label class="lean-card"><input type="radio" name="gov-type" value="${g.id}" ${g.id === 'democracy' ? 'checked' : ''}>` +
+      `<b>${g.name}</b><br><span>${g.legitimacySource}. Tax cap ${g.taxCap}%.` +
+      (g.militiaBonus > 0 ? ` Militia +${g.militiaBonus}.` : '') + `</span></label>`,
+    ).join('');
+
+    const ministerRows = MINISTER_ROLES.map((mr) =>
+      `<p><b>${mr.title}:</b> (${mr.bonus})<br>` +
+      `<select class="minister-sel" data-role="${mr.id}">${notableOptions(r.ministers.find((m) => m.role === mr.id)?.notableId ?? null)}</select></p>`,
+    ).join('');
+
+    const suggestedName = r.stateName ? `Republic of ${r.stateName}` : 'New Republic';
+    this.convention.classList.remove('hidden');
+    this.convention.innerHTML =
+      `<div class="ceremony-box">` +
+      `<h2>★ THE CONSTITUTIONAL CONVENTION ★</h2>` +
+      `<p>${Math.round(r.totalPop())} citizens, ${r.settlements.length} towns, ${r.researched.length} research nodes complete.<br>` +
+      `The time has come to proclaim the Nation.</p>` +
+      `<p><b>Nation name:</b></p>` +
+      `<input id="nation-name" type="text" maxlength="36" placeholder="Name the nation…" value="${suggestedName}">` +
+      `<p><b>Form of government:</b></p>` +
+      `<div class="lean-row">${govCards}</div>` +
+      `<p><b>Appoint ministers:</b></p>` +
+      ministerRows +
+      `<button id="convention-proclaim-btn">Proclaim the Nation</button>` +
+      `<button id="convention-cancel-btn" class="mini" style="margin-left:8px">Cancel</button>` +
+      `</div>`;
+    this.convention.querySelector<HTMLButtonElement>('#convention-proclaim-btn')!.onclick = () => {
+      const name = (this.convention.querySelector<HTMLInputElement>('#nation-name')!.value || suggestedName).trim();
+      const gov = (this.convention.querySelector<HTMLInputElement>('input[name=gov-type]:checked')?.value ?? 'democracy') as GovType;
+      const assignments: Partial<Record<MinisterRoleId, number | null>> = {};
+      for (const sel of this.convention.querySelectorAll<HTMLSelectElement>('.minister-sel')) {
+        const role = sel.dataset.role as MinisterRoleId;
+        assignments[role] = sel.value ? Number(sel.value) : null;
+      }
+      r.proclaimNation(name, gov, assignments);
+      this.conventionOpen = false;
+      this.convention.classList.add('hidden');
+    };
+    this.convention.querySelector<HTMLButtonElement>('#convention-cancel-btn')!.onclick = () => {
+      this.conventionOpen = false;
+      this.convention.classList.add('hidden');
+    };
+  }
+
   /** Tier-2 dashboard: treasury, taxes, funded services — visible once proclaimed. */
   private drawStatePanel(): void {
     const r = this.region;
@@ -366,8 +428,11 @@ export class RegionView {
       ? TECH_TREE.find((n) => n.id === r.activeResearch)?.name ?? r.activeResearch
       : `${r.researched.length}/${TECH_TREE.length} nodes`;
     this.statePanel.innerHTML =
-      `<div class="pal-title">${r.stateName.toUpperCase()}</div>` +
-      `<p class="insp-skills">${r.govLean ? GOV_LEANS[r.govLean].name : ''}</p>` +
+      `<div class="pal-title">${r.nationProclaimed ? r.nationName.toUpperCase() : r.stateName.toUpperCase()}</div>` +
+      `<p class="insp-skills">${r.nationProclaimed && r.govType
+        ? GOV_TYPES.find((g) => g.id === r.govType)!.name
+        : r.govLean ? GOV_LEANS[r.govLean].name : ''}</p>` +
+      (r.nationProclaimed ? this.nationHtml() : '') +
       `<p>treasury £${Math.floor(r.treasury)}</p>` +
       `<p>GDP £${Math.floor(r.gdpLastMonth)}/mo</p>` +
       `<p>trade £${Math.floor(r.tradeValueLastMonth)}/mo turnover</p>` +
@@ -382,6 +447,7 @@ export class RegionView {
           ? 'RAILWORKS chartered — lay rail from any town panel'
           : `railworks expected ~${RAIL_ERA_YEAR}`}</p>` +
       `<p><button class="mini" id="research-toggle">${this.researchOpen ? '▲ research' : '▼ research'}</button> <span class="insp-skills">${researchLabel}</span></p>` +
+      (r.canCallConvention() ? `<p><button id="convention-btn" style="font-size:10px;background:#8b5cf6;color:#fff;border:none;padding:4px 8px;cursor:pointer">★ CONVENE CONSTITUTIONAL CONVENTION</button></p>` : '') +
       this.politicsHtml() +
       this.freightHtml();
     this.statePanel.querySelector<HTMLInputElement>('#tax-slider')!.oninput = (e) => {
@@ -402,6 +468,9 @@ export class RegionView {
     this.statePanel.querySelector<HTMLButtonElement>('#research-toggle')!.onclick = () => {
       this.researchOpen = !this.researchOpen;
     };
+    this.statePanel.querySelector<HTMLButtonElement>('#convention-btn')?.addEventListener('click', () => {
+      this.conventionOpen = true;
+    });
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.law-btn')) {
       btn.onclick = () => r.enactLaw(btn.dataset.id!);
     }
@@ -451,6 +520,25 @@ export class RegionView {
       factionBars +
       lawButtons +
       enacted;
+  }
+
+  /** Nation-tier header: legitimacy bar + minister roster (GDD §2.2). */
+  private nationHtml(): string {
+    const r = this.region;
+    const legPct = Math.round(r.legitimacy);
+    const legCol = legPct >= 60 ? '#4e9' : legPct >= 35 ? '#ca4' : '#e55';
+    const legBar =
+      `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${legPct}%;background:${legCol}"></div></div>`;
+    const ministerLines = MINISTER_ROLES.map((mr) => {
+      const n = r.ministerFor(mr.id);
+      return `<span class="insp-skills">${mr.title}: <b>${n ? n.name : '—'}</b></span>`;
+    }).join('<br>');
+    return `<p class="insp-skills">NATION</p>` +
+      `<div class="bar-row" title="Legitimacy — the regime's right to rule (GDD §5.3)">` +
+      `<span style="width:80px;display:inline-block">legitimacy</span>` +
+      legBar + `<span>${legPct}</span></div>` +
+      `<p class="insp-skills">CABINET</p>` +
+      `<p>${ministerLines}</p>`;
   }
 
   /** Freight overlay (M6b): what the caravans actually moved, per route. */
