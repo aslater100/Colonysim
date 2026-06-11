@@ -1,140 +1,62 @@
-# Session Handoff — 2026-06-11 (post-policy-slots)
+# Session Handoff — 2026-06-11 (v0.16.0)
 
-## Where things stand
+## Current state
 
-- **Merged:** PR A (0.1 stabilization), PR B (tile-paint zones), PR #10
-  (Electron desktop app + release pipeline), PR #11 / B2 (economy
-  buildings), PR #12 / C (gates, wildlife, armed pawns, menu, save/load,
-  SFX — v0.3.0), PR #13 / M6b (region routes — v0.4.0), PR #14 (town UX:
-  drag-paint roads, fog of war, region minimap).
-- **This PR (M6c):** the rail era — `rail` route kind (capacity 1,200,
-  £8/terrain-cost, £0.5/cell/mo upkeep) behind the Railworks gate
-  (State + year ≥ 1912), station + cross-tie + animated-train art in the
-  region view, the storm washout → paid-repair loop (`repairCost` /
-  `repairRoute`), and the +25% militia relief bonus when a built link
-  (road/rail) connects a raided town to a larger one. Version 0.5.0.
-  **The transportation design (docs/design/transportation.md) is now
-  fully implemented (6a/6b/6c).**
-- **Parallel PRs in flight (same session):** animal husbandry
-  (`claude/animal-husbandry-ifaqdv`) and combat polish: smithy + ranged
-  weapons (`claude/combat-smithy-ifaqdv`), both town-tier, both branched
-  from main. They may need trivial rebases against each other; merge in
-  any order, M6c is independent of both. Neither bumps the version —
-  bump on merge per the ship loop.
+Version **v0.16.0** (policy slots + expanded statute book). Transportation arc, governance stack, and audio layer are complete.
 
-## Release (pending — needs the user)
+## Shipped
 
-No `v*` tag has ever been pushed, so no desktop release exists yet. The
-session tooling cannot push tags (403) or dispatch workflows (403). After
-merging, either `git tag v0.5.0 main && git push origin v0.5.0`, or run
-the **Release** workflow on `main` via workflow_dispatch. One release
-supersedes everything earlier (0.2/0.3/0.4 were never tagged).
+| Version | Feature |
+|---|---|
+| 0.1 | Tier-1 colony: needs/mood/food chain/events, headless deterministic sim |
+| 0.2 | Raids, medicine (wound→infection→scar), relationships + Notables seed |
+| 0.3 | Defense & game feel: gates, wildlife, armed pawns, menu, save/load, SFX |
+| 0.4 | The Flip + Notables carve-out; cohort model; Statehood gate; procedural world (terrain/weather/rivers); region routes (trail/road), capacity-clamped caravans |
+| 0.5 | Town roads/bridges/stone; rail era (Railworks gate + 1912, capacity 1,200); art pass; washout/repair loop; militia relief bonus |
+| 0.6 | Region save/load: v2 combined snapshots `{v:2, mode:'region', town, region}` under `centuria-save`; v1 town saves still load |
+| 0.7 | Region event variety: 9 incidents (highwaymen gate on freight, Notable bio beats, town fires, prospectors) |
+| 0.8 | Region markets: GDD §5.2 price rule (±2%/day, 0.25×–4× band); arbitrage traders; 5% State levy into treasury |
+| 0.9 | Highway era: `highway` kind (capacity 900, £3/tc, £0.15/cell/mo) behind State+1945; transportation arc complete (trail→road→rail→highway) |
+| 0.10 | Procedural era-aware music: WebAudio only, 6 era windows (ragtime→speculative), tension scalar, `centuria-music` toggle |
+| 0.11 | Town-tier event variety: 5→12 named incidents; fishing dock (grain-free food from water) |
+| 0.12 | Diegetic soundscape: hammering (builders), train whistle (B♭, rail condition>50), crowd chanting (grievance>50), bird chirps (calm) |
+| 0.13 | Research tree: twin tech/civics trees gate era unlocks |
+| 0.14 | Elections, factions & political capital: Tier-2 politics |
+| 0.15 | Constitutional Convention; Nation proclamation; 13 government types (democracy→fascism) |
+| 0.16 | Policy slots (3–4/gov type, 9 cards, 20 PC to swap); statute book 4→12 laws (8 nation-tier laws) |
 
 ## Ship loop
 
-After each merged gameplay PR: bump `package.json` version in the PR,
-then push the matching `v*` tag after merge.
+Each task = its own draft PR. Bump `package.json` version in the PR; push matching `v*` tag after merge.
+User merges and play-tests; CI validates (test.yml — do not run the suite locally).
 
-## User's standing instructions
+## Standing instructions
 
-- Each task = its own draft PR. User merges and play-tests themselves.
-- Be frugal with tokens; tests and typecheck run in CI (test.yml) — do
-  not run the full suite locally, push and let GitHub validate.
+- Be frugal with tokens.
 - Goal: "fully fleshed out game based on everything planned."
 
-## The plan from here
+## What's next
 
-Transportation is complete. Region-tier save/load shipped (v0.6.0 PR):
-v2 combined snapshots `{v:2, mode:'region', town, region}` under the
-same `centuria-save` key; v1 town saves still load. `RegionSim.serialize`
-/ `.deserialize(json, sim)` — the region re-shares the restored town's
-rng/map/weather; the corridor cache refills lazily; the menu now opens
-in region mode (Esc or the top-bar button). Region event variety shipped
-(v0.7.0 PR): the incident deck went from five events to nine —
-highwaymen (rob caravan **freight** on low-condition routes; kept
-roads/rail hang them; quiet routes carry nothing worth taking — that
-freight gate matters, an earlier draft robbed subsistence and starved
-the harness), Notable bio beats (role-flavored, the attachment engine
-keeps writing), town fires (a funded State brigade holds damage down),
-and prospectors (£ to the treasury post-State, timber rights before).
-Deck balance kept at the original 45/55 bad-to-good with wagon trains
-generous — statehood paces on population; the seed-42 18-year harness
-is the guard. Region markets shipped (v0.8.0 PR): the GDD §5.2 price
-rule verbatim per town for food/wood (±2%/day clamp, 0.25×–4× band
-around BASE_PRICE), monthly `traders()` (public, like `caravans()`)
-arbitraging cheap→dear along `routePath` when margin > 1.5× freight
-(£0.01/unit/hop), clamped to remaining route capacity after caravans,
-turnover into GDP and a 5% State levy into the treasury. Watch-out:
-the levy can part-fund road upkeep — the M6b rot test now gluts all
-markets to kill margins. Old saves migrate (prices default in
-deserialize). Highway era shipped (v0.9.0
-PR): `highway` kind (capacity 900, £3/terrain-cost, £0.15/cell/mo)
-behind State + 1945; KIND_RANK puts highway above rail so paving
-*replaces* steel — the stranded-asset choice is the player's; asphalt
-art with dashed centerline and shuttling trucks. The transportation
-era arc (trail→road→rail→highway) is now fully built. Music layer
-shipped (v0.10.0 PR): a procedural era-aware soundtrack in
-`src/ui/music.ts` — no assets, every note a WebAudio oscillator like
-the SFX synth. A lookahead scheduler lays a chord pad, bassline,
-arpeggiated lead and light percussion; `eraForYear()` ages the
-instrumentation across six date windows (ragtime chiptune → chip-jazz
-→ mid-century synth strings → analog → electronica → speculative
-hybrid, GDD §3.3). Dynamic mixing: a `tension` scalar in main (bumped
-by raid/wolf/bad logs and `sim.raidActive`, decaying ~8s) swells the
-lead/drums; paused drops to the ambient pad alone. Independent
-`Music: ON/OFF` menu toggle persisted under `centuria-music` (separate
-from the SFX `Sound:` toggle). Diegetic soundscape shipped (v0.12.0 PR): `src/ui/soundscape.ts` — a
-`Soundscape` class (same no-assets WebAudio philosophy as Sfx and Music)
-fired from the main loop alongside `music.update()`. Four ambient layers
-driven by live game signals: **hammering** (town: settlers on build tasks —
-more workers → faster rhythm), **train whistle** (region: rail routes with
-condition > 50 — the B♭ two-tone fall every 9–23s), **crowd chanting**
-(region: grievance > 50 — call-and-response voices that grow louder and
-faster as the pressure bar fills, audible before the number crosses a
-visible threshold), and **bird chirps** (any mode: calm conditions —
-tension < 0.2, no builders, grievance < 35). Independent `Ambience: ON/OFF`
-toggle in the menu under `centuria-soundscape`. Unlocked alongside Sfx and
-Music on the first user gesture.
+**Biggest gap:** AI rival nations + diplomacy — the world has no other nations; Nation-tier play is missing its main external actor.
 
-National Policy Slots & Expanded Statute Book shipped (v0.16.0):
-- **Policy slots**: each gov type grants 3–4 domain-specific slots (economic/social/security/diplomatic).
-  9 policy cards can be socketed; swapping an occupied slot costs 20 PC. Democracy: 4 slots;
-  republic: 2 economic + security + diplomatic; junta: 2 security + economic; monarchy: economic +
-  security + social. Policies have ongoing monthly effects (upkeep in `monthlyEconomy`): free_trade
-  zeroes levy; protectionism +£3/mo; public_investment +2 route condition/mo; welfare_state +6 sat;
-  public_health_policy mortality ×0.8; standing_army militia +2; border_constabulary grievance ×0.75;
-  open_borders immigration ×1.3; isolationism event gap ×1.35.
-- **Statute book expanded** 4→12 laws: 8 new nation-tier laws gated behind `nationProclaimed`:
-  progressive_tax, welfare_benefits, national_education_act (research ×1.3), central_bank_charter
-  (treasury 0.5% interest/mo), military_reform (militia ×1.2), press_freedom_act (legitimacy decay
-  ×0.7), healthcare_act (mortality ×0.85), land_reform (food +5%, landowners −30). All faction effects
-  wired into `updateFactions`.
-- **UI**: POLICY SLOTS section below CABINET in state panel; slot buttons open modal with eligible
-  cards for the slot's domain; STATE LAWS / NATION LAWS split in politics section.
+Other GDD-aligned open items:
+- Maglev/automated freight (transportation.md §5, 2000+ speculative era)
+- Eras 7–8 (2040–2100: solarpunk / dystopia / drowned endings)
+- Full climate system (CO₂ ledger framework exists; impacts currently simplified to events)
+- FX & monetary regimes (single-currency only today)
+- Espionage + misinformation systems
+- Historical scenarios (GDD §9)
+- War: front-based system, treaty types (GDD §7)
+- Animal husbandry + ranged combat polish (may be partially shipped; check src/)
 
-Open ideas consistent with the GDD: maglev/automated freight (2000+,
-speculative-era, transportation.md §5); AI rival nations + diplomacy basics
-(the world has no other nations — the biggest remaining gap for Nation-tier play).
+## Architecture reference
 
-## Architecture notes for M6c
-
-- `RouteKind` now `'trail' | 'road' | 'rail'`; `KIND_RANK` enforces
-  upgrade-only (`buildLink` refuses downgrades). `roadCost`/`buildRoad`
-  kept as thin wrappers over `linkCost`/`buildLink` (tests use them).
-- `railUnlocked()` = `stateProclaimed && year >= RAIL_ERA_YEAR (1912)`;
-  one-time RAILWORKS log fires from `dailyUpdate`.
-- Washouts: in `weatherRoutes`, on storm days, 12% chance one random
-  built route with condition > 40 loses 45 condition with a log naming
-  the repair price. `repairRoute` restores to 100 from the treasury;
-  monthly maintenance still heals +8/mo as the slow path. NOTE: the
-  washout roll consumes RNG draws on storm days — region sequences
-  shifted again vs 0.4.0 (tests are behavior-based, suite unaffected).
-- `routePath` gained a `usable` filter; `reliefLine(t)` = some larger
-  town reachable via road/rail legs only → ×1.25 militia in the raid
-  branch of `fireEvent`.
-- Region view: rail renders as a steel line with cross-ties plus a
-  little out-and-back engine (`drawTrain` — links-not-vehicles, flavor
-  only; silent below condition 20); rail-connected towns get a depot
-  sprite. Town panel: road buttons now only offered over trails, rail
-  buttons once unlocked, repair buttons on built links below 85%.
-- Region tier still has no save/load.
+- **Route kinds:** `'trail' | 'road' | 'rail' | 'highway'`; `KIND_RANK` enforces upgrade-only; `buildLink` refuses downgrades.
+- **Gates:** `railUnlocked()` = `stateProclaimed && year >= 1912`; highway = State + year ≥ 1945.
+- **Save format:** v2 `{v:2, mode:'region', town, region}` under `centuria-save`; v1 town saves still load.
+- **Clocks:** town = 4 game-min/tick; region = 30 game-min/tick (~6 s/day at speed 1).
+- **Effective route capacity:** `capacity × condition/100`; condition floor 15; unpaid maintenance −6/mo; washouts −45 condition on storm days (12% chance), `repairRoute` restores to 100 from treasury.
+- **Relief line:** `reliefLine(t)` = larger town reachable via road/rail → ×1.25 militia in raid branch of `fireEvent`.
+- **Markets:** `routePath` with `usable` filter; arbitrage fires when margin > 1.5× freight (£0.01/unit/hop); clamped to remaining capacity after caravans; 5% State levy into treasury.
+- **Policy effects:** ongoing monthly in `monthlyEconomy`; faction wiring in `updateFactions`.
+- **Region events:** `routePath` for highwaymen — freight gate means quiet routes carry nothing worth robbing; earlier draft robbed subsistence and starved the harness.

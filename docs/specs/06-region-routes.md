@@ -1,73 +1,28 @@
-# Milestone 6b Spec — Region Routes: Corridors, Caravans & Upkeep
+# Milestone 6b/6c — Region Routes (COMPLETE, all four kinds shipped)
 
-Implements §3 of the transportation design (docs/design/transportation.md):
-movement between towns stops being free. Routes are first-class objects laid
-along real terrain corridors; everything that moves between settlements —
-grain, migrants, the charter itself — now rides the network.
+## Corridors
 
-## Corridors (worldgen)
+`RegionMap.cellCost`: plains 1, forest 1.3, hills 1.8, marsh 2.2, mountains 3.5, river 3 (1+2 bridge surcharge), sea/lake impassable. `RegionMap.corridor(a, b)`: A* over 64×64 grid, Float64 distances (the 6a mixed-precision lesson, applied proactively). Pass-finding through valleys emerges from the cost field. Corridors memoized in `RegionSim` (UI prices roads every frame).
 
-- `RegionMap.cellCost(x, y)`: plains 1, forest 1.3, hills 1.8, marsh 2.2,
-  mountains 3.5, river 3 (1 + 2 bridge surcharge), sea/lake impassable
-  (ferries are a later era).
-- `RegionMap.corridor(a, b)`: A* over the 64×64 cell grid (binary heap,
-  manhattan heuristic, **Float64 distances** — the 6a mixed-precision
-  lesson, applied). Pass-finding through valleys emerges from the cost
-  field; mountain roads are gloriously expensive, which is the point.
-- Corridors between fixed towns never change, so `RegionSim` memoizes them
-  (the UI prices roads every frame).
+## Route kinds
 
-## Routes (region sim)
-
-`Route { a, b, kind, condition 0–100, path: cells[], terrainCost, freight }`
-
-| Kind | Gate | Build cost | Capacity (food/mo) | Maintenance |
+| Kind | Gate | Build cost | Capacity/mo | Maintenance |
 |---|---|---|---|---|
-| Trail | auto on founding | free | 60 | none; −2 condition/storm-day, footfall regrows +0.1/day |
-| Wagon road | State + treasury | £2 × terrain cost | 200 | £0.2/cell/mo from the treasury |
+| Trail | auto on founding | free | 60 | none; −2 condition/storm-day, +0.1/day footfall |
+| Wagon road | State + treasury | £2 × terrain cost | 200 | £0.2/cell/mo |
+| Rail | State + year ≥ 1912 | £8 × terrain cost | 1,200 | £0.5/cell/mo |
+| Highway | State + year ≥ 1945 | £3 × terrain cost | 900 | £0.15/cell/mo |
 
-- **Effective capacity = capacity × condition/100.** Condition floors at 15:
-  a rotted route is still a walkable track (a road at the floor carries less
-  than a healthy trail — the unmaintained empire rots, GDD's long-lag decay
-  made local).
-- **Unpaid maintenance** (empty treasury) drops road condition 6/month and
-  logs the rutting-over.
-- **Trails are blazed automatically** when an expedition founds a town
-  (origin → new town), so the network is a tree by construction; if water
-  truly separates two towns the chord stands in (peddler boats).
+`KIND_RANK` enforces upgrade-only; `buildLink` refuses downgrades. Highway above rail in rank — paving replaces steel (stranded-asset choice is the player's).
 
-## Everything rides the network
+**Effective capacity = capacity × condition/100.** Condition floor 15 (a rotted road carries less than a healthy trail). Unpaid maintenance: −6/mo condition, logs rutting-over. **Washouts:** on storm days, 12% chance a random built route with condition > 40 loses 45 condition with repair cost logged; `repairRoute` restores to 100 from treasury; monthly maintenance heals +8/mo as slow path. Note: washout roll consumes RNG draws on storm days — region sequences differ from v0.4.0 (tests are behavior-based, suite unaffected).
 
-- **Caravans clamp to capacity:** monthly transfers route through the graph
-  (BFS hop-path); the amount sent = min(need, surplus, remaining capacity
-  along every leg). Freight is recorded per route (the overlay's number).
-  A famine behind a goat trail is now possible — and fixable with money.
-  With **no route at all**, smugglers move the grain at 30% efficiency.
-- **Migration** between unconnected towns drops to a 30% trickle.
-- **The charter requirement is real** (GDD §2.2): `charterEligible()` now
-  demands every settlement reachable through the route graph, and the
-  Statehood banner calls out unconnected towns.
+## Network rules
 
-## UI
+Trails auto-blazed when a town is founded (origin → new town) — network is a tree by construction. **Caravans** clamp to remaining capacity per leg (BFS hop-path); famine behind a goat trail is possible. No route → smugglers at 30% efficiency. Migration between unconnected towns → 30% trickle. **Charter gate:** `charterEligible()` requires every settlement reachable through route graph.
 
-- Region map draws routes along their actual corridors — dotted trails,
-  solid roads, line brightness = condition — instead of the old hub chords.
-- Settlement panel gains a ROUTES section: status per neighbor and a build
-  button priced by the land, with the itemized bill in the tooltip
-  ("£38: 12 plains, 6 hills, 1 river crossing"). Roads need the State.
-- State panel gains the freight readout (food moved per route, last
-  caravan season).
+**Relief line:** `reliefLine(t)` = larger town reachable via road/rail only → ×1.25 militia in raid branch of `fireEvent`. `routePath` has a `usable` filter for this.
 
-## Tests (9 new; 61 total passing)
+## Region UI
 
-Corridor contiguity/land-only/admissibility, auto-blazed trails, the
-trail→road capacity ceiling, condition→capacity loss, the smuggler
-fallback, the State gate on building, treasury charge + double-build
-rejection, funded-vs-starved maintenance, and the charter connectivity
-gate.
-
-## Deferred to 6c
-
-Rail (tech gate ~1912, stations, art), the full storm-damage/repair event
-loop, militia response bonus over connected routes, animated wagon dots on
-busy routes.
+Routes draw along actual corridors (dotted trail, solid road, steel+cross-ties rail, dashed-centerline highway); line brightness = condition. Settlement panel: ROUTES section with build buttons priced by terrain ("£38: 12 plains, 6 hills, 1 river crossing"). Rail-connected towns get a depot sprite; animated train on rail links above condition 20.

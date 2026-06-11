@@ -1,6 +1,6 @@
 # Transportation & Roads — System Design
 
-> Status: **PLANNED** (design approved for implementation as Milestones 6a–6c).
+> Status: **COMPLETE** (trail→road→rail→highway all shipped through v0.9.0).
 > Builds on: per-tile town maps (M1), the region cell grid + terrain costs
 > (M5 `worldgen.travelDays`), grain caravans (M5), the State treasury (M4),
 > and the GDD's era arc (§5.1 transport, §10 timeline).
@@ -129,26 +129,7 @@ condition over a cell path) is deliberately already the right shape.
   (rehearsing the GDD's energy lock-in theme).
 - **2000+:** maglev/automated freight as speculative-era upgrades.
 
-## 6. Implementation plan
-
-| Milestone | Scope | Est. size |
-|---|---|---|
-| **6a** | Town roads + bridge + stone + cost-aware pathfinding + traffic overlay | ~400 LOC + tests |
-| **6b** | Region Route objects + A* corridors + capacity-clamped caravans + maintenance + route UI | ~450 LOC + tests |
-| **6c** | Rail era (tech gate, rail kind, stations, art), weather damage/repair loop, militia-response bonus | ~300 LOC + tests |
-
-**Test plan:** pathfinding prefers roads (path cost assertions); bridge
-opens the far bank (reachability before/after); caravan clamp (famine with
-trail, fed with road); A* route avoids mountains when a valley exists
-(cost comparison); maintenance decay → capacity loss; determinism
-throughout; harness: survival unchanged in 6a, statehood date improves
-~1–2 years with roads in 6b (roads should *matter*).
-
-**Tuning risks to watch:** road speed making raids too fast (raiders ride
-arteries too — may need defender-side response buff); rail trivializing
-distance (capacity costs keep geography relevant); UI drag-painting feel.
-
-## 7. Decision log
+## 6. Decision log
 
 - **Links-not-vehicles** at region tier: individual wagons/trains are
   rendering flavor (animated dots on routes), never simulation objects —
