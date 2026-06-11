@@ -1,113 +1,74 @@
-# Session Handoff — 2026-06-11
+# Session Handoff — 2026-06-11 (post-PR C)
 
-Continuation notes for the next working session. Delete this file once the
-roadmap below is done.
+The PR A → B → B2 → C roadmap is complete. Delete this file once the
+release below has shipped.
 
 ## Where things stand
 
-- **Merged:** PR A (0.1 stabilization), PR #9 / PR B (tile-paint zones for
-  farm/stockpile/wall + GitHub Actions test workflow).
-- **Open:** PR #10 (draft) — Electron desktop app + auto-updating release
-  pipeline. Branch `claude/magical-cori-7ife76` @ `752ab99`. CI status was
-  not yet verified when the session ended — check it first.
-- **After #10 merges:** trigger the Release workflow (push tag `v0.2.0`, or
-  run `release.yml` via workflow_dispatch on main). It builds Windows NSIS /
-  macOS DMG / Linux AppImage on a 3-OS matrix and publishes a GitHub
-  Release. `package.json` is already at version 0.2.0. Installed copies
-  auto-update from Releases on Windows/Linux (electron-updater); macOS
-  auto-update needs signed builds, so users re-download the DMG there.
-- **Ship loop from now on:** after each merged gameplay PR, bump
-  `package.json` version + push a `v*` tag so the desktop app updates.
+- **Merged:** PR A (0.1 stabilization), PR B (tile-paint zones), PR #10
+  (Electron desktop app + release pipeline), PR #11 / B2 (economy
+  buildings).
+- **This PR (C):** gates, armed pawns, deer/wolves with real hunting,
+  palette hotkeys, in-game menu with save/load, WebAudio SFX. Version
+  bumped to 0.3.0.
+
+## Release (pending — needs the user)
+
+No `v*` tag has ever been pushed, so no desktop release exists yet. The
+session tooling cannot push tags (403) or dispatch workflows (403), so
+after merging this PR, the user should either:
+
+- `git tag v0.3.0 main && git push origin v0.3.0`, or
+- run the **Release** workflow on `main` via workflow_dispatch.
+
+That builds Windows/macOS/Linux installers and publishes a GitHub
+Release; installed copies then auto-update (Windows/Linux). `v0.2.0` was
+never tagged and is superseded — one `v0.3.0` release covers everything.
+
+## Ship loop from now on
+
+After each merged gameplay PR: bump `package.json` version in the PR,
+then push the matching `v*` tag after merge.
 
 ## User's standing instructions
 
-- Each task = its own PR (draft). User merges and play-tests themselves.
-- Be frugal with tokens: no re-verifying merged work; tests run on GitHub
-  Actions (test.yml), only run *targeted* local tests when diagnosing.
-- All development on branch `claude/magical-cori-7ife76`: after each merge,
-  `git fetch origin main && git reset --hard origin/main`, build the next
-  PR, push, open new draft PR from the same branch.
+- Each task = its own draft PR. User merges and play-tests themselves.
+- Be frugal with tokens; tests run in CI (test.yml). Run only targeted
+  local tests when diagnosing.
 - Goal: "fully fleshed out game based on everything planned."
 
-## Roadmap (remaining, in order)
+## What might come next (no committed roadmap)
 
-### PR B2 — economy buildings (designed, not yet implemented)
-New entries in `src/data/buildings.json` + handlers:
-- **bakery** (3×2, provides `cook`): bigger/faster batches than kitchen
-  (e.g. bakeWorkPerMeal ~12 vs 20, batch 8) — cook task already keys off
-  `builtOf('cook')`; prefer bakery when present.
-- **hunting lodge** (2×2, provides `hunt`, new WorkKind `hunt`): abstract
-  hunting trips (~240 min work) yielding ~3 meals; one hunter per lodge
-  (reserve by buildingId). Becomes concrete when animals land in PR C.
-- **market** (3×3, provides `trade`): HUD barter panel on selection —
-  `sim.trade(give, get, qty)` with fixed rates (wood/stone → grain etc.).
-- **forester** (2×2, provides `forestry`, new WorkKind `plant`): plant
-  saplings on free grass within radius ~6; add `Tile.sapling: boolean`
-  reusing `t.growth`; mature → `kind='tree'` after ~8 days
-  (updateSaplings alongside updateFarms). Needs a sapling sprite.
-- **granary** (3×2, provides `granary`): meal cap = base 80 + 150 per
-  granary; excess spoils in dailyUpdate() with a log line. Grain uncapped.
-- **clinic** (2×3, provides `medical`, capacity 2): preferred bed-rest
-  destination in goSleep()/decide(); ~2× healthRegen while resting there.
+Ideas consistent with the GDD: combat polish (ranged weapons, a
+smithy), animal husbandry (tamed deer → pasture), fishing on river
+sites, region-tier save/load (the in-game menu disables saving after
+the flip), music/ambience beyond SFX, more event variety.
 
-New Provides: `hunt | trade | forestry | granary | medical`. New WorkKinds
-`hunt`, `plant` — WORK_KINDS drives skill init and the priorities UI
-automatically (sim.ts ~line 257 spawn loop). One fast test per building.
+## Architecture notes for the new systems (PR C)
 
-### PR C — defense & game feel
-Gates (paintable zone kind: settlers pass, raiders treat as wall), armed
-pawns, animals (deer → real hunting, wolves), keyboard hotkeys for the
-palette, in-game menu (pause/restart + save/load), audio (WebAudio SFX).
-Save/load matters for the desktop app — serialize Simulation (mostly plain
-data) to JSON, localStorage or file.
-
-## Architecture crib sheet (avoid re-reading the big files)
-
-- `src/sim/sim.ts` (~1600 lines), Simulation class:
-  - `findTask()` ~1080: task generation (farm zones → cook → craft → bury
-    → medic), candidates sorted prio/dist, `reserved` set dedupes via
-    `taskKey()` (`kind:buildingId|itemId|patientId|x,y`).
-  - `runTask()` switch ~1148: cases chop/build/farm/cook/craft/bury/medic/
-    haul. Work speed = (0.5 + skill×0.1) × trait × softCap × sick × rain.
-  - `decide()` ~975: need priority — food FIRST (death-spiral fix), then
-    bed-rest (`goSleep`), sleep, warmth, recreation.
-  - `dailyUpdate()` ~494: population flows, raid scheduling, winter crop
-    kill, drought/flood. `updatePopulationFlows()` ~548.
-  - Zone API: `planZone(kind,x,y)` (TOGGLES — second paint clears),
-    `bulldozeTile(x,y)` (right-click), `nearestStockpileTile(pos)`.
-  - `builtOf(provides)` returns built Buildings by their `provides` tag.
-- `src/sim/world.ts`: Tile { kind: grass|tree|rock|water|soil, road,
-  roadPlan, farmZone, stockpileZone, wall, wallPlan, wallHp, sown, growth,
-  fertility, marked, buildingId }. `passable()` blocks wall, wallPlan,
-  water-without-bridge, rock, buildings. Map 64×64.
-- `src/sim/defs.ts`: TUNING (all balance numbers), BUILDING_DEFS from
-  `src/data/buildings.json` — **no trailing commas** (broke Vite JSON
-  parse once). Current building ids: house, kitchen, hall, hearth, tailor,
-  graveyard (farm/stockpile/palisade are zones now, NOT buildings).
-- Farms are instantly workable when painted (no construction). This
-  shifted the sim timeline — the raid test asserts a `'The raid is over.'`
-  log rather than `raidActive === false` at an arbitrary day.
-- UI: `hud.ts` — palette ZONES section drives `cam.placingZone: PaintKind`;
-  HUD rebuilds innerHTML every frame, so **never bind onclick on rebuilt
-  nodes — use mousedown delegation** (cancel-build/priorities bug history).
-  `render.ts`: zones in pass 1, walls/HP bars in pass 2.
-  `sprites.ts`: `buildSprites()` returns SpriteSet (stockpileZone,
-  wallPlan, palisade already added). `main.ts`: drag-paint dispatcher
-  (road kinds dirt/plank/gravel/bridge → planRoad, else planZone);
-  contextmenu → bulldozeTile.
-- Tests: `tests/sim.test.ts` has `paintFarm(sim,x,y,w,h)` helper; 4 files,
-  ~40 tests, full suite ~4 min in CI (60-day survival test ~140 s alone).
-  Headless balance harness: `npm run sim -- [days] [runs]`.
-
-## Gotchas
-
-- `ELECTRON_SKIP_BINARY_DOWNLOAD=1` for npm install in test CI (already in
-  test.yml) and locally — the Electron binary is only needed to run the
-  shell or package installers.
-- electron-updater is CJS — loaded via `createRequire` in
-  `electron/main.js`; update check only runs when `app.isPackaged`.
-- `vite.config.ts` sets `base: './'` so the bundle loads over `file://`
-  in Electron — do not remove.
-- GitHub MCP tools are restricted to aslater100/Colonysim; PR events
-  arrive as webhooks (failures only — CI success is never delivered, so
-  poll `get_check_runs` / `pull_request_read` after pushes).
+- Gates: `Tile.gate`/`gatePlan`, shared `wallHp` (`TUNING.gateMaxHp`).
+  `World.passable(x, y, hostile)` / `findPath(..., hostile)` — raiders,
+  wolves and deer path with `hostile = true`; raiders bash the nearest
+  wall *or* gate via `nearestBarrier()`.
+- Animals: `sim.animals: Animal[]` (deer/wolf), updated in
+  `updateAnimals()`. Deer flee inside `deerFleeRadius` (3) which is
+  deliberately < `huntRange` (4.5) so hunters shoot without spooking;
+  the hunt task stalks `task.animalId`, kills, and the hunter carries
+  meals back. Empty woods fall back to the old abstract trip. Wolves
+  prey on close settlers (who counterattack) or deer, and leave after
+  `wolfStayDays` or when mauled.
+- Armed: `Settler.armed` — fighters spend `spearWoodCost` wood at raid
+  start; `settlerDamagePerHour()` adds `spearDamageBonus`.
+- Save/load: `sim.serialize()` / `Simulation.deserialize()` — seed
+  rebuilds RegionMap/Weather/worldgen; everything mutable (tiles,
+  agents, stocks, schedules, RNG word via `Rng.get/setState`) is
+  captured; `reserved` rebuilds from in-flight tasks. The menu stores
+  to localStorage `centuria-save`; loading sets a sessionStorage flag
+  and reloads (see `bootSim()` in main.ts). Determinism after load is
+  covered by a test.
+- Hotkeys live in `Hud.handleKey()`; menu in `Hud.openMenu()` (pauses
+  while open). SFX: `src/ui/audio.ts`, driven by palette clicks and a
+  log watcher in main.ts (`playLogSounds`).
+- Test note: deer spawn at founding shifts every seed's RNG sequence —
+  all 52 tests were re-run locally and pass, including the 60-day
+  survival test.

@@ -23,4 +23,11 @@ export class Rng {
   chance(p: number): boolean {
     return this.next() < p;
   }
+  /** Save/load: the whole generator is one 32-bit word. */
+  getState(): number {
+    return this.s;
+  }
+  setState(s: number): void {
+    this.s = s >>> 0;
+  }
 }
