@@ -4,7 +4,7 @@
  */
 import type { Simulation, Settler } from '../sim/sim';
 import { BUILDING_DEFS, buildingDef, traitDef, WORK_KINDS, TUNING } from '../sim/defs';
-import type { WorkKind } from '../sim/defs';
+import type { ResourceKind, WorkKind } from '../sim/defs';
 import type { Camera } from './render';
 import type { PaintKind } from '../sim/world';
 
@@ -47,6 +47,11 @@ export class Hud {
     // between mousedown and mouseup, so plain onclick handlers never fire
     // (this is what broke the cancel button and the priorities table).
     this.inspector.addEventListener('mousedown', (e) => {
+      const trade = (e.target as HTMLElement).closest<HTMLElement>('.trade-btn');
+      if (trade) {
+        this.sim.trade(trade.dataset.give as ResourceKind, trade.dataset.get as ResourceKind);
+        return;
+      }
       const btn = (e.target as HTMLElement).closest<HTMLElement>('#insp-cancel');
       if (!btn) return;
       this.sim.cancelBuilding(Number(btn.dataset.bid));
@@ -226,13 +231,24 @@ export class Hud {
         `<h3>${def.name}${building.built ? '' : ' (blueprint)'}</h3>` +
         `<p>${def.desc}</p>` +
         (building.built
-          ? ''
+          ? (def.provides === 'trade' ? this.tradePanel() : '')
           : `<p>wood ${building.delivered}/${def.cost.wood ?? 0} · work left ${Math.max(0, Math.round(building.buildLeft))}</p>` +
             `<button id="insp-cancel" data-bid="${building.id}">Cancel</button>`));
       this.inspector.classList.remove('hidden');
     } else {
       this.inspector.classList.add('hidden');
     }
+  }
+
+  /** Barter buttons for a selected market; clicks land on the mousedown delegate. */
+  private tradePanel(): string {
+    const offers = Object.entries(TUNING.tradeRates).map(([key, r]) => {
+      const [give, get] = key.split('->');
+      const can = this.sim.stock[give as ResourceKind] >= r.give;
+      return `<button class="trade-btn" data-give="${give}" data-get="${get}"${can ? '' : ' disabled'}>` +
+        `${r.give} ${give} → ${r.get} ${get}</button>`;
+    }).join(' ');
+    return `<p class="insp-skills">BARTER — fixed rates:</p><p>${offers}</p>`;
   }
 
   /** The end of the line: a big retro banner and a way back in (F18). */

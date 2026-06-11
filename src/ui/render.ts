@@ -165,6 +165,7 @@ export class Renderer {
         if (t.kind === 'rock') g.drawImage(t.marked ? sprites.rockMarked : sprites.rock, px, py);
         else if (t.wall) g.drawImage(sprites.palisade, px, py);
         else if (t.kind === 'tree') g.drawImage(t.marked ? sprites.treeMarked : sprites.tree, px - 2, py - 6);
+        else if (t.sapling) g.drawImage(sprites.sapling, px, py);
       }
     }
     // Wall HP bars

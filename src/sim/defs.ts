@@ -5,9 +5,11 @@ import namesJson from '../data/names.json';
 /** All content defs load from JSON so they are moddable without touching code (GDD §8.8). */
 
 export type ResourceKind = 'wood' | 'grain' | 'meal' | 'stone' | 'clothes';
-export type Provides = 'storage' | 'sleep' | 'cook' | 'recreation' | 'warmth' | 'craft' | 'burial';
-export type WorkKind = 'build' | 'farm' | 'chop' | 'cook' | 'haul' | 'medic' | 'craft' | 'bury';
-export const WORK_KINDS: WorkKind[] = ['build', 'farm', 'chop', 'cook', 'haul', 'medic', 'craft', 'bury'];
+export type Provides =
+  | 'storage' | 'sleep' | 'cook' | 'recreation' | 'warmth' | 'craft' | 'burial'
+  | 'hunt' | 'trade' | 'forestry' | 'granary' | 'medical';
+export type WorkKind = 'build' | 'farm' | 'chop' | 'cook' | 'haul' | 'medic' | 'craft' | 'bury' | 'hunt' | 'plant';
+export const WORK_KINDS: WorkKind[] = ['build', 'farm', 'chop', 'cook', 'haul', 'medic', 'craft', 'bury', 'hunt', 'plant'];
 
 export interface BuildingDef {
   id: string;
@@ -86,6 +88,25 @@ export const TUNING = {
   farmYieldPerTile: 10,
   cookWorkPerMeal: 20,
   cookBatch: 4,
+  // Economy buildings (PR B2)
+  bakeWorkPerMeal: 12, // bakery: bigger ovens, faster meals
+  bakeBatch: 8,
+  huntTripWork: 240, // an abstract trip into the woods…
+  huntMealYield: 3, // …comes back with game enough for a few meals
+  plantWork: 20,
+  saplingGrowDays: 8,
+  foresterRadius: 6,
+  // Meals spoil past what the stores can keep; granaries extend the larder.
+  mealCapBase: 200,
+  mealCapPerGranary: 150,
+  clinicRegenMult: 2,
+  // Market barter, fixed and deliberately lossy round-trip
+  tradeRates: {
+    'wood->grain': { give: 3, get: 2 },
+    'stone->grain': { give: 2, get: 3 },
+    'grain->wood': { give: 3, get: 2 },
+    'grain->stone': { give: 4, get: 1 },
+  } as Record<string, { give: number; get: number }>,
   // The spine: soft ceiling on town #1 (GDD §2.3)
   softCapPop: 60,
   softCapWorkPenaltyPer: 0.0075,

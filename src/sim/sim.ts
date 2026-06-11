@@ -418,6 +418,11 @@ export class Simulation {
       t.wallPlan = false;
       return;
     }
+    if (t.sapling) {
+      t.sapling = false;
+      t.growth = 0;
+      return;
+    }
     if (t.farmZone && !t.sown && t.growth === 0) {
       t.farmZone = false;
       t.kind = 'grass';
@@ -436,6 +441,22 @@ export class Simulation {
       t.wallHp = 0;
       return;
     }
+  }
+
+  /** Barter at a built market (HUD panel): fixed rates, lossy round-trip. */
+  trade(give: ResourceKind, get: ResourceKind, times = 1): boolean {
+    if (this.builtOf('trade').length === 0) return false;
+    const rate = TUNING.tradeRates[`${give}->${get}`];
+    if (!rate || times < 1) return false;
+    if (this.stock[give] < rate.give * times) return false;
+    this.stock[give] -= rate.give * times;
+    this.stock[get] += rate.get * times;
+    return true;
+  }
+
+  /** Meals the stores can keep without spoiling. */
+  mealCap(): number {
+    return TUNING.mealCapBase + TUNING.mealCapPerGranary * this.builtOf('granary').length;
   }
 
   building(id: number | null | undefined): Building | undefined {
@@ -483,6 +504,7 @@ export class Simulation {
     const newDay = this.minute % MINUTES_PER_DAY < MINUTES_PER_TICK;
     if (newDay) this.dailyUpdate();
     this.updateFarms();
+    this.updateSaplings();
     this.updateRaiders();
     for (const s of [...this.settlers]) this.updateSettler(s);
     if (this.settlers.length === 0 && !this.gameOver) {
@@ -494,6 +516,13 @@ export class Simulation {
   private dailyUpdate(): void {
     for (let i = 0; i < this.traffic.length; i++) this.traffic[i] *= 0.9; // overlay shows recent flow
     this.updatePopulationFlows();
+    // Cooked food keeps only so long; granaries extend the larder. Grain is uncapped.
+    const mealCap = this.mealCap();
+    if (this.stock.meal > mealCap) {
+      const spoiled = this.stock.meal - mealCap;
+      this.stock.meal = mealCap;
+      this.addLog(`${spoiled} meals spoiled — the stores hold only ${mealCap}. A granary would keep more.`, 'bad');
+    }
     if (this.day >= this.nextEventDay) {
       this.fireEvent();
       this.nextEventDay = this.day + 3 + this.rng.int(4);
@@ -815,7 +844,9 @@ export class Simulation {
     if (s.infection) s.health -= t.infectionHealthPerHour * hours;
     if (s.sickUntil > this.minute) s.health -= t.sickHealthPerHour * hours;
     if (s.needs.food > 30 && s.needs.warmth > 30 && s.health < 100) {
-      s.health = Math.min(100, s.health + t.healthRegenPerHour * hours);
+      const cot = this.building(s.bedId);
+      const inClinic = s.state === 'sleeping' && cot?.built && buildingDef(cot.defId).provides === 'medical';
+      s.health = Math.min(100, s.health + t.healthRegenPerHour * (inClinic ? t.clinicRegenMult : 1) * hours);
     }
     if (s.health <= 0) {
       const cause = s.infection ? 'infection' : s.sickUntil > this.minute ? 'fever'
@@ -1088,10 +1119,27 @@ export class Simulation {
         }
       }
     }
-    // Cook while there is grain and meals are short.
-    const kitchen = this.builtOf('cook')[0];
+    // Cook while there is grain and meals are short. A bakery outclasses the
+    // cookhouse (faster, bigger batches), so it takes over when built.
+    const cookShops = this.builtOf('cook');
+    const kitchen = cookShops.find((b) => b.defId === 'bakery') ?? cookShops[0];
     if (kitchen && this.stock.grain > 0 && this.stock.meal < this.settlers.length * 3) {
-      push({ kind: 'cook', x: kitchen.x, y: kitchen.y, buildingId: kitchen.id, workLeft: TUNING.cookWorkPerMeal * TUNING.cookBatch, label: 'cook meals' }, 'cook');
+      const { workPerMeal, batch } = this.cookParams(kitchen);
+      push({ kind: 'cook', x: kitchen.x, y: kitchen.y, buildingId: kitchen.id, workLeft: workPerMeal * batch, label: 'cook meals' }, 'cook');
+    }
+    // Hunting trips: one hunter per lodge (the lodge id reserves the task)
+    // heads out while meals run short — food without grain.
+    if (this.stock.meal < this.settlers.length * 3) {
+      for (const lodge of this.builtOf('hunt')) {
+        push({ kind: 'hunt', x: lodge.x, y: lodge.y, buildingId: lodge.id, workLeft: TUNING.huntTripWork, label: 'hunt game' }, 'hunt');
+      }
+    }
+    // Foresters replant: one sapling order at a time per lodge, on free grass nearby.
+    for (const f of this.builtOf('forestry')) {
+      const spot = this.saplingSpot(f);
+      if (spot) {
+        push({ kind: 'plant', x: spot.x, y: spot.y, workLeft: TUNING.plantWork, label: 'plant sapling' }, 'plant');
+      }
     }
     // Weave clothes while anyone goes threadbare — but never eat the seed grain.
     const tailorShop = this.builtOf('craft')[0];
@@ -1138,7 +1186,8 @@ export class Simulation {
     const sickMult = s.sickUntil > this.minute ? TUNING.sickWorkMult : 1;
     const sky = this.weatherToday().sky;
     const outdoorWork =
-      task.kind === 'farm' || task.kind === 'chop' || task.kind === 'build' || task.kind === 'haul' || task.kind === 'bury';
+      task.kind === 'farm' || task.kind === 'chop' || task.kind === 'build' || task.kind === 'haul' ||
+      task.kind === 'bury' || task.kind === 'hunt' || task.kind === 'plant';
     const rainMult = outdoorWork && (sky === 'rain' || sky === 'storm' || sky === 'snow') ? 0.85 : 1;
     const speed =
       (0.5 + s.skills[task.kind] * 0.1) * this.traitMult(s, 'workSpeed') * this.softCapWorkMult() * sickMult * rainMult;
@@ -1280,14 +1329,36 @@ export class Simulation {
       case 'cook': {
         const k = this.building(task.buildingId);
         if (!k?.built || this.stock.grain <= 0) return this.finishTask(s);
+        const { workPerMeal } = this.cookParams(k);
         k.cookProgress += work;
         task.workLeft -= work;
-        while (k.cookProgress >= TUNING.cookWorkPerMeal && this.stock.grain > 0) {
-          k.cookProgress -= TUNING.cookWorkPerMeal;
+        while (k.cookProgress >= workPerMeal && this.stock.grain > 0) {
+          k.cookProgress -= workPerMeal;
           this.stock.grain--;
           this.stock.meal++;
         }
         if (task.workLeft <= 0 || this.stock.grain <= 0) this.finishTask(s);
+        return;
+      }
+      case 'hunt': {
+        const lodge = this.building(task.buildingId);
+        if (!lodge?.built) return this.finishTask(s);
+        task.workLeft -= work;
+        if (task.workLeft <= 0) {
+          this.stock.meal += TUNING.huntMealYield;
+          this.finishTask(s);
+        }
+        return;
+      }
+      case 'plant': {
+        const tile = this.world.at(task.x, task.y);
+        if (tile.kind !== 'grass' || tile.sapling || tile.buildingId !== null) return this.finishTask(s);
+        task.workLeft -= work;
+        if (task.workLeft <= 0) {
+          tile.sapling = true;
+          tile.growth = 0;
+          this.finishTask(s);
+        }
         return;
       }
       case 'craft': {
@@ -1328,6 +1399,33 @@ export class Simulation {
         return;
       }
     }
+  }
+
+  /** A bakery cooks faster in bigger batches than the cookhouse. */
+  private cookParams(b: Building): { workPerMeal: number; batch: number } {
+    return b.defId === 'bakery'
+      ? { workPerMeal: TUNING.bakeWorkPerMeal, batch: TUNING.bakeBatch }
+      : { workPerMeal: TUNING.cookWorkPerMeal, batch: TUNING.cookBatch };
+  }
+
+  /** Nearest free, unreserved grass tile in the forester's range, or null when saturated. */
+  private saplingSpot(f: Building): Vec | null {
+    const c = this.buildingCenter(f);
+    const r = TUNING.foresterRadius;
+    let best: Vec | null = null;
+    let bd = Infinity;
+    for (let y = c.y - r; y <= c.y + r; y++) {
+      for (let x = c.x - r; x <= c.x + r; x++) {
+        if (!this.world.inBounds(x, y)) continue;
+        const t = this.world.at(x, y);
+        if (t.kind !== 'grass' || t.sapling || t.buildingId !== null || t.road || t.roadPlan ||
+            t.wall || t.wallPlan || t.farmZone || t.stockpileZone) continue;
+        if (this.reserved.has(`plant:${x},${y}`)) continue;
+        const d = Math.hypot(x - c.x, y - c.y);
+        if (d <= r && d < bd) { bd = d; best = { x, y }; }
+      }
+    }
+    return best;
   }
 
   private taskKey(t: Task): string {
@@ -1400,6 +1498,19 @@ export class Simulation {
   }
 
   private goSleep(s: Settler): void {
+    // The badly hurt take a clinic cot first: supervised rest heals faster.
+    if (s.health < TUNING.bedRestThreshold) {
+      for (const c of this.builtOf('medical')) {
+        const cap = buildingDef(c.defId).capacity ?? 0;
+        const used = this.settlers.filter((o) => o.bedId === c.id).length;
+        if (used < cap) {
+          s.bedId = c.id;
+          s.state = 'sleeping';
+          this.setDestination(s, this.buildingCenter(c));
+          return;
+        }
+      }
+    }
     const houses = this.builtOf('sleep');
     for (const h of houses) {
       const cap = buildingDef(h.defId).capacity ?? 0;
@@ -1438,7 +1549,7 @@ export class Simulation {
       ? this.world.at(Math.round(s.pos.x), Math.round(s.pos.y))
       : null;
     const b = this.building(tile?.buildingId);
-    const indoors = b?.built && ['sleep', 'cook', 'recreation', 'craft'].includes(buildingDef(b.defId).provides);
+    const indoors = b?.built && ['sleep', 'cook', 'recreation', 'craft', 'medical', 'trade'].includes(buildingDef(b.defId).provides);
     if (indoors) return Math.max(this.temperature() + INDOOR_BONUS_C, 14);
     // An open hearth warms the tiles around it — winter survivable by design.
     for (const h of this.builtOf('warmth')) {
@@ -1565,6 +1676,26 @@ export class Simulation {
     for (const t of this.world.tiles) {
       if (t.kind === 'soil' && t.farmZone && t.sown && t.growth < 100) {
         t.growth = Math.min(100, t.growth + perTick * t.fertility);
+      }
+    }
+  }
+
+  /** Forester saplings creep toward full trees; anything built over one clears it. */
+  private updateSaplings(): void {
+    const perTick = (100 / (TUNING.saplingGrowDays * MINUTES_PER_DAY)) * MINUTES_PER_TICK;
+    for (const t of this.world.tiles) {
+      if (!t.sapling) continue;
+      if (t.kind !== 'grass' || t.buildingId !== null || t.road || t.roadPlan ||
+          t.wall || t.wallPlan || t.farmZone || t.stockpileZone) {
+        t.sapling = false;
+        t.growth = 0;
+        continue;
+      }
+      t.growth = Math.min(100, t.growth + perTick);
+      if (t.growth >= 100) {
+        t.sapling = false;
+        t.growth = 0;
+        t.kind = 'tree';
       }
     }
   }

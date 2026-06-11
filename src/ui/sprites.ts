@@ -98,6 +98,7 @@ export interface SpriteSet {
   stockpileZone: HTMLCanvasElement;
   wallPlan: HTMLCanvasElement;
   palisade: HTMLCanvasElement;
+  sapling: HTMLCanvasElement;
   settler: HTMLCanvasElement[][];
   raider: HTMLCanvasElement[];
   items: Record<'wood' | 'grain' | 'meal' | 'stone' | 'clothes', HTMLCanvasElement>;
@@ -417,7 +418,7 @@ function buildingSprite(defId: string, w: number, h: number, ghost: boolean): HT
     g.fillRect(Math.floor(W / 2) - 3, H - 9, 7, 8);
     g.fillStyle = wallD;
     g.fillRect(Math.floor(W / 2) - 2, H - 8, 5, 7);
-    if (defId === 'kitchen') {
+    if (defId === 'kitchen' || defId === 'bakery') {
       g.fillStyle = P.rock;
       g.fillRect(W - 8, 1, 5, 7); // chimney
       g.fillStyle = P.rockLight;
@@ -570,6 +571,23 @@ function palisadeTile(): HTMLCanvasElement {
   return c;
 }
 
+/** A forester's planting: a thin whip with a tuft of leaves, not yet a tree. */
+function saplingSprite(): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE;
+  c.height = TILE;
+  const g = c.getContext('2d')!;
+  g.fillStyle = P.shadow;
+  g.fillRect(6, 13, 5, 2);
+  g.fillStyle = P.trunk;
+  g.fillRect(7, 8, 2, 6);
+  g.fillStyle = P.treeLeaf;
+  g.fillRect(5, 4, 6, 5);
+  g.fillStyle = P.treeLeafLight;
+  g.fillRect(6, 3, 4, 3);
+  return c;
+}
+
 export function buildSprites(buildingDefs: { id: string; w: number; h: number }[]): SpriteSet {
   const buildings: Record<string, HTMLCanvasElement> = {};
   const blueprints: Record<string, HTMLCanvasElement> = {};
@@ -605,6 +623,7 @@ export function buildSprites(buildingDefs: { id: string; w: number; h: number }[
     stockpileZone: stockpileZoneTile(),
     wallPlan: wallPlanTile(),
     palisade: palisadeTile(),
+    sapling: saplingSprite(),
     settler: pawnLooks.map(([c, s, h]) => [pawnSprite(c, 0, s, h), pawnSprite(c, 1, s, h)]),
     raider: [pawnSprite(P.clothRaider, 0, P.skinB, P.hairA, true), pawnSprite(P.clothRaider, 1, P.skinB, P.hairA, true)],
     items: {

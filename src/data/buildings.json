@@ -60,6 +60,67 @@
       "buildWork": 90,
       "provides": "burial",
       "desc": "A fenced plot with simple rites. The dead rest here — and the living rest easier."
+    },
+    {
+      "id": "bakery",
+      "name": "Bakery",
+      "w": 3,
+      "h": 2,
+      "cost": { "wood": 45 },
+      "buildWork": 540,
+      "provides": "cook",
+      "desc": "Big ovens, bigger batches. Cooks faster than the cookhouse — preferred when built."
+    },
+    {
+      "id": "lodge",
+      "name": "Hunting Lodge",
+      "w": 2,
+      "h": 2,
+      "cost": { "wood": 30 },
+      "buildWork": 420,
+      "provides": "hunt",
+      "desc": "One hunter per lodge ranges out for game — meals without grain."
+    },
+    {
+      "id": "market",
+      "name": "Market",
+      "w": 3,
+      "h": 3,
+      "cost": { "wood": 50 },
+      "buildWork": 600,
+      "provides": "trade",
+      "desc": "Passing traders barter at fixed rates. Select it to swap wood, stone and grain."
+    },
+    {
+      "id": "forester",
+      "name": "Forester",
+      "w": 2,
+      "h": 2,
+      "cost": { "wood": 25 },
+      "buildWork": 360,
+      "provides": "forestry",
+      "desc": "Plants saplings on nearby grass; they mature into harvestable trees."
+    },
+    {
+      "id": "granary",
+      "name": "Granary",
+      "w": 3,
+      "h": 2,
+      "cost": { "wood": 35 },
+      "buildWork": 480,
+      "provides": "granary",
+      "desc": "Cool dry storage: each granary lets 150 more meals keep without spoiling."
+    },
+    {
+      "id": "clinic",
+      "name": "Clinic",
+      "w": 2,
+      "h": 3,
+      "cost": { "wood": 40 },
+      "buildWork": 540,
+      "provides": "medical",
+      "capacity": 2,
+      "desc": "Two cots and clean bandages. The badly hurt heal twice as fast resting here."
     }
   ]
 }

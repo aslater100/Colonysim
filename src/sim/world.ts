@@ -38,6 +38,8 @@ export interface Tile {
   stockpileZone: boolean;
   /** wall ordered but not yet built */
   wallPlan: boolean;
+  /** forester-planted sapling growing here (reuses growth; matures into a tree) */
+  sapling: boolean;
   /** HP of built wall on this tile */
   wallHp: number;
   buildingId: number | null;
@@ -65,7 +67,7 @@ export class World {
       this.tiles.push({
         kind: 'grass', growth: 0, sown: false, marked: false, wall: false,
         fertility: 1, road: null, roadPlan: null,
-        farmZone: false, stockpileZone: false, wallPlan: false, wallHp: 0,
+        farmZone: false, stockpileZone: false, wallPlan: false, sapling: false, wallHp: 0,
         buildingId: null,
       });
     }
