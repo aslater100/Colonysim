@@ -2,6 +2,8 @@
   "name": "centuria",
   "private": true,
   "version": "0.21.0",
+  "description": "A colony-to-nation deep-simulation builder, 1900–2100.",
+  "author": "aslater100",
   "type": "module",
   "main": "electron/main.js",
   "scripts": {
@@ -18,7 +20,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.9.2",
-    "electron": "^33.2.0",
+    "electron": "33.2.0",
     "electron-builder": "^25.1.8",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
@@ -28,6 +30,7 @@
   "build": {
     "appId": "io.github.aslater100.centuria",
     "productName": "Centuria",
+    "electronVersion": "33.2.0",
     "files": [
       "dist/**",
       "electron/**"
