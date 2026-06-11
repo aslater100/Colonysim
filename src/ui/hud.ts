@@ -9,6 +9,7 @@ import type { Camera } from './render';
 import type { PaintKind } from '../sim/world';
 import type { Sfx } from './audio';
 import type { Music } from './music';
+import type { Soundscape } from './soundscape';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -43,7 +44,7 @@ export class Hud {
   /** last innerHTML per panel — skip DOM writes when nothing changed */
   private htmlCache = new Map<HTMLElement, string>();
 
-  constructor(root: HTMLElement, private sim: Simulation, private cam: Camera, private sfx?: Sfx, private music?: Music) {
+  constructor(root: HTMLElement, private sim: Simulation, private cam: Camera, private sfx?: Sfx, private music?: Music, private soundscape?: Soundscape) {
     this.topBar = el('div', 'topbar', root);
     this.palette = el('div', 'palette', root);
     this.inspector = el('div', 'inspector', root);
@@ -72,6 +73,11 @@ export class Hud {
         case 'menu-music':
           this.music?.toggle();
           this.music?.unlock();
+          this.renderMenu();
+          break;
+        case 'menu-soundscape':
+          this.soundscape?.toggle();
+          this.soundscape?.unlock();
           this.renderMenu();
           break;
         case 'menu-restart':
@@ -250,6 +256,7 @@ export class Hud {
       `<button id="menu-load"${canLoad ? '' : ' disabled title="No saved game yet"'}>Load Game</button>` +
       `<button id="menu-mute">${this.sfx?.muted ? 'Sound: OFF' : 'Sound: ON'}</button>` +
       `<button id="menu-music">${this.music?.enabled ? 'Music: ON' : 'Music: OFF'}</button>` +
+      `<button id="menu-soundscape">${this.soundscape?.enabled ? 'Ambience: ON' : 'Ambience: OFF'}</button>` +
       `<button id="menu-restart">Restart Colony</button>` +
       `</div>`);
   }

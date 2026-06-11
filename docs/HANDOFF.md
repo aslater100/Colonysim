@@ -1,4 +1,4 @@
-# Session Handoff — 2026-06-11 (post-M6c)
+# Session Handoff — 2026-06-11 (post-soundscape)
 
 ## Where things stand
 
@@ -83,11 +83,23 @@ hybrid, GDD §3.3). Dynamic mixing: a `tension` scalar in main (bumped
 by raid/wolf/bad logs and `sim.raidActive`, decaying ~8s) swells the
 lead/drums; paused drops to the ambient pad alone. Independent
 `Music: ON/OFF` menu toggle persisted under `centuria-music` (separate
-from the SFX `Sound:` toggle). Open ideas consistent with the GDD
-(minus whatever the two in-flight PRs land): town-tier fishing jobs,
-diegetic soundscape layers (§3.3 — hammering/whistles/unrest under the
-music), town-tier event variety, maglev/automated freight (2000+,
-speculative-era, transportation.md §5).
+from the SFX `Sound:` toggle). Diegetic soundscape shipped (v0.12.0 PR): `src/ui/soundscape.ts` — a
+`Soundscape` class (same no-assets WebAudio philosophy as Sfx and Music)
+fired from the main loop alongside `music.update()`. Four ambient layers
+driven by live game signals: **hammering** (town: settlers on build tasks —
+more workers → faster rhythm), **train whistle** (region: rail routes with
+condition > 50 — the B♭ two-tone fall every 9–23s), **crowd chanting**
+(region: grievance > 50 — call-and-response voices that grow louder and
+faster as the pressure bar fills, audible before the number crosses a
+visible threshold), and **bird chirps** (any mode: calm conditions —
+tension < 0.2, no builders, grievance < 35). Independent `Ambience: ON/OFF`
+toggle in the menu under `centuria-soundscape`. Unlocked alongside Sfx and
+Music on the first user gesture.
+
+Open ideas consistent with the GDD: maglev/automated freight (2000+,
+speculative-era, transportation.md §5), technology/civics research tree
+(GDD §5.6 — the twin trees that gate era unlocks beyond the current
+year+state hard-gates).
 
 ## Architecture notes for M6c
 

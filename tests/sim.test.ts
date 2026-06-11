@@ -283,7 +283,9 @@ describe('Town-tier event variety', () => {
 
   it('evtMerchant with a built market converts 3 wood to 5 grain', () => {
     const sim = new Simulation(42);
-    sim.placeBuilding('market', 30, 30, true);
+    // Push a built market directly — avoids canPlace colliding with the
+    // initial stockpile zone at (31-32, 31-32) near the colony centre.
+    (sim as any).buildings.push({ id: 9999, defId: 'market', x: 5, y: 5, built: true, delivered: 50, buildLeft: 0, cookProgress: 0, hp: 0 });
     sim.stock.wood = 10;
     const grainBefore = sim.stock.grain;
     (sim as any).evtMerchant();

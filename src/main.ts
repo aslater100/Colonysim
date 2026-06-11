@@ -10,6 +10,7 @@ import { RegionView } from './ui/regionview';
 import { TILE } from './ui/sprites';
 import { Sfx } from './ui/audio';
 import { Music } from './ui/music';
+import { Soundscape } from './ui/soundscape';
 
 const root = document.getElementById('app')!;
 const canvas = document.createElement('canvas');
@@ -80,12 +81,13 @@ window.addEventListener('resize', resize);
 
 const sfx = new Sfx();
 const music = new Music();
+const soundscape = new Soundscape();
 // Browsers gate audio behind a user gesture; the first input unlocks it.
-window.addEventListener('mousedown', () => { sfx.unlock(); music.unlock(); }, { once: true });
-window.addEventListener('keydown', () => { sfx.unlock(); music.unlock(); }, { once: true });
+window.addEventListener('mousedown', () => { sfx.unlock(); music.unlock(); soundscape.unlock(); }, { once: true });
+window.addEventListener('keydown', () => { sfx.unlock(); music.unlock(); soundscape.unlock(); }, { once: true });
 
 const renderer = new Renderer(canvas, sim, cam);
-const hud = new Hud(root, sim, cam, sfx, music);
+const hud = new Hud(root, sim, cam, sfx, music, soundscape);
 
 hud.onSave = () => {
   try {
@@ -376,6 +378,23 @@ function loop(now: number): void {
   else tension = Math.max(0, tension - dt * 0.12); // ~8s to settle from a peak
   const year = mode === 'region' && region ? region.year : sim.year;
   music.update({ year, paused: hud.paused, tension });
+
+  // Diegetic soundscape: ambient layers driven by live game signals (GDD §3.3).
+  soundscape.update({
+    mode,
+    paused: hud.paused,
+    year,
+    activeBuildWorkers: mode === 'town'
+      ? sim.settlers.filter((s) => s.task?.kind === 'build').length
+      : 0,
+    activeRailRoutes: mode === 'region' && region
+      ? region.routes.filter((r) => r.kind === 'rail' && r.condition > 50).length
+      : 0,
+    maxGrievance: mode === 'region' && region
+      ? Math.max(0, ...region.settlements.map((s) => s.grievance))
+      : 0,
+    tension,
+  });
 
   requestAnimationFrame(loop);
 }
