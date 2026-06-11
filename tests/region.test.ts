@@ -133,6 +133,93 @@ describe('RegionSim (aggregate model)', () => {
   });
 });
 
+describe('Region event variety', () => {
+  function flipped(seed: number): RegionSim {
+    const sim = new Simulation(seed);
+    grow(sim);
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    runDays(r, 5);
+    return r;
+  }
+
+  /** the event methods are private; tests reach in to fire them directly */
+  type EventHooks = {
+    eventBandits(t: unknown): void;
+    eventFire(t: unknown): void;
+    eventProspectors(t: unknown): void;
+    eventNotableBeat(t: unknown): void;
+  };
+  const hooks = (r: RegionSim) => r as unknown as EventHooks;
+
+  it('highwaymen rob rotted routes but hang where the grade is kept', () => {
+    const r = flipped(42);
+    const [home, town2] = r.settlements;
+    const route = r.routeBetween(home.id, town2.id)!;
+    route.kind = 'road';
+    route.condition = 30; // a rotted road is cover
+    route.freight = 50; // and the caravans make it worth working
+    home.food = 500;
+    hooks(r).eventBandits(home);
+    expect(home.food).toBeLessThan(500);
+    expect(r.log[r.log.length - 1].text).toContain('Highwaymen prey');
+    route.condition = 90; // a kept road is not
+    const before = home.food;
+    hooks(r).eventBandits(home);
+    expect(home.food).toBe(before);
+    expect(r.log[r.log.length - 1].text).toContain('They hang');
+  });
+
+  it('a funded State fire brigade holds the damage down', () => {
+    const a = flipped(42);
+    const burnt = a.settlements[0];
+    burnt.wood = 100;
+    hooks(a).eventFire(burnt);
+    const unfundedLoss = 100 - burnt.wood;
+    const b = flipped(42);
+    const saved = b.settlements[0];
+    b.stateProclaimed = true;
+    b.servicesLevel = 1;
+    saved.wood = 100;
+    hooks(b).eventFire(saved);
+    expect(100 - saved.wood).toBeLessThan(unfundedLoss);
+  });
+
+  it('prospectors pay the treasury once there is a State, the stores before', () => {
+    const r = flipped(42);
+    const t = r.settlements[0];
+    const wood = t.wood;
+    hooks(r).eventProspectors(t);
+    expect(t.wood).toBeGreaterThan(wood);
+    r.stateProclaimed = true;
+    r.treasury = 0;
+    hooks(r).eventProspectors(t);
+    expect(r.treasury).toBeGreaterThan(0);
+  });
+
+  it('Notable beats accrue to the bio — the attachment engine keeps writing', () => {
+    const r = flipped(42);
+    const t = r.settlements[0];
+    const n = r.notablesAt(t.id)[0];
+    const beats = n.bio.length;
+    for (let i = 0; i < 12; i++) hooks(r).eventNotableBeat(t);
+    expect(r.notablesAt(t.id).some((m) => m.bio.length > beats)).toBe(true);
+  });
+
+  it('the long run shows the wider deck, not just the original five', () => {
+    const r = flipped(42);
+    const seen = new Set<string>();
+    for (let i = 0; i < 40; i++) {
+      runDays(r, 15); // 600 days total, sampling before the log cap trims
+      for (const l of r.log) {
+        if (l.text.includes('Highwaymen')) seen.add('bandits');
+        if (l.text.includes('Fire') || l.text.includes('brigade')) seen.add('fire');
+        if (l.text.includes('Prospectors')) seen.add('prospectors');
+      }
+    }
+    expect(seen.size).toBeGreaterThanOrEqual(2);
+  });
+});
+
 describe('Region save/load', () => {
   function flippedPair(seed: number): { sim: Simulation; r: RegionSim } {
     const sim = new Simulation(seed);

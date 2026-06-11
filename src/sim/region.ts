@@ -827,49 +827,155 @@ export class RegionSim {
     this.addLog(`${n.name} rises to ${role} of ${t.name}.`, 'info');
   }
 
+  /** The region's incident deck. Wider than the original five (the GDD's
+   *  "more event variety"): the network, the Notables, and the State all
+   *  show up in the stream of small history. */
   private fireEvent(): void {
     const t = this.settlements[this.rng.int(this.settlements.length)];
     if (!t || this.popOf(t) < 1) return;
+    // The deck keeps the original 45/55 bad-to-good balance — immigration
+    // (wagon trains) stays generous because statehood paces on population.
     const roll = this.rng.next();
-    if (roll < 0.3) {
-      // Raid, resolved abstractly by militia strength (GDD §7: abstraction rises with tier)
-      const strength = 2 + this.rng.int(Math.max(2, Math.floor(this.totalPop() / 40)));
-      const captain = 1 + 0.25 * this.roleMult(t, 'Captain');
-      const funded = this.stateProclaimed ? 1 + 0.2 * this.militiaLevel + (this.govLean === 'mayor' ? 0.2 : 0) : 1;
-      // M6c: the network is defense — a built link to a bigger town brings relief
-      const relief = this.reliefLine(t);
-      const militia = this.workersOf(t) * 0.12 * captain * funded * (relief ? 1.25 : 1);
-      t.lastRaidDay = this.day;
-      if (militia >= strength) {
-        this.addLog(
-          relief
-            ? `Raiders struck ${t.name} and were driven off — relief militia rode in along the line.`
-            : `Raiders struck ${t.name} and were driven off by the militia.`,
-          'good',
-        );
-      } else {
-        const losses = Math.min(this.popOf(t) * 0.06, strength - militia);
-        this.removePop(t, losses);
-        t.food *= 0.85;
-        this.addLog(`Raiders overran ${t.name}'s pickets — ${Math.max(1, Math.round(losses))} lost, stores plundered.`, 'bad');
-      }
-    } else if (roll < 0.45) {
-      const sick = Math.round(this.popOf(t) * 0.05);
-      t.cohorts.bands[4] *= 0.92;
-      t.cohorts.bands[0] *= 0.97;
-      t.satisfaction -= 5;
-      this.addLog(`Fever in ${t.name} — ${sick} bedridden; the old and the young suffer worst.`, 'bad');
-    } else if (roll < 0.6) {
-      t.food += this.workersOf(t) * 4;
-      this.addLog(`A bumper harvest in ${t.name}.`, 'good');
-    } else if (roll < 0.8) {
-      const wave = 3 + this.rng.int(6);
-      t.cohorts.bands[1] += wave * 0.7;
-      t.cohorts.bands[2] += wave * 0.3;
-      this.addLog(`A wagon train of ${wave} arrives at ${t.name}, drawn by word of the frontier.`, 'good');
+    if (roll < 0.22) this.eventRaid(t);
+    else if (roll < 0.32) this.eventFever(t);
+    else if (roll < 0.44) this.eventHarvest(t);
+    else if (roll < 0.62) this.eventWagonTrain(t);
+    else if (roll < 0.68) this.eventBandits(t);
+    else if (roll < 0.76) this.eventNotableBeat(t);
+    else if (roll < 0.83) this.eventFire(t);
+    else if (roll < 0.9) this.eventProspectors(t);
+    else this.eventFair(t);
+  }
+
+  /** Raid, resolved abstractly by militia strength (GDD §7: abstraction rises with tier). */
+  private eventRaid(t: Settlement): void {
+    const strength = 2 + this.rng.int(Math.max(2, Math.floor(this.totalPop() / 40)));
+    const captain = 1 + 0.25 * this.roleMult(t, 'Captain');
+    const funded = this.stateProclaimed ? 1 + 0.2 * this.militiaLevel + (this.govLean === 'mayor' ? 0.2 : 0) : 1;
+    // M6c: the network is defense — a built link to a bigger town brings relief
+    const relief = this.reliefLine(t);
+    const militia = this.workersOf(t) * 0.12 * captain * funded * (relief ? 1.25 : 1);
+    t.lastRaidDay = this.day;
+    if (militia >= strength) {
+      this.addLog(
+        relief
+          ? `Raiders struck ${t.name} and were driven off — relief militia rode in along the line.`
+          : `Raiders struck ${t.name} and were driven off by the militia.`,
+        'good',
+      );
     } else {
-      t.satisfaction = Math.min(100, t.satisfaction + 6);
-      this.addLog(`${t.name} holds a harvest fair. Spirits lift.`, 'good');
+      const losses = Math.min(this.popOf(t) * 0.06, strength - militia);
+      this.removePop(t, losses);
+      t.food *= 0.85;
+      this.addLog(`Raiders overran ${t.name}'s pickets — ${Math.max(1, Math.round(losses))} lost, stores plundered.`, 'bad');
+    }
+  }
+
+  private eventFever(t: Settlement): void {
+    const sick = Math.round(this.popOf(t) * 0.05);
+    t.cohorts.bands[4] *= 0.92;
+    t.cohorts.bands[0] *= 0.97;
+    t.satisfaction -= 5;
+    this.addLog(`Fever in ${t.name} — ${sick} bedridden; the old and the young suffer worst.`, 'bad');
+  }
+
+  private eventHarvest(t: Settlement): void {
+    t.food += this.workersOf(t) * 4;
+    this.addLog(`A bumper harvest in ${t.name}.`, 'good');
+  }
+
+  private eventWagonTrain(t: Settlement): void {
+    const wave = 3 + this.rng.int(6);
+    t.cohorts.bands[1] += wave * 0.7;
+    t.cohorts.bands[2] += wave * 0.3;
+    this.addLog(`A wagon train of ${wave} arrives at ${t.name}, drawn by word of the frontier.`, 'good');
+  }
+
+  private eventFair(t: Settlement): void {
+    t.satisfaction = Math.min(100, t.satisfaction + 6);
+    this.addLog(`${t.name} holds a harvest fair. Spirits lift.`, 'good');
+  }
+
+  /** Highwaymen work the routes — but they rob freight, not subsistence:
+   *  a quiet trail carries nothing worth taking, and a kept road or rail
+   *  gives no cover. Maintenance money buys safety, not just throughput. */
+  private eventBandits(t: Settlement): void {
+    const mine = this.routes.filter((r) => (r.a === t.id || r.b === t.id) && r.freight > 0);
+    if (mine.length === 0) return this.eventFair(t); // no caravan traffic, nothing to rob
+    const worst = mine.reduce((a, b) => (a.condition <= b.condition ? a : b));
+    const otherName = this.settlement(worst.a === t.id ? worst.b : worst.a)?.name ?? 'the hills';
+    if (worst.kind !== 'trail' && worst.condition > 60) {
+      this.addLog(`Highwaymen tried the ${worst.kind} to ${otherName}, but the patrolled grade gave no cover. They hang at ${t.name}.`, 'good');
+      return;
+    }
+    const toll = Math.min(t.food * 0.05, 15 + this.rng.int(10));
+    t.food = Math.max(0, t.food - toll);
+    t.satisfaction -= 2;
+    this.addLog(`Highwaymen prey on the ${worst.kind} to ${otherName} — ${Math.round(toll)} food taken from ${t.name}'s wagons.`, 'bad');
+  }
+
+  /** A Notable's small hour: the attachment engine accrues bio beats (GDD §2.4). */
+  private eventNotableBeat(t: Settlement): void {
+    const locals = this.notablesAt(t.id);
+    if (locals.length === 0) return this.eventFair(t);
+    const n = locals[this.rng.int(locals.length)];
+    const beat: Record<NotableRole, { text: string; apply: () => void }> = {
+      Mayor: {
+        text: `${n.name} settles a boundary feud on the courthouse steps of ${t.name}.`,
+        apply: () => { t.grievance = Math.max(0, t.grievance - 8); t.satisfaction += 3; },
+      },
+      Doctor: {
+        text: `${n.name} rides three days vaccinating the outlying farms of ${t.name}.`,
+        apply: () => { t.satisfaction += 3; },
+      },
+      Captain: {
+        text: `${n.name} drills ${t.name}'s militia on the green till dusk.`,
+        apply: () => { t.lastRaidDay = Math.min(t.lastRaidDay, this.day - 10); },
+      },
+      Granger: {
+        text: `${n.name} takes the county prize for winter wheat — ${t.name}'s granary swells.`,
+        apply: () => { t.food += this.workersOf(t) * 2; },
+      },
+      Forewoman: {
+        text: `${n.name} fells the giant deadfall above ${t.name} — a season's lumber in a week.`,
+        apply: () => { t.wood += this.workersOf(t) * 1.5; },
+      },
+      Reeve: {
+        text: `${n.name} writes home glowing letters about ${t.name}; they get printed back east.`,
+        apply: () => { t.cohorts.bands[1] += 2; },
+      },
+    };
+    const b = beat[n.role];
+    b.apply();
+    n.bio.push(`${b.text.replace(`${n.name} `, '')} (${this.year})`);
+    this.addLog(b.text, 'good');
+  }
+
+  /** Fire: wood-built towns burn; a funded State has a brigade. */
+  private eventFire(t: Settlement): void {
+    const brigade = this.stateProclaimed && this.servicesLevel >= 1;
+    const woodLost = t.wood * (brigade ? 0.08 : 0.2);
+    t.wood = Math.max(0, t.wood - woodLost);
+    t.housing = Math.max(this.popOf(t) * 0.5, t.housing - (brigade ? 1 : 4));
+    t.satisfaction -= brigade ? 2 : 6;
+    this.addLog(
+      brigade
+        ? `Fire in ${t.name}'s mill row — the brigade holds it to one block.`
+        : `Fire tears through ${t.name} — timber and homes lost before the rain came.`,
+      'bad',
+    );
+  }
+
+  /** Prospectors: the land pays out a little — coin for a State, timber rights before one. */
+  private eventProspectors(t: Settlement): void {
+    if (this.stateProclaimed) {
+      const find = 15 + this.rng.int(20);
+      this.treasury += find;
+      this.addLog(`Prospectors file a claim in the hills above ${t.name} — £${find} in fees and assay to the treasury.`, 'good');
+    } else {
+      const timber = 20 + this.rng.int(15);
+      t.wood += timber;
+      this.addLog(`Prospectors trade timber rights at ${t.name} — ${timber} wood for the stores.`, 'good');
     }
   }
 

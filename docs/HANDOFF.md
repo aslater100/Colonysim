@@ -49,11 +49,21 @@ v2 combined snapshots `{v:2, mode:'region', town, region}` under the
 same `centuria-save` key; v1 town saves still load. `RegionSim.serialize`
 / `.deserialize(json, sim)` — the region re-shares the restored town's
 rng/map/weather; the corridor cache refills lazily; the menu now opens
-in region mode (Esc or the top-bar button). Open ideas consistent with
-the GDD (minus whatever the two in-flight PRs land): town-tier fishing
-jobs, music/ambience, more event variety, Tier-2 goods markets along
-routes (arbitrage, GDD §5.2), paved-highway era (1945+, ×2.2 — the rail
-stranded-asset lesson, transportation.md §5).
+in region mode (Esc or the top-bar button). Region event variety shipped
+(v0.7.0 PR): the incident deck went from five events to nine —
+highwaymen (rob caravan **freight** on low-condition routes; kept
+roads/rail hang them; quiet routes carry nothing worth taking — that
+freight gate matters, an earlier draft robbed subsistence and starved
+the harness), Notable bio beats (role-flavored, the attachment engine
+keeps writing), town fires (a funded State brigade holds damage down),
+and prospectors (£ to the treasury post-State, timber rights before).
+Deck balance kept at the original 45/55 bad-to-good with wagon trains
+generous — statehood paces on population; the seed-42 18-year harness
+is the guard. Open ideas consistent with the GDD (minus whatever the
+two in-flight PRs land): town-tier fishing jobs, music/ambience, town-
+tier event variety, Tier-2 goods markets along routes (arbitrage, GDD
+§5.2), paved-highway era (1945+, ×2.2 — the rail stranded-asset lesson,
+transportation.md §5).
 
 ## Architecture notes for M6c
 
