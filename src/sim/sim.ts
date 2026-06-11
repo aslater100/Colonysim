@@ -396,7 +396,14 @@ export class Simulation {
     return true;
   }
 
-  placeBuilding(defId: string, x: number, y: number, rotation = 0, prebuilt = false): Building | null {
+  placeBuilding(defId: string, x: number, y: number, rotationOrPrebuilt: number | boolean = 0, prebuilt = false): Building | null {
+    let rotation: number;
+    if (typeof rotationOrPrebuilt === 'boolean') {
+      prebuilt = rotationOrPrebuilt;
+      rotation = 0;
+    } else {
+      rotation = rotationOrPrebuilt;
+    }
     if (!this.canPlace(defId, x, y, rotation)) return null;
     const def = buildingDef(defId);
     const w = rotation % 2 === 1 ? def.h : def.w;
