@@ -55,11 +55,11 @@ describe('defense & game feel (PR C)', () => {
     fighter.combat = 8;
     fighter.health = 100;
     const woodBefore = sim.stock.wood;
+    // startRaid sets raidActive/raidUntil; replace raiders with a known-reachable
+    // position. RNG-shifted spawns can land east of the river where settlers
+    // can't pathfind, causing setDestination to reset state='idle' after arming.
     sim.startRaid();
-    // Guarantee at least one raider exists regardless of RNG spawn positions
-    if (sim.raiders.length === 0) {
-      sim.raiders.push({ id: 9999, pos: { x: 32, y: 32 }, path: [], health: TUNING.raiderHealth, combat: 3, state: 'attack', repathAt: 0 });
-    }
+    sim.raiders = [{ id: 9999, pos: { x: 32, y: 28 }, path: [], health: TUNING.raiderHealth, combat: 3, state: 'attack', repathAt: 0 }];
     sim.tick();
     expect(fighter.armed).toBe(true);
     expect(fighter.state).toBe('fighting');
