@@ -106,7 +106,7 @@ export interface Expedition {
  * links between settlements, laid along a real A* corridor through the
  * terrain. Everything that moves between towns rides this network.
  */
-export type RouteKind = 'trail' | 'road' | 'rail';
+export type RouteKind = 'trail' | 'road' | 'rail' | 'highway';
 
 export interface Route {
   a: number; // settlement ids
@@ -127,14 +127,22 @@ export const ROUTE_SPECS: Record<RouteKind, {
   trail: { capacity: 60, speed: 1.0, buildPerCost: 0, maintPerCell: 0 },
   road: { capacity: 200, speed: 1.7, buildPerCost: 2, maintPerCell: 0.2 },
   rail: { capacity: 1200, speed: 4.0, buildPerCost: 8, maintPerCell: 0.5 },
+  highway: { capacity: 900, speed: 2.2, buildPerCost: 3, maintPerCell: 0.15 },
 };
 
-/** Trail < road < rail: links only ever upgrade (you don't tear up track). */
-const KIND_RANK: Record<RouteKind, number> = { trail: 0, road: 1, rail: 2 };
+/** Links only ever upgrade (you don't tear up track) — but note the asphalt
+ *  trap: a highway *replaces* rail at lower capacity and upkeep. The player
+ *  who over-built rail keeps paying £0.5/cell or writes the steel off —
+ *  the stranded-asset lesson, rehearsed early (transportation.md §5). */
+const KIND_RANK: Record<RouteKind, number> = { trail: 0, road: 1, rail: 2, highway: 3 };
 
 /** Railworks (M6c, transportation.md §5): the rail boom opens ~1912 —
  *  deliberately the best value in the game during its window. */
 export const RAIL_ERA_YEAR = 1912;
+
+/** The asphalt age (transportation.md §5): cheap paved highways from 1945
+ *  erode rail's monopoly — less throughput than steel, a third the upkeep. */
+export const HIGHWAY_ERA_YEAR = 1945;
 
 /** A rotted route is still a walkable track — people keep using it. */
 const ROUTE_CONDITION_FLOOR = 15;
@@ -181,6 +189,7 @@ export class RegionSim {
   gameOver = false;
   private droughtAnnounced = false;
   private railAnnounced = false;
+  private highwayAnnounced = false;
   private nextId = 1000;
   private nextEventDay: number;
   private townNamePool: string[];
@@ -280,7 +289,7 @@ export class RegionSim {
   }
 
   /** Price a built link between two towns: the terrain's itemized bill. */
-  linkCost(aId: number, bId: number, kind: 'road' | 'rail'): { total: number; cells: number; breakdown: string } | null {
+  linkCost(aId: number, bId: number, kind: 'road' | 'rail' | 'highway'): { total: number; cells: number; breakdown: string } | null {
     const a = this.settlement(aId);
     const b = this.settlement(bId);
     if (!a || !b) return null;
@@ -304,15 +313,25 @@ export class RegionSim {
     return this.linkCost(aId, bId, 'rail');
   }
 
+  highwayCost(aId: number, bId: number): { total: number; cells: number; breakdown: string } | null {
+    return this.linkCost(aId, bId, 'highway');
+  }
+
   /** The Railworks gate: steel needs both a State and the 1912 era. */
   railUnlocked(): boolean {
     return this.stateProclaimed && this.year >= RAIL_ERA_YEAR;
   }
 
+  /** The asphalt gate: paving plants need a State and the 1945 era. */
+  highwayUnlocked(): boolean {
+    return this.stateProclaimed && this.year >= HIGHWAY_ERA_YEAR;
+  }
+
   /** Built links are State works, paid from the treasury; links only upgrade. */
-  private buildLink(aId: number, bId: number, kind: 'road' | 'rail'): boolean {
+  private buildLink(aId: number, bId: number, kind: 'road' | 'rail' | 'highway'): boolean {
     if (!this.stateProclaimed) return false;
     if (kind === 'rail' && !this.railUnlocked()) return false;
+    if (kind === 'highway' && !this.highwayUnlocked()) return false;
     const existing = this.routeBetween(aId, bId);
     if (existing && KIND_RANK[existing.kind] >= KIND_RANK[kind]) return false;
     const a = this.settlement(aId);
@@ -320,6 +339,7 @@ export class RegionSim {
     const cost = this.linkCost(aId, bId, kind);
     if (!a || !b || !cost || this.treasury < cost.total) return false;
     const c = this.corridorBetween(a, b)!;
+    const wasRail = existing?.kind === 'rail';
     this.treasury -= cost.total;
     if (existing) {
       existing.kind = kind;
@@ -332,7 +352,9 @@ export class RegionSim {
     this.addLog(
       kind === 'road'
         ? `A wagon road opens between ${a.name} and ${b.name} — £${cost.total} of grading and bridgework.`
-        : `Steel rails link ${a.name} and ${b.name} — £${cost.total} of cuttings, trestles, and track. The whistle carries for miles.`,
+        : kind === 'rail'
+          ? `Steel rails link ${a.name} and ${b.name} — £${cost.total} of cuttings, trestles, and track. The whistle carries for miles.`
+          : `Fresh asphalt runs from ${a.name} to ${b.name} — £${cost.total} of paving${wasRail ? '. The old rail bed goes quiet' : ''}.`,
       'good',
     );
     return true;
@@ -344,6 +366,10 @@ export class RegionSim {
 
   buildRail(aId: number, bId: number): boolean {
     return this.buildLink(aId, bId, 'rail');
+  }
+
+  buildHighway(aId: number, bId: number): boolean {
+    return this.buildLink(aId, bId, 'highway');
   }
 
   /** Putting a storm-damaged link back in order: crews priced by what the
@@ -666,6 +692,14 @@ export class RegionSim {
       this.addLog(
         `RAILWORKS: ${this.stateName} charters its first railway engineers. ` +
         `Steel rails can now be laid between the towns — the age of steam begins.`,
+        'good',
+      );
+    }
+    if (!this.highwayAnnounced && this.highwayUnlocked()) {
+      this.highwayAnnounced = true;
+      this.addLog(
+        `THE ASPHALT AGE: ${this.stateName} opens its first paving plant. Cheap highways ` +
+        `now rival the railways — the steel monopolies grumble.`,
         'good',
       );
     }
@@ -1222,6 +1256,7 @@ export class RegionSim {
       gameOver: this.gameOver,
       droughtAnnounced: this.droughtAnnounced,
       railAnnounced: this.railAnnounced,
+      highwayAnnounced: this.highwayAnnounced,
       nextId: this.nextId,
       nextEventDay: this.nextEventDay,
       townNamePool: this.townNamePool,
@@ -1253,6 +1288,7 @@ export class RegionSim {
     r.gameOver = d.gameOver;
     r.droughtAnnounced = d.droughtAnnounced;
     r.railAnnounced = d.railAnnounced;
+    r.highwayAnnounced = d.highwayAnnounced ?? false;
     r.nextId = d.nextId;
     r.nextEventDay = d.nextEventDay;
     r.townNamePool = d.townNamePool;

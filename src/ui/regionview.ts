@@ -80,14 +80,24 @@ export class RegionView {
           const c = region.map.cellToCoord(cell.x, cell.y);
           return this.toPx(c.rx, c.ry);
         });
-        g.strokeStyle = r.kind === 'rail' ? `rgba(150,156,168,${alpha})` : `rgba(216,180,106,${alpha})`;
-        g.lineWidth = r.kind === 'rail' ? 3 : 2;
+        g.strokeStyle = r.kind === 'rail' ? `rgba(150,156,168,${alpha})`
+          : r.kind === 'highway' ? `rgba(62,66,74,${Math.min(1, alpha + 0.2)})`
+          : `rgba(216,180,106,${alpha})`;
+        g.lineWidth = r.kind === 'rail' ? 3 : r.kind === 'highway' ? 4 : 2;
         g.beginPath();
         for (let i = 0; i < pts.length; i++) {
           if (i === 0) g.moveTo(pts[i].px, pts[i].py);
           else g.lineTo(pts[i].px, pts[i].py);
         }
         g.stroke();
+        if (r.kind === 'highway') {
+          // the dashed centerline is what makes asphalt read as asphalt
+          g.fillStyle = `rgba(232,226,200,${alpha})`;
+          for (let i = 0; i < pts.length; i += 2) {
+            g.fillRect(Math.round(pts[i].px) - 1, Math.round(pts[i].py), 2, 1);
+          }
+          this.drawTruck(pts, r.condition);
+        }
         if (r.kind === 'rail') {
           // cross-ties: short perpendicular ticks so steel reads as track
           g.strokeStyle = `rgba(40,36,32,${alpha})`;
@@ -216,6 +226,20 @@ export class RegionView {
     g.fillRect(Math.round(p.px) + 1, Math.round(p.py) - 6 - puff, 2 + puff, 2); // smoke
   }
 
+  /** Freight trucks shuttle the highways — same flavor-only rule as trains. */
+  private drawTruck(pts: { px: number; py: number }[], condition: number): void {
+    if (pts.length < 2 || condition <= 20) return;
+    const { g } = this;
+    const span = (pts.length - 1) * 2;
+    const t = Math.floor(this.frame / 3) % span; // asphalt is quick
+    const i = t < pts.length - 1 ? t : span - t;
+    const p = pts[Math.max(0, Math.min(pts.length - 1, i))];
+    g.fillStyle = '#8c2f24'; // a red hauler
+    g.fillRect(Math.round(p.px) - 2, Math.round(p.py) - 3, 5, 4);
+    g.fillStyle = '#dfe6ee';
+    g.fillRect(Math.round(p.px) + 1, Math.round(p.py) - 2, 1, 1); // windscreen glint
+  }
+
   /** The generated land itself, in 8-bit blocks: this map IS the world. */
   private drawTerrain(W: number, H: number): void {
     const { g, region } = this;
@@ -342,9 +366,11 @@ export class RegionView {
       `<p>services: <b>${lvl(r.servicesLevel)}</b> <button class="mini" id="svc-up">+</button><button class="mini" id="svc-dn">−</button></p>` +
       `<p>militia: <b>${lvl(r.militiaLevel)}</b> <button class="mini" id="mil-up">+</button><button class="mini" id="mil-dn">−</button></p>` +
       `<p class="insp-skills">high taxes breed strikes; services cost £ but save lives</p>` +
-      `<p class="insp-skills">${r.railUnlocked()
-        ? 'RAILWORKS chartered — lay rail from any town panel'
-        : `railworks expected ~${RAIL_ERA_YEAR}`}</p>` +
+      `<p class="insp-skills">${r.highwayUnlocked()
+        ? 'THE ASPHALT AGE — highways from any town panel'
+        : r.railUnlocked()
+          ? 'RAILWORKS chartered — lay rail from any town panel'
+          : `railworks expected ~${RAIL_ERA_YEAR}`}</p>` +
       this.freightHtml();
     this.statePanel.querySelector<HTMLInputElement>('#tax-slider')!.oninput = (e) => {
       r.taxRate = Number((e.target as HTMLInputElement).value) / 100;
@@ -400,6 +426,11 @@ export class RegionView {
         this.region.buildRail(t.id, Number(rb.dataset.to));
       };
     }
+    for (const rb of this.panel.querySelectorAll<HTMLButtonElement>('.hwy-btn')) {
+      rb.onclick = () => {
+        this.region.buildHighway(t.id, Number(rb.dataset.to));
+      };
+    }
     for (const rb of this.panel.querySelectorAll<HTMLButtonElement>('.repair-btn')) {
       rb.onclick = () => {
         this.region.repairRoute(t.id, Number(rb.dataset.to));
@@ -424,12 +455,20 @@ export class RegionView {
               `title="£${cost.total}: ${cost.breakdown}">road £${cost.total}</button>`;
           }
         }
-        if (r.railUnlocked() && (!route || route.kind !== 'rail')) {
+        if (r.railUnlocked() && (!route || (route.kind !== 'rail' && route.kind !== 'highway'))) {
           const cost = r.railCost(t.id, o.id);
           if (cost) {
             const afford = r.treasury >= cost.total;
             btn += ` <button class="mini rail-btn" data-to="${o.id}" ${afford ? '' : 'disabled'} ` +
               `title="£${cost.total}: ${cost.breakdown}">rail £${cost.total}</button>`;
+          }
+        }
+        if (r.highwayUnlocked() && (!route || route.kind !== 'highway')) {
+          const cost = r.highwayCost(t.id, o.id);
+          if (cost) {
+            const afford = r.treasury >= cost.total;
+            btn += ` <button class="mini hwy-btn" data-to="${o.id}" ${afford ? '' : 'disabled'} ` +
+              `title="£${cost.total}: ${cost.breakdown}${route?.kind === 'rail' ? ' — replaces the rail line' : ''}">highway £${cost.total}</button>`;
           }
         }
         if (r.stateProclaimed && route && route.kind !== 'trail' && route.condition < 85) {

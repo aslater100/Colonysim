@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Simulation } from '../src/sim/sim';
-import { RegionSim, REGION_MINUTES_PER_TICK, ROUTE_SPECS, RAIL_ERA_YEAR } from '../src/sim/region';
+import { RegionSim, REGION_MINUTES_PER_TICK, ROUTE_SPECS, RAIL_ERA_YEAR, HIGHWAY_ERA_YEAR } from '../src/sim/region';
 import { RegionMap } from '../src/sim/worldgen';
 import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
 
@@ -163,10 +163,14 @@ describe('Roads & the treasury (M6b)', () => {
   });
 });
 
-/** jump the region clock so the Railworks era is open */
-function toRailEra(r: RegionSim): void {
-  const target = (RAIL_ERA_YEAR - START_YEAR) * DAYS_PER_YEAR * MINUTES_PER_DAY;
+/** jump the region clock so a given era year is open */
+function toYear(r: RegionSim, year: number): void {
+  const target = (year - START_YEAR) * DAYS_PER_YEAR * MINUTES_PER_DAY;
   if (r.minute < target) r.minute = target;
+}
+
+function toRailEra(r: RegionSim): void {
+  toYear(r, RAIL_ERA_YEAR);
 }
 
 describe('The rail era (M6c)', () => {
@@ -214,6 +218,34 @@ describe('The rail era (M6c)', () => {
     r.caravans();
     expect(town2.food).toBeGreaterThan(overRoad);
     expect(town2.food).toBeLessThanOrEqual(ROUTE_SPECS.rail.capacity * 0.9 + 1e-9);
+  });
+});
+
+describe('The asphalt age (transportation.md §5)', () => {
+  it('highways wait on the State and 1945 — then replace even rail', () => {
+    const r = flipped(42);
+    toStatehood(r);
+    r.treasury = 1e6;
+    const [a, b] = r.settlements;
+    expect(r.highwayUnlocked()).toBe(false);
+    expect(r.buildHighway(a.id, b.id)).toBe(false); // era not open
+    toRailEra(r);
+    expect(r.buildRail(a.id, b.id)).toBe(true);
+    toYear(r, HIGHWAY_ERA_YEAR);
+    expect(r.highwayUnlocked()).toBe(true);
+    expect(r.buildHighway(a.id, b.id)).toBe(true); // pave over the rail bed
+    const route = r.routeBetween(a.id, b.id)!;
+    expect(route.kind).toBe('highway');
+    expect(route.condition).toBe(100);
+    expect(r.buildRail(a.id, b.id)).toBe(false); // no going back to steel
+    expect(r.buildHighway(a.id, b.id)).toBe(false); // already paved
+  });
+
+  it('the stranded-asset arithmetic: cheaper to build and keep, less to carry', () => {
+    expect(ROUTE_SPECS.highway.buildPerCost).toBeLessThan(ROUTE_SPECS.rail.buildPerCost);
+    expect(ROUTE_SPECS.highway.maintPerCell).toBeLessThan(ROUTE_SPECS.rail.maintPerCell);
+    expect(ROUTE_SPECS.highway.capacity).toBeLessThan(ROUTE_SPECS.rail.capacity);
+    expect(ROUTE_SPECS.highway.capacity).toBeGreaterThan(ROUTE_SPECS.road.capacity);
   });
 });
 

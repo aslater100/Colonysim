@@ -67,10 +67,16 @@ arbitraging cheap→dear along `routePath` when margin > 1.5× freight
 turnover into GDP and a 5% State levy into the treasury. Watch-out:
 the levy can part-fund road upkeep — the M6b rot test now gluts all
 markets to kill margins. Old saves migrate (prices default in
-deserialize). Open ideas consistent with the GDD (minus whatever the
-two in-flight PRs land): town-tier fishing jobs, music/ambience, town-
-tier event variety, paved-highway era (1945+, ×2.2 — the rail
-stranded-asset lesson, transportation.md §5).
+deserialize). Highway era shipped (v0.9.0
+PR): `highway` kind (capacity 900, £3/terrain-cost, £0.15/cell/mo)
+behind State + 1945; KIND_RANK puts highway above rail so paving
+*replaces* steel — the stranded-asset choice is the player's; asphalt
+art with dashed centerline and shuttling trucks. The transportation
+era arc (trail→road→rail→highway) is now fully built. Open ideas
+consistent with the GDD (minus whatever the two in-flight PRs land):
+town-tier fishing jobs, music/ambience, town-tier event variety,
+maglev/automated freight (2000+, speculative-era, transportation.md
+§5).
 
 ## Architecture notes for M6c
 
