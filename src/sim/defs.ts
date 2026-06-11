@@ -145,6 +145,28 @@ export const TUNING = {
   wallWork: 30,
   wallMaxHp: 80,
   wallDamagePerHour: 50,
+  // Gates: a door in the palisade — settlers pass, raiders have to break it
+  gateCost: { wood: 5 },
+  gateWork: 45,
+  gateMaxHp: 100,
+  // Armed pawns: fighters grab a spear from the stores when the horn sounds
+  spearWoodCost: 3,
+  spearDamageBonus: 12,
+  // Animals: deer to hunt, wolves to fear
+  deerStartCount: 8,
+  deerMaxCount: 10,
+  deerSpawnChancePerDay: 0.12,
+  deerHealth: 40,
+  deerFleeRadius: 3,
+  huntRange: 4.5, // hunters shoot from outside the flee radius
+  huntDamagePerHour: 30,
+  wolfMealYield: 1,
+  wolfFirstDay: 9,
+  wolfPackChancePerDay: 0.06,
+  wolfHealth: 60,
+  wolfAggroRadius: 5,
+  wolfDamagePerHour: 10,
+  wolfStayDays: 2,
   // Medical
   woundBleedPerHour: 0.8,
   woundSelfHealHours: 24,

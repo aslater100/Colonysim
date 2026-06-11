@@ -8,13 +8,32 @@ import type { Camera } from './ui/render';
 import { Hud } from './ui/hud';
 import { RegionView } from './ui/regionview';
 import { TILE } from './ui/sprites';
+import { Sfx } from './ui/audio';
 
 const root = document.getElementById('app')!;
 const canvas = document.createElement('canvas');
 canvas.id = 'game';
 root.appendChild(canvas);
 
-const sim = new Simulation(Date.now() % 100000);
+const SAVE_KEY = 'centuria-save';
+
+// Booting after "Load Game": the menu sets a one-shot flag and reloads, and
+// we resume from the snapshot instead of seeding a fresh colony.
+function bootSim(): Simulation {
+  try {
+    const pending = sessionStorage.getItem('centuria-load-on-boot');
+    if (pending) {
+      sessionStorage.removeItem('centuria-load-on-boot');
+      const data = localStorage.getItem(SAVE_KEY);
+      if (data) return Simulation.deserialize(data);
+    }
+  } catch (err) {
+    console.error('load failed, starting fresh:', err);
+  }
+  return new Simulation(Date.now() % 100000);
+}
+
+const sim = bootSim();
 // Debug/automation hook (used by headless smoke tests; harmless in play)
 (window as unknown as { sim: Simulation }).sim = sim;
 const cam: Camera = {
@@ -38,8 +57,46 @@ function resize(): void {
 resize();
 window.addEventListener('resize', resize);
 
+const sfx = new Sfx();
+// Browsers gate audio behind a user gesture; the first input unlocks it.
+window.addEventListener('mousedown', () => sfx.unlock(), { once: true });
+window.addEventListener('keydown', () => sfx.unlock(), { once: true });
+
 const renderer = new Renderer(canvas, sim, cam);
-const hud = new Hud(root, sim, cam);
+const hud = new Hud(root, sim, cam, sfx);
+
+hud.onSave = () => {
+  try {
+    localStorage.setItem(SAVE_KEY, sim.serialize());
+    return true;
+  } catch (err) {
+    console.error('save failed:', err);
+    return false;
+  }
+};
+hud.onLoad = () => {
+  sessionStorage.setItem('centuria-load-on-boot', '1');
+  location.reload();
+};
+hud.hasSave = () => {
+  try {
+    return localStorage.getItem(SAVE_KEY) !== null;
+  } catch {
+    return false;
+  }
+};
+
+// Event sounds: watch the colony log and voice the moments that matter.
+let sfxLogLen = sim.log.length;
+function playLogSounds(): void {
+  if (sim.log.length === sfxLogLen) return;
+  const fresh = sim.log.slice(sfxLogLen);
+  sfxLogLen = sim.log.length;
+  if (fresh.some((l) => l.text.startsWith('RAID!') || l.text.startsWith('Wolves'))) return sfx.horn();
+  if (fresh.some((l) => l.text.includes('has died'))) return sfx.knell();
+  if (fresh.some((l) => l.kind === 'bad')) return sfx.thud();
+  if (fresh.some((l) => l.kind === 'good')) return sfx.chime();
+}
 
 // ---- the flip: town → region (GDD §2.4) ----
 let mode: 'town' | 'region' = 'town';
@@ -56,6 +113,8 @@ hud.onFoundTown = () => {
   regionView = new RegionView(canvas, region, root);
   mode = 'region';
   dioramaOpen = false;
+  hud.closeMenu();
+  hud.onSave = null; // the region sim has no snapshots yet — town-tier only
   hud.setRegionMode(true);
 };
 
@@ -64,19 +123,34 @@ const keys = new Set<string>();
 window.addEventListener('keydown', (e) => {
   keys.add(e.key);
   if (e.key === ' ') {
-    hud.paused = !hud.paused;
+    if (!hud.menuOpen) hud.paused = !hud.paused;
     e.preventDefault();
+    return;
   }
   if (e.key === '1') hud.speed = 1;
   if (e.key === '2') hud.speed = 3;
   if (e.key === '3') hud.speed = 8;
   if (e.key === 'Escape') {
+    if (hud.menuOpen) {
+      hud.closeMenu();
+      return;
+    }
+    // First escape clears whatever tool/selection is live; a bare escape
+    // with nothing active opens the menu.
+    const anythingActive = cam.placing !== null || cam.placingZone !== null || cam.chopMode ||
+      cam.selectedSettler !== null || cam.selectedBuilding !== null;
     cam.placing = null;
     cam.placingZone = null;
     cam.chopMode = false;
     cam.selectedSettler = null;
     cam.selectedBuilding = null;
     hud.refreshPaletteState();
+    if (!anythingActive && mode === 'town') hud.openMenu();
+    return;
+  }
+  // Palette hotkeys (the bracketed letters on the buttons)
+  if (mode === 'town' && hud.handleKey(e.key)) {
+    e.preventDefault();
   }
 });
 window.addEventListener('keyup', (e) => keys.delete(e.key));
@@ -184,6 +258,7 @@ function loop(now: number): void {
   if (mode === 'town') {
     renderer.draw();
     hud.update();
+    playLogSounds();
   } else if (region) {
     if (dioramaOpen) {
       sim.tickDiorama(region.minute);

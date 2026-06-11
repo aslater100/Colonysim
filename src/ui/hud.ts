@@ -7,6 +7,7 @@ import { BUILDING_DEFS, buildingDef, traitDef, WORK_KINDS, TUNING } from '../sim
 import type { ResourceKind, WorkKind } from '../sim/defs';
 import type { Camera } from './render';
 import type { PaintKind } from '../sim/world';
+import type { Sfx } from './audio';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -22,26 +23,56 @@ export class Hud {
   onFoundTown: (() => void) | null = null;
   /** set by main: restart after a colony loss */
   onRestart: (() => void) | null = null;
+  /** set by main: persist / restore the sim (in-game menu) */
+  onSave: (() => boolean) | null = null;
+  onLoad: (() => void) | null = null;
+  hasSave: (() => boolean) | null = null;
+  menuOpen = false;
+  private pausedBeforeMenu = false;
   private topBar: HTMLElement;
   private palette: HTMLElement;
   private inspector: HTMLElement;
   private logBox: HTMLElement;
   private prioBox: HTMLElement;
   private gameOverBox: HTMLElement;
+  private menuBox: HTMLElement;
   private showPriorities = false;
   private lastLogLen = 0;
   private foundBtn: HTMLButtonElement | null = null;
   /** last innerHTML per panel — skip DOM writes when nothing changed */
   private htmlCache = new Map<HTMLElement, string>();
 
-  constructor(root: HTMLElement, private sim: Simulation, private cam: Camera) {
+  constructor(root: HTMLElement, private sim: Simulation, private cam: Camera, private sfx?: Sfx) {
     this.topBar = el('div', 'topbar', root);
     this.palette = el('div', 'palette', root);
     this.inspector = el('div', 'inspector', root);
     this.logBox = el('div', 'eventlog', root);
     this.prioBox = el('div', 'priorities hidden', root);
     this.gameOverBox = el('div', 'gameover hidden', root);
+    this.menuBox = el('div', 'menu hidden', root);
     this.buildPalette();
+    this.palette.addEventListener('mousedown', () => this.sfx?.click());
+    // Menu contents are rebuilt on every open, so delegate like the panels.
+    this.menuBox.addEventListener('mousedown', (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLElement>('button');
+      if (!btn) return;
+      this.sfx?.click();
+      switch (btn.id) {
+        case 'menu-resume': this.closeMenu(); break;
+        case 'menu-save':
+          if (this.onSave?.()) this.renderMenu('Saved.');
+          else this.renderMenu('Save failed.');
+          break;
+        case 'menu-load': this.onLoad?.(); break;
+        case 'menu-mute':
+          this.sfx?.toggleMuted();
+          this.renderMenu();
+          break;
+        case 'menu-restart':
+          if (confirm('Abandon this colony and start over?')) this.onRestart?.();
+          break;
+      }
+    });
     // Panels whose innerHTML is rebuilt while open handle clicks by
     // delegation on mousedown: a per-frame rebuild destroys child elements
     // between mousedown and mouseup, so plain onclick handlers never fire
@@ -88,57 +119,132 @@ export class Hud {
       b.dataset.def = def.id;
     }
     const chop = el('button', 'pal-btn', this.palette);
-    chop.textContent = 'Chop / Quarry';
+    chop.textContent = 'Chop / Quarry [C]';
     chop.title = 'Mark trees for felling and rock for quarrying (stone)';
     chop.dataset.def = 'chop';
-    chop.onclick = () => {
-      this.cam.chopMode = !this.cam.chopMode;
-      this.cam.placing = null;
-      this.cam.placingZone = null;
-      this.refreshPaletteState();
-    };
-    // Zones and roads (drag to paint)
+    chop.onclick = () => this.toggleChop();
+    // Zones and roads (drag to paint); the bracketed letter is the hotkey
     const zoneDefs: [PaintKind, string, string][] = [
-      ['farm', 'Farm Zone', 'Paint farmable soil tiles; settlers sow and harvest automatically'],
-      ['stockpile', 'Stockpile Zone', 'Designate tiles as storage; settlers haul here'],
-      ['wall', 'Palisade Wall', 'Paint wall tiles; workers build them with wood'],
-      ['dirt', 'Dirt Path (free)', 'Quick ruts: ×1.3 speed, mud in rain'],
-      ['plank', 'Plank Road (1w)', 'All-weather timber: ×1.6 speed'],
-      ['gravel', 'Gravel Road (1s)', 'Best surface: ×1.8 speed (needs quarried stone)'],
-      ['bridge', 'Bridge (4w)', 'The only way across water'],
+      ['farm', 'Farm Zone [F]', 'Paint farmable soil tiles; settlers sow and harvest automatically'],
+      ['stockpile', 'Stockpile Zone [T]', 'Designate tiles as storage; settlers haul here'],
+      ['wall', 'Palisade Wall [L]', 'Paint wall tiles; workers build them with wood'],
+      ['gate', 'Gate (5w) [G]', 'A door in the palisade: settlers walk through, raiders and wolves must break it'],
+      ['dirt', 'Dirt Path (free) [4]', 'Quick ruts: ×1.3 speed, mud in rain'],
+      ['plank', 'Plank Road (1w) [5]', 'All-weather timber: ×1.6 speed'],
+      ['gravel', 'Gravel Road (1s) [6]', 'Best surface: ×1.8 speed (needs quarried stone)'],
+      ['bridge', 'Bridge (4w) [7]', 'The only way across water'],
     ];
     for (const [kind, label, desc] of zoneDefs) {
       const b = el('button', 'pal-btn', this.palette);
       b.textContent = label;
       b.title = desc;
       b.dataset.def = `zone-${kind}`;
-      b.onclick = () => {
-        this.cam.placingZone = this.cam.placingZone === kind ? null : kind;
-        this.cam.placing = null;
-        this.cam.chopMode = false;
-        this.refreshPaletteState();
-      };
+      b.onclick = () => this.toggleZone(kind);
     }
     const overlay = el('button', 'pal-btn', this.palette);
-    overlay.textContent = 'Traffic Overlay';
+    overlay.textContent = 'Traffic Overlay [O]';
     overlay.title = 'Heatmap of where settlers actually walk';
     overlay.dataset.def = 'overlay-traffic';
-    overlay.onclick = () => {
-      this.cam.overlay = this.cam.overlay === 'traffic' ? 'none' : 'traffic';
-      this.refreshPaletteState();
-    };
+    overlay.onclick = () => this.toggleOverlay();
     const prio = el('button', 'pal-btn', this.palette);
-    prio.textContent = 'Work Priorities';
-    prio.onclick = () => {
-      this.showPriorities = !this.showPriorities;
-      this.prioBox.classList.toggle('hidden', !this.showPriorities);
-    };
+    prio.textContent = 'Work Priorities [P]';
+    prio.onclick = () => this.togglePriorities();
+    const menu = el('button', 'pal-btn', this.palette);
+    menu.textContent = 'Menu [M]';
+    menu.title = 'Pause, save, load, restart, sound';
+    menu.onclick = () => this.toggleMenu();
     // The flip: available once the town has outgrown the valley (GDD §2.3)
     this.foundBtn = el('button', 'pal-btn pal-found', this.palette);
     this.foundBtn.textContent = 'Found Town #2';
     this.foundBtn.onclick = () => {
       if (this.sim.canFoundSecondTown().ok && this.onFoundTown) this.onFoundTown();
     };
+  }
+
+  private toggleChop(): void {
+    this.cam.chopMode = !this.cam.chopMode;
+    this.cam.placing = null;
+    this.cam.placingZone = null;
+    this.refreshPaletteState();
+  }
+
+  private toggleZone(kind: PaintKind): void {
+    this.cam.placingZone = this.cam.placingZone === kind ? null : kind;
+    this.cam.placing = null;
+    this.cam.chopMode = false;
+    this.refreshPaletteState();
+  }
+
+  private toggleOverlay(): void {
+    this.cam.overlay = this.cam.overlay === 'traffic' ? 'none' : 'traffic';
+    this.refreshPaletteState();
+  }
+
+  private togglePriorities(): void {
+    this.showPriorities = !this.showPriorities;
+    this.prioBox.classList.toggle('hidden', !this.showPriorities);
+  }
+
+  /** Palette hotkeys (the bracketed letters on the buttons). True if handled. */
+  handleKey(key: string): boolean {
+    const k = key.toLowerCase();
+    if (this.menuOpen) {
+      if (k === 'm' || k === 'escape') {
+        this.closeMenu();
+        return true;
+      }
+      return k.length === 1; // swallow stray keys while the menu is up
+    }
+    switch (k) {
+      case 'c': this.toggleChop(); return true;
+      case 'f': this.toggleZone('farm'); return true;
+      case 't': this.toggleZone('stockpile'); return true;
+      case 'l': this.toggleZone('wall'); return true;
+      case 'g': this.toggleZone('gate'); return true;
+      case '4': this.toggleZone('dirt'); return true;
+      case '5': this.toggleZone('plank'); return true;
+      case '6': this.toggleZone('gravel'); return true;
+      case '7': this.toggleZone('bridge'); return true;
+      case 'o': this.toggleOverlay(); return true;
+      case 'p': this.togglePriorities(); return true;
+      case 'm': this.toggleMenu(); return true;
+      default: return false;
+    }
+  }
+
+  // ---- in-game menu ----
+  toggleMenu(): void {
+    if (this.menuOpen) this.closeMenu();
+    else this.openMenu();
+  }
+
+  openMenu(): void {
+    this.menuOpen = true;
+    this.pausedBeforeMenu = this.paused;
+    this.paused = true;
+    this.renderMenu();
+    this.menuBox.classList.remove('hidden');
+  }
+
+  closeMenu(): void {
+    this.menuOpen = false;
+    this.paused = this.pausedBeforeMenu;
+    this.menuBox.classList.add('hidden');
+  }
+
+  private renderMenu(note = ''): void {
+    const canSave = this.onSave !== null;
+    const canLoad = (this.hasSave?.() ?? false) && this.onLoad !== null;
+    this.setHtml(this.menuBox,
+      `<div class="menu-box">` +
+      `<h2>CENTURIA</h2>` +
+      `<p class="menu-note">${note || 'The colony waits.'}</p>` +
+      `<button id="menu-resume">Resume [M]</button>` +
+      `<button id="menu-save"${canSave ? '' : ' disabled title="Saving works on the town map"'}>Save Game</button>` +
+      `<button id="menu-load"${canLoad ? '' : ' disabled title="No saved game yet"'}>Load Game</button>` +
+      `<button id="menu-mute">${this.sfx?.muted ? 'Sound: OFF' : 'Sound: ON'}</button>` +
+      `<button id="menu-restart">Restart Colony</button>` +
+      `</div>`);
   }
 
   /** Region mode hides the town chrome; the region view brings its own panel. */

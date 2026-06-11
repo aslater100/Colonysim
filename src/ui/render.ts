@@ -153,6 +153,7 @@ export class Renderer {
         else if (t.roadPlan) g.drawImage(sprites.roadPlans[t.roadPlan], px, py);
         if (t.stockpileZone && !t.road) g.drawImage(sprites.stockpileZone, px, py);
         if (t.wallPlan) g.drawImage(sprites.wallPlan, px, py);
+        if (t.gatePlan) g.drawImage(sprites.gatePlan, px, py);
       }
     }
     // Pass 2: standing terrain (rocks, palisades, then trees with overhanging canopies)
@@ -164,19 +165,21 @@ export class Renderer {
         if (px < -TILE * 2 || py < -TILE * 2 || px > this.canvas.width || py > this.canvas.height) continue;
         if (t.kind === 'rock') g.drawImage(t.marked ? sprites.rockMarked : sprites.rock, px, py);
         else if (t.wall) g.drawImage(sprites.palisade, px, py);
+        else if (t.gate) g.drawImage(sprites.gate, px, py);
         else if (t.kind === 'tree') g.drawImage(t.marked ? sprites.treeMarked : sprites.tree, px - 2, py - 6);
         else if (t.sapling) g.drawImage(sprites.sapling, px, py);
       }
     }
-    // Wall HP bars
+    // Wall & gate HP bars
     for (let y = 0; y < MAP_H; y++) {
       for (let x = 0; x < MAP_W; x++) {
         const t = sim.world.at(x, y);
-        if (t.wall && t.wallHp < TUNING.wallMaxHp) {
+        const maxHp = t.wall ? TUNING.wallMaxHp : t.gate ? TUNING.gateMaxHp : 0;
+        if (maxHp && t.wallHp < maxHp) {
           const px = ox + x * TILE;
           const py = oy + y * TILE;
           if (px >= -TILE && py >= -TILE && px < this.canvas.width && py < this.canvas.height) {
-            this.hpBar(px, py - 3, t.wallHp / TUNING.wallMaxHp);
+            this.hpBar(px, py - 3, t.wallHp / maxHp);
           }
         }
       }
@@ -222,6 +225,16 @@ export class Renderer {
       g.drawImage(this.sprites.corpse, ox + c.x * TILE, oy + c.y * TILE);
     }
 
+    // Wildlife
+    for (const a of sim.animals) {
+      const fr = Math.floor(this.frame / 14) % 2;
+      const px = ox + Math.round(a.pos.x * TILE);
+      const py = oy + Math.round(a.pos.y * TILE);
+      g.drawImage(a.kind === 'wolf' ? this.sprites.wolf[fr] : this.sprites.deer[fr], px, py);
+      const maxHp = a.kind === 'wolf' ? TUNING.wolfHealth : TUNING.deerHealth;
+      if (a.health < maxHp) this.hpBar(px, py - 2, a.health / maxHp);
+    }
+
     // Raiders
     for (const r of sim.raiders) {
       const fr = Math.floor(this.frame / 10) % 2;
@@ -231,13 +244,13 @@ export class Renderer {
       this.hpBar(px, py + 2, r.health / 70);
     }
 
-    // Settlers with a 2-frame walk bob
+    // Settlers with a 2-frame walk bob (spear carriers draw armed)
     for (const s of sim.settlers) {
       const variant = s.id % this.sprites.settler.length;
       const fr = s.state === 'sleeping' ? 0 : Math.floor(this.frame / 12) % 2;
       const px = ox + Math.round(s.pos.x * TILE);
       const py = oy + Math.round(s.pos.y * TILE) - 4;
-      g.drawImage(this.sprites.settler[variant][fr], px, py);
+      g.drawImage((s.armed ? this.sprites.settlerArmed : this.sprites.settler)[variant][fr], px, py);
       if (s.state === 'sleeping') {
         g.fillStyle = '#cfd4e0';
         g.font = '8px monospace';
@@ -312,7 +325,7 @@ export class Renderer {
         g.strokeStyle = '#9cc4e4';
       } else {
         g.globalAlpha = 0.6;
-        const zoneColors: Record<string, string> = { farm: '#7ac26a', stockpile: '#e8d27a', wall: '#c25b2e' };
+        const zoneColors: Record<string, string> = { farm: '#7ac26a', stockpile: '#e8d27a', wall: '#c25b2e', gate: '#9c7544' };
         g.fillStyle = zoneColors[cam.placingZone] || '#999';
         g.fillRect(ox + cam.mouseTile.x * TILE, oy + cam.mouseTile.y * TILE, TILE, TILE);
         g.globalAlpha = 1;

@@ -40,6 +40,9 @@ export interface Task {
   patientId?: number;
   roadTile?: boolean;
   wallTile?: boolean;
+  gateTile?: boolean;
+  /** hunt: the animal being stalked */
+  animalId?: number;
   workLeft: number;
   label: string;
 }
@@ -57,6 +60,19 @@ export interface Raider {
   health: number;
   combat: number;
   state: 'attack' | 'flee';
+  repathAt: number;
+}
+
+export type AnimalKind = 'deer' | 'wolf';
+
+export interface Animal {
+  id: number;
+  kind: AnimalKind;
+  pos: Vec;
+  path: Vec[];
+  health: number;
+  /** wolves head home past this minute (deer never leave) */
+  leaveAt: number;
   repathAt: number;
 }
 
@@ -83,6 +99,8 @@ export interface Settler {
   carrying: { kind: ResourceKind; qty: number } | null;
   bedId: number | null;
   clothedUntil: number; // minute their clothes wear out; 0 = threadbare
+  /** carries a spear: hits harder in melee (grabbed from stores when raids land) */
+  armed: boolean;
 }
 
 export interface Corpse {
@@ -151,6 +169,7 @@ export class Simulation {
   coldSnapUntil = -1;
   raiders: Raider[] = [];
   raidActive = false;
+  animals: Animal[] = [];
   private droughtActive = false;
   private lastFloodDay = -99;
   /** pairwise relationship scores, keyed "lowId:highId" */
@@ -161,7 +180,10 @@ export class Simulation {
   private nextEventDay: number;
   private reserved = new Set<string>(); // task target keys
 
+  readonly seed: number;
+
   constructor(seed: number) {
+    this.seed = seed;
     this.rng = new Rng(seed);
     // The world precedes the colony: one seeded region, and the best
     // river-valley cell in it is where the wagon stops (GDD: terrain first).
@@ -172,6 +194,8 @@ export class Simulation {
     this.nextEventDay = 4 + this.rng.int(3);
     this.nextRaidDay = TUNING.firstRaidDay + this.rng.int(5);
     this.foundColony();
+    // The woods were never empty: game animals range the map from day one.
+    for (let i = 0; i < TUNING.deerStartCount; i++) this.spawnDeer();
   }
 
   weatherToday(): DayWeather {
@@ -284,9 +308,48 @@ export class Simulation {
       carrying: null,
       bedId: null,
       clothedUntil: 0,
+      armed: false,
     };
     this.settlers.push(s);
     return s;
+  }
+
+  /** A deer appears on open ground away from the camp (or anywhere wild at the edges). */
+  spawnDeer(): Animal | null {
+    for (let tries = 0; tries < 40; tries++) {
+      const x = this.rng.int(MAP_W);
+      const y = this.rng.int(MAP_H);
+      const farFromCamp = Math.hypot(x - MAP_W / 2, y - MAP_H / 2) > 14;
+      if (!farFromCamp || !this.world.passable(x, y, true)) continue;
+      const a: Animal = {
+        id: this.nextId++, kind: 'deer', pos: { x, y }, path: [],
+        health: TUNING.deerHealth, leaveAt: Number.MAX_SAFE_INTEGER, repathAt: 0,
+      };
+      this.animals.push(a);
+      return a;
+    }
+    return null;
+  }
+
+  /** Wolves slip in from a map edge and prowl for a couple of days. */
+  spawnWolfPack(n: number): void {
+    const side = this.rng.int(4);
+    for (let i = 0; i < n; i++) {
+      const along = 4 + this.rng.int(MAP_W - 8);
+      const edge: Vec =
+        side === 0 ? { x: along, y: 0 } : side === 1 ? { x: along, y: MAP_H - 1 } :
+        side === 2 ? { x: 0, y: along } : { x: MAP_W - 1, y: along };
+      const spot = this.world.passable(edge.x, edge.y, true) ? edge : this.world.nearestPassable(edge, true);
+      if (!spot) continue;
+      this.animals.push({
+        id: this.nextId++, kind: 'wolf', pos: { ...spot }, path: [],
+        health: TUNING.wolfHealth, leaveAt: this.minute + TUNING.wolfStayDays * MINUTES_PER_DAY,
+        repathAt: 0,
+      });
+    }
+    if (this.animals.some((a) => a.kind === 'wolf')) {
+      this.addLog('Wolves have been sighted at the forest edge. Keep your distance — or hunt them.', 'bad');
+    }
   }
 
   // ---- player verbs ----
@@ -297,7 +360,7 @@ export class Simulation {
         if (!this.world.inBounds(x + dx, y + dy)) return false;
         const t = this.world.at(x + dx, y + dy);
         if (t.kind !== 'grass' || t.buildingId !== null || t.wall || t.wallPlan ||
-            t.farmZone || t.stockpileZone) return false;
+            t.gate || t.gatePlan || t.farmZone || t.stockpileZone) return false;
       }
     }
     return true;
@@ -358,7 +421,7 @@ export class Simulation {
       t.roadPlan = null; // toggle off
       return true;
     }
-    if (t.road === kind || t.wall || t.wallPlan || t.buildingId !== null) return false;
+    if (t.road === kind || t.wall || t.wallPlan || t.gate || t.gatePlan || t.buildingId !== null) return false;
     if (kind === 'bridge') {
       if (t.kind !== 'water') return false;
     } else if (t.kind !== 'grass' && t.kind !== 'soil') {
@@ -379,7 +442,7 @@ export class Simulation {
         return true;
       }
       if (t.kind === 'water' || t.kind === 'rock' || t.kind === 'tree') return false;
-      if (t.buildingId !== null || t.wall || t.wallPlan) return false;
+      if (t.buildingId !== null || t.wall || t.wallPlan || t.gate || t.gatePlan) return false;
       t.farmZone = true;
       t.kind = 'soil';
       t.stockpileZone = false;
@@ -390,7 +453,7 @@ export class Simulation {
         return true;
       }
       if (t.kind === 'water' || t.kind === 'rock' || t.kind === 'tree') return false;
-      if (t.buildingId !== null || t.wall || t.wallPlan) return false;
+      if (t.buildingId !== null || t.wall || t.wallPlan || t.gate || t.gatePlan) return false;
       t.stockpileZone = true;
       t.farmZone = false;
       return true;
@@ -399,8 +462,17 @@ export class Simulation {
         t.wallPlan = false;
         return true;
       }
-      if (t.kind === 'water' || t.buildingId !== null || t.wall) return false;
+      if (t.kind === 'water' || t.buildingId !== null || t.wall || t.gate || t.gatePlan) return false;
       t.wallPlan = true;
+      return true;
+    } else if (kind === 'gate') {
+      if (t.gatePlan) {
+        t.gatePlan = false;
+        return true;
+      }
+      if (t.kind === 'water' || t.kind === 'rock' || t.kind === 'tree') return false;
+      if (t.buildingId !== null || t.wall || t.wallPlan || t.gate) return false;
+      t.gatePlan = true;
       return true;
     }
     return false;
@@ -416,6 +488,10 @@ export class Simulation {
     }
     if (t.wallPlan) {
       t.wallPlan = false;
+      return;
+    }
+    if (t.gatePlan) {
+      t.gatePlan = false;
       return;
     }
     if (t.sapling) {
@@ -438,6 +514,11 @@ export class Simulation {
     }
     if (t.wall) {
       t.wall = false;
+      t.wallHp = 0;
+      return;
+    }
+    if (t.gate) {
+      t.gate = false;
       t.wallHp = 0;
       return;
     }
@@ -506,6 +587,7 @@ export class Simulation {
     this.updateFarms();
     this.updateSaplings();
     this.updateRaiders();
+    this.updateAnimals();
     for (const s of [...this.settlers]) this.updateSettler(s);
     if (this.settlers.length === 0 && !this.gameOver) {
       this.gameOver = true;
@@ -530,6 +612,15 @@ export class Simulation {
     if (this.day >= this.nextRaidDay && !this.raidActive) {
       this.startRaid();
       this.nextRaidDay = this.day + TUNING.raidIntervalDays + this.rng.int(5);
+    }
+    // Wildlife flows: deer drift back into emptied woods; wolf packs pass through.
+    const deer = this.animals.filter((a) => a.kind === 'deer').length;
+    if (deer < TUNING.deerMaxCount && this.rng.chance(TUNING.deerSpawnChancePerDay)) {
+      this.spawnDeer();
+    }
+    if (this.day >= TUNING.wolfFirstDay && !this.animals.some((a) => a.kind === 'wolf') &&
+        this.rng.chance(TUNING.wolfPackChancePerDay)) {
+      this.spawnWolfPack(2 + this.rng.int(2));
     }
     // Winter kills the standing crop.
     if (!this.growingSeason) {
@@ -653,7 +744,8 @@ export class Simulation {
     return Math.max(1, Math.min(TUNING.raidMaxRaiders, byWealth, byTime, byPop));
   }
 
-  private startRaid(): void {
+  /** Public so tests can muster a raid without fast-forwarding to raid day. */
+  startRaid(): void {
     const n = this.raidSize();
     const side = this.rng.int(4);
     for (let i = 0; i < n; i++) {
@@ -661,7 +753,7 @@ export class Simulation {
       const edge: Vec =
         side === 0 ? { x: along, y: 0 } : side === 1 ? { x: along, y: MAP_H - 1 } :
         side === 2 ? { x: 0, y: along } : { x: MAP_W - 1, y: along };
-      const spot = this.world.passable(edge.x, edge.y) ? edge : this.world.nearestPassable(edge);
+      const spot = this.world.passable(edge.x, edge.y, true) ? edge : this.world.nearestPassable(edge, true);
       if (!spot) continue;
       this.raiders.push({
         id: this.nextId++,
@@ -699,8 +791,8 @@ export class Simulation {
       }
       if (r.state === 'flee') {
         if (r.path.length === 0) {
-          const exit = this.world.nearestPassable({ x: r.pos.x < MAP_W / 2 ? 0 : MAP_W - 1, y: Math.round(r.pos.y) });
-          const p = exit ? this.world.findPath({ x: Math.round(r.pos.x), y: Math.round(r.pos.y) }, exit) : null;
+          const exit = this.world.nearestPassable({ x: r.pos.x < MAP_W / 2 ? 0 : MAP_W - 1, y: Math.round(r.pos.y) }, true);
+          const p = exit ? this.world.findPath({ x: Math.round(r.pos.x), y: Math.round(r.pos.y) }, exit, true) : null;
           if (!p || p.length === 0) {
             this.raiders = this.raiders.filter((o) => o !== r);
             continue;
@@ -727,13 +819,14 @@ export class Simulation {
         const p = this.world.findPath(
           { x: Math.round(r.pos.x), y: Math.round(r.pos.y) },
           { x: Math.round(target.pos.x), y: Math.round(target.pos.y) },
+          true,
         );
         r.repathAt = this.minute + 60;
         if (p && p.length > 0) {
           r.path = p;
         } else {
-          // Walled out: break the nearest palisade.
-          const wall = this.nearestWall(r.pos);
+          // Walled out: break the nearest palisade or gate.
+          const wall = this.nearestBarrier(r.pos);
           if (!wall) {
             r.state = 'flee';
             continue;
@@ -743,13 +836,14 @@ export class Simulation {
             const wt = this.world.at(wall.x, wall.y);
             wt.wallHp -= TUNING.wallDamagePerHour * hours;
             if (wt.wallHp <= 0) {
+              this.addLog(wt.gate ? 'The gate is smashed open by raiders!' : 'Palisade destroyed by raiders!', 'bad');
               wt.wall = false;
+              wt.gate = false;
               wt.wallHp = 0;
-              this.addLog('Palisade destroyed by raiders!', 'bad');
             }
             continue;
           }
-          const wp = this.world.findPath({ x: Math.round(r.pos.x), y: Math.round(r.pos.y) }, { x: wall.x, y: wall.y });
+          const wp = this.world.findPath({ x: Math.round(r.pos.x), y: Math.round(r.pos.y) }, { x: wall.x, y: wall.y }, true);
           if (wp) r.path = wp;
           else r.state = 'flee';
           continue;
@@ -773,12 +867,13 @@ export class Simulation {
     return best;
   }
 
-  private nearestWall(p: Vec): Vec | null {
+  /** Nearest standing wall or gate tile — what a walled-out raider bashes. */
+  private nearestBarrier(p: Vec): Vec | null {
     let best: Vec | null = null;
     let bd = Infinity;
     for (let idx = 0; idx < this.world.tiles.length; idx++) {
       const t = this.world.tiles[idx];
-      if (!t.wall) continue;
+      if (!t.wall && !t.gate) continue;
       const x = idx % MAP_W;
       const y = Math.floor(idx / MAP_W);
       const d = Math.hypot(x - p.x, y - p.y);
@@ -787,10 +882,132 @@ export class Simulation {
     return best;
   }
 
-  private damageSettler(s: Settler, dmg: number): void {
+  private damageSettler(s: Settler, dmg: number, cause = "a raider's blade"): void {
     s.health -= dmg;
     if (!s.wound) s.wound = { at: this.minute, untreated: true, infectionRolled: false };
-    if (s.health <= 0) this.kill(s, "a raider's blade");
+    if (s.health <= 0) this.kill(s, cause);
+  }
+
+  /** Melee damage a settler deals per hour: base + skill, more with a spear in hand. */
+  private settlerDamagePerHour(s: Settler): number {
+    return TUNING.combatDamagePerHour + s.combat * TUNING.combatDamagePerSkill +
+      (s.armed ? TUNING.spearDamageBonus : 0);
+  }
+
+  // ---- wildlife ----
+  private updateAnimals(): void {
+    const hours = MINUTES_PER_TICK / 60;
+    for (const a of [...this.animals]) {
+      if (a.health <= 0) {
+        this.animals = this.animals.filter((o) => o !== a);
+        continue;
+      }
+      if (a.kind === 'wolf') this.updateWolf(a, hours);
+      else this.updateDeer(a);
+    }
+  }
+
+  private updateWolf(a: Animal, hours: number): void {
+    // Mauled or overstayed: head for the treeline and vanish.
+    if (a.health < 20 || this.minute >= a.leaveAt) {
+      if (a.path.length === 0) {
+        const exit = this.world.nearestPassable({ x: a.pos.x < MAP_W / 2 ? 0 : MAP_W - 1, y: Math.round(a.pos.y) }, true);
+        const p = exit ? this.world.findPath({ x: Math.round(a.pos.x), y: Math.round(a.pos.y) }, exit, true) : null;
+        if (!p || p.length === 0) {
+          this.animals = this.animals.filter((o) => o !== a);
+          return;
+        }
+        a.path = p;
+      }
+      this.stepAgent(a, 0.55);
+      if (a.path.length === 0) this.animals = this.animals.filter((o) => o !== a);
+      return;
+    }
+    // Prey: a settler who strayed close, else the nearest deer.
+    let prey: { pos: Vec } | null = null;
+    let settlerPrey: Settler | null = null;
+    let bd = Infinity;
+    for (const s of this.settlers) {
+      const d = Math.hypot(s.pos.x - a.pos.x, s.pos.y - a.pos.y);
+      if (d <= TUNING.wolfAggroRadius && d < bd) { bd = d; settlerPrey = s; prey = s; }
+    }
+    if (!prey) {
+      bd = Infinity;
+      for (const o of this.animals) {
+        if (o.kind !== 'deer') continue;
+        const d = Math.hypot(o.pos.x - a.pos.x, o.pos.y - a.pos.y);
+        if (d < bd) { bd = d; prey = o; }
+      }
+    }
+    if (!prey) {
+      this.wanderAnimal(a, 0.4);
+      return;
+    }
+    const d = Math.hypot(prey.pos.x - a.pos.x, prey.pos.y - a.pos.y);
+    if (d <= 1.3) {
+      if (settlerPrey) {
+        this.damageSettler(settlerPrey, TUNING.wolfDamagePerHour * hours, 'a wolf attack');
+        // The bitten fight back — most wolves regret testing a colonist.
+        a.health -= this.settlerDamagePerHour(settlerPrey) * hours;
+        if (a.health <= 0) this.addLog(`${settlerPrey.name} fights off a wolf and kills it.`, 'good');
+      } else {
+        (prey as Animal).health -= TUNING.wolfDamagePerHour * 3 * hours;
+      }
+      return;
+    }
+    if (a.path.length === 0 || this.minute >= a.repathAt) {
+      a.repathAt = this.minute + 45;
+      const p = this.world.findPath(
+        { x: Math.round(a.pos.x), y: Math.round(a.pos.y) },
+        { x: Math.round(prey.pos.x), y: Math.round(prey.pos.y) },
+        true,
+      );
+      if (p && p.length > 0) a.path = p;
+      else { this.wanderAnimal(a, 0.4); return; }
+    }
+    this.stepAgent(a, 0.55);
+  }
+
+  private updateDeer(a: Animal): void {
+    // Spooked by anything close — settlers and wolves alike. Hunters work
+    // from outside this radius (huntRange > deerFleeRadius by design).
+    let threat: Vec | null = null;
+    let bd = TUNING.deerFleeRadius;
+    for (const s of this.settlers) {
+      const d = Math.hypot(s.pos.x - a.pos.x, s.pos.y - a.pos.y);
+      if (d < bd) { bd = d; threat = s.pos; }
+    }
+    for (const o of this.animals) {
+      if (o.kind !== 'wolf') continue;
+      const d = Math.hypot(o.pos.x - a.pos.x, o.pos.y - a.pos.y);
+      if (d < bd) { bd = d; threat = o.pos; }
+    }
+    if (threat) {
+      const dx = a.pos.x - threat.x;
+      const dy = a.pos.y - threat.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const tx = Math.max(0, Math.min(MAP_W - 1, Math.round(a.pos.x + (dx / len) * 6)));
+      const ty = Math.max(0, Math.min(MAP_H - 1, Math.round(a.pos.y + (dy / len) * 6)));
+      const p = this.world.findPath({ x: Math.round(a.pos.x), y: Math.round(a.pos.y) }, { x: tx, y: ty }, true);
+      if (p && p.length > 0) a.path = p;
+    }
+    if (a.path.length > 0) this.stepAgent(a, 0.45);
+    else this.wanderAnimal(a, 0.35);
+  }
+
+  private wanderAnimal(a: Animal, speed: number): void {
+    if (a.path.length > 0) {
+      this.stepAgent(a, speed);
+      return;
+    }
+    if (this.rng.chance(0.03)) {
+      const tx = Math.round(a.pos.x) + this.rng.int(9) - 4;
+      const ty = Math.round(a.pos.y) + this.rng.int(9) - 4;
+      if (this.world.passable(tx, ty, true)) {
+        const p = this.world.findPath({ x: Math.round(a.pos.x), y: Math.round(a.pos.y) }, { x: tx, y: ty }, true);
+        if (p) a.path = p;
+      }
+    }
   }
 
   // ---- settler update ----
@@ -891,6 +1108,11 @@ export class Simulation {
       this.releaseTask(s);
       s.bedId = null;
       if (s.combat >= t.fightMinCombat && s.health > 50) {
+        // Fighters grab a spear from the stores on the way out (kept for good).
+        if (!s.armed && this.stock.wood >= t.spearWoodCost) {
+          this.stock.wood -= t.spearWoodCost;
+          s.armed = true;
+        }
         s.state = 'fighting';
       } else {
         s.state = 'fleeing';
@@ -918,7 +1140,7 @@ export class Simulation {
           return;
         }
         if (bd <= 1.3) {
-          target.health -= (t.combatDamagePerHour + s.combat * t.combatDamagePerSkill) * hours;
+          target.health -= this.settlerDamagePerHour(s) * hours;
           s.combat = Math.min(10, s.combat + 0.2 * hours);
           return;
         }
@@ -1087,6 +1309,12 @@ export class Simulation {
             push({ kind: 'build', x, y, workLeft: TUNING.wallWork, label: 'build palisade', wallTile: true }, 'build');
           }
         }
+        if (tile.gatePlan && !tile.gate) {
+          const affordable = (TUNING.gateCost.wood ?? 0) <= this.stock.wood;
+          if (affordable) {
+            push({ kind: 'build', x, y, workLeft: TUNING.gateWork, label: 'build gate', gateTile: true }, 'build');
+          }
+        }
       }
     }
     // Chop marked trees, quarry marked rock, lay planned roads.
@@ -1128,10 +1356,27 @@ export class Simulation {
       push({ kind: 'cook', x: kitchen.x, y: kitchen.y, buildingId: kitchen.id, workLeft: workPerMeal * batch, label: 'cook meals' }, 'cook');
     }
     // Hunting trips: one hunter per lodge (the lodge id reserves the task)
-    // heads out while meals run short — food without grain.
+    // heads out while meals run short — food without grain. With game on the
+    // map the hunt is real: stalk the nearest animal and bring back the kill.
+    // With the woods empty, fall back to an abstract trip from the lodge.
     if (this.stock.meal < this.settlers.length * 3) {
       for (const lodge of this.builtOf('hunt')) {
-        push({ kind: 'hunt', x: lodge.x, y: lodge.y, buildingId: lodge.id, workLeft: TUNING.huntTripWork, label: 'hunt game' }, 'hunt');
+        const c = this.buildingCenter(lodge);
+        let prey: Animal | null = null;
+        let bd = Infinity;
+        for (const a of this.animals) {
+          const d = Math.hypot(a.pos.x - c.x, a.pos.y - c.y);
+          if (d < bd) { bd = d; prey = a; }
+        }
+        if (prey) {
+          push({
+            kind: 'hunt', x: Math.round(prey.pos.x), y: Math.round(prey.pos.y),
+            buildingId: lodge.id, animalId: prey.id,
+            workLeft: TUNING.huntTripWork, label: `hunt ${prey.kind}`,
+          }, 'hunt');
+        } else {
+          push({ kind: 'hunt', x: lodge.x, y: lodge.y, buildingId: lodge.id, workLeft: TUNING.huntTripWork, label: 'hunt game' }, 'hunt');
+        }
       }
     }
     // Foresters replant: one sapling order at a time per lodge, on free grass nearby.
@@ -1180,6 +1425,14 @@ export class Simulation {
       return;
     }
     if (s.state === 'moving') {
+      // Hunters loose the shot the moment the quarry is in range; walking all
+      // the way onto its tile would spook it into an endless chase.
+      if (task.kind === 'hunt' && task.animalId !== undefined && !s.carrying) {
+        const prey = this.animals.find((a) => a.id === task.animalId);
+        if (prey && Math.hypot(prey.pos.x - s.pos.x, prey.pos.y - s.pos.y) <= TUNING.huntRange) {
+          s.path = [];
+        }
+      }
       if (!this.arrived(s)) return this.step(s);
       s.state = 'working';
     }
@@ -1255,6 +1508,22 @@ export class Simulation {
             tile.wall = true;
             tile.wallPlan = false;
             tile.wallHp = TUNING.wallMaxHp;
+            this.finishTask(s);
+          }
+          return;
+        }
+        // Gate tiles: like walls, but the finished tile stays settler-passable.
+        if (task.gateTile) {
+          const tile = this.world.at(task.x, task.y);
+          if (!tile.gatePlan) return this.finishTask(s);
+          task.workLeft -= work;
+          if (task.workLeft <= 0) {
+            const cost = TUNING.gateCost;
+            if ((cost.wood ?? 0) > this.stock.wood) return this.finishTask(s);
+            this.stock.wood -= cost.wood ?? 0;
+            tile.gate = true;
+            tile.gatePlan = false;
+            tile.wallHp = TUNING.gateMaxHp;
             this.finishTask(s);
           }
           return;
@@ -1343,10 +1612,43 @@ export class Simulation {
       case 'hunt': {
         const lodge = this.building(task.buildingId);
         if (!lodge?.built) return this.finishTask(s);
-        task.workLeft -= work;
-        if (task.workLeft <= 0) {
-          this.stock.meal += TUNING.huntMealYield;
-          this.finishTask(s);
+        // Carrying the kill: arrived back at the stockpile, into the larder.
+        if (s.carrying) {
+          this.stock[s.carrying.kind] += s.carrying.qty;
+          s.carrying = null;
+          return this.finishTask(s);
+        }
+        const prey = this.animals.find((a) => a.id === task.animalId);
+        if (!prey) {
+          // The quarry got away (or was never sighted): an abstract trip
+          // from the lodge still feeds the pot.
+          task.workLeft -= work;
+          if (task.workLeft <= 0) {
+            this.stock.meal += TUNING.huntMealYield;
+            this.finishTask(s);
+          }
+          return;
+        }
+        // Stalk to bow range (outside the flee radius), then work the shot.
+        const d = Math.hypot(prey.pos.x - s.pos.x, prey.pos.y - s.pos.y);
+        if (d > TUNING.huntRange) {
+          s.state = 'moving';
+          this.setDestination(s, { x: Math.round(prey.pos.x), y: Math.round(prey.pos.y) });
+          return;
+        }
+        prey.health -= TUNING.huntDamagePerHour * (0.5 + s.skills.hunt * 0.1) * hours;
+        if (prey.health <= 0) {
+          this.animals = this.animals.filter((a) => a !== prey);
+          const qty = prey.kind === 'deer' ? TUNING.huntMealYield : TUNING.wolfMealYield;
+          this.addLog(`${s.name} brings down a ${prey.kind}.`, 'good');
+          const spTile = this.nearestStockpileTile(s.pos);
+          if (!spTile) {
+            this.dropItem('meal', qty, Math.round(s.pos.x), Math.round(s.pos.y));
+            return this.finishTask(s);
+          }
+          s.carrying = { kind: 'meal', qty };
+          s.state = 'moving';
+          this.setDestination(s, spTile);
         }
         return;
       }
@@ -1419,7 +1721,7 @@ export class Simulation {
         if (!this.world.inBounds(x, y)) continue;
         const t = this.world.at(x, y);
         if (t.kind !== 'grass' || t.sapling || t.buildingId !== null || t.road || t.roadPlan ||
-            t.wall || t.wallPlan || t.farmZone || t.stockpileZone) continue;
+            t.wall || t.wallPlan || t.gate || t.gatePlan || t.farmZone || t.stockpileZone) continue;
         if (this.reserved.has(`plant:${x},${y}`)) continue;
         const d = Math.hypot(x - c.x, y - c.y);
         if (d <= r && d < bd) { bd = d; best = { x, y }; }
@@ -1686,7 +1988,7 @@ export class Simulation {
     for (const t of this.world.tiles) {
       if (!t.sapling) continue;
       if (t.kind !== 'grass' || t.buildingId !== null || t.road || t.roadPlan ||
-          t.wall || t.wallPlan || t.farmZone || t.stockpileZone) {
+          t.wall || t.wallPlan || t.gate || t.gatePlan || t.farmZone || t.stockpileZone) {
         t.sapling = false;
         t.growth = 0;
         continue;
@@ -1703,6 +2005,74 @@ export class Simulation {
   private addLog(text: string, kind: LogEntry['kind']): void {
     this.log.push({ day: this.day, text, kind });
     if (this.log.length > 200) this.log.shift();
+  }
+
+  // ---- save & load ----
+  /**
+   * Snapshot the whole town sim as JSON. Seed-derived structures (region
+   * map, weather, worldgen params) rebuild from the seed; everything mutable
+   * — tiles, agents, stocks, schedules, the RNG word — is captured verbatim
+   * so a loaded game continues exactly where it left off.
+   */
+  serialize(): string {
+    return JSON.stringify({
+      v: 1,
+      seed: this.seed,
+      rng: this.rng.getState(),
+      minute: this.minute,
+      tiles: this.world.tiles,
+      settlers: this.settlers,
+      buildings: this.buildings,
+      items: this.items,
+      corpses: this.corpses,
+      graves: this.graves,
+      stock: this.stock,
+      traffic: Array.from(this.traffic),
+      log: this.log,
+      gameOver: this.gameOver,
+      coldSnapUntil: this.coldSnapUntil,
+      raiders: this.raiders,
+      raidActive: this.raidActive,
+      animals: this.animals,
+      droughtActive: this.droughtActive,
+      lastFloodDay: this.lastFloodDay,
+      opinions: [...this.opinions.entries()],
+      raidUntil: this.raidUntil,
+      nextRaidDay: this.nextRaidDay,
+      nextId: this.nextId,
+      nextEventDay: this.nextEventDay,
+    });
+  }
+
+  static deserialize(json: string): Simulation {
+    const d = JSON.parse(json);
+    const sim = new Simulation(d.seed);
+    sim.rng.setState(d.rng);
+    sim.minute = d.minute;
+    sim.world.tiles = d.tiles;
+    sim.settlers = d.settlers;
+    sim.buildings = d.buildings;
+    sim.items = d.items;
+    sim.corpses = d.corpses;
+    sim.graves = d.graves;
+    sim.stock = d.stock;
+    sim.traffic = Float32Array.from(d.traffic);
+    sim.log = d.log;
+    sim.gameOver = d.gameOver;
+    sim.coldSnapUntil = d.coldSnapUntil;
+    sim.raiders = d.raiders;
+    sim.raidActive = d.raidActive;
+    sim.animals = d.animals;
+    sim.droughtActive = d.droughtActive;
+    sim.lastFloodDay = d.lastFloodDay;
+    sim.opinions = new Map(d.opinions);
+    sim.raidUntil = d.raidUntil;
+    sim.nextRaidDay = d.nextRaidDay;
+    sim.nextId = d.nextId;
+    sim.nextEventDay = d.nextEventDay;
+    // Task reservations aren't saved; rebuild them from in-flight tasks.
+    sim.reserved = new Set(sim.settlers.filter((s) => s.task).map((s) => sim.taskKey(s.task!)));
+    return sim;
   }
 }
 

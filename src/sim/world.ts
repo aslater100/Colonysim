@@ -5,7 +5,7 @@ import type { TownSite } from './worldgen';
 export type TileKind = 'grass' | 'tree' | 'water' | 'soil' | 'rock';
 
 export type RoadKind = 'dirt' | 'plank' | 'gravel' | 'bridge';
-export type ZoneKind = 'farm' | 'stockpile' | 'wall';
+export type ZoneKind = 'farm' | 'stockpile' | 'wall' | 'gate';
 export type PaintKind = RoadKind | ZoneKind;
 
 /** Speed multiplier walking this road type (design: docs/design/transportation.md §2). */
@@ -38,9 +38,13 @@ export interface Tile {
   stockpileZone: boolean;
   /** wall ordered but not yet built */
   wallPlan: boolean;
+  /** a built gate stands here: settlers pass, raiders and beasts do not */
+  gate: boolean;
+  /** gate ordered but not yet built */
+  gatePlan: boolean;
   /** forester-planted sapling growing here (reuses growth; matures into a tree) */
   sapling: boolean;
-  /** HP of built wall on this tile */
+  /** HP of built wall or gate on this tile */
   wallHp: number;
   buildingId: number | null;
 }
@@ -67,7 +71,8 @@ export class World {
       this.tiles.push({
         kind: 'grass', growth: 0, sown: false, marked: false, wall: false,
         fertility: 1, road: null, roadPlan: null,
-        farmZone: false, stockpileZone: false, wallPlan: false, sapling: false, wallHp: 0,
+        farmZone: false, stockpileZone: false, wallPlan: false,
+        gate: false, gatePlan: false, sapling: false, wallHp: 0,
         buildingId: null,
       });
     }
@@ -82,10 +87,12 @@ export class World {
     return x >= 0 && y >= 0 && x < MAP_W && y < MAP_H;
   }
 
-  passable(x: number, y: number): boolean {
+  /** Hostiles (raiders, wild animals) can't use gates; settlers walk through. */
+  passable(x: number, y: number, hostile = false): boolean {
     if (!this.inBounds(x, y)) return false;
     const t = this.at(x, y);
     if (t.wall || t.wallPlan) return false;
+    if (hostile && t.gate) return false;
     if (t.kind === 'water') return t.road === 'bridge';
     return t.kind !== 'rock' && t.kind !== 'tree';
   }
@@ -193,10 +200,10 @@ export class World {
    * water). Tile cost = 1/speedMult, so agents — settlers and raiders alike —
    * prefer roads automatically. Returns waypoints excluding start.
    */
-  findPath(from: Vec, to: Vec): Vec[] | null {
+  findPath(from: Vec, to: Vec, hostile = false): Vec[] | null {
     const key = (x: number, y: number) => y * MAP_W + x;
     if (from.x === to.x && from.y === to.y) return [];
-    const target = this.passable(to.x, to.y) ? to : this.nearestPassable(to);
+    const target = this.passable(to.x, to.y, hostile) ? to : this.nearestPassable(to, hostile);
     if (!target) return null;
     const prev = new Int32Array(MAP_W * MAP_H).fill(-1);
     // Float64 — float32 rounding of road costs (e.g. 1/1.8) made popped
@@ -269,7 +276,7 @@ export class World {
       for (const [dx, dy] of dirs) {
         const nx = cx + dx;
         const ny = cy + dy;
-        if (!this.passable(nx, ny)) continue;
+        if (!this.passable(nx, ny, hostile)) continue;
         const nk = key(nx, ny);
         const stepCost = 1 / this.speedMult(nx, ny, false);
         const nd = cur.d + stepCost;
@@ -283,11 +290,11 @@ export class World {
     return null;
   }
 
-  nearestPassable(p: Vec): Vec | null {
+  nearestPassable(p: Vec, hostile = false): Vec | null {
     for (let r = 1; r < 8; r++) {
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
-          if (this.passable(p.x + dx, p.y + dy)) return { x: p.x + dx, y: p.y + dy };
+          if (this.passable(p.x + dx, p.y + dy, hostile)) return { x: p.x + dx, y: p.y + dy };
         }
       }
     }

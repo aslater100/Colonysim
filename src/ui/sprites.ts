@@ -98,9 +98,14 @@ export interface SpriteSet {
   stockpileZone: HTMLCanvasElement;
   wallPlan: HTMLCanvasElement;
   palisade: HTMLCanvasElement;
+  gate: HTMLCanvasElement;
+  gatePlan: HTMLCanvasElement;
   sapling: HTMLCanvasElement;
   settler: HTMLCanvasElement[][];
+  settlerArmed: HTMLCanvasElement[][];
   raider: HTMLCanvasElement[];
+  deer: HTMLCanvasElement[];
+  wolf: HTMLCanvasElement[];
   items: Record<'wood' | 'grain' | 'meal' | 'stone' | 'clothes', HTMLCanvasElement>;
   grave: HTMLCanvasElement;
   corpse: HTMLCanvasElement;
@@ -571,6 +576,105 @@ function palisadeTile(): HTMLCanvasElement {
   return c;
 }
 
+/** A built gate: palisade posts flanking a barred wooden door. */
+function gateTile(): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE;
+  c.height = TILE;
+  const g = c.getContext('2d')!;
+  g.fillStyle = P.shadow;
+  g.fillRect(0, 12, TILE, 3);
+  // flanking posts
+  g.fillStyle = P.wood;
+  g.fillRect(0, 5, 3, 8);
+  g.fillRect(13, 5, 3, 8);
+  g.fillStyle = P.woodDark;
+  g.fillRect(2, 5, 1, 8);
+  g.fillRect(13, 5, 1, 8);
+  // the door: horizontal planks with a cross-bar
+  g.fillStyle = P.plank;
+  g.fillRect(3, 6, 10, 7);
+  g.fillStyle = P.plankDark;
+  g.fillRect(3, 8, 10, 1);
+  g.fillRect(3, 11, 10, 1);
+  g.fillStyle = P.woodDark;
+  g.fillRect(3, 9, 10, 1);
+  return c;
+}
+
+/** Gate plan: ghost door outline. */
+function gatePlanTile(): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE;
+  c.height = TILE;
+  const g = c.getContext('2d')!;
+  g.globalAlpha = 0.5;
+  g.fillStyle = '#9cc4e4';
+  g.fillRect(2, 7, 2, 6);
+  g.fillRect(12, 7, 2, 6);
+  g.fillRect(4, 9, 8, 2);
+  g.globalAlpha = 1;
+  return c;
+}
+
+/** A grazing deer: tan body, slender legs, a flick of white tail. */
+function deerSprite(frame: number): HTMLCanvasElement {
+  const legA = frame === 0 ? 'L..L' : '.LL.';
+  const rows = [
+    '................',
+    '......e.........',
+    '.....hh.........',
+    '.....hhn........',
+    '..bbbbbh........',
+    '.bbbbbbb........',
+    '.tbbbbbb........',
+    `..${legA}...........`,
+    `..${legA}...........`,
+    '..SSSSSS........',
+    '................',
+    '................',
+    '................',
+    '................',
+    '................',
+    '................',
+  ];
+  return sheet(
+    grid(rows, {
+      b: '#a87f50', h: '#96714a', n: '#26201a', e: '#6b4a2a',
+      t: '#e8e2d4', L: '#7a5a36', S: 'rgba(20,16,10,0.3)',
+    }),
+  );
+}
+
+/** A wolf: grey, low-slung, ears up. */
+function wolfSprite(frame: number): HTMLCanvasElement {
+  const legA = frame === 0 ? 'L..L' : '.LL.';
+  const rows = [
+    '................',
+    '....e.e.........',
+    '....hhh.........',
+    '....hhhn........',
+    '.bbbbbh.........',
+    'tbbbbbb.........',
+    '.bbbbbb.........',
+    `.${legA}...........`,
+    `.${legA}...........`,
+    '.SSSSSS.........',
+    '................',
+    '................',
+    '................',
+    '................',
+    '................',
+    '................',
+  ];
+  return sheet(
+    grid(rows, {
+      b: '#6e6e72', h: '#5d5d62', n: '#26201a', e: '#5d5d62',
+      t: '#8c8c90', L: '#4d4d52', S: 'rgba(20,16,10,0.3)',
+    }),
+  );
+}
+
 /** A forester's planting: a thin whip with a tuft of leaves, not yet a tree. */
 function saplingSprite(): HTMLCanvasElement {
   const c = document.createElement('canvas');
@@ -623,9 +727,14 @@ export function buildSprites(buildingDefs: { id: string; w: number; h: number }[
     stockpileZone: stockpileZoneTile(),
     wallPlan: wallPlanTile(),
     palisade: palisadeTile(),
+    gate: gateTile(),
+    gatePlan: gatePlanTile(),
     sapling: saplingSprite(),
     settler: pawnLooks.map(([c, s, h]) => [pawnSprite(c, 0, s, h), pawnSprite(c, 1, s, h)]),
+    settlerArmed: pawnLooks.map(([c, s, h]) => [pawnSprite(c, 0, s, h, true), pawnSprite(c, 1, s, h, true)]),
     raider: [pawnSprite(P.clothRaider, 0, P.skinB, P.hairA, true), pawnSprite(P.clothRaider, 1, P.skinB, P.hairA, true)],
+    deer: [deerSprite(0), deerSprite(1)],
+    wolf: [wolfSprite(0), wolfSprite(1)],
     items: {
       wood: itemSprite('wood'),
       grain: itemSprite('grain'),
