@@ -64,6 +64,33 @@
       "desc": "The atom is split. This era marker unlocks advanced research in the next tier."
     },
     {
+      "id": "computing",
+      "name": "Computing",
+      "tree": "tech",
+      "cost": 200,
+      "prereqs": ["atomic_age"],
+      "era": 1965,
+      "desc": "Mainframes shrink toward the microchip. Research rate +25%."
+    },
+    {
+      "id": "automated_logistics",
+      "name": "Automated Freight",
+      "tree": "tech",
+      "cost": 240,
+      "prereqs": ["computing"],
+      "era": 1990,
+      "desc": "Self-routing depots and driverless haulers run the network. Route maintenance −40%."
+    },
+    {
+      "id": "maglev",
+      "name": "Maglev Trains",
+      "tree": "tech",
+      "cost": 300,
+      "prereqs": ["automated_logistics"],
+      "era": 1998,
+      "desc": "Superconducting guideways float freight at airline speed. Maglev lines can be laid five years early."
+    },
+    {
       "id": "common_law",
       "name": "Common Law",
       "tree": "civics",

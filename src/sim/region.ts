@@ -704,7 +704,10 @@ export interface Expedition {
  * links between settlements, laid along a real A* corridor through the
  * terrain. Everything that moves between towns rides this network.
  */
-export type RouteKind = 'trail' | 'road' | 'rail' | 'highway';
+export type RouteKind = 'trail' | 'road' | 'rail' | 'highway' | 'maglev';
+
+/** Every kind the treasury can buy — everything but the free founding trail. */
+export type BuiltRouteKind = Exclude<RouteKind, 'trail'>;
 
 export interface Route {
   a: number; // settlement ids
@@ -726,13 +729,16 @@ export const ROUTE_SPECS: Record<RouteKind, {
   road: { capacity: 200, speed: 1.7, buildPerCost: 2, maintPerCell: 0.2 },
   rail: { capacity: 1200, speed: 4.0, buildPerCost: 8, maintPerCell: 0.5 },
   highway: { capacity: 900, speed: 2.2, buildPerCost: 3, maintPerCell: 0.15 },
+  maglev: { capacity: 3000, speed: 8.0, buildPerCost: 14, maintPerCell: 0.2 },
 };
 
 /** Links only ever upgrade (you don't tear up track) — but note the asphalt
  *  trap: a highway *replaces* rail at lower capacity and upkeep. The player
  *  who over-built rail keeps paying £0.5/cell or writes the steel off —
- *  the stranded-asset lesson, rehearsed early (transportation.md §5). */
-const KIND_RANK: Record<RouteKind, number> = { trail: 0, road: 1, rail: 2, highway: 3 };
+ *  the stranded-asset lesson, rehearsed early (transportation.md §5).
+ *  Maglev inverts the trade: the dearest guideway in the game, then almost
+ *  nothing to run — capex vs. opex is the speculative era's whole question. */
+const KIND_RANK: Record<RouteKind, number> = { trail: 0, road: 1, rail: 2, highway: 3, maglev: 4 };
 
 /** Railworks (M6c, transportation.md §5): the rail boom opens ~1912 —
  *  deliberately the best value in the game during its window. */
@@ -741,6 +747,10 @@ export const RAIL_ERA_YEAR = 1912;
 /** The asphalt age (transportation.md §5): cheap paved highways from 1945
  *  erode rail's monopoly — less throughput than steel, a third the upkeep. */
 export const HIGHWAY_ERA_YEAR = 1945;
+
+/** The speculative era (transportation.md §5): maglev/automated freight
+ *  from 2005 — colossal to build, nearly free to run once it floats. */
+export const MAGLEV_ERA_YEAR = 2005;
 
 /** A rotted route is still a walkable track — people keep using it. */
 const ROUTE_CONDITION_FLOOR = 15;
@@ -839,6 +849,7 @@ export class RegionSim {
   private droughtAnnounced = false;
   private railAnnounced = false;
   private highwayAnnounced = false;
+  private maglevAnnounced = false;
   private nextId = 1000;
   private nextEventDay: number;
   private townNamePool: string[];
@@ -938,7 +949,7 @@ export class RegionSim {
   }
 
   /** Price a built link between two towns: the terrain's itemized bill. */
-  linkCost(aId: number, bId: number, kind: 'road' | 'rail' | 'highway'): { total: number; cells: number; breakdown: string } | null {
+  linkCost(aId: number, bId: number, kind: BuiltRouteKind): { total: number; cells: number; breakdown: string } | null {
     const a = this.settlement(aId);
     const b = this.settlement(bId);
     if (!a || !b) return null;
@@ -966,6 +977,10 @@ export class RegionSim {
     return this.linkCost(aId, bId, 'highway');
   }
 
+  maglevCost(aId: number, bId: number): { total: number; cells: number; breakdown: string } | null {
+    return this.linkCost(aId, bId, 'maglev');
+  }
+
   /** Query whether a tech/civics node has been researched. */
   has(id: string): boolean {
     return this.researched.includes(id);
@@ -977,6 +992,7 @@ export class RegionSim {
     let mult = 1;
     if (this.has('public_education')) mult *= 1.5;
     if (this.has('electrical_grid')) mult *= 1.25;
+    if (this.has('computing')) mult *= 1.25;
     if (this.passedLaws.includes('national_education_act')) mult *= 1.3;
     return base * mult;
   }
@@ -1036,11 +1052,19 @@ export class RegionSim {
     return this.stateProclaimed && this.year >= threshold;
   }
 
+  /** The speculative gate: superconductors need a State and the 2005 era.
+   *  Maglev Trains research floats the freight five years early. */
+  maglevUnlocked(): boolean {
+    const threshold = this.has('maglev') ? MAGLEV_ERA_YEAR - 5 : MAGLEV_ERA_YEAR;
+    return this.stateProclaimed && this.year >= threshold;
+  }
+
   /** Built links are State works, paid from the treasury; links only upgrade. */
-  private buildLink(aId: number, bId: number, kind: 'road' | 'rail' | 'highway'): boolean {
+  private buildLink(aId: number, bId: number, kind: BuiltRouteKind): boolean {
     if (!this.stateProclaimed) return false;
     if (kind === 'rail' && !this.railUnlocked()) return false;
     if (kind === 'highway' && !this.highwayUnlocked()) return false;
+    if (kind === 'maglev' && !this.maglevUnlocked()) return false;
     const existing = this.routeBetween(aId, bId);
     if (existing && KIND_RANK[existing.kind] >= KIND_RANK[kind]) return false;
     const a = this.settlement(aId);
@@ -1063,7 +1087,9 @@ export class RegionSim {
         ? `A wagon road opens between ${a.name} and ${b.name} — £${cost.total} of grading and bridgework.`
         : kind === 'rail'
           ? `Steel rails link ${a.name} and ${b.name} — £${cost.total} of cuttings, trestles, and track. The whistle carries for miles.`
-          : `Fresh asphalt runs from ${a.name} to ${b.name} — £${cost.total} of paving${wasRail ? '. The old rail bed goes quiet' : ''}.`,
+          : kind === 'highway'
+            ? `Fresh asphalt runs from ${a.name} to ${b.name} — £${cost.total} of paving${wasRail ? '. The old rail bed goes quiet' : ''}.`
+            : `A maglev guideway hums between ${a.name} and ${b.name} — £${cost.total} of pylons and superconductors. The freight drives itself now.`,
       'good',
     );
     return true;
@@ -1079,6 +1105,10 @@ export class RegionSim {
 
   buildHighway(aId: number, bId: number): boolean {
     return this.buildLink(aId, bId, 'highway');
+  }
+
+  buildMaglev(aId: number, bId: number): boolean {
+    return this.buildLink(aId, bId, 'maglev');
   }
 
   /** Putting a storm-damaged link back in order: crews priced by what the
@@ -1180,11 +1210,18 @@ export class RegionSim {
         const b = this.settlement(r.b)?.name ?? '?';
         this.addLog(
           `Storm washout: the ${r.kind} between ${a} and ${b} is cut — ` +
-          `${r.kind === 'rail' ? 'a trestle is down' : 'a bridge is out'}. Repairs would cost £${this.repairCost(r)}.`,
+          `${r.kind === 'rail' ? 'a trestle is down' : r.kind === 'maglev' ? 'a guideway pylon is down' : 'a bridge is out'}. Repairs would cost £${this.repairCost(r)}.`,
           'bad',
         );
       }
     }
+  }
+
+  /** What a link's road gangs (or drone crews) bill per month — Automated
+   *  Freight research swaps the work crews for machines at 60% the cost. */
+  maintBill(r: Route): number {
+    const automation = this.has('automated_logistics') ? 0.6 : 1;
+    return r.path.length * ROUTE_SPECS[r.kind].maintPerCell * automation;
   }
 
   /** Monthly upkeep on built links from the treasury — an unmaintained
@@ -1194,7 +1231,7 @@ export class RegionSim {
     let rotting = false;
     for (const r of this.routes) {
       if (r.kind === 'trail') continue;
-      const bill = r.path.length * ROUTE_SPECS[r.kind].maintPerCell;
+      const bill = this.maintBill(r);
       if (this.treasury >= bill) {
         this.treasury -= bill;
         r.condition = Math.min(100, r.condition + 8 + investmentBonus);
@@ -1418,6 +1455,14 @@ export class RegionSim {
       this.addLog(
         `THE ASPHALT AGE: ${this.stateName} opens its first paving plant. Cheap highways ` +
         `now rival the railways — the steel monopolies grumble.`,
+        'good',
+      );
+    }
+    if (!this.maglevAnnounced && this.maglevUnlocked()) {
+      this.maglevAnnounced = true;
+      this.addLog(
+        `THE FLOATING FREIGHT: ${this.stateName} energizes its first superconducting guideway. ` +
+        `Maglev lines cost a fortune to raise and almost nothing to run — the hauliers' unions read the writing on the wall.`,
         'good',
       );
     }
@@ -3317,6 +3362,7 @@ export class RegionSim {
       droughtAnnounced: this.droughtAnnounced,
       railAnnounced: this.railAnnounced,
       highwayAnnounced: this.highwayAnnounced,
+      maglevAnnounced: this.maglevAnnounced,
       researched: this.researched,
       activeResearch: this.activeResearch,
       researchProgress: this.researchProgress,
@@ -3374,6 +3420,7 @@ export class RegionSim {
     r.droughtAnnounced = d.droughtAnnounced;
     r.railAnnounced = d.railAnnounced;
     r.highwayAnnounced = d.highwayAnnounced ?? false;
+    r.maglevAnnounced = d.maglevAnnounced ?? false;
     r.researched = d.researched ?? ['steam_power', 'common_law'];
     r.activeResearch = d.activeResearch ?? null;
     r.researchProgress = d.researchProgress ?? 0;

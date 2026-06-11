@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Simulation } from '../src/sim/sim';
-import { RegionSim, REGION_MINUTES_PER_TICK, ROUTE_SPECS, RAIL_ERA_YEAR, HIGHWAY_ERA_YEAR } from '../src/sim/region';
+import { RegionSim, REGION_MINUTES_PER_TICK, ROUTE_SPECS, RAIL_ERA_YEAR, HIGHWAY_ERA_YEAR, MAGLEV_ERA_YEAR } from '../src/sim/region';
 import { RegionMap } from '../src/sim/worldgen';
 import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
 
@@ -246,6 +246,74 @@ describe('The asphalt age (transportation.md §5)', () => {
     expect(ROUTE_SPECS.highway.maintPerCell).toBeLessThan(ROUTE_SPECS.rail.maintPerCell);
     expect(ROUTE_SPECS.highway.capacity).toBeLessThan(ROUTE_SPECS.rail.capacity);
     expect(ROUTE_SPECS.highway.capacity).toBeGreaterThan(ROUTE_SPECS.road.capacity);
+  });
+});
+
+describe('The maglev era (transportation.md §5)', () => {
+  it('maglev waits on the State and 2005 — then floats over even asphalt', () => {
+    const r = flipped(42);
+    toStatehood(r);
+    r.treasury = 1e7;
+    const [a, b] = r.settlements;
+    expect(r.maglevUnlocked()).toBe(false);
+    expect(r.buildMaglev(a.id, b.id)).toBe(false); // era not open
+    toYear(r, HIGHWAY_ERA_YEAR);
+    expect(r.buildHighway(a.id, b.id)).toBe(true);
+    expect(r.maglevUnlocked()).toBe(false); // 1945 asphalt is not 2005 superconductors
+    toYear(r, MAGLEV_ERA_YEAR);
+    expect(r.maglevUnlocked()).toBe(true);
+    const cost = r.maglevCost(a.id, b.id)!;
+    expect(cost.total).toBeGreaterThan(r.railCost(a.id, b.id)!.total); // dearest build in the game
+    const before = r.treasury;
+    expect(r.buildMaglev(a.id, b.id)).toBe(true);
+    expect(r.treasury).toBeCloseTo(before - cost.total, 5);
+    const route = r.routeBetween(a.id, b.id)!;
+    expect(route.kind).toBe('maglev');
+    expect(route.condition).toBe(100);
+    expect(r.buildHighway(a.id, b.id)).toBe(false); // nothing tops the guideway
+    expect(r.buildRail(a.id, b.id)).toBe(false);
+    expect(r.buildMaglev(a.id, b.id)).toBe(false); // already floating
+  });
+
+  it('maglev moves more grain than rail (capacity 3000)', () => {
+    const r = flipped(42);
+    const [home, town2] = r.settlements;
+    const route = r.routeBetween(home.id, town2.id)!;
+    // a megacity's hunger: need far beyond rail capacity, so the link is the limit
+    town2.cohorts.bands = [0, 600, 300, 0, 0];
+    route.kind = 'rail';
+    route.condition = 100;
+    town2.food = 0;
+    home.food = r.popOf(home) * 0.75 * 60 + 1e6; // deep surplus
+    r.caravans();
+    const overRail = town2.food;
+    expect(overRail).toBeLessThanOrEqual(ROUTE_SPECS.rail.capacity * 0.9 + 1e-9);
+    route.kind = 'maglev';
+    town2.food = 0;
+    home.food = r.popOf(home) * 0.75 * 60 + 1e6;
+    r.caravans();
+    expect(town2.food).toBeGreaterThan(overRail);
+    expect(town2.food).toBeLessThanOrEqual(ROUTE_SPECS.maglev.capacity * 0.9 + 1e-9);
+  });
+
+  it('the capex/opex inversion: dearest to build, more capacity than steel, cheap to run', () => {
+    expect(ROUTE_SPECS.maglev.buildPerCost).toBeGreaterThan(ROUTE_SPECS.rail.buildPerCost);
+    expect(ROUTE_SPECS.maglev.capacity).toBeGreaterThan(ROUTE_SPECS.rail.capacity);
+    expect(ROUTE_SPECS.maglev.maintPerCell).toBeLessThan(ROUTE_SPECS.rail.maintPerCell);
+    expect(ROUTE_SPECS.maglev.speed).toBeGreaterThan(ROUTE_SPECS.rail.speed);
+  });
+
+  it('Automated Freight research cuts every maintenance bill by 40%', () => {
+    const r = flipped(42);
+    toStatehood(r);
+    r.treasury = 1e6;
+    const [a, b] = r.settlements;
+    expect(r.buildRoad(a.id, b.id)).toBe(true);
+    const route = r.routeBetween(a.id, b.id)!;
+    const manned = r.maintBill(route);
+    expect(manned).toBeCloseTo(route.path.length * ROUTE_SPECS.road.maintPerCell, 5);
+    r.researched.push('automated_logistics');
+    expect(r.maintBill(route)).toBeCloseTo(manned * 0.6, 5);
   });
 });
 

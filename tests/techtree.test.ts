@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Simulation } from '../src/sim/sim';
-import { RegionSim, REGION_MINUTES_PER_TICK, TECH_TREE, RAIL_ERA_YEAR, HIGHWAY_ERA_YEAR } from '../src/sim/region';
+import { RegionSim, REGION_MINUTES_PER_TICK, TECH_TREE, RAIL_ERA_YEAR, HIGHWAY_ERA_YEAR, MAGLEV_ERA_YEAR } from '../src/sim/region';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
@@ -19,7 +19,7 @@ function runDays(r: RegionSim, days: number): void {
 
 describe('Tech tree: node definitions', () => {
   it('has the expected number of nodes', () => {
-    expect(TECH_TREE.length).toBe(14);
+    expect(TECH_TREE.length).toBe(17);
   });
 
   it('start nodes have zero cost and no prereqs', () => {
@@ -216,6 +216,26 @@ describe('Tech tree: gameplay effects', () => {
     expect(r.highwayUnlocked()).toBe(false);
     r.researched.push('asphalt');
     expect(r.highwayUnlocked()).toBe(true);
+  });
+
+  it('computing multiplies research rate by 1.25', () => {
+    const r = makeRegion();
+    const before = r.researchRate();
+    r.researched.push('computing');
+    const after = r.researchRate();
+    expect(after).toBeCloseTo(before * 1.25, 5);
+  });
+
+  it('maglev research unlocks maglev lines 5 years early', () => {
+    const r = makeRegion();
+    r.stateProclaimed = true;
+    r.stateName = 'Test State';
+    const earlyYear = MAGLEV_ERA_YEAR - 4;
+    const targetDay = (earlyYear - 1900) * 60;
+    r.minute = targetDay * MINUTES_PER_DAY;
+    expect(r.maglevUnlocked()).toBe(false);
+    r.researched.push('maglev');
+    expect(r.maglevUnlocked()).toBe(true);
   });
 
   it('labor_law reduces grievance build rate', () => {

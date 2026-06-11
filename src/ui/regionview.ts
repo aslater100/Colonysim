@@ -113,8 +113,9 @@ export class RegionView {
         });
         g.strokeStyle = r.kind === 'rail' ? `rgba(150,156,168,${alpha})`
           : r.kind === 'highway' ? `rgba(62,66,74,${Math.min(1, alpha + 0.2)})`
+          : r.kind === 'maglev' ? `rgba(110,200,214,${alpha})`
           : `rgba(216,180,106,${alpha})`;
-        g.lineWidth = r.kind === 'rail' ? 3 : r.kind === 'highway' ? 4 : 2;
+        g.lineWidth = r.kind === 'rail' || r.kind === 'maglev' ? 3 : r.kind === 'highway' ? 4 : 2;
         g.beginPath();
         for (let i = 0; i < pts.length; i++) {
           if (i === 0) g.moveTo(pts[i].px, pts[i].py);
@@ -145,6 +146,14 @@ export class RegionView {
             g.stroke();
           }
           this.drawTrain(pts, r.condition);
+        }
+        if (r.kind === 'maglev') {
+          // pylon dots beneath the line: the guideway floats above the land
+          g.fillStyle = `rgba(70,120,130,${alpha})`;
+          for (let i = 0; i < pts.length; i += 3) {
+            g.fillRect(Math.round(pts[i].px) - 1, Math.round(pts[i].py) + 2, 2, 3);
+          }
+          this.drawPod(pts, r.condition);
         }
       }
     }
@@ -306,6 +315,20 @@ export class RegionView {
     g.fillRect(Math.round(p.px) - 2, Math.round(p.py) - 3, 5, 4);
     g.fillStyle = '#dfe6ee';
     g.fillRect(Math.round(p.px) + 1, Math.round(p.py) - 2, 1, 1); // windscreen glint
+  }
+
+  /** A maglev pod glides the guideway — fastest of the flavor fleet. */
+  private drawPod(pts: { px: number; py: number }[], condition: number): void {
+    if (pts.length < 2 || condition <= 20) return; // a downed pylon stops the line
+    const { g } = this;
+    const span = (pts.length - 1) * 2;
+    const t = Math.floor(this.frame / 2) % span; // nothing on the map moves quicker
+    const i = t < pts.length - 1 ? t : span - t;
+    const p = pts[Math.max(0, Math.min(pts.length - 1, i))];
+    g.fillStyle = '#dfe9ee'; // a white bullet
+    g.fillRect(Math.round(p.px) - 3, Math.round(p.py) - 3, 7, 3);
+    g.fillStyle = '#6ec8d6';
+    g.fillRect(Math.round(p.px) - 3, Math.round(p.py) - 1, 7, 1); // the field glow beneath
   }
 
   /** The generated land itself, in 8-bit blocks: this map IS the world. */
@@ -495,11 +518,13 @@ export class RegionView {
       `<p>services: <b>${lvl(r.servicesLevel)}</b> <button class="mini" id="svc-up">+</button><button class="mini" id="svc-dn">−</button></p>` +
       `<p>militia: <b>${lvl(r.militiaLevel)}</b> <button class="mini" id="mil-up">+</button><button class="mini" id="mil-dn">−</button></p>` +
       `<p class="insp-skills">high taxes breed strikes; services cost £ but save lives</p>` +
-      `<p class="insp-skills">${r.highwayUnlocked()
-        ? 'THE ASPHALT AGE — highways from any town panel'
-        : r.railUnlocked()
-          ? 'RAILWORKS chartered — lay rail from any town panel'
-          : `railworks expected ~${RAIL_ERA_YEAR}`}</p>` +
+      `<p class="insp-skills">${r.maglevUnlocked()
+        ? 'THE FLOATING FREIGHT — maglev guideways from any town panel'
+        : r.highwayUnlocked()
+          ? 'THE ASPHALT AGE — highways from any town panel'
+          : r.railUnlocked()
+            ? 'RAILWORKS chartered — lay rail from any town panel'
+            : `railworks expected ~${RAIL_ERA_YEAR}`}</p>` +
       `<p><button class="mini" id="research-toggle">${this.researchOpen ? '▲ research' : '▼ research'}</button> <span class="insp-skills">${researchLabel}</span></p>` +
       (r.canCallConvention() ? `<p><button id="convention-btn" style="font-size:10px;background:#8b5cf6;color:#fff;border:none;padding:4px 8px;cursor:pointer">★ CONVENE CONSTITUTIONAL CONVENTION</button></p>` : '') +
       this.politicsHtml() +
@@ -1037,6 +1062,11 @@ export class RegionView {
         this.region.buildHighway(t.id, Number(rb.dataset.to));
       };
     }
+    for (const rb of this.panel.querySelectorAll<HTMLButtonElement>('.mag-btn')) {
+      rb.onclick = () => {
+        this.region.buildMaglev(t.id, Number(rb.dataset.to));
+      };
+    }
     for (const rb of this.panel.querySelectorAll<HTMLButtonElement>('.repair-btn')) {
       rb.onclick = () => {
         this.region.repairRoute(t.id, Number(rb.dataset.to));
@@ -1061,7 +1091,7 @@ export class RegionView {
               `title="£${cost.total}: ${cost.breakdown}">road £${cost.total}</button>`;
           }
         }
-        if (r.railUnlocked() && (!route || (route.kind !== 'rail' && route.kind !== 'highway'))) {
+        if (r.railUnlocked() && (!route || (route.kind !== 'rail' && route.kind !== 'highway' && route.kind !== 'maglev'))) {
           const cost = r.railCost(t.id, o.id);
           if (cost) {
             const afford = r.treasury >= cost.total;
@@ -1069,12 +1099,21 @@ export class RegionView {
               `title="£${cost.total}: ${cost.breakdown}">rail £${cost.total}</button>`;
           }
         }
-        if (r.highwayUnlocked() && (!route || route.kind !== 'highway')) {
+        if (r.highwayUnlocked() && (!route || (route.kind !== 'highway' && route.kind !== 'maglev'))) {
           const cost = r.highwayCost(t.id, o.id);
           if (cost) {
             const afford = r.treasury >= cost.total;
             btn += ` <button class="mini hwy-btn" data-to="${o.id}" ${afford ? '' : 'disabled'} ` +
               `title="£${cost.total}: ${cost.breakdown}${route?.kind === 'rail' ? ' — replaces the rail line' : ''}">highway £${cost.total}</button>`;
+          }
+        }
+        if (r.maglevUnlocked() && (!route || route.kind !== 'maglev')) {
+          const cost = r.maglevCost(t.id, o.id);
+          if (cost) {
+            const afford = r.treasury >= cost.total;
+            const replaces = route && route.kind !== 'trail' ? ` — replaces the ${route.kind}` : '';
+            btn += ` <button class="mini mag-btn" data-to="${o.id}" ${afford ? '' : 'disabled'} ` +
+              `title="£${cost.total}: ${cost.breakdown}${replaces}">maglev £${cost.total}</button>`;
           }
         }
         if (r.stateProclaimed && route && route.kind !== 'trail' && route.condition < 85) {

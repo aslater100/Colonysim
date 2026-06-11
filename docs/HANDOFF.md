@@ -1,8 +1,8 @@
-# Session Handoff — 2026-06-11 (v0.19.0)
+# Session Handoff — 2026-06-11 (v0.20.0)
 
 ## Current state
 
-Version **v0.19.0** (negotiation engine + war depth). Transportation arc, governance stack, audio layer, rival nations + diplomacy, the full war loop, the §6.3 bargaining engine (deal baskets + counter-offers, also pricing the peace table), and §7.3–7.4 war depth (blockade, co-belligerence, occupation/resistance) are complete.
+Version **v0.20.0** (maglev + automated freight). Transportation arc **including the speculative era** (trail→road→rail→highway→maglev), governance stack, audio layer, rival nations + diplomacy, the full war loop, the §6.3 bargaining engine (deal baskets + counter-offers, also pricing the peace table), and §7.3–7.4 war depth (blockade, co-belligerence, occupation/resistance) are complete.
 
 ## Shipped
 
@@ -27,6 +27,7 @@ Version **v0.19.0** (negotiation engine + war depth). Transportation arc, govern
 | 0.17 | Rival nations + diplomacy: ≤6 powers emerge 1922+, §6.3 personality archetypes, 10 era-gated regimes in 4 blocs, generated founding histories, player relations ledger + 3 treaty types + envoys/gifts/AI offers, pairwise rival relations with alliances/customs unions/ultimatums, foreign wars (refugee waves, export booms, dictated peaces, defeat-toppled regimes), sponsored raids |
 | 0.18 | War (GDD §7): nation-tier `playerWar` — 3 casus belli (CB quality sets war support; fabrication costs legitimacy + reputation), 3 mobilization levels (GDP stimulus + £/pop drain + rationing), monthly front resolution on `manpower^0.6 × quality` power ratio, attrition scars cohorts, support floors per regime (home front breaks → capitulation), peace table priced in war score (status quo/reparations/annex/regime change) with grudge premium + Versailles trap; hostile rivals can declare on the player |
 | 0.19 | Negotiation engine (§6.3) + war depth (§7.3–7.4): deal baskets (treaties + gold both ways + border settlement) valued in diplomatic points from each rival's own personality, accept/counter-within-30%/walk-with-reason, signable counter-offers; peace table re-priced through the same engine (multi-term baskets, counter names what they'd sign, occupied marches discount the ask, annexation requires held ground); blockade (needs funded militia/standing army; enemy power ×0.85, pop bleed, score drift, upkeep + export interdiction both ways), allied co-belligerence (called pacts fight at 0.5 vs 0.25 passive, share victory/defeat; refusing a defensive call tears the pact; enemy allies join honor-weighted), occupation/resistance (≤3 marches, conciliatory/brutal policy, partisans past resistance 50, brutality is legitimacy now + grudge forever), enemy raiders cut routes monthly |
+| 0.20 | Maglev + automated freight (transportation.md §5 speculative era): `maglev` route kind (capacity 3,000, ×8 speed, £14/tc — dearest build, £0.2/cell/mo) behind State + 2005; late-century tech chain `computing` (1965, research +25%) → `automated_logistics` (1990, all route maintenance ×0.6) → `maglev` (1998, lines 5 years early); cyan guideway on pylons with a gliding pod; capex-vs-opex inverts the asphalt trap |
 
 ## Ship loop
 
@@ -41,7 +42,6 @@ User merges and play-tests; CI validates (test.yml — do not run the suite loca
 ## What's next
 
 GDD-aligned open items (roughly in order of pull):
-- Maglev/automated freight (transportation.md §5, 2000+ speculative era)
 - Eras 7–8 (2040–2100: solarpunk / dystopia / drowned endings)
 - Full climate system (CO₂ ledger framework exists; impacts currently simplified to events)
 - FX & monetary regimes (single-currency only today)
@@ -51,8 +51,8 @@ GDD-aligned open items (roughly in order of pull):
 
 ## Architecture reference
 
-- **Route kinds:** `'trail' | 'road' | 'rail' | 'highway'`; `KIND_RANK` enforces upgrade-only; `buildLink` refuses downgrades.
-- **Gates:** `railUnlocked()` = `stateProclaimed && year >= 1912`; highway = State + year ≥ 1945.
+- **Route kinds:** `'trail' | 'road' | 'rail' | 'highway' | 'maglev'`; `KIND_RANK` enforces upgrade-only; `buildLink` refuses downgrades.
+- **Gates:** `railUnlocked()` = `stateProclaimed && year >= 1912`; highway = State + year ≥ 1945; maglev = State + year ≥ 2005 (each −5 years with its tech node). `maintBill(r)` is ×0.6 once `automated_logistics` is researched.
 - **Save format:** v2 `{v:2, mode:'region', town, region}` under `centuria-save`; v1 town saves still load.
 - **Clocks:** town = 4 game-min/tick; region = 30 game-min/tick (~6 s/day at speed 1).
 - **Effective route capacity:** `capacity × condition/100`; condition floor 15; unpaid maintenance −6/mo; washouts −45 condition on storm days (12% chance), `repairRoute` restores to 100 from treasury.

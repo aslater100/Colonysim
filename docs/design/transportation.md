@@ -1,6 +1,7 @@
 # Transportation & Roads — System Design
 
-> Status: **COMPLETE** (trail→road→rail→highway all shipped through v0.9.0).
+> Status: **COMPLETE** (trail→road→rail→highway shipped through v0.9.0;
+> the §5 speculative era — maglev + automated freight — shipped v0.20.0).
 > Builds on: per-tile town maps (M1), the region cell grid + terrain costs
 > (M5 `worldgen.travelDays`), grain caravans (M5), the State treasury (M4),
 > and the GDD's era arc (§5.1 transport, §10 timeline).
