@@ -364,6 +364,100 @@ export const POLICY_CARDS: PolicyCard[] = [
 /** Political capital cost to swap a policy card out of an occupied slot. */
 export const POLICY_SWAP_COST = 20;
 
+// ---- Rival nations & diplomacy (GDD §5.4, §6.2–6.4) ----
+
+/** Personality weights 0–10 (GDD §6.3): they drive treaty appetite,
+ *  hostility, and how the rival values what you offer. */
+export interface RivalPersonality {
+  expansion: number;
+  commerce: number;
+  ideology: number;
+  honor: number;
+  risk: number;
+  grudge: number;
+}
+
+export type RivalArchetype =
+  | 'hegemon' | 'trading_republic' | 'hermit_kingdom' | 'crusader_state' | 'opportunist';
+
+/** The GDD §6.3 archetypes, verbatim as presets over the weights. */
+export const RIVAL_ARCHETYPES: Record<RivalArchetype, { name: string; weights: RivalPersonality }> = {
+  hegemon: { name: 'the Hegemon', weights: { expansion: 9, commerce: 4, ideology: 5, honor: 4, risk: 7, grudge: 5 } },
+  trading_republic: { name: 'the Trading Republic', weights: { expansion: 3, commerce: 9, ideology: 3, honor: 7, risk: 3, grudge: 3 } },
+  hermit_kingdom: { name: 'the Hermit Kingdom', weights: { expansion: 2, commerce: 2, ideology: 6, honor: 6, risk: 2, grudge: 8 } },
+  crusader_state: { name: 'the Crusader State', weights: { expansion: 6, commerce: 3, ideology: 9, honor: 5, risk: 6, grudge: 6 } },
+  opportunist: { name: 'the Opportunist', weights: { expansion: 6, commerce: 6, ideology: 2, honor: 2, risk: 9, grudge: 4 } },
+};
+
+export type TreatyKind = 'non_aggression' | 'trade_agreement' | 'defensive_pact';
+
+/** First slice of the GDD §5.4 treaty table. `baseAsk` is the relations
+ *  level the rival wants before personality adjusts the price. */
+export const TREATY_DEFS: Record<TreatyKind, { name: string; baseAsk: number; desc: string }> = {
+  non_aggression: {
+    name: 'Non-Aggression Pact', baseAsk: -5,
+    desc: 'Fenced borders: no sponsored raids or border incidents from this power.',
+  },
+  trade_agreement: {
+    name: 'Trade Agreement', baseAsk: 15,
+    desc: 'Monthly export earnings scaled to GDP; relations warm with the traffic.',
+  },
+  defensive_pact: {
+    name: 'Defensive Pact', baseAsk: 45,
+    desc: 'Allied arms: militia +15% when raiders strike.',
+  },
+};
+
+export interface RivalNation {
+  id: number;
+  name: string;
+  leader: string;
+  archetype: RivalArchetype;
+  weights: RivalPersonality;
+  govType: GovType; // rivals run regimes too; distance feeds relations
+  agenda: string;   // discoverable long-term goal — legible in hindsight
+  compass: 'north' | 'east' | 'south' | 'west'; // which map edge they loom over
+  pop: number;      // abstract: they are nation-scale already (GDD §6.4)
+  relations: number; // −100..+100 ledger (GDD §5.4)
+  treaties: TreatyKind[];
+  emergedYear: number;
+  lastEnvoyDay: number;
+  lastGiftDay: number;
+}
+
+/** An AI-initiated treaty offer, waiting in the diplomacy panel. */
+export interface TreatyOffer {
+  rivalId: number;
+  kind: TreatyKind;
+  expiresDay: number;
+}
+
+export const ENVOY_COST = 15;
+export const GIFT_COST = 40;
+export const ENVOY_COOLDOWN_DAYS = 90;
+export const GIFT_COOLDOWN_DAYS = 60;
+/** The world proclaims its first foreign nation in this band (GDD §6.2). */
+export const RIVAL_EMERGENCE_YEAR = 1922;
+export const MAX_RIVALS = 3;
+/** Each treaty the player breaks raises every future ask (GDD §5.4 reputation). */
+export const TREATY_BREACH_PENALTY = 15;
+
+const RIVAL_NAMES = ['Vasterholm', 'Karelia', 'Tyrennia', 'Meridia', 'Vossland', 'Cantara'];
+const RIVAL_LEADERS = ['Chancellor Aldric', 'Doge Maren', 'King Osric III', 'Marshal Veka', 'First Citizen Roux', 'Queen Ilsabet'];
+const RIVAL_AGENDAS: Record<RivalArchetype, string> = {
+  hegemon: 'unite the river basins under one crown',
+  trading_republic: 'corner the coastal carrying trade',
+  hermit_kingdom: 'keep the mountain passes closed',
+  crusader_state: 'spread the one true creed',
+  opportunist: 'profit from every war but fight in none',
+};
+const COMPASS_FLAVOR: Record<RivalNation['compass'], string> = {
+  north: 'beyond the northern ranges',
+  east: 'across the eastern marches',
+  south: 'down the southern coast',
+  west: 'over the western sea',
+};
+
 export type NotableRole = 'Mayor' | 'Doctor' | 'Captain' | 'Granger' | 'Forewoman' | 'Reeve';
 
 export interface Notable {
@@ -508,6 +602,16 @@ export class RegionSim {
   ministers: MinisterAssignment[] = MINISTER_ROLES.map((r) => ({ role: r.id, title: r.title, notableId: null }));
   /** Active policy card id per slot (null = empty). Length matches govType.policySlots. */
   activePolicies: (string | null)[] = [];
+  // ---- Rival nations & diplomacy (GDD §5.4, §6.2–6.4) ----
+  rivals: RivalNation[] = [];
+  /** AI-initiated treaty offers awaiting the player's signature. */
+  offers: TreatyOffer[] = [];
+  /** Treaties the player has torn up — priced into every future ask. */
+  treatiesBroken = 0;
+  /** Foreign wars move prices (GDD §6.4): exports boom while this runs. */
+  warBoomUntil = -1;
+  /** Last month's trade-agreement export earnings (for the UI). */
+  exportEarningsLastMonth = 0;
   private droughtAnnounced = false;
   private railAnnounced = false;
   private highwayAnnounced = false;
@@ -1148,6 +1252,7 @@ export class RegionSim {
     this.ageNotables();
     if (this.stateProclaimed) this.monthlyEconomy();
     if (this.stateProclaimed) this.updateFactions();
+    this.updateDiplomacy();
   }
 
   // ---- local markets & trade (GDD §5.2, first slice) ----
@@ -1295,8 +1400,18 @@ export class RegionSim {
     const protectionismBonus = this.policyActive('protectionism') ? 3 : 0;
     // Central Bank Charter law: treasury reserves earn 0.5% interest/month
     const bankInterest = this.passedLaws.includes('central_bank_charter') ? this.treasury * 0.005 : 0;
+    // Trade agreements (GDD §5.4): export earnings per signed rival, scaled to
+    // GDP and the rival's commerce appetite. Foreign wars make buyers pay more.
+    const warBoom = this.day < this.warBoomUntil ? 1.5 : 1;
+    this.exportEarningsLastMonth = this.rivals.reduce(
+      (s, rv) =>
+        rv.treaties.includes('trade_agreement')
+          ? s + Math.min(12, this.gdpLastMonth * 0.025) * (0.5 + rv.weights.commerce / 10) * warBoom
+          : s,
+      0,
+    );
     this.treasury += revenue - spending + incomeTaxBonus + estateLevyBonus +
-      progressiveTaxBonus + protectionismBonus + bankInterest;
+      progressiveTaxBonus + protectionismBonus + bankInterest + this.exportEarningsLastMonth;
     if (this.treasury < 0) {
       this.treasury = 0;
       if (this.servicesLevel > 0) {
@@ -1387,7 +1502,11 @@ export class RegionSim {
 
   /** Raid, resolved abstractly by militia strength (GDD §7: abstraction rises with tier). */
   private eventRaid(t: Settlement): void {
-    const strength = 2 + this.rng.int(Math.max(2, Math.floor(this.totalPop() / 40)));
+    let strength = 2 + this.rng.int(Math.max(2, Math.floor(this.totalPop() / 40)));
+    // Raid sponsorship is deniable (GDD §6.4): a hostile power arms the raiders
+    const sponsor = this.hostileRivals()[0];
+    const sponsored = sponsor !== undefined && this.rng.chance(0.5);
+    if (sponsored) strength *= 1.3;
     const captain = 1 + 0.25 * this.roleMult(t, 'Captain');
     // Defence Minister adds 20% militia effectiveness (GDD §8.7)
     const defenceBonus = this.ministerFor('defence') ? 1.2 : 1;
@@ -1399,20 +1518,23 @@ export class RegionSim {
       : 1;
     // M6c: the network is defense — a built link to a bigger town brings relief
     const relief = this.reliefLine(t);
-    const militia = this.workersOf(t) * 0.12 * captain * funded * (relief ? 1.25 : 1);
+    // A Defensive Pact (GDD §5.4) puts allied arms behind the militia
+    const pact = this.rivals.some((rv) => rv.treaties.includes('defensive_pact'));
+    const militia = this.workersOf(t) * 0.12 * captain * funded * (relief ? 1.25 : 1) * (pact ? 1.15 : 1);
     t.lastRaidDay = this.day;
+    const foreignArms = sponsored ? ` The dead carried rifles of foreign make — ${sponsor!.name}'s hand, deniably.` : '';
     if (militia >= strength) {
       this.addLog(
-        relief
+        (relief
           ? `Raiders struck ${t.name} and were driven off — relief militia rode in along the line.`
-          : `Raiders struck ${t.name} and were driven off by the militia.`,
+          : `Raiders struck ${t.name} and were driven off by the militia.`) + foreignArms,
         'good',
       );
     } else {
       const losses = Math.min(this.popOf(t) * 0.06, strength - militia);
       this.removePop(t, losses);
       t.food *= 0.85;
-      this.addLog(`Raiders overran ${t.name}'s pickets — ${Math.max(1, Math.round(losses))} lost, stores plundered.`, 'bad');
+      this.addLog(`Raiders overran ${t.name}'s pickets — ${Math.max(1, Math.round(losses))} lost, stores plundered.` + foreignArms, 'bad');
     }
   }
 
@@ -1892,6 +2014,244 @@ export class RegionSim {
     }
   }
 
+  // ---- Rival nations & diplomacy (GDD §5.4, §6.2–6.4) ----
+
+  rival(id: number): RivalNation | undefined {
+    return this.rivals.find((rv) => rv.id === id);
+  }
+
+  /** Rivals open to mischief: cold relations and nothing signed to stop them. */
+  hostileRivals(): RivalNation[] {
+    return this.rivals.filter((rv) => rv.relations < -40 && !rv.treaties.includes('non_aggression'));
+  }
+
+  private clampRel(v: number): number {
+    return Math.max(-100, Math.min(100, v));
+  }
+
+  /** A new great power proclaims itself at the edge of the map (GDD §6.2).
+   *  Public so scenarios and tests can seed the world directly. */
+  spawnRival(archetype?: RivalArchetype): RivalNation | null {
+    if (this.rivals.length >= MAX_RIVALS) return null;
+    const kinds = Object.keys(RIVAL_ARCHETYPES) as RivalArchetype[];
+    const arch = archetype ?? kinds[this.rng.int(kinds.length)];
+    const base = RIVAL_ARCHETYPES[arch].weights;
+    const jitter = (v: number) => Math.max(0, Math.min(10, v + this.rng.int(3) - 1));
+    const weights: RivalPersonality = {
+      expansion: jitter(base.expansion),
+      commerce: jitter(base.commerce),
+      ideology: jitter(base.ideology),
+      honor: jitter(base.honor),
+      risk: jitter(base.risk),
+      grudge: jitter(base.grudge),
+    };
+    // Rivals choose regimes personality-weighted (GDD §6.3)
+    const govType: GovType =
+      weights.commerce >= 7 ? 'republic'
+      : weights.honor >= 6 ? 'democracy'
+      : weights.risk >= 7 || weights.expansion >= 8 ? 'junta'
+      : 'monarchy';
+    const names = RIVAL_NAMES.filter((n) => !this.rivals.some((rv) => rv.name === n));
+    const leaders = RIVAL_LEADERS.filter((n) => !this.rivals.some((rv) => rv.leader === n));
+    const compasses = (['north', 'east', 'south', 'west'] as const)
+      .filter((c) => !this.rivals.some((rv) => rv.compass === c));
+    const rv: RivalNation = {
+      id: this.nextId++,
+      name: names[this.rng.int(names.length)] ?? `Power ${this.rivals.length + 1}`,
+      leader: leaders[this.rng.int(leaders.length)] ?? 'the Directorate',
+      archetype: arch,
+      weights,
+      govType,
+      agenda: RIVAL_AGENDAS[arch],
+      compass: compasses[this.rng.int(compasses.length)] ?? 'north',
+      pop: 2500 + this.rng.int(3000),
+      relations: this.clampRel(10 + weights.commerce - weights.expansion - weights.grudge + this.rng.int(11) - 5),
+      treaties: [],
+      emergedYear: this.year,
+      lastEnvoyDay: -999,
+      lastGiftDay: -999,
+    };
+    this.rivals.push(rv);
+    this.addLog(
+      `A NEW POWER: ${COMPASS_FLAVOR[rv.compass]}, ${rv.leader} proclaims the nation of ${rv.name} — ` +
+      `${RIVAL_ARCHETYPES[arch].name}. Its agenda, the envoys say: "${rv.agenda}."`,
+      'info',
+    );
+    return rv;
+  }
+
+  /** What this rival wants on the ledger before it signs (GDD §6.3: the
+   *  AI prices every basket from its own personality and situation). */
+  treatyAsk(rv: RivalNation, kind: TreatyKind): number {
+    let ask = TREATY_DEFS[kind].baseAsk + rv.weights.grudge * 2 + this.treatiesBroken * TREATY_BREACH_PENALTY;
+    if (kind === 'trade_agreement') ask -= rv.weights.commerce * 2.5;
+    if (kind === 'non_aggression') ask -= 10 - rv.weights.risk; // the cautious want fences
+    if (kind === 'defensive_pact') ask -= rv.weights.honor * 1.5;
+    return Math.round(ask);
+  }
+
+  /** Send a paid envoy: the cheap, repeatable relations verb. */
+  sendEnvoy(id: number): boolean {
+    const rv = this.rival(id);
+    if (!rv || !this.stateProclaimed || this.treasury < ENVOY_COST) return false;
+    if (this.day - rv.lastEnvoyDay < ENVOY_COOLDOWN_DAYS) return false;
+    this.treasury -= ENVOY_COST;
+    rv.lastEnvoyDay = this.day;
+    const gain = 4 + Math.round(rv.weights.commerce * 0.3);
+    rv.relations = this.clampRel(rv.relations + gain);
+    this.addLog(`An envoy rides for ${rv.name} with letters and samples of the valley's grain — relations warm (+${gain}).`, 'good');
+    return true;
+  }
+
+  /** A state gift: dearer, faster — commerce-minded courts love it most. */
+  sendGift(id: number): boolean {
+    const rv = this.rival(id);
+    if (!rv || !this.stateProclaimed || this.treasury < GIFT_COST) return false;
+    if (this.day - rv.lastGiftDay < GIFT_COOLDOWN_DAYS) return false;
+    this.treasury -= GIFT_COST;
+    rv.lastGiftDay = this.day;
+    const gain = 6 + Math.round(rv.weights.commerce * 0.5);
+    rv.relations = this.clampRel(rv.relations + gain);
+    this.addLog(`A state gift is sent to ${rv.leader} of ${rv.name} — relations warm (+${gain}).`, 'good');
+    return true;
+  }
+
+  /** Propose a treaty. The rival accepts when relations meet its ask;
+   *  otherwise it walks away, stating why — truthfully but vaguely. */
+  proposeTreaty(id: number, kind: TreatyKind): boolean {
+    const rv = this.rival(id);
+    if (!rv || !this.stateProclaimed || rv.treaties.includes(kind)) return false;
+    if (rv.relations >= this.treatyAsk(rv, kind)) {
+      rv.treaties.push(kind);
+      rv.relations = this.clampRel(rv.relations + 5);
+      this.addLog(`TREATY: ${this.stateName || 'the State'} and ${rv.name} sign a ${TREATY_DEFS[kind].name}.`, 'good');
+      return true;
+    }
+    const why = this.treatiesBroken > 0
+      ? `"${rv.name} remembers broken seals."`
+      : rv.relations < -20
+        ? `"our people will not deal with you yet."`
+        : `"${rv.name} sees no profit in it — for now."`;
+    this.addLog(`${rv.name} declines the ${TREATY_DEFS[kind].name} — ${why}`, 'bad');
+    return false;
+  }
+
+  /** Tear up a treaty. Everyone reads the reputation ledger (GDD §5.4). */
+  breakTreaty(id: number, kind: TreatyKind): boolean {
+    const rv = this.rival(id);
+    if (!rv || !rv.treaties.includes(kind)) return false;
+    rv.treaties = rv.treaties.filter((k) => k !== kind);
+    this.treatiesBroken++;
+    rv.relations = this.clampRel(rv.relations - (25 + rv.weights.grudge * 2));
+    this.addLog(
+      `TREATY BROKEN: the ${TREATY_DEFS[kind].name} with ${rv.name} is torn up. ` +
+      `Every chancery on the continent takes note.`,
+      'bad',
+    );
+    return true;
+  }
+
+  /** The pending AI-initiated offer for a rival, if any. */
+  offerFor(rivalId: number): TreatyOffer | undefined {
+    return this.offers.find((o) => o.rivalId === rivalId);
+  }
+
+  /** Sign an offered treaty off the diplomacy panel. */
+  acceptOffer(rivalId: number): boolean {
+    const o = this.offerFor(rivalId);
+    const rv = this.rival(rivalId);
+    if (!o || !rv) return false;
+    this.offers = this.offers.filter((x) => x !== o);
+    if (!rv.treaties.includes(o.kind)) rv.treaties.push(o.kind);
+    rv.relations = this.clampRel(rv.relations + 8);
+    this.addLog(`TREATY: ${rv.name}'s offered ${TREATY_DEFS[o.kind].name} is signed.`, 'good');
+    return true;
+  }
+
+  /** Decline an offered treaty — a small, remembered slight. */
+  declineOffer(rivalId: number): boolean {
+    const o = this.offerFor(rivalId);
+    const rv = this.rival(rivalId);
+    if (!o || !rv) return false;
+    this.offers = this.offers.filter((x) => x !== o);
+    rv.relations = this.clampRel(rv.relations - 4);
+    this.addLog(`${rv.name}'s offer is declined. Their envoys withdraw, noting the hour.`, 'info');
+    return true;
+  }
+
+  /** Monthly diplomacy tick: emergence, relations drift, AI offers,
+   *  hostile mischief, regime change abroad, and foreign wars. */
+  private updateDiplomacy(): void {
+    // Emergence: the world proclaims its nations on its own clock (GDD §6.2),
+    // banded so the first foreign power reliably exists by mid-century.
+    if (this.year >= RIVAL_EMERGENCE_YEAR && this.rivals.length < MAX_RIVALS) {
+      const overdue = this.rivals.length === 0 && this.year >= 1940;
+      if (this.rng.chance(overdue ? 0.25 : 0.035)) this.spawnRival();
+    }
+    this.offers = this.offers.filter((o) => o.expiresDay > this.day && this.rival(o.rivalId));
+    for (const rv of this.rivals) {
+      rv.pop *= 1.0015; // they grow whether you watch or not
+      // Relations drift toward a baseline set by personality, regime
+      // distance (GDD §5.4), and whatever ink is already on the page.
+      let base = rv.weights.commerce * 1.2 - rv.weights.expansion * 1.5 - rv.weights.grudge * 0.8;
+      if (this.nationProclaimed && this.govType) {
+        const mine = GOV_TYPES.find((g) => g.id === this.govType)!.electionsRequired;
+        const theirs = GOV_TYPES.find((g) => g.id === rv.govType)!.electionsRequired;
+        base += mine === theirs ? 12 : -12;
+      }
+      if (rv.treaties.includes('non_aggression')) base += 8;
+      if (rv.treaties.includes('trade_agreement')) base += 12;
+      if (rv.treaties.includes('defensive_pact')) base += 16;
+      rv.relations = this.clampRel(rv.relations + (base - rv.relations) * 0.04);
+      // AI-initiated offers (GDD §6.3): commerce courts you; caution wants fences
+      if (this.stateProclaimed && !this.offers.some((o) => o.rivalId === rv.id)) {
+        if (!rv.treaties.includes('trade_agreement') && rv.weights.commerce >= 5 && rv.relations > 30 && this.rng.chance(0.12)) {
+          this.offers.push({ rivalId: rv.id, kind: 'trade_agreement', expiresDay: this.day + 90 });
+          this.addLog(`Envoys from ${rv.name} arrive with ledgers and samples: they offer a Trade Agreement.`, 'info');
+        } else if (!rv.treaties.includes('non_aggression') && rv.relations < -10 && rv.relations > -50 && rv.weights.risk <= 5 && this.rng.chance(0.08)) {
+          this.offers.push({ rivalId: rv.id, kind: 'non_aggression', expiresDay: this.day + 90 });
+          this.addLog(`${rv.name} proposes a Non-Aggression Pact — cold neighbors, fenced borders.`, 'info');
+        }
+      }
+      // Hostile mischief (GDD §6.4): town-scale friction, deniable and cheap
+      if (rv.relations < -40 && !rv.treaties.includes('non_aggression') && this.rng.chance(0.1 + rv.weights.risk * 0.015)) {
+        if (this.rng.chance(0.5) || this.tradeValueLastMonth <= 0) {
+          const t = this.settlements[this.rng.int(this.settlements.length)];
+          if (t) {
+            t.grievance = Math.min(100, t.grievance + 6);
+            rv.relations = this.clampRel(rv.relations - 3);
+            this.addLog(`Border friction: ${rv.name}'s surveyors plant markers in ${t.name}'s outfields. Tempers fray.`, 'bad');
+          }
+        } else {
+          const toll = Math.min(this.treasury, 5 + this.rng.int(10));
+          this.treasury -= toll;
+          this.addLog(`${rv.name}'s customs men shake down caravans at the frontier — £${toll} in seized goods and bribes.`, 'bad');
+        }
+      }
+      // Regime change abroad is world news the player reads about (GDD §6.3);
+      // the interwar window leans autocratic, as the century did.
+      if (this.rng.chance(0.012)) {
+        const old = rv.govType;
+        rv.govType = this.year < 1950 && this.rng.chance(0.5)
+          ? 'junta'
+          : (['democracy', 'republic', 'monarchy', 'junta'] as GovType[])[this.rng.int(4)];
+        if (rv.govType !== old) {
+          const oldName = GOV_TYPES.find((g) => g.id === old)!.name.toLowerCase();
+          const newName = GOV_TYPES.find((g) => g.id === rv.govType)!.name.toLowerCase();
+          this.addLog(`REGIME CHANGE in ${rv.name}: the ${oldName} falls; a ${newName} takes its place.`, 'info');
+        }
+      }
+    }
+    // Foreign wars move prices (GDD §6.4): their fight is your market
+    if (this.rivals.length >= 2 && this.day >= this.warBoomUntil && this.rng.chance(0.025)) {
+      const a = this.rivals[this.rng.int(this.rivals.length)];
+      const others = this.rivals.filter((x) => x !== a);
+      const b = others[this.rng.int(others.length)];
+      this.warBoomUntil = this.day + 180 + this.rng.int(360);
+      this.addLog(`WAR ABROAD: ${a.name} and ${b.name} are at war. Their buyers pay any price — the valley's exports boom.`, 'info');
+    }
+  }
+
   private removePop(t: Settlement, count: number): void {
     const pop = this.popOf(t);
     if (pop <= 0) return;
@@ -1946,6 +2306,11 @@ export class RegionSim {
       legitimacy: this.legitimacy,
       ministers: this.ministers,
       activePolicies: this.activePolicies,
+      rivals: this.rivals,
+      offers: this.offers,
+      treatiesBroken: this.treatiesBroken,
+      warBoomUntil: this.warBoomUntil,
+      exportEarningsLastMonth: this.exportEarningsLastMonth,
       nextId: this.nextId,
       nextEventDay: this.nextEventDay,
       townNamePool: this.townNamePool,
@@ -1998,6 +2363,12 @@ export class RegionSim {
       const govDef = GOV_TYPES.find((g) => g.id === d.govType);
       r.activePolicies = new Array(govDef?.policySlots.length ?? 0).fill(null);
     }
+    // pre-diplomacy saves carry no rivals: the world is still empty
+    r.rivals = d.rivals ?? [];
+    r.offers = d.offers ?? [];
+    r.treatiesBroken = d.treatiesBroken ?? 0;
+    r.warBoomUntil = d.warBoomUntil ?? -1;
+    r.exportEarningsLastMonth = d.exportEarningsLastMonth ?? 0;
     r.nextId = d.nextId;
     r.nextEventDay = d.nextEventDay;
     r.townNamePool = d.townNamePool;
