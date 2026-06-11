@@ -144,6 +144,73 @@ export const GOV_LEANS: Record<GovLean, { name: string; desc: string }> = {
   },
 };
 
+// ---- Nation-tier: government types & ministers (GDD §9) ----
+
+export type GovType = 'democracy' | 'republic' | 'junta' | 'monarchy';
+
+export interface GovTypeDef {
+  id: GovType;
+  name: string;
+  legitimacySource: string;
+  electionsRequired: boolean;
+  taxCap: number;
+  militiaBonus: number;
+  startingLegitimacy: number;
+}
+
+export const GOV_TYPES: GovTypeDef[] = [
+  {
+    id: 'democracy',
+    name: 'Constitutional Democracy',
+    legitimacySource: 'Elections won and popular approval',
+    electionsRequired: true,
+    taxCap: 25,
+    militiaBonus: 0,
+    startingLegitimacy: 80,
+  },
+  {
+    id: 'republic',
+    name: 'Presidential Republic',
+    legitimacySource: 'Elections and executive performance',
+    electionsRequired: true,
+    taxCap: 28,
+    militiaBonus: 0,
+    startingLegitimacy: 78,
+  },
+  {
+    id: 'junta',
+    name: 'Military Junta',
+    legitimacySource: 'Faction loyalty and military strength',
+    electionsRequired: false,
+    taxCap: 30,
+    militiaBonus: 2,
+    startingLegitimacy: 70,
+  },
+  {
+    id: 'monarchy',
+    name: 'Absolute Monarchy',
+    legitimacySource: 'Dynasty, Notable longevity, and tradition',
+    electionsRequired: false,
+    taxCap: 22,
+    militiaBonus: 1,
+    startingLegitimacy: 75,
+  },
+];
+
+export type MinisterRoleId = 'interior' | 'treasury' | 'defence';
+
+export interface MinisterAssignment {
+  role: MinisterRoleId;
+  title: string;
+  notableId: number | null;
+}
+
+export const MINISTER_ROLES: { id: MinisterRoleId; title: string; bonus: string }[] = [
+  { id: 'interior', title: 'Interior Minister', bonus: 'services 15% more effective' },
+  { id: 'treasury', title: 'Treasury Secretary', bonus: 'tax collection +10%' },
+  { id: 'defence', title: 'Defence Minister', bonus: 'militia 20% stronger' },
+];
+
 export type NotableRole = 'Mayor' | 'Doctor' | 'Captain' | 'Granger' | 'Forewoman' | 'Reeve';
 
 export interface Notable {
@@ -279,6 +346,13 @@ export class RegionSim {
   tradeLevyRate = 0.05;
   /** Estate Tax law active: monthly wealth levy. */
   estateTaxActive = false;
+  // ---- Nation-tier: Constitutional Convention & Proclamation (GDD §2.2) ----
+  nationProclaimed = false;
+  nationName = '';
+  govType: GovType | null = null;
+  /** 0–100: regime's right to rule; distinct from approval (GDD §5.3). */
+  legitimacy = 0;
+  ministers: MinisterAssignment[] = MINISTER_ROLES.map((r) => ({ role: r.id, title: r.title, notableId: null }));
   private droughtAnnounced = false;
   private railAnnounced = false;
   private highwayAnnounced = false;
@@ -886,7 +960,9 @@ export class RegionSim {
       }
       // Mortality (doctor and funded services help); elders carry most of it
       const doctor = this.roleMult(t, 'Doctor') ? 0.85 : 1;
-      const services = this.stateProclaimed ? 1 - 0.05 * this.servicesLevel : 1;
+      // Interior Minister makes services 15% more effective (GDD §8.7)
+      const interiorBonus = this.ministerFor('interior') ? 1.15 : 1;
+      const services = this.stateProclaimed ? 1 - 0.05 * this.servicesLevel * interiorBonus : 1;
       for (let i = 0; i < b.length; i++) {
         b[i] -= b[i] * (BASE_MORTALITY_PER_YEAR[i] / 12) * doctor * services;
       }
@@ -1030,7 +1106,9 @@ export class RegionSim {
     }
     gdp += this.tradeValueLastMonth; // commerce counts (GDD §5.2)
     this.gdpLastMonth = gdp;
-    const revenue = gdp * this.taxRate * collection;
+    // Treasury Secretary bonus: +10% tax collection (GDD §8.7)
+    const treasuryMult = this.ministerFor('treasury') ? 1.1 : 1;
+    const revenue = gdp * this.taxRate * collection * treasuryMult;
     const pop = this.totalPop();
     const spending =
       pop * 0.05 * this.servicesLevel * serviceCost +
@@ -1049,6 +1127,7 @@ export class RegionSim {
       }
     }
     this.maintainRoutes();
+    this.tickLegitimacy();
     // Strikes: pressure vents when grievance boils over
     for (const t of this.settlements) {
       if (t.grievance > 60 && this.day >= t.strikeUntil && this.rng.chance(0.5)) {
@@ -1132,7 +1211,9 @@ export class RegionSim {
   private eventRaid(t: Settlement): void {
     const strength = 2 + this.rng.int(Math.max(2, Math.floor(this.totalPop() / 40)));
     const captain = 1 + 0.25 * this.roleMult(t, 'Captain');
-    const funded = this.stateProclaimed ? 1 + 0.2 * this.militiaLevel + (this.govLean === 'mayor' ? 0.2 : 0) : 1;
+    // Defence Minister adds 20% militia effectiveness (GDD §8.7)
+    const defenceBonus = this.ministerFor('defence') ? 1.2 : 1;
+    const funded = this.stateProclaimed ? (1 + 0.2 * this.militiaLevel + (this.govLean === 'mayor' ? 0.2 : 0)) * defenceBonus : 1;
     // M6c: the network is defense — a built link to a bigger town brings relief
     const relief = this.reliefLine(t);
     const militia = this.workersOf(t) * 0.12 * captain * funded * (relief ? 1.25 : 1);
@@ -1431,6 +1512,11 @@ export class RegionSim {
   /** Schedule the first election once universal suffrage + state both exist. */
   private checkElection(): void {
     if (!this.stateProclaimed || !this.has('universal_suffrage')) return;
+    // Non-democratic governments don't hold elections after proclamation
+    if (this.nationProclaimed && this.govType !== null) {
+      const def = GOV_TYPES.find((g) => g.id === this.govType)!;
+      if (!def.electionsRequired) return;
+    }
     if (this.nextElectionDay < 0) {
       this.nextElectionDay = this.day + 240; // ~4 game-years
     }
@@ -1453,6 +1539,11 @@ export class RegionSim {
       (result === 'LOST' ? ' The government limps on.' : ''),
       avgSat >= 50 ? 'good' : 'bad',
     );
+    // Democracy/Republic: legitimacy refreshed by elections (GDD §5.3)
+    if (this.nationProclaimed && (this.govType === 'democracy' || this.govType === 'republic')) {
+      const legBonus = result === 'LANDSLIDE' ? 20 : result === 'MAJORITY' ? 12 : result === 'MINORITY' ? 4 : -12;
+      this.legitimacy = Math.max(0, Math.min(100, this.legitimacy + legBonus));
+    }
   }
 
   // ---- Law system (GDD §5.3) ----
@@ -1498,6 +1589,71 @@ export class RegionSim {
 
     this.addLog(`LAW ENACTED: "${law.name}". ${law.desc.split('.')[0]}.`, 'good');
     return true;
+  }
+
+  // ---- Nation-tier: Constitutional Convention (GDD §2.2) ----
+
+  /** True when the player may call the Constitutional Convention. */
+  canCallConvention(): boolean {
+    return (
+      this.stateProclaimed &&
+      !this.nationProclaimed &&
+      this.has('statecraft') &&
+      this.totalPop() >= 1500
+    );
+  }
+
+  /** Confirm the Constitutional Convention — names the nation, sets gov type, assigns ministers. */
+  proclaimNation(
+    name: string,
+    gov: GovType,
+    assignments: Partial<Record<MinisterRoleId, number | null>>,
+  ): void {
+    const def = GOV_TYPES.find((g) => g.id === gov)!;
+    this.nationName = name;
+    this.govType = gov;
+    this.legitimacy = def.startingLegitimacy;
+    this.nationProclaimed = true;
+    this.militiaLevel = Math.min(4, this.militiaLevel + def.militiaBonus);
+    for (const m of this.ministers) {
+      m.notableId = assignments[m.role] ?? null;
+    }
+    if (!def.electionsRequired) this.nextElectionDay = -1;
+    this.addLog(
+      `THE PROCLAMATION OF ${name.toUpperCase()}: The Constitutional Convention has spoken. ` +
+      `${def.name} — the form of government is set. A new era begins.`,
+      'good',
+    );
+  }
+
+  /** Return the Notable assigned to a ministry role (null if vacant or dead). */
+  ministerFor(role: MinisterRoleId): Notable | null {
+    const m = this.ministers.find((x) => x.role === role);
+    if (!m || m.notableId === null) return null;
+    return this.notables.find((n) => n.id === m.notableId && n.alive) ?? null;
+  }
+
+  /** Monthly legitimacy tick (GDD §5.3). */
+  private tickLegitimacy(): void {
+    if (!this.nationProclaimed) return;
+    this.legitimacy = Math.max(0, this.legitimacy - 0.5);
+    if (this.govType === 'junta') {
+      const ws = this.factions.find((f) => f.id === 'workers')?.support ?? 50;
+      const ls = this.factions.find((f) => f.id === 'landowners')?.support ?? 50;
+      const avg = ws * 0.5 + ls * 0.5;
+      if (avg > 60) this.legitimacy = Math.min(100, this.legitimacy + 0.3);
+      if (avg < 30) this.legitimacy = Math.max(0, this.legitimacy - 0.5);
+    }
+    if (this.govType === 'monarchy') {
+      const elders = this.notables.filter((n) => n.alive && n.age >= 50).length;
+      if (elders > 0) this.legitimacy = Math.min(100, this.legitimacy + 0.2 * elders);
+    }
+    if (this.legitimacy < 30 && this.rng.chance(0.05)) {
+      this.addLog(
+        'LEGITIMACY CRISIS: opposition groups are openly challenging the regime.',
+        'bad',
+      );
+    }
   }
 
   private removePop(t: Settlement, count: number): void {
@@ -1548,6 +1704,11 @@ export class RegionSim {
       passedLaws: this.passedLaws,
       tradeLevyRate: this.tradeLevyRate,
       estateTaxActive: this.estateTaxActive,
+      nationProclaimed: this.nationProclaimed,
+      nationName: this.nationName,
+      govType: this.govType,
+      legitimacy: this.legitimacy,
+      ministers: this.ministers,
       nextId: this.nextId,
       nextEventDay: this.nextEventDay,
       townNamePool: this.townNamePool,
@@ -1589,6 +1750,11 @@ export class RegionSim {
     r.passedLaws = d.passedLaws ?? [];
     r.tradeLevyRate = d.tradeLevyRate ?? 0.05;
     r.estateTaxActive = d.estateTaxActive ?? false;
+    r.nationProclaimed = d.nationProclaimed ?? false;
+    r.nationName = d.nationName ?? '';
+    r.govType = d.govType ?? null;
+    r.legitimacy = d.legitimacy ?? 0;
+    r.ministers = d.ministers ?? MINISTER_ROLES.map((x) => ({ role: x.id, title: x.title, notableId: null }));
     r.nextId = d.nextId;
     r.nextEventDay = d.nextEventDay;
     r.townNamePool = d.townNamePool;
