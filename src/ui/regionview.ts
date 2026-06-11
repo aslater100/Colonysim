@@ -3,8 +3,8 @@
  * operating altitude after the flip (GDD §2.5). Painterly backdrop, town
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
-import type { RegionSim, Settlement, GovLean, GovType, MinisterRoleId } from '../sim/region';
-import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST } from '../sim/region';
+import type { RegionSim, Settlement, GovLean, GovType, MinisterRoleId, TreatyKind } from '../sim/region';
+import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS } from '../sim/region';
 
 export class RegionView {
   selectedId: number | null = null;
@@ -220,12 +220,47 @@ export class RegionView {
       g.textAlign = 'left';
     }
 
+    this.drawRivalBanners(W, H);
     this.drawWeather(W, H);
     this.drawPanel();
     this.drawStatePanel();
     this.drawResearchPanel();
     this.drawCeremony();
     this.drawConvention();
+  }
+
+  /** Rival nations loom at the map's edge (GDD §6.4): a flag, a name, and
+   *  the relations number — the world beyond the valley, read at a glance. */
+  private drawRivalBanners(W: number, H: number): void {
+    const { g, region } = this;
+    const edgeIdx = { north: 0, east: 0, south: 0, west: 0 };
+    for (const rv of region.rivals) {
+      const rel = Math.round(rv.relations);
+      const col = rel >= 25 ? '#8fc26a' : rel >= -25 ? '#c2a14d' : '#e04444';
+      const i = edgeIdx[rv.compass]++;
+      let x: number, y: number;
+      switch (rv.compass) {
+        case 'north': x = W / 2 + (i - 0.5) * 220; y = 18; break;
+        case 'south': x = 150 + i * 220; y = H - 18; break;
+        case 'east': x = W - 110; y = H / 2 + (i - 0.5) * 56; break;
+        default: x = 110; y = H / 2 + (i - 0.5) * 56; break; // west
+      }
+      // a power at war flies a battle streamer
+      const atWar = region.foreignWars.some((w) => w.a === rv.id || w.b === rv.id);
+      const label = `${atWar ? '⚔ ' : ''}${rv.name} ${rel >= 0 ? '+' : ''}${rel}`;
+      g.font = '11px monospace';
+      const tw = g.measureText(label).width;
+      g.fillStyle = 'rgba(16,14,10,0.8)';
+      g.fillRect(x - tw / 2 - 16, y - 10, tw + 32, 20);
+      // the flag: a chip of bunting in the relation's color
+      g.fillStyle = col;
+      g.fillRect(x - tw / 2 - 12, y - 6, 8, 6);
+      g.fillStyle = '#5a4a36';
+      g.fillRect(x - tw / 2 - 13, y - 6, 1, 12);
+      g.fillStyle = '#dfe6ee';
+      g.textAlign = 'left';
+      g.fillText(label, x - tw / 2, y + 4);
+    }
   }
 
   /** Rendering flavor only (transportation.md §7: links-not-vehicles) —
@@ -455,6 +490,7 @@ export class RegionView {
       `<p><button class="mini" id="research-toggle">${this.researchOpen ? '▲ research' : '▼ research'}</button> <span class="insp-skills">${researchLabel}</span></p>` +
       (r.canCallConvention() ? `<p><button id="convention-btn" style="font-size:10px;background:#8b5cf6;color:#fff;border:none;padding:4px 8px;cursor:pointer">★ CONVENE CONSTITUTIONAL CONVENTION</button></p>` : '') +
       this.politicsHtml() +
+      this.diplomacyHtml() +
       this.freightHtml();
     this.statePanel.querySelector<HTMLInputElement>('#tax-slider')!.oninput = (e) => {
       r.taxRate = Number((e.target as HTMLInputElement).value) / 100;
@@ -486,6 +522,85 @@ export class RegionView {
         this.renderPolicyModal();
       };
     }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-envoy-btn')) {
+      btn.onclick = () => r.sendEnvoy(Number(btn.dataset.rival));
+    }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-gift-btn')) {
+      btn.onclick = () => r.sendGift(Number(btn.dataset.rival));
+    }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-prop-btn')) {
+      btn.onclick = () => r.proposeTreaty(Number(btn.dataset.rival), btn.dataset.kind as TreatyKind);
+    }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-break-btn')) {
+      btn.onclick = () => r.breakTreaty(Number(btn.dataset.rival), btn.dataset.kind as TreatyKind);
+    }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-accept-btn')) {
+      btn.onclick = () => r.acceptOffer(Number(btn.dataset.rival));
+    }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-decline-btn')) {
+      btn.onclick = () => r.declineOffer(Number(btn.dataset.rival));
+    }
+  }
+
+  /** Diplomacy section (GDD §5.4): the rival ledger, treaties, and verbs. */
+  private diplomacyHtml(): string {
+    const r = this.region;
+    if (r.rivals.length === 0) return '';
+    const short: Record<TreatyKind, string> = {
+      non_aggression: 'pact: NAP', trade_agreement: 'pact: trade', defensive_pact: 'pact: defense',
+    };
+    const rows = r.rivals.map((rv) => {
+      const rel = Math.round(rv.relations);
+      const col = rel >= 25 ? '#4e9' : rel >= -25 ? '#ca4' : '#e55';
+      const pct = Math.round((rel + 100) / 2);
+      const gov = r.regimeOf(rv).name;
+      const recentHistory = rv.history.slice(-4).join(' ');
+      const treaties = rv.treaties.length > 0
+        ? rv.treaties.map((k) =>
+            `${TREATY_DEFS[k].name} <button class="mini dip-break-btn" data-rival="${rv.id}" data-kind="${k}" ` +
+            `title="Tearing up a treaty is remembered by every chancery">✕</button>`).join(' · ')
+        : 'no treaties';
+      const offer = r.offerFor(rv.id);
+      const offerRow = offer
+        ? `<p>offers <b>${TREATY_DEFS[offer.kind].name}</b> ` +
+          `<button class="mini dip-accept-btn" data-rival="${rv.id}">sign</button>` +
+          `<button class="mini dip-decline-btn" data-rival="${rv.id}">decline</button></p>`
+        : '';
+      const canEnvoy = r.treasury >= ENVOY_COST && r.day - rv.lastEnvoyDay >= ENVOY_COOLDOWN_DAYS;
+      const canGift = r.treasury >= GIFT_COST && r.day - rv.lastGiftDay >= GIFT_COOLDOWN_DAYS;
+      const proposals = (Object.keys(TREATY_DEFS) as TreatyKind[])
+        .filter((k) => !rv.treaties.includes(k))
+        .map((k) =>
+          `<button class="mini dip-prop-btn" data-rival="${rv.id}" data-kind="${k}" ` +
+          `title="${TREATY_DEFS[k].desc} (their ask: relations ≥ ${r.treatyAsk(rv, k)})">${short[k]}</button>`)
+        .join(' ');
+      return `<div class="bar-row" title="${RIVAL_ARCHETYPES[rv.archetype].name} — agenda: ${rv.agenda}. ${recentHistory}">` +
+        `<span style="width:80px;display:inline-block"><b>${rv.name}</b></span>` +
+        `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${pct}%;background:${col}"></div></div>` +
+        `<span>${rel}</span></div>` +
+        `<p class="insp-skills" title="${recentHistory}">${gov} · ${treaties}</p>` +
+        offerRow +
+        `<p><button class="mini dip-envoy-btn" data-rival="${rv.id}" ${canEnvoy ? '' : 'disabled'} ` +
+        `title="A paid mission to warm relations (${ENVOY_COOLDOWN_DAYS}-day turnaround)">envoy £${ENVOY_COST}</button> ` +
+        `<button class="mini dip-gift-btn" data-rival="${rv.id}" ${canGift ? '' : 'disabled'} ` +
+        `title="A state gift — dearer, faster">gift £${GIFT_COST}</button> ` +
+        proposals + `</p>`;
+    }).join('');
+    // World affairs: what the powers are doing to each other (GDD §6.4)
+    const name = (id: number) => r.rival(id)?.name ?? '?';
+    const wars = r.foreignWars
+      .map((w) => `<p class="insp-skills">⚔ ${name(w.a)} vs ${name(w.b)}</p>`)
+      .join('');
+    const pacts = r.alliances
+      .map((k) => {
+        const [a, b] = k.split(':').map(Number);
+        return r.rival(a) && r.rival(b) ? `<p class="insp-skills">🤝 ${name(a)} – ${name(b)} allied</p>` : '';
+      })
+      .join('');
+    const world = wars || pacts ? `<p class="insp-skills">WORLD AFFAIRS</p>` + wars + pacts : '';
+    const boom = r.day < r.warBoomUntil ? `<p class="insp-skills">WAR ABROAD — export prices booming</p>` : '';
+    const exports = r.exportEarningsLastMonth > 0 ? `<p>exports £${Math.floor(r.exportEarningsLastMonth)}/mo</p>` : '';
+    return `<p class="insp-skills">DIPLOMACY (relations −100..+100)</p>` + boom + exports + rows + world;
   }
 
   /** Politics section: political capital, elections, faction bars, law cards. */
