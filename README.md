@@ -3,7 +3,7 @@
 A colony-to-nation deep-simulation builder, 1900–2100. Begin with twelve
 named settlers stepping off a wagon; end the century signing peace treaties
 as a great power — RimWorld-intimate at town scale, Cities/Citystate at
-state scale, Civ at nation scale, all in 8-bit pixel art over lush
+state scale, Civ at nation scale, all in pixel art over lush
 era-evolving backdrops.
 
 - **Design:** [GDD.md](GDD.md) — the full game design document.
