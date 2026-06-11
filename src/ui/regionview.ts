@@ -3,8 +3,8 @@
  * operating altitude after the flip (GDD §2.5). Painterly backdrop, town
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
-import type { RegionSim, Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm } from '../sim/region';
-import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR } from '../sim/region';
+import type { RegionSim, Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy } from '../sim/region';
+import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP } from '../sim/region';
 
 export class RegionView {
   selectedId: number | null = null;
@@ -20,6 +20,15 @@ export class RegionView {
   private convention: HTMLElement;
   private policyModal: HTMLElement;
   private policySlotIndex = -1;
+  // the bargaining table (GDD §6.3): basket state lives here while composing
+  private dealModal: HTMLElement;
+  private dealRivalId = -1;
+  private dealTreaties = new Set<TreatyKind>();
+  private dealGoldToThem = 0;
+  private dealGoldToYou = 0;
+  private dealBorder = false;
+  /** Peace terms ticked at the war room's table (GDD §7.4). */
+  private peacePicks = new Set<PeaceTerm>();
   private frame = 0;
 
   constructor(private canvas: HTMLCanvasElement, private region: RegionSim, root: HTMLElement) {
@@ -42,6 +51,9 @@ export class RegionView {
     this.policyModal = document.createElement('div');
     this.policyModal.className = 'ceremony hidden';
     root.appendChild(this.policyModal);
+    this.dealModal = document.createElement('div');
+    this.dealModal.className = 'ceremony hidden';
+    root.appendChild(this.dealModal);
   }
 
   destroyPanel(): void {
@@ -51,6 +63,7 @@ export class RegionView {
     this.ceremony.remove();
     this.convention.remove();
     this.policyModal.remove();
+    this.dealModal.remove();
   }
 
   private toPx(x: number, y: number): { px: number; py: number } {
@@ -546,10 +559,38 @@ export class RegionView {
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.war-mob-btn')) {
       btn.onclick = () => r.setMobilization(btn.dataset.mob as Mobilization);
     }
-    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.war-peace-btn')) {
-      btn.onclick = () => r.offerPeace(btn.dataset.term as PeaceTerm);
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-deal-btn')) {
+      btn.onclick = () => this.openDealModal(Number(btn.dataset.rival));
     }
-    this.statePanel.querySelector<HTMLButtonElement>('.war-capitulate-btn')?.addEventListener('click', () => r.capitulate());
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-counter-sign-btn')) {
+      btn.onclick = () => r.acceptCounter(Number(btn.dataset.rival));
+    }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-counter-decline-btn')) {
+      btn.onclick = () => r.declineCounter(Number(btn.dataset.rival));
+    }
+    this.statePanel.querySelector<HTMLButtonElement>('.war-blockade-btn')?.addEventListener('click', () => {
+      r.setBlockade(!r.playerWar?.blockade);
+    });
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.war-ally-btn')) {
+      btn.onclick = () => r.callAlly(Number(btn.dataset.rival));
+    }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.war-occ-btn')) {
+      btn.onclick = () => r.setOccupationPolicy(btn.dataset.pol as OccupationPolicy);
+    }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.war-term-btn')) {
+      btn.onclick = () => {
+        const t = btn.dataset.term as PeaceTerm;
+        if (this.peacePicks.has(t)) this.peacePicks.delete(t);
+        else this.peacePicks.add(t);
+      };
+    }
+    this.statePanel.querySelector<HTMLButtonElement>('.war-offer-btn')?.addEventListener('click', () => {
+      if (r.offerPeaceBasket([...this.peacePicks])) this.peacePicks.clear();
+    });
+    this.statePanel.querySelector<HTMLButtonElement>('.war-capitulate-btn')?.addEventListener('click', () => {
+      r.capitulate();
+      this.peacePicks.clear();
+    });
   }
 
   /** Diplomacy section (GDD §5.4): the rival ledger, treaties, and verbs. */
@@ -576,6 +617,14 @@ export class RegionView {
           `<button class="mini dip-accept-btn" data-rival="${rv.id}">sign</button>` +
           `<button class="mini dip-decline-btn" data-rival="${rv.id}">decline</button></p>`
         : '';
+      // their counter from the bargaining table, if one is on offer (§6.3)
+      const counter = r.counterFor(rv.id);
+      const counterRow = counter
+        ? `<p>counters <b>${r.basketLabel(counter.basket)}</b> ` +
+          `<button class="mini dip-counter-sign-btn" data-rival="${rv.id}" ` +
+          `${r.treasury >= counter.basket.goldToThem ? '' : 'disabled'}>sign</button>` +
+          `<button class="mini dip-counter-decline-btn" data-rival="${rv.id}">decline</button></p>`
+        : '';
       const canEnvoy = r.treasury >= ENVOY_COST && r.day - rv.lastEnvoyDay >= ENVOY_COOLDOWN_DAYS;
       const canGift = r.treasury >= GIFT_COST && r.day - rv.lastGiftDay >= GIFT_COOLDOWN_DAYS;
       const proposals = (Object.keys(TREATY_DEFS) as TreatyKind[])
@@ -597,13 +646,15 @@ export class RegionView {
           `title="A paid mission to warm relations (${ENVOY_COOLDOWN_DAYS}-day turnaround)">envoy £${ENVOY_COST}</button> ` +
           `<button class="mini dip-gift-btn" data-rival="${rv.id}" ${canGift ? '' : 'disabled'} ` +
           `title="A state gift — dearer, faster">gift £${GIFT_COST}</button> ` +
+          `<button class="mini dip-deal-btn" data-rival="${rv.id}" ` +
+          `title="Open the bargaining table: compose a multi-item basket (GDD §6.3)">negotiate</button> ` +
           proposals + warBtn + `</p>`;
       return `<div class="bar-row" title="${RIVAL_ARCHETYPES[rv.archetype].name} — agenda: ${rv.agenda}. ${recentHistory}">` +
         `<span style="width:80px;display:inline-block"><b>${rv.name}</b></span>` +
         `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${pct}%;background:${col}"></div></div>` +
         `<span>${rel}</span></div>` +
-        `<p class="insp-skills" title="${recentHistory}">${gov} · ${treaties}</p>` +
-        offerRow +
+        `<p class="insp-skills" title="${recentHistory}">${gov}${rv.borderSettled ? ' · border settled' : ''} · ${treaties}</p>` +
+        offerRow + counterRow +
         verbs;
     }).join('');
     // World affairs: what the powers are doing to each other (GDD §6.4)
@@ -638,13 +689,61 @@ export class RegionView {
         `<button class="mini war-mob-btn" data-mob="${m}" ${m === w.mobilization ? 'disabled' : ''} ` +
         `title="${MOBILIZATION_DEFS[m].desc}">${MOBILIZATION_DEFS[m].name}</button>`)
       .join(' ');
-    const peaceBtns = (Object.keys(PEACE_TERMS) as PeaceTerm[])
+    // Blockade: trade interdiction made of warships (GDD §7.3)
+    const canBlockade = r.militiaLevel >= 2 || r.policyActive('standing_army');
+    const blockadeBtn =
+      `<button class="mini war-blockade-btn" ${w.blockade || canBlockade ? '' : 'disabled'} ` +
+      `title="${w.blockade
+        ? 'Lift the blockade: lanes reopen for both sides'
+        : `Close their lanes: their power −15%, score climbs — costs £${BLOCKADE_UPKEEP_PER_POP}/pop/mo and your own exports (needs funded militia or a standing army)`}">` +
+      `${w.blockade ? '⚓ lift blockade' : '⚓ blockade'}</button>`;
+    // Co-belligerence (GDD §7.3): the pacts you can call to the colors
+    const name = (id: number) => r.rival(id)?.name ?? '?';
+    const allies = w.allies.length > 0 ? `with: ${w.allies.map(name).join(', ')}` : '';
+    const enemies = w.enemyAllies.length > 0 ? `against: ${rv.name} + ${w.enemyAllies.map(name).join(', ')}` : '';
+    const sides = allies || enemies ? `<p class="insp-skills">${[allies, enemies].filter(Boolean).join(' · ')}</p>` : '';
+    const callBtns = r.rivals
+      .filter((x) => x.id !== w.rivalId && x.treaties.includes('defensive_pact') && !w.allies.includes(x.id))
+      .map((x) =>
+        `<button class="mini war-ally-btn" data-rival="${x.id}" ` +
+        `title="Call ${x.name} to the colors — honor decides whether the ink holds">call ${x.name}</button>`)
+      .join(' ');
+    // Occupation (GDD §7.4): the marches the army administers
+    const occ = w.occupied > 0
+      ? `<p class="insp-skills">occupied marches ${w.occupied}/${MAX_OCCUPIED_MARCHES} · ` +
+        `yield £${w.occupied * (OCCUPATION_DEFS[w.occupationPolicy].yield - OCCUPATION_DEFS[w.occupationPolicy].garrison)}/mo net</p>` +
+        `<div class="bar-row" title="Resistance in the occupied marches: past 50, partisans bleed the garrisons">` +
+        `<span style="width:70px;display:inline-block">resistance</span>` +
+        `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${Math.round(w.resistance)}%;background:${w.resistance > 50 ? '#e55' : '#ca4'}"></div></div>` +
+        `<span>${Math.round(w.resistance)}</span></div>` +
+        `<p>${(Object.keys(OCCUPATION_DEFS) as OccupationPolicy[])
+          .map((p) =>
+            `<button class="mini war-occ-btn" data-pol="${p}" ${p === w.occupationPolicy ? 'disabled' : ''} ` +
+            `title="${OCCUPATION_DEFS[p].desc}">${OCCUPATION_DEFS[p].name}</button>`)
+          .join(' ')}</p>`
+      : w.score >= 35
+        ? `<p class="insp-skills">the front is deep enough to take ground — the columns probe their marches</p>`
+        : '';
+    // The peace table (GDD §7.4 priced with §6.3): tick terms into a basket
+    for (const t of [...this.peacePicks]) {
+      if (t === 'border_province' && w.occupied === 0) this.peacePicks.delete(t);
+    }
+    const termBtns = (Object.keys(PEACE_TERMS) as PeaceTerm[])
       .map((t) => {
-        const ask = r.peaceAsk(rv, t);
-        return `<button class="mini war-peace-btn" data-term="${t}" ${w.score >= ask ? '' : 'disabled'} ` +
-          `title="${PEACE_TERMS[t].desc} (needs war score ≥ ${ask})">${PEACE_TERMS[t].name}</button>`;
+        const picked = this.peacePicks.has(t);
+        const blocked = t === 'border_province' && w.occupied === 0;
+        return `<button class="mini war-term-btn" data-term="${t}" ${blocked ? 'disabled' : ''} ` +
+          `style="${picked ? 'background:#4e9;color:#10141c' : ''}" ` +
+          `title="${PEACE_TERMS[t].desc}${blocked ? ' (you must hold a march to claim it)' : ''} (worth ${PEACE_TERMS[t].score})">` +
+          `${picked ? '☑ ' : ''}${PEACE_TERMS[t].name}</button>`;
       })
       .join(' ');
+    const picks = [...this.peacePicks];
+    const ask = picks.length > 0 ? r.peaceBasketAsk(rv, picks) : null;
+    const offerBtn = picks.length > 0
+      ? `<button class="mini war-offer-btn" ${w.score >= (ask ?? 0) ? '' : 'disabled'} ` +
+        `title="Put the basket on the table — each occupied march discounts their ask">offer terms (ask ${ask})</button>`
+      : `<span class="insp-skills">tick terms to compose the instrument</span>`;
     return `<p class="insp-skills">⚔ WAR — vs ${rv.name} (${CASUS_BELLI_DEFS[w.cb].name.toLowerCase()}${w.defensive ? ', defensive' : ''})</p>` +
       `<div class="bar-row" title="War score −100..+100: the front line, in one number">` +
       `<span style="width:70px;display:inline-block">war score</span>` +
@@ -655,8 +754,12 @@ export class RegionView {
       `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${Math.round(w.support)}%;background:${supCol}"></div></div>` +
       `<span>${Math.round(w.support)}</span></div>` +
       `<p class="insp-skills">casualties ${Math.round(w.casualties)} · combat power ${Math.round(r.warPower())} vs ${Math.round(r.rivalWarPower(rv))}</p>` +
-      `<p>${mobBtns}</p>` +
-      `<p>${peaceBtns} <button class="mini war-capitulate-btn" title="End the war on their terms — reparations and a stripped treasury">capitulate</button></p>`;
+      sides +
+      `<p>${mobBtns} ${blockadeBtn}</p>` +
+      (callBtns ? `<p>${callBtns}</p>` : '') +
+      occ +
+      `<p>${termBtns}</p>` +
+      `<p>${offerBtn} <button class="mini war-capitulate-btn" title="End the war on their terms — reparations and a stripped treasury">capitulate</button></p>`;
   }
 
   /** Politics section: political capital, elections, faction bars, law cards. */
@@ -790,6 +893,106 @@ export class RegionView {
       this.policyModal.classList.add('hidden');
       this.policySlotIndex = -1;
     };
+  }
+
+  // ---- the bargaining table (GDD §6.3): compose a basket, read their face ----
+
+  private openDealModal(rivalId: number): void {
+    this.dealRivalId = rivalId;
+    this.dealTreaties.clear();
+    this.dealGoldToThem = 0;
+    this.dealGoldToYou = 0;
+    this.dealBorder = false;
+    this.renderDealModal();
+  }
+
+  private closeDealModal(): void {
+    this.dealRivalId = -1;
+    this.dealModal.classList.add('hidden');
+  }
+
+  private currentBasket(): DealBasket {
+    return {
+      treaties: [...this.dealTreaties],
+      goldToThem: this.dealGoldToThem,
+      goldToYou: this.dealGoldToYou,
+      borderSettlement: this.dealBorder,
+    };
+  }
+
+  /** Live verdict in their envoy's voice — the §6.3 read of the basket. */
+  private dealVerdictLine(): string {
+    const r = this.region;
+    const rv = r.rival(this.dealRivalId);
+    if (!rv) return '';
+    const v = r.evaluateDeal(rv, this.currentBasket());
+    const ledger = `they value it ${v.get.toFixed(1)} pts against ${v.cost.toFixed(1)} asked`;
+    if (v.accept) return `✓ Their envoy nods — ${ledger}. They would sign.`;
+    if (v.counter) return `± Close: ${ledger}. They would counter, asking £${v.counter.goldToThem - this.dealGoldToThem} more.`;
+    return `✗ ${ledger}. They would walk — "${v.reason}."`;
+  }
+
+  private renderDealModal(): void {
+    const r = this.region;
+    const rv = r.rival(this.dealRivalId);
+    if (!rv) return;
+    const treatyRows = (Object.keys(TREATY_DEFS) as TreatyKind[]).map((k) => {
+      const signed = rv.treaties.includes(k);
+      const appetite = r.treatyAppetite(rv, k);
+      const hint = signed ? 'already in force' : appetite >= 0 ? 'they want this' : 'a concession — they want paying';
+      return `<p><label title="${TREATY_DEFS[k].desc}">` +
+        `<input type="checkbox" class="deal-treaty" data-kind="${k}" ${this.dealTreaties.has(k) ? 'checked' : ''} ${signed ? 'disabled' : ''}> ` +
+        `${TREATY_DEFS[k].name} <span class="insp-skills">— ${hint}</span></label></p>`;
+    }).join('');
+    const borderHint = rv.borderSettled
+      ? 'already settled'
+      : r.borderAppetite(rv) >= 0 ? 'they would welcome a fixed frontier' : 'they will not pin a border they mean to move';
+    const borderRow = `<p><label title="Survey and sign the frontier: no more border friction, and no border casus belli — for either side">` +
+      `<input type="checkbox" id="deal-border" ${this.dealBorder ? 'checked' : ''} ${rv.borderSettled ? 'disabled' : ''}> ` +
+      `Border Settlement <span class="insp-skills">— ${borderHint}</span></label></p>`;
+    this.dealModal.innerHTML =
+      `<div class="ceremony-box">` +
+      `<h2>THE BARGAINING TABLE — ${rv.name.toUpperCase()}</h2>` +
+      `<p class="insp-skills">${RIVAL_ARCHETYPES[rv.archetype].name} · relations ${Math.round(rv.relations)} · ` +
+      `every item is priced from their situation and personality (GDD §6.3)</p>` +
+      treatyRows + borderRow +
+      `<p><label>£ to them <input type="number" id="deal-gold-them" min="0" step="5" value="${this.dealGoldToThem}" style="width:70px"></label> ` +
+      `<label>£ asked of them <input type="number" id="deal-gold-you" min="0" step="5" value="${this.dealGoldToYou}" style="width:70px"></label> ` +
+      `<span class="insp-skills">(treasury £${Math.floor(r.treasury)})</span></p>` +
+      `<p id="deal-verdict" class="insp-skills">${this.dealVerdictLine()}</p>` +
+      `<p><button id="deal-propose-btn" ${r.treasury >= this.dealGoldToThem ? '' : 'disabled'}>Put it on the table</button> ` +
+      `<button id="deal-cancel-btn" class="mini">Withdraw</button></p>` +
+      `</div>`;
+    this.dealModal.classList.remove('hidden');
+
+    const refreshVerdict = () => {
+      this.dealModal.querySelector('#deal-verdict')!.textContent = this.dealVerdictLine();
+    };
+    for (const box of this.dealModal.querySelectorAll<HTMLInputElement>('.deal-treaty')) {
+      box.onchange = () => {
+        const k = box.dataset.kind as TreatyKind;
+        if (box.checked) this.dealTreaties.add(k);
+        else this.dealTreaties.delete(k);
+        refreshVerdict();
+      };
+    }
+    this.dealModal.querySelector<HTMLInputElement>('#deal-border')!.onchange = (e) => {
+      this.dealBorder = (e.target as HTMLInputElement).checked;
+      refreshVerdict();
+    };
+    this.dealModal.querySelector<HTMLInputElement>('#deal-gold-them')!.oninput = (e) => {
+      this.dealGoldToThem = Math.max(0, Number((e.target as HTMLInputElement).value) || 0);
+      refreshVerdict();
+    };
+    this.dealModal.querySelector<HTMLInputElement>('#deal-gold-you')!.oninput = (e) => {
+      this.dealGoldToYou = Math.max(0, Number((e.target as HTMLInputElement).value) || 0);
+      refreshVerdict();
+    };
+    this.dealModal.querySelector<HTMLButtonElement>('#deal-propose-btn')!.onclick = () => {
+      r.proposeDeal(this.dealRivalId, this.currentBasket());
+      this.closeDealModal(); // accepted, countered, or refused — the log has the answer
+    };
+    this.dealModal.querySelector<HTMLButtonElement>('#deal-cancel-btn')!.onclick = () => this.closeDealModal();
   }
 
   /** Freight overlay (M6b): what the caravans actually moved, per route. */

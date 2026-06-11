@@ -217,6 +217,7 @@ describe('The peace table (GDD §7.4)', () => {
   it('annexing the border province is the Versailles trap: a revanchist for fifty years', () => {
     const { r, rv } = atWar();
     r.playerWar!.score = 100;
+    r.playerWar!.occupied = 1; // the army must hold the ground it claims (§7.4)
     const grudge = rv.weights.grudge;
     const popBefore = r.totalPop();
     expect(r.offerPeace('border_province')).toBe(true);
@@ -237,6 +238,195 @@ describe('The peace table (GDD §7.4)', () => {
   });
 });
 
+describe('Blockade (GDD §7.3: trade interdiction made of warships)', () => {
+  function atWar() {
+    const r = nationReady();
+    const rv = r.spawnRival('hegemon')!;
+    rv.relations = -60;
+    r.declareWar(rv.id, 'sponsored_raids');
+    return { r, rv };
+  }
+
+  it('needs a funded service, then starves their combat power', () => {
+    const { r, rv } = atWar();
+    r.militiaLevel = 1;
+    expect(r.setBlockade(true)).toBe(false);
+    const open = r.rivalWarPower(rv);
+    r.militiaLevel = 2;
+    expect(r.setBlockade(true)).toBe(true);
+    expect(r.playerWar!.blockade).toBe(true);
+    expect(r.rivalWarPower(rv)).toBeCloseTo(open * 0.85, 5);
+    expect(r.setBlockade(false)).toBe(true);
+    expect(r.rivalWarPower(rv)).toBeCloseTo(open, 5);
+  });
+
+  it('the noose tightens monthly: their population bleeds, the score climbs', () => {
+    const { r, rv } = atWar();
+    r.militiaLevel = 2;
+    r.setBlockade(true);
+    r.playerWar!.score = 0;
+    rv.pop = 1_000_000; // an even front would drift negative without the blockade
+    const pop = rv.pop;
+    runDays(r, 35);
+    expect(rv.pop).toBeLessThan(pop);
+    expect(r.log.some((l) => l.text.includes('BLOCKADE'))).toBe(true);
+  });
+});
+
+describe('Co-belligerence (GDD §7.3)', () => {
+  it('a called ally fights at double the passive weight', () => {
+    const r = nationReady();
+    const enemy = r.spawnRival('hegemon')!;
+    const friend = r.spawnRival('trading_republic')!;
+    friend.treaties.push('defensive_pact');
+    friend.weights.honor = 7;
+    enemy.relations = -60;
+    r.declareWar(enemy.id, 'sponsored_raids');
+    r.playerWar!.defensive = true;
+    r.playerWar!.enemyAllies = []; // isolate the ally math
+    const passive = r.warPower();
+    expect(r.callAlly(friend.id)).toBe(true);
+    expect(r.playerWar!.allies).toContain(friend.id);
+    expect(r.warPower()).toBeGreaterThan(passive);
+  });
+
+  it('abandoning a defensive call tears the pact up for all to read', () => {
+    const r = nationReady();
+    const enemy = r.spawnRival('hegemon')!;
+    const coward = r.spawnRival('opportunist')!;
+    coward.treaties.push('defensive_pact');
+    coward.weights.honor = 0; // the ink was worth nothing
+    enemy.relations = -60;
+    r.declareWar(enemy.id, 'sponsored_raids');
+    r.playerWar!.defensive = true;
+    expect(r.callAlly(coward.id)).toBe(false);
+    expect(coward.treaties).not.toContain('defensive_pact');
+    expect(r.log.some((l) => l.text.includes('abandons its pact'))).toBe(true);
+  });
+
+  it("the enemy's friends weigh on their side of the front", () => {
+    const r = nationReady();
+    const enemy = r.spawnRival('hegemon')!;
+    const second = r.spawnRival('crusader_state')!;
+    enemy.relations = -60;
+    r.declareWar(enemy.id, 'sponsored_raids');
+    const alone = r.rivalWarPower(enemy);
+    r.playerWar!.enemyAllies = [second.id];
+    expect(r.rivalWarPower(enemy)).toBeGreaterThan(alone);
+  });
+});
+
+describe('Occupation & resistance (GDD §7.4)', () => {
+  function winning() {
+    const r = nationReady();
+    const rv = r.spawnRival('trading_republic')!;
+    rv.relations = -30;
+    r.declareWar(rv.id, 'border_dispute');
+    return { r, rv };
+  }
+
+  it('a deep front takes marches; resistance builds and partisans bleed the garrisons', () => {
+    const { r } = winning();
+    const w = r.playerWar!;
+    for (let i = 0; i < 24 && w.occupied === 0; i++) {
+      w.score = 80;
+      w.support = 90;
+      runDays(r, 30);
+    }
+    expect(w.occupied).toBeGreaterThan(0);
+    const res = w.resistance;
+    w.score = 80;
+    runDays(r, 35);
+    expect(w.resistance).toBeGreaterThan(res);
+  });
+
+  it('brutality is cheaper now and costlier forever', () => {
+    const { r, rv } = winning();
+    const w = r.playerWar!;
+    w.occupied = 1;
+    const leg = r.legitimacy;
+    expect(r.setOccupationPolicy('brutal')).toBe(true);
+    expect(r.legitimacy).toBe(Math.max(0, leg - 5));
+    expect(w.brutality).toBe(true);
+    // …and the record follows the peace: extra grudge and a colder ledger
+    const grudge = rv.weights.grudge;
+    w.score = 100;
+    expect(r.offerPeace('status_quo')).toBe(true);
+    expect(rv.weights.grudge).toBe(Math.min(10, grudge + 2));
+    expect(rv.relations).toBeLessThan(-40);
+  });
+
+  it('annexation demands the ground be held', () => {
+    const { r } = winning();
+    r.playerWar!.score = 100;
+    r.playerWar!.occupied = 0;
+    expect(r.offerPeace('border_province')).toBe(false);
+    expect(r.log.some((l) => l.text.includes('ground you do not hold'))).toBe(true);
+  });
+});
+
+describe('The peace basket (GDD §7.4 priced with the §6.3 engine)', () => {
+  function tableSet() {
+    const r = nationReady();
+    const rv = r.spawnRival('trading_republic')!;
+    rv.relations = -30;
+    r.declareWar(rv.id, 'border_dispute');
+    return { r, rv };
+  }
+
+  it('occupied marches discount the combined ask', () => {
+    const { r, rv } = tableSet();
+    const w = r.playerWar!;
+    w.occupied = 0;
+    const full = r.peaceBasketAsk(rv, ['reparations', 'border_province']);
+    w.occupied = 2;
+    expect(r.peaceBasketAsk(rv, ['reparations', 'border_province'])).toBe(full - 12);
+  });
+
+  it('a winning basket signs every clause at once', () => {
+    const { r, rv } = tableSet();
+    const w = r.playerWar!;
+    w.score = 100;
+    w.occupied = 2;
+    const cash = r.treasury;
+    const popBefore = r.totalPop();
+    expect(r.offerPeaceBasket(['reparations', 'border_province'])).toBe(true);
+    expect(r.playerWar).toBeNull();
+    expect(rv.history.some((h) => h.includes('Paid reparations'))).toBe(true);
+    expect(rv.history.some((h) => h.includes('revanchists'))).toBe(true);
+    expect(r.totalPop()).toBeGreaterThan(popBefore); // the annexed souls
+    expect(r.treasury).toBeGreaterThan(cash * 0.85); // tranche beats demobilization
+  });
+
+  it('a near miss draws a counter-offer naming what they would sign', () => {
+    const { r, rv } = tableSet();
+    const w = r.playerWar!;
+    w.occupied = 1;
+    const ask = r.peaceBasketAsk(rv, ['reparations', 'border_province']);
+    w.score = ask - 10;
+    expect(r.offerPeaceBasket(['reparations', 'border_province'])).toBe(false);
+    expect(r.playerWar).not.toBeNull();
+    expect(r.log.some((l) => l.text.includes('envoys counter'))).toBe(true);
+  });
+
+  it('victorious co-belligerents share the warmth of the peace', () => {
+    const r = nationReady();
+    const enemy = r.spawnRival('hegemon')!;
+    const friend = r.spawnRival('trading_republic')!;
+    friend.treaties.push('defensive_pact');
+    friend.weights.honor = 7;
+    enemy.relations = -60;
+    r.declareWar(enemy.id, 'sponsored_raids');
+    r.playerWar!.defensive = true;
+    r.callAlly(friend.id);
+    const rel = friend.relations;
+    r.playerWar!.score = 100;
+    expect(r.offerPeace('status_quo')).toBe(true);
+    expect(friend.relations).toBeGreaterThan(rel);
+    expect(friend.history.some((h) => h.includes('Shared the victory'))).toBe(true);
+  });
+});
+
 describe('War save/load', () => {
   it('round-trips the player war', () => {
     const { sim, r } = flippedPair(42);
@@ -253,6 +443,32 @@ describe('War save/load', () => {
     const town = Simulation.deserialize(sim.serialize());
     const r2 = RegionSim.deserialize(r.serialize(), town);
     expect(r2.playerWar).toEqual(r.playerWar);
+  });
+
+  it('a v0.18 war without the depth fields loads at peace defaults', () => {
+    const { sim, r } = flippedPair(42);
+    r.stateProclaimed = true;
+    r.stateName = 'Testonia';
+    r.govLean = 'council';
+    r.treasury = 500;
+    r.proclaimNation('Testland', 'democracy', {});
+    const rv = r.spawnRival('hegemon')!;
+    rv.relations = -60;
+    r.declareWar(rv.id, 'sponsored_raids');
+    const d = JSON.parse(r.serialize());
+    delete d.playerWar.blockade;
+    delete d.playerWar.allies;
+    delete d.playerWar.enemyAllies;
+    delete d.playerWar.occupied;
+    delete d.playerWar.resistance;
+    delete d.playerWar.occupationPolicy;
+    delete d.playerWar.brutality;
+    const r2 = RegionSim.deserialize(JSON.stringify(d), Simulation.deserialize(sim.serialize()));
+    expect(r2.playerWar!.blockade).toBe(false);
+    expect(r2.playerWar!.allies).toEqual([]);
+    expect(r2.playerWar!.occupied).toBe(0);
+    expect(r2.playerWar!.occupationPolicy).toBe('conciliatory');
+    runDays(r2, 35); // the war still ticks
   });
 
   it('pre-war saves load at peace', () => {

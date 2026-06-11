@@ -408,6 +408,42 @@ export const TREATY_DEFS: Record<TreatyKind, { name: string; baseAsk: number; de
   },
 };
 
+// ---- The negotiation engine (GDD §6.3): every treaty is a basket ----
+
+/** A multi-item offer on the table. Gold flows both ways; treaties are
+ *  mutual ink; a border settlement fixes the frontier for good. */
+export interface DealBasket {
+  treaties: TreatyKind[];
+  goldToThem: number;
+  goldToYou: number;
+  borderSettlement: boolean;
+}
+
+/** The AI's reading of a basket, in diplomatic points — computed from its
+ *  own situation and personality, never a single accept/reject (GDD §6.3). */
+export interface DealVerdict {
+  accept: boolean;
+  /** points flowing to the rival, by its own valuation */
+  get: number;
+  /** points it must give up, reputation premium applied */
+  cost: number;
+  /** a sweetened basket it would sign, when the offer is within 30% */
+  counter: DealBasket | null;
+  /** truthful but vague — why they walk, when they walk */
+  reason: string;
+}
+
+/** A rival's counter-offer, waiting on the player's signature. */
+export interface DealCounter {
+  rivalId: number;
+  basket: DealBasket;
+  expiresDay: number;
+}
+
+/** £ → diplomatic points: the chancery's exchange rate. */
+export const GOLD_PER_POINT = 8;
+export const DEAL_COUNTER_DAYS = 90;
+
 // Rivals run richer regimes than the player's four (GDD §6.3: "the 1930s
 // should produce at least one neighboring autocracy organically"). Blocs are
 // the coarse ideology axis that feeds relations — yours and theirs.
@@ -454,6 +490,8 @@ export interface RivalNation {
   pop: number;      // abstract: they are nation-scale already (GDD §6.4)
   relations: number; // −100..+100 ledger (GDD §5.4)
   treaties: TreatyKind[];
+  /** A surveyed, signed frontier: no border friction, no border CB (§5.4). */
+  borderSettled: boolean;
   emergedYear: number;
   /** Accumulated story beats — wars, revolutions, pacts. A nation's bio. */
   history: string[];
@@ -541,6 +579,34 @@ export const PEACE_TERMS: Record<PeaceTerm, { name: string; score: number; desc:
   regime_change: { name: 'Regime Change', score: 80, desc: 'Their government falls; a friendlier one signs the instrument.' },
 };
 
+/** Occupied marches are administered with a light hand or a heavy one —
+ *  brutality is cheaper now, costlier forever (GDD §7.4). */
+export type OccupationPolicy = 'conciliatory' | 'brutal';
+
+export const OCCUPATION_DEFS: Record<OccupationPolicy, {
+  name: string;
+  yield: number;      // £/march/month of partial output
+  garrison: number;   // £/march/month the garrison costs
+  resistance: number; // resistance points accrued per month
+  desc: string;
+}> = {
+  conciliatory: {
+    name: 'Conciliatory', yield: 6, garrison: 4, resistance: 2,
+    desc: 'Partial output, a light hand: resistance builds slowly.',
+  },
+  brutal: {
+    name: 'Brutal', yield: 10, garrison: 3, resistance: 6,
+    desc: 'Squeeze the marches. Cheaper now — costlier forever.',
+  },
+};
+
+/** A front only runs so deep at this altitude. */
+export const MAX_OCCUPIED_MARCHES = 3;
+/** Each occupied march discounts the peace table: the flag already flies. */
+export const OCCUPATION_SCORE_DISCOUNT = 6;
+/** Blockade upkeep: gunboats and requisitioned merchantmen, £/pop/month. */
+export const BLOCKADE_UPKEEP_PER_POP = 0.02;
+
 export interface PlayerWar {
   rivalId: number;
   cb: CasusBelli;
@@ -550,6 +616,19 @@ export interface PlayerWar {
   score: number;       // −100..+100 war score (GDD §7.4)
   mobilization: Mobilization;
   casualties: number;  // running total — the demographic scar (GDD §7.3)
+  /** Trade interdiction made of warships (GDD §7.3): strangles them, and you. */
+  blockade: boolean;
+  /** Co-belligerents fighting beside you — called-in defensive pacts. */
+  allies: number[];
+  /** Powers honoring their alliance with the enemy. */
+  enemyAllies: number[];
+  /** Enemy marches under military administration (GDD §7.4). */
+  occupied: number;
+  /** 0–100 resistance in the occupied marches. */
+  resistance: number;
+  occupationPolicy: OccupationPolicy;
+  /** Once brutal, always remembered — the record follows the peace. */
+  brutality: boolean;
 }
 
 /** Regime × war (GDD §7.5): below this floor the war eats the regime;
@@ -740,6 +819,8 @@ export class RegionSim {
   rivals: RivalNation[] = [];
   /** AI-initiated treaty offers awaiting the player's signature. */
   offers: TreatyOffer[] = [];
+  /** Counter-offers from the bargaining table, awaiting signature (§6.3). */
+  counters: DealCounter[] = [];
   /** Treaties the player has torn up — priced into every future ask. */
   treatiesBroken = 0;
   /** Foreign wars move prices (GDD §6.4): exports boom while this runs. */
@@ -1536,7 +1617,8 @@ export class RegionSim {
       this.settlements.length * 5 + // administration
       this.policyUpkeep() + // active policy running costs
       (this.passedLaws.includes('welfare_benefits') ? pop * 0.01 : 0) + // welfare relief payments
-      (warMob ? pop * warMob.upkeepPerPop : 0); // …and the drain runs concurrently (GDD §7.2)
+      (warMob ? pop * warMob.upkeepPerPop : 0) + // …and the drain runs concurrently (GDD §7.2)
+      (this.playerWar?.blockade ? pop * BLOCKADE_UPKEEP_PER_POP : 0); // coal and crews for the gunboats
     // Income Tax (civic research): a progressive levy adds 3% of GDP on top
     const incomeTaxBonus = this.has('income_tax') ? this.gdpLastMonth * 0.03 : 0;
     // Estate Tax law: a wealth levy on the land
@@ -1557,6 +1639,9 @@ export class RegionSim {
           : s,
       0,
     );
+    // Your own war contests the lanes (GDD §7.3) — and your own blockade
+    // requisitions the merchantmen that would have carried the exports
+    if (this.playerWar) this.exportEarningsLastMonth *= this.playerWar.blockade ? 0.6 : 0.7;
     this.treasury += revenue - spending + incomeTaxBonus + estateLevyBonus +
       progressiveTaxBonus + protectionismBonus + bankInterest + this.exportEarningsLastMonth;
     if (this.treasury < 0) {
@@ -2262,6 +2347,7 @@ export class RegionSim {
       pop: 2500 + this.rng.int(3000),
       relations: this.clampRel(10 + weights.commerce - weights.expansion - weights.grudge + this.rng.int(11) - 5),
       treaties: [],
+      borderSettled: false,
       emergedYear: this.year,
       history: [`Proclaimed ${this.year}, ${COMPASS_FLAVOR[compass]} — ${origin}.`],
       lastEnvoyDay: -999,
@@ -2294,6 +2380,166 @@ export class RegionSim {
     if (kind === 'non_aggression') ask -= 10 - rv.weights.risk; // the cautious want fences
     if (kind === 'defensive_pact') ask -= rv.weights.honor * 1.5;
     return Math.round(ask);
+  }
+
+  // ---- the bargaining table (GDD §6.3): baskets, valuation, counter-offers ----
+
+  /** What signing this treaty is worth *to the rival*, in diplomatic points —
+   *  positive is appetite, negative is a concession it wants paying for. */
+  treatyAppetite(rv: RivalNation, kind: TreatyKind): number {
+    switch (kind) {
+      case 'trade_agreement':
+        // fuel access is worth triple to an oil-poor industrializer — here,
+        // markets are worth most to the commerce-minded
+        return rv.weights.commerce * 1.6 - 4;
+      case 'non_aggression':
+        return (10 - rv.weights.risk) * 0.8 + rv.weights.honor * 0.3 - 3;
+      case 'defensive_pact':
+        // an entangling commitment: the honorable mean it, the rash resent it
+        return rv.weights.honor * 0.8 - rv.weights.risk * 0.5 - 5;
+    }
+  }
+
+  /** A fixed frontier, valued by temperament: hermits love fences,
+   *  hegemons will not pin a border they mean to move. */
+  borderAppetite(rv: RivalNation): number {
+    return (4 - rv.weights.expansion) * 1.2 + rv.weights.grudge * 0.4;
+  }
+
+  /** What £1 buys at this court, in points — commerce raises the bid. */
+  private goldRate(rv: RivalNation): number {
+    return (0.6 + rv.weights.commerce * 0.08) / GOLD_PER_POINT;
+  }
+
+  /** Reputation premium on everything the rival gives up (GDD §5.4:
+   *  treaty-breaking is priced into all future deals, +30%/breach). */
+  dealPremium(rv: RivalNation): number {
+    return Math.max(0.5, 1 + this.treatiesBroken * 0.3 + rv.weights.grudge * 0.03 - rv.relations / 150);
+  }
+
+  /** Sitting down at all has a price when they hate you. */
+  private tableCost(rv: RivalNation): number {
+    return Math.max(0, -rv.relations / 8) + this.treatiesBroken * 2 + rv.weights.grudge * 0.4;
+  }
+
+  /** Strip a basket to the items that still mean anything. */
+  private normalizeBasket(rv: RivalNation, b: DealBasket): DealBasket {
+    return {
+      treaties: [...new Set(b.treaties)].filter((k) => !rv.treaties.includes(k)),
+      goldToThem: Math.max(0, Math.round(b.goldToThem || 0)),
+      goldToYou: Math.max(0, Math.round(b.goldToYou || 0)),
+      borderSettlement: b.borderSettlement && !rv.borderSettled,
+    };
+  }
+
+  /** The AI reads a basket (GDD §6.3): accepts when what it gets covers what
+   *  it gives at its premium, counters with a sweetener when within 30%,
+   *  and walks away — stating why, truthfully but vaguely — when far off.
+   *  Pure: the UI live-previews the verdict while the player composes. */
+  evaluateDeal(rv: RivalNation, basket: DealBasket): DealVerdict {
+    const b = this.normalizeBasket(rv, basket);
+    const empty = b.treaties.length === 0 && !b.borderSettlement && b.goldToThem === 0 && b.goldToYou === 0;
+    let get = 0;
+    let give = 0;
+    const weigh = (v: number) => { if (v >= 0) get += v; else give += -v; };
+    for (const k of b.treaties) weigh(this.treatyAppetite(rv, k));
+    if (b.borderSettlement) weigh(this.borderAppetite(rv));
+    get += b.goldToThem * this.goldRate(rv);
+    give += b.goldToYou * this.goldRate(rv);
+    const cost = give * this.dealPremium(rv) + this.tableCost(rv);
+    if (empty) return { accept: false, get: 0, cost, counter: null, reason: 'there is nothing on the table' };
+    if (get >= cost) return { accept: true, get, cost, counter: null, reason: '' };
+    // Within 30%: they name their sweetener instead of walking (GDD §6.3)
+    if (get >= cost * 0.7) {
+      const shortfall = cost - get;
+      const sweetener = Math.ceil(shortfall / this.goldRate(rv) / 5) * 5;
+      return {
+        accept: false, get, cost,
+        counter: { ...b, goldToThem: b.goldToThem + sweetener },
+        reason: 'close — they want a sweetener',
+      };
+    }
+    const reason = this.treatiesBroken > 0
+      ? `${rv.name} remembers broken seals`
+      : b.borderSettlement && this.borderAppetite(rv) < 0
+        ? 'they will not trade away the frontier'
+        : rv.relations < -20
+          ? 'their people will not deal with you yet'
+          : `${rv.name} sees no profit in it`;
+    return { accept: false, get, cost, counter: null, reason };
+  }
+
+  /** Put a basket on the table. Accepted deals execute at once; near-misses
+   *  come back as counter-offers the player can sign from the panel. */
+  proposeDeal(id: number, basket: DealBasket): boolean {
+    const rv = this.rival(id);
+    if (!rv || !this.stateProclaimed) return false;
+    if (this.playerWar?.rivalId === id) return false; // peace has its own table
+    const b = this.normalizeBasket(rv, basket);
+    if (this.treasury < b.goldToThem) return false;
+    const v = this.evaluateDeal(rv, b);
+    if (v.accept) {
+      this.executeDeal(rv, b);
+      return true;
+    }
+    if (v.counter) {
+      this.counters = this.counters.filter((c) => c.rivalId !== rv.id);
+      this.counters.push({ rivalId: rv.id, basket: v.counter, expiresDay: this.day + DEAL_COUNTER_DAYS });
+      this.addLog(
+        `${rv.name} counters: "${this.basketLabel(v.counter)} — and we have an accord." The offer stands ${DEAL_COUNTER_DAYS} days.`,
+        'info',
+      );
+      return false;
+    }
+    this.addLog(`${rv.name} walks from the table — "${v.reason}."`, 'bad');
+    return false;
+  }
+
+  /** The pending counter-offer from a rival, if any. */
+  counterFor(rivalId: number): DealCounter | undefined {
+    return this.counters.find((c) => c.rivalId === rivalId);
+  }
+
+  /** Sign the rival's counter-offer as it stands. */
+  acceptCounter(rivalId: number): boolean {
+    const c = this.counterFor(rivalId);
+    const rv = this.rival(rivalId);
+    if (!c || !rv || this.treasury < c.basket.goldToThem) return false;
+    this.counters = this.counters.filter((x) => x !== c);
+    this.executeDeal(rv, this.normalizeBasket(rv, c.basket));
+    return true;
+  }
+
+  /** Let the counter lapse — a slight, but a small one. */
+  declineCounter(rivalId: number): boolean {
+    const c = this.counterFor(rivalId);
+    const rv = this.rival(rivalId);
+    if (!c || !rv) return false;
+    this.counters = this.counters.filter((x) => x !== c);
+    rv.relations = this.clampRel(rv.relations - 2);
+    this.addLog(`${rv.name}'s counter-offer is declined. Their envoys fold the papers away.`, 'info');
+    return true;
+  }
+
+  /** A basket in plain words, for logs and the panel. */
+  basketLabel(b: DealBasket): string {
+    const parts = b.treaties.map((k) => TREATY_DEFS[k].name);
+    if (b.borderSettlement) parts.push('Border Settlement');
+    if (b.goldToThem > 0) parts.push(`£${b.goldToThem} to them`);
+    if (b.goldToYou > 0) parts.push(`£${b.goldToYou} to you`);
+    return parts.join(' + ') || 'nothing';
+  }
+
+  /** Ink, gold, and surveys change hands. */
+  private executeDeal(rv: RivalNation, b: DealBasket): void {
+    for (const k of b.treaties) rv.treaties.push(k);
+    this.treasury += b.goldToYou - b.goldToThem;
+    if (b.borderSettlement) {
+      rv.borderSettled = true;
+      this.noteHistory(rv, `Settled the frontier with ${this.stateName || 'the State'}, ${this.year}.`);
+    }
+    rv.relations = this.clampRel(rv.relations + 4 + b.treaties.length * 2);
+    this.addLog(`ACCORD: ${this.stateName || 'the State'} and ${rv.name} sign — ${this.basketLabel(b)}.`, 'good');
   }
 
   /** Send a paid envoy: the cheap, repeatable relations verb. */
@@ -2398,6 +2644,7 @@ export class RegionSim {
       if (this.rng.chance(overdue ? 0.25 : 0.03)) this.spawnRival();
     }
     this.offers = this.offers.filter((o) => o.expiresDay > this.day && this.rival(o.rivalId));
+    this.counters = this.counters.filter((c) => c.expiresDay > this.day && this.rival(c.rivalId));
     const myBloc = this.playerBloc();
     for (const rv of this.rivals) {
       rv.pop *= 1.0015; // they grow whether you watch or not
@@ -2412,6 +2659,7 @@ export class RegionSim {
       if (rv.treaties.includes('non_aggression')) base += 8;
       if (rv.treaties.includes('trade_agreement')) base += 12;
       if (rv.treaties.includes('defensive_pact')) base += 16;
+      if (rv.borderSettled) base += 6; // a fixed frontier is a quiet one
       rv.relations = this.clampRel(rv.relations + (base - rv.relations) * 0.04);
       // AI-initiated offers (GDD §6.3): commerce courts you; caution wants fences
       if (this.stateProclaimed && !this.offers.some((o) => o.rivalId === rv.id)) {
@@ -2425,7 +2673,7 @@ export class RegionSim {
       }
       // Hostile mischief (GDD §6.4): town-scale friction, deniable and cheap
       if (rv.relations < -40 && !rv.treaties.includes('non_aggression') && this.rng.chance(0.1 + rv.weights.risk * 0.015)) {
-        if (this.rng.chance(0.5) || this.tradeValueLastMonth <= 0) {
+        if (!rv.borderSettled && (this.rng.chance(0.5) || this.tradeValueLastMonth <= 0)) {
           const t = this.settlements[this.rng.int(this.settlements.length)];
           if (t) {
             t.grievance = Math.min(100, t.grievance + 6);
@@ -2444,7 +2692,8 @@ export class RegionSim {
         !rv.treaties.includes('non_aggression') &&
         this.rng.chance(0.01 + rv.weights.risk * 0.003 + rv.weights.expansion * 0.002)
       ) {
-        this.startPlayerWar(rv, 'border_dispute', true);
+        // a settled frontier leaves them no honest grievance — they stage one
+        this.startPlayerWar(rv, rv.borderSettled ? 'fabricated' : 'border_dispute', true);
         continue;
       }
       // Regime change abroad is world news the player reads about (GDD §6.3)
@@ -2590,7 +2839,7 @@ export class RegionSim {
   availableCasusBelli(rv: RivalNation): CasusBelli[] {
     const list: CasusBelli[] = [];
     if (rv.relations < -40 && !rv.treaties.includes('non_aggression')) list.push('sponsored_raids');
-    if (rv.relations < -20) list.push('border_dispute');
+    if (rv.relations < -20 && !rv.borderSettled) list.push('border_dispute'); // a signed survey leaves nothing to dispute
     list.push('fabricated');
     return list;
   }
@@ -2618,13 +2867,23 @@ export class RegionSim {
       rivalId: rv.id, cb, defensive, startedDay: this.day,
       support: defensive ? 85 : CASUS_BELLI_DEFS[cb].support, // a defensive war starts at 85 (§7.1)
       score: 0, mobilization: 'peacetime', casualties: 0,
+      blockade: false, allies: [], enemyAllies: [],
+      occupied: 0, resistance: 0, occupationPolicy: 'conciliatory', brutality: false,
     };
     rv.relations = this.clampRel(Math.min(rv.relations, -60));
-    // Their allies turn cold toward you — sides harden (as in startForeignWar)
+    // Their allies turn cold toward you — sides harden (as in startForeignWar),
+    // and the honorable ones march: co-belligerence runs both ways (GDD §7.3)
     for (const key of this.alliances) {
       const [x, y] = key.split(':').map(Number);
       const ally = x === rv.id ? this.rival(y) : y === rv.id ? this.rival(x) : undefined;
-      if (ally) ally.relations = this.clampRel(ally.relations - 20);
+      if (!ally) continue;
+      ally.relations = this.clampRel(ally.relations - 20);
+      if (this.rng.chance(0.3 + ally.weights.honor * 0.05)) {
+        this.playerWar.enemyAllies.push(ally.id);
+        ally.relations = this.clampRel(Math.min(ally.relations, -40));
+        this.noteHistory(ally, `Marched beside ${rv.name} against ${this.nationName || this.stateName || 'the nation'}, ${this.year}.`);
+        this.addLog(`${ally.name} honors its alliance with ${rv.name} — its armies take the field against you.`, 'bad');
+      }
     }
     const nation = this.nationName || this.stateName || 'the nation';
     this.noteHistory(rv, defensive ? `Declared war on ${nation}, ${this.year}.` : `Attacked by ${nation}, ${this.year}.`);
@@ -2645,20 +2904,96 @@ export class RegionSim {
       (this.passedLaws.includes('military_reform') ? 1.2 : 1) *
       (this.govType === 'junta' ? 1.15 : 1);
     const mob = this.playerWar ? MOBILIZATION_DEFS[this.playerWar.mobilization].power : 1;
-    // Defensive pacts put allied arms on your front (GDD §5.4)
-    const allies = this.rivals.reduce(
-      (s, rv) =>
-        rv.treaties.includes('defensive_pact') && rv.id !== this.playerWar?.rivalId
-          ? s + Math.pow(rv.pop, 0.6) * 0.25
-          : s,
-      0,
-    );
+    // Defensive pacts put allied arms on your front (GDD §5.4); a called
+    // co-belligerent commits its army, not just its sympathy (GDD §7.3)
+    const allies = this.rivals.reduce((s, rv) => {
+      if (rv.id === this.playerWar?.rivalId) return s;
+      if (this.playerWar?.allies.includes(rv.id)) return s + Math.pow(rv.pop, 0.6) * 0.5;
+      if (rv.treaties.includes('defensive_pact')) return s + Math.pow(rv.pop, 0.6) * 0.25;
+      return s;
+    }, 0);
     return Math.pow(Math.max(1, this.totalPop()), 0.6) * quality * mob + allies;
   }
 
-  /** The other side of the front: their mass, discounted by their appetite. */
+  /** The other side of the front: their mass, discounted by their appetite —
+   *  plus whoever marches with them, minus whatever the blockade starves. */
   rivalWarPower(rv: RivalNation): number {
-    return Math.pow(rv.pop, 0.6) * (0.5 + rv.weights.expansion * 0.04 + rv.weights.risk * 0.015);
+    let p = Math.pow(rv.pop, 0.6) * (0.5 + rv.weights.expansion * 0.04 + rv.weights.risk * 0.015);
+    const w = this.playerWar;
+    if (w?.rivalId === rv.id) {
+      for (const id of w.enemyAllies) {
+        const ally = this.rival(id);
+        if (ally) p += Math.pow(ally.pop, 0.6) * 0.3;
+      }
+      if (w.blockade) p *= 0.85; // supply starves at the quays (GDD §7.3)
+    }
+    return p;
+  }
+
+  /** Call a defensive-pact ally to the colors (GDD §7.3). Honor weight sets
+   *  whether signed ink survives the shells; refusing a *defensive* call
+   *  tears the pact up for all to read. */
+  callAlly(id: number): boolean {
+    const w = this.playerWar;
+    const rv = this.rival(id);
+    const enemy = w ? this.rival(w.rivalId) : undefined;
+    if (!w || !rv || !enemy || rv.id === w.rivalId || w.allies.includes(id)) return false;
+    if (!rv.treaties.includes('defensive_pact')) return false;
+    const nation = this.nationName || this.stateName || 'the nation';
+    const honors = w.defensive
+      ? rv.weights.honor >= 4 || this.rng.chance(rv.weights.honor / 10)
+      : rv.relations >= 60 && this.rng.chance(0.2 + rv.weights.honor * 0.06);
+    if (!honors) {
+      if (w.defensive) {
+        rv.treaties = rv.treaties.filter((k) => k !== 'defensive_pact');
+        rv.relations = this.clampRel(rv.relations - 10);
+        this.noteHistory(rv, `Abandoned its pact with ${nation} when the shells fell, ${this.year}.`);
+        this.addLog(`${rv.name} abandons its pact when the shells fall — the ink was worth nothing.`, 'bad');
+      } else {
+        this.addLog(`${rv.name} declines the call — "this is not the war we signed for."`, 'info');
+      }
+      return false;
+    }
+    w.allies.push(id);
+    rv.relations = this.clampRel(rv.relations + 8);
+    this.noteHistory(rv, `Marched beside ${nation} against ${enemy.name}, ${this.year}.`);
+    this.addLog(`CO-BELLIGERENCE: ${rv.name} honors the pact — its armies take the field beside yours.`, 'good');
+    return true;
+  }
+
+  /** Trade interdiction made of warships (GDD §7.3): strangles their supply
+   *  and growth, costs upkeep, and requisitions your own merchantmen. */
+  setBlockade(on: boolean): boolean {
+    const w = this.playerWar;
+    if (!w || w.blockade === on) return false;
+    if (on && this.militiaLevel < 2 && !this.policyActive('standing_army')) {
+      this.addLog('A blockade needs a funded service — raise the militia budget or a standing army first.', 'info');
+      return false;
+    }
+    w.blockade = on;
+    this.addLog(
+      on
+        ? 'BLOCKADE: gunboats and requisitioned merchantmen close the enemy\'s lanes — trade strangles both ways.'
+        : 'The blockade is lifted; the sea lanes reopen.',
+      'info',
+    );
+    return true;
+  }
+
+  /** Choose how the occupied marches are run (GDD §7.4). Brutality is
+   *  cheaper now and costlier forever — the first order is remembered. */
+  setOccupationPolicy(p: OccupationPolicy): boolean {
+    const w = this.playerWar;
+    if (!w || w.occupationPolicy === p) return false;
+    w.occupationPolicy = p;
+    if (p === 'brutal' && !w.brutality) {
+      w.brutality = true;
+      this.legitimacy = Math.max(0, this.legitimacy - 5);
+      this.addLog('The army is given a free hand in the occupied marches. Cheaper now — costlier forever.', 'bad');
+    } else if (p === 'conciliatory') {
+      this.addLog('The military administration softens: requisitions end, local councils reconvene.', 'info');
+    }
+    return true;
   }
 
   /** Set the mobilization level (GDD §7.2, §7.5: democracies mobilize slowly —
@@ -2685,13 +3020,47 @@ export class RegionSim {
     return Math.round(PEACE_TERMS[term].score + rv.weights.grudge * 2);
   }
 
+  /** Combined ask for a basket of terms (GDD §7.4 priced with the §6.3
+   *  engine): scores sum, the grudge premium is charged once, and ground
+   *  the army already holds discounts the bill. */
+  peaceBasketAsk(rv: RivalNation, terms: PeaceTerm[]): number {
+    const occupied = this.playerWar?.occupied ?? 0;
+    const sum = terms.reduce((s, t) => s + PEACE_TERMS[t].score, 0);
+    return Math.max(0, Math.round(sum + rv.weights.grudge * 2 - occupied * OCCUPATION_SCORE_DISCOUNT));
+  }
+
   /** Offer peace (GDD §7.4), priced in war score. Overreach is punished:
    *  a humiliated rival is a revanchist for fifty years — the Versailles trap. */
   offerPeace(term: PeaceTerm): boolean {
+    return this.offerPeaceBasket([term]);
+  }
+
+  /** Peace is negotiated with the §6.3 engine: a basket of terms, a single
+   *  combined ask, and a counter-offer when the front nearly says yes. */
+  offerPeaceBasket(termsIn: PeaceTerm[]): boolean {
     const w = this.playerWar;
     const rv = w ? this.rival(w.rivalId) : undefined;
     if (!w || !rv) return false;
-    if (w.score < this.peaceAsk(rv, term)) {
+    let terms = [...new Set(termsIn)];
+    if (terms.length > 1) terms = terms.filter((t) => t !== 'status_quo'); // the maps cannot both move and stay
+    if (terms.length === 0) return false;
+    if (terms.includes('border_province') && w.occupied === 0) {
+      this.addLog(`${rv.name} refuses — "you will not sign away ground you do not hold."`, 'bad');
+      return false;
+    }
+    const ask = this.peaceBasketAsk(rv, terms);
+    if (w.score < ask) {
+      // a near miss draws a counter-offer, not a refusal (GDD §6.3)
+      if (terms.length > 1 && w.score >= ask - 15) {
+        const counter = this.peaceCounter(rv, terms);
+        if (counter.length > 0) {
+          this.addLog(
+            `${rv.name}'s envoys counter: "${counter.map((t) => PEACE_TERMS[t].name).join(' + ')} — that, we would sign."`,
+            'info',
+          );
+          return false;
+        }
+      }
       this.addLog(`${rv.name} rejects the terms — "the front does not say you may ask for that."`, 'bad');
       return false;
     }
@@ -2700,6 +3069,38 @@ export class RegionSim {
     rv.pop *= 0.92; // the war's bill abroad
     this.treasury *= 0.9; // demobilization and pensions — the drain after (GDD §7.2)
     this.legitimacy = Math.min(100, this.legitimacy + (w.defensive ? 15 : 10));
+    // each clause in turn, the heaviest last so its memory sets the ledger
+    for (const t of [...terms].sort((a, b) => PEACE_TERMS[a].score - PEACE_TERMS[b].score)) {
+      this.applyPeaceTerm(rv, t, nation);
+    }
+    // co-belligerents share the victory (GDD §7.3)
+    for (const id of w.allies) {
+      const ally = this.rival(id);
+      if (!ally) continue;
+      ally.relations = this.clampRel(ally.relations + 8);
+      this.noteHistory(ally, `Shared the victory over ${rv.name}, ${this.year}.`);
+    }
+    // the occupation's record follows the peace (GDD §7.4)
+    if (w.brutality) {
+      rv.weights.grudge = Math.min(10, rv.weights.grudge + 2);
+      rv.relations = this.clampRel(rv.relations - 15);
+      this.addLog("The occupation's cruelties travel home with the refugees — they will not be forgotten.", 'bad');
+    }
+    return true;
+  }
+
+  /** What of the basket the enemy *would* sign at the current score —
+   *  drop the heaviest clauses until the front agrees. */
+  private peaceCounter(rv: RivalNation, terms: PeaceTerm[]): PeaceTerm[] {
+    const w = this.playerWar;
+    if (!w) return [];
+    const sorted = [...terms].sort((a, b) => PEACE_TERMS[b].score - PEACE_TERMS[a].score);
+    while (sorted.length > 0 && w.score < this.peaceBasketAsk(rv, sorted)) sorted.shift();
+    return sorted;
+  }
+
+  /** One clause of the instrument. */
+  private applyPeaceTerm(rv: RivalNation, term: PeaceTerm, nation: string): void {
     switch (term) {
       case 'status_quo':
         rv.relations = this.clampRel(Math.max(rv.relations, -40));
@@ -2739,7 +3140,6 @@ export class RegionSim {
         this.addLog(`PEACE: ${rv.name}'s government falls with the war — the new ministry signs whatever is put before it.`, 'good');
         break;
     }
-    return true;
   }
 
   /** Sue for terms you cannot refuse — or be made to (GDD §7.4). */
@@ -2755,6 +3155,13 @@ export class RegionSim {
     this.legitimacy = Math.max(0, this.legitimacy - (this.govType === 'junta' ? 25 : 15));
     rv.relations = this.clampRel(Math.min(rv.relations, -60));
     rv.pop *= 1.02;
+    // allies dragged into your defeat read the ledger too (GDD §7.3)
+    for (const id of w.allies) {
+      const ally = this.rival(id);
+      if (!ally) continue;
+      ally.relations = this.clampRel(ally.relations - 10);
+      this.noteHistory(ally, `Shared in ${nation}'s defeat by ${rv.name}, ${this.year}.`);
+    }
     this.noteHistory(rv, `Dictated peace to ${nation}, ${this.year}.`);
     this.addLog(
       `DEFEAT: ${rv.name} dictates the peace — reparations, a stripped treasury, ` +
@@ -2769,6 +3176,7 @@ export class RegionSim {
   private tickPlayerWar(): void {
     const w = this.playerWar;
     if (!w) return;
+    if (w.startedDay === this.day) return; // the declaration day musters; the front resolves with the month
     const rv = this.rival(w.rivalId);
     if (!rv) {
       this.playerWar = null;
@@ -2779,6 +3187,10 @@ export class RegionSim {
     const R = this.rivalWarPower(rv);
     const delta = 16 * ((P - R) / (P + R)) + this.rng.int(9) - 4;
     w.score = Math.max(-100, Math.min(100, w.score + delta));
+    if (w.blockade) {
+      rv.pop *= 0.997; // the quays starve before the trenches do
+      w.score = Math.min(100, w.score + 1.5);
+    }
     // Attrition (GDD §7.3): burns even on quiet fronts; the pyramid keeps the scar
     const lossRate =
       (w.mobilization === 'total' ? 0.006 : w.mobilization === 'partial' ? 0.004 : 0.003) +
@@ -2793,10 +3205,46 @@ export class RegionSim {
     }
     w.casualties += lost;
     rv.pop *= 1 - lossRate * (delta > 0 ? 1.2 : 0.8);
+    // co-belligerents bleed beside you, at half the rate (GDD §7.3)
+    for (const id of w.allies) {
+      const ally = this.rival(id);
+      if (ally) ally.pop *= 1 - lossRate * 0.5;
+    }
+    // Interdiction runs both ways (GDD §7.3): their raiders cut your routes
+    if (this.routes.length > 0 && this.rng.chance(0.3)) {
+      const rt = this.routes[this.rng.int(this.routes.length)];
+      rt.condition = Math.max(ROUTE_CONDITION_FLOOR, rt.condition - 12);
+      const an = this.settlement(rt.a)?.name ?? '?';
+      const bn = this.settlement(rt.b)?.name ?? '?';
+      this.addLog(`Enemy raiders fire the depots — the ${an}–${bn} ${rt.kind} is cut about.`, 'bad');
+    }
     // War support (GDD §7.4): decays with duration and defeat, rallies on victories
     w.support += delta > 4 ? 2 : delta < -4 ? -4 : -1.5;
     if (w.mobilization === 'total') w.support -= 1.5;
     w.support = Math.max(0, Math.min(100, w.support));
+    // Occupation (GDD §7.4): a winning front takes ground; a losing one cedes it
+    if (w.score >= 35 && w.occupied < MAX_OCCUPIED_MARCHES && this.rng.chance(0.3)) {
+      w.occupied++;
+      w.support = Math.min(100, w.support + 3); // the parade writes the headline
+      this.addLog(`Our columns take one of ${rv.name}'s marches — military administration begins (${w.occupied} occupied).`, 'good');
+    } else if (w.score < 0 && w.occupied > 0 && this.rng.chance(0.25)) {
+      w.occupied--;
+      if (w.occupied === 0) w.resistance = 0;
+      this.addLog(`${rv.name}'s counterattack retakes its march — the garrison falls back (${w.occupied} occupied).`, 'bad');
+    }
+    if (w.occupied > 0) {
+      const occ = OCCUPATION_DEFS[w.occupationPolicy];
+      // resistance scales with ideology distance and your policy (GDD §7.4)
+      const distance = blocAffinity(this.playerBloc() ?? 'liberal', this.regimeOf(rv).bloc) < 0 ? 1.5 : 1;
+      w.resistance = Math.min(100, w.resistance + occ.resistance * distance);
+      this.treasury += w.occupied * (occ.yield - occ.garrison); // partial output, garrisons paid
+      if (w.resistance > 50 && this.rng.chance(w.resistance / 120)) {
+        w.casualties += w.occupied * 1.5;
+        w.score = Math.max(-100, w.score - 2);
+        w.support = Math.max(0, w.support - 1.5);
+        this.addLog('Partisans burn the depots in the occupied marches — garrisons bleed and the occupation sours.', 'bad');
+      }
+    }
     if (this.rng.chance(0.35)) {
       this.addLog(
         delta > 4
@@ -2886,6 +3334,7 @@ export class RegionSim {
       activePolicies: this.activePolicies,
       rivals: this.rivals,
       offers: this.offers,
+      counters: this.counters,
       treatiesBroken: this.treatiesBroken,
       warBoomUntil: this.warBoomUntil,
       exportEarningsLastMonth: this.exportEarningsLastMonth,
@@ -2946,15 +3395,23 @@ export class RegionSim {
       r.activePolicies = new Array(govDef?.policySlots.length ?? 0).fill(null);
     }
     // pre-diplomacy saves carry no rivals: the world is still empty
-    r.rivals = d.rivals ?? [];
+    r.rivals = (d.rivals ?? []).map((rv: RivalNation) => ({ ...rv, borderSettled: rv.borderSettled ?? false }));
     r.offers = d.offers ?? [];
+    r.counters = d.counters ?? [];
     r.treatiesBroken = d.treatiesBroken ?? 0;
     r.warBoomUntil = d.warBoomUntil ?? -1;
     r.exportEarningsLastMonth = d.exportEarningsLastMonth ?? 0;
     r.rivalPairs = d.rivalPairs ?? {};
     r.alliances = d.alliances ?? [];
     r.foreignWars = d.foreignWars ?? [];
-    r.playerWar = d.playerWar ?? null;
+    // v0.18 saves carry wars without the depth fields — fill them at peace defaults
+    r.playerWar = d.playerWar
+      ? {
+          blockade: false, allies: [], enemyAllies: [], occupied: 0, resistance: 0,
+          occupationPolicy: 'conciliatory' as OccupationPolicy, brutality: false,
+          ...d.playerWar,
+        }
+      : null;
     r.nextId = d.nextId;
     r.nextEventDay = d.nextEventDay;
     r.townNamePool = d.townNamePool;
