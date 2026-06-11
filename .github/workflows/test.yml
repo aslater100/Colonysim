@@ -20,5 +20,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
       - run: npm install
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       - run: npm run build
       - run: npm test
