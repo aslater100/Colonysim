@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Simulation } from '../src/sim/sim';
-import { RegionSim, REGION_MINUTES_PER_TICK, ROUTE_SPECS } from '../src/sim/region';
+import { RegionSim, REGION_MINUTES_PER_TICK, ROUTE_SPECS, RAIL_ERA_YEAR } from '../src/sim/region';
 import { RegionMap } from '../src/sim/worldgen';
-import { MINUTES_PER_DAY } from '../src/sim/defs';
+import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
 
@@ -155,6 +155,111 @@ describe('Roads & the treasury (M6b)', () => {
     route.condition = 80;
     runDays(r, 95); // three unfunded cycles
     expect(route.condition).toBeLessThan(70);
+  });
+});
+
+/** jump the region clock so the Railworks era is open */
+function toRailEra(r: RegionSim): void {
+  const target = (RAIL_ERA_YEAR - START_YEAR) * DAYS_PER_YEAR * MINUTES_PER_DAY;
+  if (r.minute < target) r.minute = target;
+}
+
+describe('The rail era (M6c)', () => {
+  it('rail waits on both the State and the Railworks year', () => {
+    const r = flipped(42);
+    const [a, b] = r.settlements;
+    expect(r.railUnlocked()).toBe(false);
+    expect(r.buildRail(a.id, b.id)).toBe(false); // no State yet
+    toStatehood(r);
+    r.treasury = 100000;
+    if (r.year < RAIL_ERA_YEAR) {
+      expect(r.railUnlocked()).toBe(false);
+      expect(r.buildRail(a.id, b.id)).toBe(false); // era not open yet
+    }
+    toRailEra(r);
+    expect(r.railUnlocked()).toBe(true);
+    const cost = r.railCost(a.id, b.id)!;
+    expect(cost.total).toBeGreaterThan(r.roadCost(a.id, b.id)!.total); // steel is dear
+    const before = r.treasury;
+    expect(r.buildRail(a.id, b.id)).toBe(true);
+    expect(r.treasury).toBeCloseTo(before - cost.total, 5);
+    const route = r.routeBetween(a.id, b.id)!;
+    expect(route.kind).toBe('rail');
+    expect(route.condition).toBe(100);
+    expect(r.buildRoad(a.id, b.id)).toBe(false); // no downgrading steel to dirt
+    expect(r.buildRail(a.id, b.id)).toBe(false); // already rail
+  });
+
+  it('rail moves far more grain than a road (capacity 1200)', () => {
+    const r = flipped(42);
+    const [home, town2] = r.settlements;
+    const route = r.routeBetween(home.id, town2.id)!;
+    // a hungry boomtown: need far beyond road capacity, so the link is the limit
+    town2.cohorts.bands = [0, 200, 100, 0, 0];
+    route.kind = 'road';
+    route.condition = 100;
+    town2.food = 0;
+    home.food = r.popOf(home) * 0.75 * 60 + 100000; // deep surplus
+    r.caravans();
+    const overRoad = town2.food;
+    expect(overRoad).toBeLessThanOrEqual(ROUTE_SPECS.road.capacity * 0.9 + 1e-9);
+    route.kind = 'rail';
+    town2.food = 0;
+    home.food = r.popOf(home) * 0.75 * 60 + 100000;
+    r.caravans();
+    expect(town2.food).toBeGreaterThan(overRoad);
+    expect(town2.food).toBeLessThanOrEqual(ROUTE_SPECS.rail.capacity * 0.9 + 1e-9);
+  });
+});
+
+describe('Washouts & repair (M6c)', () => {
+  it('repairRoute restores a damaged link from the treasury', () => {
+    const r = flipped(42);
+    toStatehood(r);
+    const [a, b] = r.settlements;
+    r.treasury = 10000;
+    expect(r.buildRoad(a.id, b.id)).toBe(true);
+    const route = r.routeBetween(a.id, b.id)!;
+    route.condition = 40; // a storm took the bridge
+    const cost = r.repairCost(route);
+    expect(cost).toBeGreaterThan(0);
+    r.treasury = cost - 1;
+    expect(r.repairRoute(a.id, b.id)).toBe(false); // can't afford the crews
+    expect(route.condition).toBe(40);
+    r.treasury = cost + 5;
+    expect(r.repairRoute(a.id, b.id)).toBe(true);
+    expect(route.condition).toBe(100);
+    expect(r.treasury).toBeCloseTo(5, 5);
+    expect(r.repairRoute(a.id, b.id)).toBe(false); // nothing left to fix
+  });
+
+  it('trails cannot be bought back to health — only built links repair', () => {
+    const r = flipped(42);
+    toStatehood(r);
+    const [a, b] = r.settlements;
+    const route = r.routeBetween(a.id, b.id)!;
+    expect(route.kind).toBe('trail');
+    route.condition = 40;
+    r.treasury = 10000;
+    expect(r.repairRoute(a.id, b.id)).toBe(false);
+  });
+});
+
+describe('Militia relief rides the network (M6c)', () => {
+  it('a built link to a larger town counts as a relief line; a trail does not', () => {
+    const r = flipped(42);
+    const [home, town2] = r.settlements;
+    // make town2 clearly the smaller settlement
+    town2.cohorts.bands = [1, 4, 3, 0, 0];
+    home.cohorts.bands[2] += 50;
+    const route = r.routeBetween(home.id, town2.id)!;
+    route.kind = 'trail';
+    expect(r.reliefLine(town2)).toBe(false); // raiders cut trails easily
+    route.kind = 'road';
+    expect(r.reliefLine(town2)).toBe(true);
+    expect(r.reliefLine(home)).toBe(false); // nobody bigger to ride from
+    route.kind = 'rail';
+    expect(r.reliefLine(town2)).toBe(true);
   });
 });
 

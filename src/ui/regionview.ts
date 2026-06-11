@@ -4,7 +4,7 @@
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
 import type { RegionSim, Settlement, GovLean } from '../sim/region';
-import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS } from '../sim/region';
+import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, RAIL_ERA_YEAR } from '../sim/region';
 
 export class RegionView {
   selectedId: number | null = null;
@@ -63,8 +63,8 @@ export class RegionView {
     g.fillRect(0, 0, W, H);
     this.drawTerrain(W, H);
 
-    // Routes along their actual corridors (M6b): dotted trails, solid
-    // roads; line brightness is the route's condition.
+    // Routes along their actual corridors (M6b/6c): dotted trails, solid
+    // roads, cross-tied rail; line brightness is the route's condition.
     const ss = region.settlements;
     for (const r of region.routes) {
       const alpha = 0.2 + 0.6 * (r.condition / 100);
@@ -76,16 +76,35 @@ export class RegionView {
           g.fillRect(Math.round(p.px) - 1, Math.round(p.py) - 1, 2, 2);
         }
       } else {
-        g.strokeStyle = `rgba(216,180,106,${alpha})`;
-        g.lineWidth = 2;
+        const pts = r.path.map((cell) => {
+          const c = region.map.cellToCoord(cell.x, cell.y);
+          return this.toPx(c.rx, c.ry);
+        });
+        g.strokeStyle = r.kind === 'rail' ? `rgba(150,156,168,${alpha})` : `rgba(216,180,106,${alpha})`;
+        g.lineWidth = r.kind === 'rail' ? 3 : 2;
         g.beginPath();
-        for (let i = 0; i < r.path.length; i++) {
-          const c = region.map.cellToCoord(r.path[i].x, r.path[i].y);
-          const p = this.toPx(c.rx, c.ry);
-          if (i === 0) g.moveTo(p.px, p.py);
-          else g.lineTo(p.px, p.py);
+        for (let i = 0; i < pts.length; i++) {
+          if (i === 0) g.moveTo(pts[i].px, pts[i].py);
+          else g.lineTo(pts[i].px, pts[i].py);
         }
         g.stroke();
+        if (r.kind === 'rail') {
+          // cross-ties: short perpendicular ticks so steel reads as track
+          g.strokeStyle = `rgba(40,36,32,${alpha})`;
+          g.lineWidth = 1;
+          for (let i = 1; i < pts.length - 1; i += 2) {
+            const dx = pts[i + 1].px - pts[i - 1].px;
+            const dy = pts[i + 1].py - pts[i - 1].py;
+            const len = Math.hypot(dx, dy) || 1;
+            const nx = (-dy / len) * 3;
+            const ny = (dx / len) * 3;
+            g.beginPath();
+            g.moveTo(pts[i].px - nx, pts[i].py - ny);
+            g.lineTo(pts[i].px + nx, pts[i].py + ny);
+            g.stroke();
+          }
+          this.drawTrain(pts, r.condition);
+        }
       }
     }
 
@@ -94,6 +113,18 @@ export class RegionView {
       const { px, py } = this.toPx(t.x, t.y);
       const pop = Math.round(region.popOf(t));
       const houses = Math.min(7, 2 + Math.floor(pop / 25));
+      // Station (M6c): towns on the rail network get a depot by the tracks
+      if (region.routes.some((r) => r.kind === 'rail' && (r.a === t.id || r.b === t.id))) {
+        const sx = px + houses * 4 + 4;
+        g.fillStyle = '#7a3b2e'; // brick depot
+        g.fillRect(sx, py - 4, 10, 10);
+        g.fillStyle = '#3a2e26';
+        g.fillRect(sx - 1, py - 7, 12, 4); // roof
+        g.fillStyle = '#969ca8';
+        g.fillRect(sx - 2, py + 7, 14, 2); // platform
+        g.fillStyle = '#e8d27a';
+        g.fillRect(sx + 4, py - 1, 2, 2); // lamplit window
+      }
       g.fillStyle = '#1a1410';
       g.fillRect(px - houses * 4 - 1, py - 9, houses * 8 + 2, 18);
       for (let i = 0; i < houses; i++) {
@@ -165,6 +196,24 @@ export class RegionView {
     this.drawPanel();
     this.drawStatePanel();
     this.drawCeremony();
+  }
+
+  /** Rendering flavor only (transportation.md §7: links-not-vehicles) —
+   *  a little engine shuttles each rail line, smoke trailing. */
+  private drawTrain(pts: { px: number; py: number }[], condition: number): void {
+    if (pts.length < 2 || condition <= 20) return; // a washed-out line falls silent
+    const { g } = this;
+    const span = (pts.length - 1) * 2;
+    const t = Math.floor(this.frame / 4) % span;
+    const i = t < pts.length - 1 ? t : span - t; // out and back
+    const p = pts[Math.max(0, Math.min(pts.length - 1, i))];
+    g.fillStyle = '#23262c';
+    g.fillRect(Math.round(p.px) - 3, Math.round(p.py) - 3, 7, 5); // the engine
+    g.fillStyle = '#c2a14d';
+    g.fillRect(Math.round(p.px) - 2, Math.round(p.py) - 2, 2, 2); // brass boiler glint
+    const puff = Math.floor(this.frame / 8) % 3;
+    g.fillStyle = 'rgba(220,224,230,0.5)';
+    g.fillRect(Math.round(p.px) + 1, Math.round(p.py) - 6 - puff, 2 + puff, 2); // smoke
   }
 
   /** The generated land itself, in 8-bit blocks: this map IS the world. */
@@ -292,6 +341,9 @@ export class RegionView {
       `<p>services: <b>${lvl(r.servicesLevel)}</b> <button class="mini" id="svc-up">+</button><button class="mini" id="svc-dn">−</button></p>` +
       `<p>militia: <b>${lvl(r.militiaLevel)}</b> <button class="mini" id="mil-up">+</button><button class="mini" id="mil-dn">−</button></p>` +
       `<p class="insp-skills">high taxes breed strikes; services cost £ but save lives</p>` +
+      `<p class="insp-skills">${r.railUnlocked()
+        ? 'RAILWORKS chartered — lay rail from any town panel'
+        : `railworks expected ~${RAIL_ERA_YEAR}`}</p>` +
       this.freightHtml();
     this.statePanel.querySelector<HTMLInputElement>('#tax-slider')!.oninput = (e) => {
       r.taxRate = Number((e.target as HTMLInputElement).value) / 100;
@@ -342,9 +394,19 @@ export class RegionView {
         this.region.buildRoad(t.id, Number(rb.dataset.to));
       };
     }
+    for (const rb of this.panel.querySelectorAll<HTMLButtonElement>('.rail-btn')) {
+      rb.onclick = () => {
+        this.region.buildRail(t.id, Number(rb.dataset.to));
+      };
+    }
+    for (const rb of this.panel.querySelectorAll<HTMLButtonElement>('.repair-btn')) {
+      rb.onclick = () => {
+        this.region.repairRoute(t.id, Number(rb.dataset.to));
+      };
+    }
   }
 
-  /** Route list to every other town, with the terrain-priced build button. */
+  /** Route list to every other town, with terrain-priced build/repair buttons. */
   private routesHtml(t: Settlement): string {
     const r = this.region;
     const rows = r.settlements
@@ -353,13 +415,27 @@ export class RegionView {
         const route = r.routeBetween(t.id, o.id);
         const status = route ? `${route.kind} · ${Math.round(route.condition)}%` : 'no route';
         let btn = '';
-        if (r.stateProclaimed && (!route || route.kind !== 'road')) {
+        if (r.stateProclaimed && (!route || route.kind === 'trail')) {
           const cost = r.roadCost(t.id, o.id);
           if (cost) {
             const afford = r.treasury >= cost.total;
-            btn = ` <button class="mini road-btn" data-to="${o.id}" ${afford ? '' : 'disabled'} ` +
+            btn += ` <button class="mini road-btn" data-to="${o.id}" ${afford ? '' : 'disabled'} ` +
               `title="£${cost.total}: ${cost.breakdown}">road £${cost.total}</button>`;
           }
+        }
+        if (r.railUnlocked() && (!route || route.kind !== 'rail')) {
+          const cost = r.railCost(t.id, o.id);
+          if (cost) {
+            const afford = r.treasury >= cost.total;
+            btn += ` <button class="mini rail-btn" data-to="${o.id}" ${afford ? '' : 'disabled'} ` +
+              `title="£${cost.total}: ${cost.breakdown}">rail £${cost.total}</button>`;
+          }
+        }
+        if (r.stateProclaimed && route && route.kind !== 'trail' && route.condition < 85) {
+          const cost = r.repairCost(route);
+          const afford = r.treasury >= cost;
+          btn += ` <button class="mini repair-btn" data-to="${o.id}" ${afford ? '' : 'disabled'} ` +
+            `title="restore to 100%">repair £${cost}</button>`;
         }
         return `<li>${o.name} — <span class="insp-skills">${status}</span>${btn}</li>`;
       })

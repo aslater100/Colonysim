@@ -94,7 +94,7 @@ export interface Expedition {
  * links between settlements, laid along a real A* corridor through the
  * terrain. Everything that moves between towns rides this network.
  */
-export type RouteKind = 'trail' | 'road'; // rail arrives in 6c
+export type RouteKind = 'trail' | 'road' | 'rail';
 
 export interface Route {
   a: number; // settlement ids
@@ -114,7 +114,15 @@ export const ROUTE_SPECS: Record<RouteKind, {
 }> = {
   trail: { capacity: 60, speed: 1.0, buildPerCost: 0, maintPerCell: 0 },
   road: { capacity: 200, speed: 1.7, buildPerCost: 2, maintPerCell: 0.2 },
+  rail: { capacity: 1200, speed: 4.0, buildPerCost: 8, maintPerCell: 0.5 },
 };
+
+/** Trail < road < rail: links only ever upgrade (you don't tear up track). */
+const KIND_RANK: Record<RouteKind, number> = { trail: 0, road: 1, rail: 2 };
+
+/** Railworks (M6c, transportation.md §5): the rail boom opens ~1912 —
+ *  deliberately the best value in the game during its window. */
+export const RAIL_ERA_YEAR = 1912;
 
 /** A rotted route is still a walkable track — people keep using it. */
 const ROUTE_CONDITION_FLOOR = 15;
@@ -160,6 +168,7 @@ export class RegionSim {
   gdpLastMonth = 0;
   gameOver = false;
   private droughtAnnounced = false;
+  private railAnnounced = false;
   private nextId = 1000;
   private nextEventDay: number;
   private townNamePool: string[];
@@ -258,8 +267,8 @@ export class RegionSim {
     return c;
   }
 
-  /** Price a wagon road between two towns: the terrain's itemized bill. */
-  roadCost(aId: number, bId: number): { total: number; cells: number; breakdown: string } | null {
+  /** Price a built link between two towns: the terrain's itemized bill. */
+  linkCost(aId: number, bId: number, kind: 'road' | 'rail'): { total: number; cells: number; breakdown: string } | null {
     const a = this.settlement(aId);
     const b = this.settlement(bId);
     if (!a || !b) return null;
@@ -272,34 +281,84 @@ export class RegionSim {
       counts[label] = (counts[label] ?? 0) + 1;
     }
     const breakdown = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ');
-    return { total: Math.ceil(c.cost * ROUTE_SPECS.road.buildPerCost), cells: c.path.length, breakdown };
+    return { total: Math.ceil(c.cost * ROUTE_SPECS[kind].buildPerCost), cells: c.path.length, breakdown };
   }
 
-  /** Roads are a State work: grading and bridgework paid from the treasury. */
-  buildRoad(aId: number, bId: number): boolean {
+  roadCost(aId: number, bId: number): { total: number; cells: number; breakdown: string } | null {
+    return this.linkCost(aId, bId, 'road');
+  }
+
+  railCost(aId: number, bId: number): { total: number; cells: number; breakdown: string } | null {
+    return this.linkCost(aId, bId, 'rail');
+  }
+
+  /** The Railworks gate: steel needs both a State and the 1912 era. */
+  railUnlocked(): boolean {
+    return this.stateProclaimed && this.year >= RAIL_ERA_YEAR;
+  }
+
+  /** Built links are State works, paid from the treasury; links only upgrade. */
+  private buildLink(aId: number, bId: number, kind: 'road' | 'rail'): boolean {
     if (!this.stateProclaimed) return false;
+    if (kind === 'rail' && !this.railUnlocked()) return false;
     const existing = this.routeBetween(aId, bId);
-    if (existing && existing.kind === 'road') return false;
+    if (existing && KIND_RANK[existing.kind] >= KIND_RANK[kind]) return false;
     const a = this.settlement(aId);
     const b = this.settlement(bId);
-    const cost = this.roadCost(aId, bId);
+    const cost = this.linkCost(aId, bId, kind);
     if (!a || !b || !cost || this.treasury < cost.total) return false;
     const c = this.corridorBetween(a, b)!;
     this.treasury -= cost.total;
     if (existing) {
-      existing.kind = 'road';
+      existing.kind = kind;
       existing.condition = 100;
       existing.path = c.path;
       existing.terrainCost = c.cost;
     } else {
-      this.routes.push({ a: aId, b: bId, kind: 'road', condition: 100, path: c.path, terrainCost: c.cost, freight: 0 });
+      this.routes.push({ a: aId, b: bId, kind, condition: 100, path: c.path, terrainCost: c.cost, freight: 0 });
     }
-    this.addLog(`A wagon road opens between ${a.name} and ${b.name} — £${cost.total} of grading and bridgework.`, 'good');
+    this.addLog(
+      kind === 'road'
+        ? `A wagon road opens between ${a.name} and ${b.name} — £${cost.total} of grading and bridgework.`
+        : `Steel rails link ${a.name} and ${b.name} — £${cost.total} of cuttings, trestles, and track. The whistle carries for miles.`,
+      'good',
+    );
     return true;
   }
 
-  /** Shortest hop-path through the route graph; null when unconnected. */
-  private routePath(fromId: number, toId: number): Route[] | null {
+  buildRoad(aId: number, bId: number): boolean {
+    return this.buildLink(aId, bId, 'road');
+  }
+
+  buildRail(aId: number, bId: number): boolean {
+    return this.buildLink(aId, bId, 'rail');
+  }
+
+  /** Putting a storm-damaged link back in order: crews priced by what the
+   *  land charged to build it and how much of it is down. */
+  repairCost(r: Route): number {
+    return Math.max(1, Math.ceil(((100 - r.condition) / 100) * r.terrainCost * ROUTE_SPECS[r.kind].buildPerCost * 0.5));
+  }
+
+  /** The repair half of the storm loop (M6c): pay now, or let maintenance
+   *  crawl it back over months while the caravans squeeze through. */
+  repairRoute(aId: number, bId: number): boolean {
+    if (!this.stateProclaimed) return false;
+    const r = this.routeBetween(aId, bId);
+    if (!r || r.kind === 'trail' || r.condition >= 99) return false;
+    const cost = this.repairCost(r);
+    if (this.treasury < cost) return false;
+    this.treasury -= cost;
+    r.condition = 100;
+    const a = this.settlement(aId)?.name ?? '?';
+    const b = this.settlement(bId)?.name ?? '?';
+    this.addLog(`Repair gangs put the ${r.kind} between ${a} and ${b} back in order — £${cost}.`, 'good');
+    return true;
+  }
+
+  /** Shortest hop-path through the route graph; null when unconnected.
+   *  `usable` narrows the graph (e.g. militia relief rides built links only). */
+  private routePath(fromId: number, toId: number, usable: (r: Route) => boolean = () => true): Route[] | null {
     if (fromId === toId) return [];
     const prev = new Map<number, { via: Route; from: number }>();
     const seen = new Set([fromId]);
@@ -307,6 +366,7 @@ export class RegionSim {
     while (queue.length > 0) {
       const cur = queue.shift()!;
       for (const r of this.routes) {
+        if (!usable(r)) continue;
         const other = r.a === cur ? r.b : r.b === cur ? r.a : -1;
         if (other < 0 || seen.has(other)) continue;
         seen.add(other);
@@ -345,7 +405,17 @@ export class RegionSim {
     return this.settlements.every((t) => seen.has(t.id));
   }
 
-  /** Storms wear routes down; footfall keeps trails open, roads need £. */
+  /** A relief line (M6c): a built link — road or rail, in any state — to a
+   *  larger town means reinforcements can ride in when raiders strike. */
+  reliefLine(t: Settlement): boolean {
+    const pop = this.popOf(t);
+    return this.settlements.some(
+      (o) => o !== t && this.popOf(o) > pop && this.routePath(t.id, o.id, (r) => r.kind !== 'trail') !== null,
+    );
+  }
+
+  /** Storms wear routes down; footfall keeps trails open, roads need £.
+   *  M6c adds the washout: a big storm can take a whole crossing out. */
   private weatherRoutes(): void {
     const storm = this.weather.forDay(this.day).sky === 'storm';
     for (const r of this.routes) {
@@ -355,14 +425,28 @@ export class RegionSim {
         r.condition = Math.min(100, r.condition + 0.1);
       }
     }
+    if (storm && this.routes.length > 0 && this.rng.chance(0.12)) {
+      const r = this.routes[this.rng.int(this.routes.length)];
+      if (r.kind !== 'trail' && r.condition > 40) {
+        r.condition = Math.max(ROUTE_CONDITION_FLOOR, r.condition - 45);
+        const a = this.settlement(r.a)?.name ?? '?';
+        const b = this.settlement(r.b)?.name ?? '?';
+        this.addLog(
+          `Storm washout: the ${r.kind} between ${a} and ${b} is cut — ` +
+          `${r.kind === 'rail' ? 'a trestle is down' : 'a bridge is out'}. Repairs would cost £${this.repairCost(r)}.`,
+          'bad',
+        );
+      }
+    }
   }
 
-  /** Monthly road upkeep from the treasury — an unmaintained empire rots. */
+  /** Monthly upkeep on built links from the treasury — an unmaintained
+   *  empire rots. Rail crews cost more than road gangs. */
   private maintainRoutes(): void {
     let rotting = false;
     for (const r of this.routes) {
-      if (r.kind !== 'road') continue;
-      const bill = r.path.length * ROUTE_SPECS.road.maintPerCell;
+      if (r.kind === 'trail') continue;
+      const bill = r.path.length * ROUTE_SPECS[r.kind].maintPerCell;
       if (this.treasury >= bill) {
         this.treasury -= bill;
         r.condition = Math.min(100, r.condition + 8);
@@ -372,7 +456,7 @@ export class RegionSim {
       }
     }
     if (rotting && this.rng.chance(0.3)) {
-      this.addLog('No coin for the road gangs — the wagon roads are rutting over.', 'bad');
+      this.addLog('No coin for the road and rail gangs — the built routes are rutting over.', 'bad');
     }
   }
 
@@ -562,6 +646,15 @@ export class RegionSim {
       this.droughtAnnounced = false;
     }
     this.weatherRoutes();
+    // The rail era arrives (M6c): one announcement, the year the gate opens
+    if (!this.railAnnounced && this.railUnlocked()) {
+      this.railAnnounced = true;
+      this.addLog(
+        `RAILWORKS: ${this.stateName} charters its first railway engineers. ` +
+        `Steel rails can now be laid between the towns — the age of steam begins.`,
+        'good',
+      );
+    }
     if (this.day % 30 === 0) this.monthlyUpdate();
     if (this.day >= this.nextEventDay) {
       this.fireEvent();
@@ -743,10 +836,17 @@ export class RegionSim {
       const strength = 2 + this.rng.int(Math.max(2, Math.floor(this.totalPop() / 40)));
       const captain = 1 + 0.25 * this.roleMult(t, 'Captain');
       const funded = this.stateProclaimed ? 1 + 0.2 * this.militiaLevel + (this.govLean === 'mayor' ? 0.2 : 0) : 1;
-      const militia = this.workersOf(t) * 0.12 * captain * funded;
+      // M6c: the network is defense — a built link to a bigger town brings relief
+      const relief = this.reliefLine(t);
+      const militia = this.workersOf(t) * 0.12 * captain * funded * (relief ? 1.25 : 1);
       t.lastRaidDay = this.day;
       if (militia >= strength) {
-        this.addLog(`Raiders struck ${t.name} and were driven off by the militia.`, 'good');
+        this.addLog(
+          relief
+            ? `Raiders struck ${t.name} and were driven off — relief militia rode in along the line.`
+            : `Raiders struck ${t.name} and were driven off by the militia.`,
+          'good',
+        );
       } else {
         const losses = Math.min(this.popOf(t) * 0.06, strength - militia);
         this.removePop(t, losses);
