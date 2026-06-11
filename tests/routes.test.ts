@@ -194,17 +194,21 @@ describe('The rail era (M6c)', () => {
     const r = flipped(42);
     const [home, town2] = r.settlements;
     const route = r.routeBetween(home.id, town2.id)!;
+    // a hungry boomtown: need far beyond road capacity, so the link is the limit
+    town2.cohorts.bands = [0, 200, 100, 0, 0];
     route.kind = 'road';
     route.condition = 100;
     town2.food = 0;
     home.food = r.popOf(home) * 0.75 * 60 + 100000; // deep surplus
     r.caravans();
     const overRoad = town2.food;
+    expect(overRoad).toBeLessThanOrEqual(ROUTE_SPECS.road.capacity * 0.9 + 1e-9);
     route.kind = 'rail';
     town2.food = 0;
     home.food = r.popOf(home) * 0.75 * 60 + 100000;
     r.caravans();
     expect(town2.food).toBeGreaterThan(overRoad);
+    expect(town2.food).toBeLessThanOrEqual(ROUTE_SPECS.rail.capacity * 0.9 + 1e-9);
   });
 });
 
