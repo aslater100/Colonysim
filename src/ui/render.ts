@@ -30,6 +30,17 @@ const SKY_DAY = [104, 144, 170];
 const SKY_DUSK = [168, 110, 86];
 const SKY_NIGHT = [18, 22, 38];
 
+// Buildings that vent chimney smoke while built
+const SMOKE_BUILDINGS = new Set([
+  'house', 'cottage', 'kitchen', 'bakery', 'blacksmith', 'kiln', 'brewery', 'hearth',
+]);
+// Buildings whose windows (or fires) spill warm light after dark
+const GLOW_BUILDINGS = new Set([
+  'hearth', 'house', 'cottage', 'barracks', 'longhouse', 'hall', 'town_hall',
+  'kitchen', 'bakery', 'lodge', 'clinic', 'apothecary', 'schoolhouse', 'brewery',
+  'tailor', 'forester', 'blacksmith',
+]);
+
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
@@ -100,6 +111,20 @@ export class Renderer {
     g.fillStyle = hour > 5.5 && hour < 18.5 ? '#e8d27a' : '#cfd4e0';
     g.fillRect(Math.round(bx) - 5, Math.round(by) - 5, 10, 10);
     g.fillRect(Math.round(bx) - 7, Math.round(by) - 3, 14, 6);
+
+    // Drifting clouds during daylight
+    if (d > 0.15) {
+      g.fillStyle = `rgba(236,238,242,${0.08 + d * 0.14})`;
+      for (let i = 0; i < 6; i++) {
+        const speed = 0.06 + (i % 3) * 0.05;
+        const cx = Math.round(((i * 211 + this.frame * speed) % (W + 90)) - 45);
+        const cy = 14 + ((i * 67) % Math.max(1, Math.floor(H * 0.28)));
+        const cw = 30 + (i % 3) * 16;
+        g.fillRect(cx, cy, cw, 5);
+        g.fillRect(cx + 6, cy - 3, cw - 14, 3);
+        g.fillRect(cx + 9, cy + 5, cw - 18, 3);
+      }
+    }
 
     // Parallax bands: far ridge, near ridge, treeline — offset slightly by camera
     const bands = [
@@ -246,6 +271,26 @@ export class Renderer {
       if (this.cam.selectedBuilding === b.id) this.outline(bx, by, rw * TILE, rh * TILE);
     }
 
+    // Chimney smoke drifting up from working buildings
+    for (const b of sim.buildings) {
+      if (!b.built || !SMOKE_BUILDINGS.has(b.defId)) continue;
+      const def = buildingDef(b.defId);
+      const rot = b.rotation ?? 0;
+      const rw = rot % 2 === 1 ? def.h : def.w;
+      const bx = ox + b.x * TILE;
+      const by = oy + b.y * TILE;
+      if (bx < -TILE * 4 || by < -TILE * 4 || bx > this.canvas.width || by > this.canvas.height) continue;
+      const cx = b.defId === 'hearth' ? bx + TILE / 2 - 1 : bx + rw * TILE - 7;
+      for (let p = 0; p < 3; p++) {
+        const t = ((this.frame + b.id * 41 + p * 40) % 120) / 120;
+        const sx = Math.round(cx + Math.sin((t * 4 + p) * Math.PI) * 2);
+        const sy = Math.round(by + 1 - t * 13);
+        const size = 1 + Math.round(t * 2);
+        g.fillStyle = `rgba(208,204,196,${0.42 * (1 - t)})`;
+        g.fillRect(sx, sy, size, size);
+      }
+    }
+
     // Graves (over the burial-ground plot), then ground items, then the unburied
     for (const gr of sim.graves) {
       g.drawImage(this.sprites.grave, ox + gr.x * TILE, oy + gr.y * TILE);
@@ -325,6 +370,32 @@ export class Renderer {
     if (d < 0.45) {
       g.fillStyle = `rgba(10,12,30,${(0.45 - d) * 0.9})`;
       g.fillRect(0, 0, vw, vh);
+    }
+
+    // Warm light spills from windows and the hearth after dark
+    if (d < 0.4) {
+      const na = Math.min(1, (0.4 - d) * 3);
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      for (const b of sim.buildings) {
+        if (!b.built || !GLOW_BUILDINGS.has(b.defId)) continue;
+        const def = buildingDef(b.defId);
+        const rot = b.rotation ?? 0;
+        const rw = rot % 2 === 1 ? def.h : def.w;
+        const rh = rot % 2 === 1 ? def.w : def.h;
+        const cx = ox + (b.x + rw / 2) * TILE;
+        const cy = oy + (b.y + rh / 2) * TILE;
+        if (cx < -48 || cy < -48 || cx > vw + 48 || cy > vh + 48) continue;
+        const hearth = b.defId === 'hearth';
+        const flick = hearth ? Math.sin(this.frame * 0.22 + b.id) * 2 : 0;
+        const r = (hearth ? 26 : Math.max(rw, rh) * TILE * 0.85) + flick;
+        const grad = g.createRadialGradient(cx, cy, 1, cx, cy, r);
+        grad.addColorStop(0, `rgba(255,180,80,${(hearth ? 0.3 : 0.16) * na})`);
+        grad.addColorStop(1, 'rgba(255,180,80,0)');
+        g.fillStyle = grad;
+        g.fillRect(cx - r, cy - r, r * 2, r * 2);
+      }
+      g.restore();
     }
 
     // Fog of war: hard black over unexplored tiles
