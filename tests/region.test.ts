@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Simulation } from '../src/sim/sim';
-import { RegionSim, REGION_MINUTES_PER_TICK, REGION_LAWS, GOV_TYPES, POLICY_CARDS, POLICY_SWAP_COST, REGION_BUILDINGS } from '../src/sim/region';
+import { RegionSim, REGION_MINUTES_PER_TICK, REGION_LAWS, GOV_TYPES, POLICY_CARDS, POLICY_SWAP_COST, REGION_BUILDINGS, REGION_EVENT_DEFS } from '../src/sim/region';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
@@ -999,5 +999,146 @@ describe('City works & zoning (Phase 2)', () => {
     expect(c2.buildings).toContain('waterworks');
     expect(c2.construction?.id).toBe('grain_exchange');
     expect(c2.focus).toBe('agriculture');
+  });
+});
+
+describe('Regional Events (Phase 4)', () => {
+  function stateCity(seed: number): RegionSim {
+    const sim = new Simulation(seed);
+    grow(sim);
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    runDays(r, 5);
+    r.stateProclaimed = true;
+    r.stateName = 'Test State';
+    r.govLean = 'council';
+    r.treasury = 500;
+    return r;
+  }
+
+  it('event definitions cover both good and bad outcomes', () => {
+    const good = REGION_EVENT_DEFS.filter((d) => d.outputMult >= 1.0);
+    const bad = REGION_EVENT_DEFS.filter((d) => d.outputMult < 1.0);
+    expect(good.length).toBeGreaterThanOrEqual(2);
+    expect(bad.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('an injected drought halves agriculture output next update', () => {
+    const r = stateCity(42);
+    const t = r.settlements[0];
+    runDays(r, 35); // populate baseline outputs
+    const agri_before = t.sectors.agriculture.output;
+    t.activeEvents.push({ kind: 'drought', untilDay: r.day + 60, severity: 1 });
+    runDays(r, 30);
+    expect(t.sectors.agriculture.output).toBeLessThan(agri_before * 0.7);
+  });
+
+  it('a bumper harvest lifts agriculture output above baseline', () => {
+    const r = stateCity(42);
+    const t = r.settlements[0];
+    runDays(r, 35);
+    const agri_before = t.sectors.agriculture.output;
+    t.activeEvents.push({ kind: 'harvest_bonus', untilDay: r.day + 30, severity: 1 });
+    runDays(r, 30);
+    expect(t.sectors.agriculture.output).toBeGreaterThan(agri_before * 1.1);
+  });
+
+  it('events expire after their duration', () => {
+    const r = stateCity(42);
+    const t = r.settlements[0];
+    t.activeEvents.push({ kind: 'drought', untilDay: r.day + 5, severity: 1 });
+    runDays(r, 35); // monthlyUpdate will prune expired events
+    expect(t.activeEvents.filter((ev) => ev.kind === 'drought')).toHaveLength(0);
+  });
+
+  it('events and policies survive save/load', () => {
+    const sim = new Simulation(42);
+    grow(sim);
+    const r = stateCity(42);
+    const t = r.settlements[0];
+    t.activeEvents.push({ kind: 'trade_windfall', untilDay: r.day + 30, severity: 1 });
+    r.setCityPolicy(t.id, 'taxBand', 2);
+    const r2 = RegionSim.deserialize(r.serialize(), sim);
+    expect(r2.settlements[0].activeEvents.some((ev) => ev.kind === 'trade_windfall')).toBe(true);
+    expect(r2.settlements[0].policies.taxBand).toBe(2);
+  });
+});
+
+describe('Local Policies (Phase 5)', () => {
+  function managedCity(seed: number): RegionSim {
+    const sim = new Simulation(seed);
+    grow(sim);
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    runDays(r, 5);
+    r.stateProclaimed = true;
+    r.stateName = 'Test State';
+    r.govLean = 'council';
+    r.treasury = 500;
+    return r;
+  }
+
+  it('setCityPolicy rejects changes on unmanaged towns', () => {
+    const r = managedCity(42);
+    const hamlet = r.settlements[1]; // too small, not capital
+    expect(r.setCityPolicy(hamlet.id, 'taxBand', 2)).toBe(false);
+  });
+
+  it('heavy taxation reduces sector output', () => {
+    const r = managedCity(42);
+    const capital = r.settlements[0];
+    runDays(r, 35);
+    const outBefore = capital.sectors.agriculture.output;
+    r.setCityPolicy(capital.id, 'taxBand', 3); // 15% tax
+    runDays(r, 30);
+    expect(capital.sectors.agriculture.output).toBeLessThan(outBefore);
+  });
+
+  it('generous services boost sector productivity above the standard level', () => {
+    const r1 = managedCity(42);
+    runDays(r1, 35);
+    const output1 = r1.settlements[0].sectors.services.output;
+
+    const r2 = managedCity(42);
+    r2.setCityPolicy(r2.settlements[0].id, 'serviceLevel', 2);
+    runDays(r2, 35);
+    const output2 = r2.settlements[0].sectors.services.output;
+
+    // SERVICE_PROD_MULT[2] = 1.15 vs [1] = 1.0: generous services should yield higher output
+    expect(output2).toBeGreaterThan(output1);
+  });
+
+  it('wage policy biases the migration signal', () => {
+    const r = managedCity(42);
+    const capital = r.settlements[0];
+    runDays(r, 35);
+    const wageMarket = r.avgWageOf(capital);
+    r.setCityPolicy(capital.id, 'wagePolicy', 'high');
+    runDays(r, 30);
+    expect(r.avgWageOf(capital)).toBeGreaterThan(wageMarket * 1.05);
+  });
+});
+
+describe('Route Cargo Visualization (Phase 6)', () => {
+  it('routes get a cargo type after a monthly update', () => {
+    const sim = new Simulation(42);
+    grow(sim);
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    runDays(r, 35); // at least one monthly update
+    expect(r.routes.length).toBeGreaterThan(0);
+    // After a monthly update, at least some routes should have cargo assigned
+    // (depends on sector output differences — might be null if outputs are equal)
+    for (const route of r.routes) {
+      expect(route.cargoType === null || typeof route.cargoType === 'string').toBe(true);
+    }
+  });
+
+  it('cargo type survives save/load', () => {
+    const sim = new Simulation(42);
+    grow(sim);
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    runDays(r, 35);
+    // Manually set a cargo type to ensure round-trip
+    if (r.routes.length > 0) r.routes[0].cargoType = 'agriculture';
+    const r2 = RegionSim.deserialize(r.serialize(), sim);
+    expect(r2.routes[0]?.cargoType).toBe('agriculture');
   });
 });

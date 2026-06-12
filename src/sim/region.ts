@@ -76,6 +76,10 @@ export interface Settlement {
   construction: CityConstruction | null;
   /** Development focus: biases where this town's labor drifts. */
   focus: TownFocus;
+  /** Phase 4: active regional events currently affecting this settlement. */
+  activeEvents: ActiveEvent[];
+  /** Phase 5: local governance policies for managed cities. */
+  policies: CityPolicies;
 }
 
 /** Local markets (GDD §5.2, first slice): each town prices the two goods
@@ -169,6 +173,54 @@ export const CITY_MANAGEMENT_POP = 400;
 export const FOCUS_CHANGE_COST = 10;
 
 export type TownFocus = SectorId | 'balanced';
+
+// ---- Phase 4: Regional Events ----
+
+export type RegionalEventKind =
+  | 'drought' | 'flood' | 'plague' | 'earthquake'
+  | 'harvest_bonus' | 'trade_windfall' | 'labor_shortage' | 'gold_rush';
+
+export interface ActiveEvent {
+  kind: RegionalEventKind;
+  untilDay: number;
+  severity: number; // 0..1 — scales the output modifier
+}
+
+export interface RegionalEventDef {
+  kind: RegionalEventKind;
+  name: string;
+  sector: SectorId | 'all';
+  outputMult: number;   // multiplier applied to the affected sector output
+  durationDays: number;
+  probability: number;  // per-settlement per monthly update
+  desc: string;
+}
+
+export const REGION_EVENT_DEFS: RegionalEventDef[] = [
+  { kind: 'drought',       name: 'Drought',       sector: 'agriculture', outputMult: 0.60, durationDays: 60, probability: 0.04, desc: 'Dry weeks bake the fields. Agriculture -40%.' },
+  { kind: 'flood',         name: 'Flood',         sector: 'agriculture', outputMult: 0.70, durationDays: 30, probability: 0.03, desc: 'River breaks its banks. Agriculture -30%.' },
+  { kind: 'plague',        name: 'Plague',        sector: 'all',         outputMult: 0.75, durationDays: 45, probability: 0.02, desc: 'Disease spreads through the streets. All output -25%.' },
+  { kind: 'earthquake',    name: 'Earthquake',    sector: 'industry',    outputMult: 0.50, durationDays: 20, probability: 0.01, desc: 'Mills and forges go dark. Industry -50%.' },
+  { kind: 'harvest_bonus', name: 'Bumper Harvest', sector: 'agriculture', outputMult: 1.40, durationDays: 30, probability: 0.05, desc: 'Rains and sunshine, perfectly timed. Agriculture +40%.' },
+  { kind: 'trade_windfall', name: 'Trade Windfall', sector: 'services', outputMult: 1.20, durationDays: 30, probability: 0.04, desc: 'Caravans arrive flush with coin. Services +20%.' },
+  { kind: 'labor_shortage', name: 'Labor Shortage', sector: 'industry', outputMult: 0.75, durationDays: 40, probability: 0.03, desc: 'Workers drain to the capital. Industry -25%.' },
+  { kind: 'gold_rush',     name: 'Gold Rush',     sector: 'information', outputMult: 1.30, durationDays: 45, probability: 0.02, desc: 'Prospectors flood in hungry for maps and news. Information +30%.' },
+];
+
+// ---- Phase 5: Local Policies ----
+
+export type WagePolicy = 'low' | 'market' | 'high';
+
+export interface CityPolicies {
+  taxBand: number;         // 0–3: 0=none, 1=light (5%), 2=standard (10%), 3=heavy (15%)
+  wagePolicy: WagePolicy;  // shapes migration pull and sector cost
+  serviceLevel: number;    // 0–2: 0=minimal, 1=standard, 2=generous
+}
+
+export const DEFAULT_CITY_POLICIES: CityPolicies = { taxBand: 0, wagePolicy: 'market', serviceLevel: 1 };
+export const TAX_BAND_RATES = [0, 0.05, 0.10, 0.15] as const;
+export const TAX_BAND_LABELS = ['None', 'Light (5%)', 'Standard (10%)', 'Heavy (15%)'] as const;
+export const SERVICE_PROD_MULT = [0.90, 1.0, 1.15] as const;
 
 /** Provisional government lean chosen at the Incorporation ceremony. */
 export type GovLean = 'council' | 'mayor' | 'compact';
@@ -898,6 +950,7 @@ export interface Route {
   path: { x: number; y: number }[]; // region cells, computed once by A*
   terrainCost: number; // summed cell costs — what the land charges
   freight: number; // food moved last caravan season (the overlay number)
+  cargoType: SectorId | null; // Phase 6: dominant sector cargo flowing this route
 }
 
 export const ROUTE_SPECS: Record<RouteKind, {
@@ -1330,7 +1383,7 @@ export class RegionSim {
     const path = c ? c.path : [this.map.coordToCell(a.x, a.y), this.map.coordToCell(b.x, b.y)];
     this.routes.push({
       a: fromId, b: toId, kind: 'trail', condition: 100,
-      path, terrainCost: c ? c.cost : path.length * 2, freight: 0,
+      path, terrainCost: c ? c.cost : path.length * 2, freight: 0, cargoType: null,
     });
   }
 
@@ -1762,7 +1815,7 @@ export class RegionSim {
       existing.path = c.path;
       existing.terrainCost = c.cost;
     } else {
-      this.routes.push({ a: aId, b: bId, kind, condition: 100, path: c.path, terrainCost: c.cost, freight: 0 });
+      this.routes.push({ a: aId, b: bId, kind, condition: 100, path: c.path, terrainCost: c.cost, freight: 0, cargoType: null });
     }
     this.addLog(
       kind === 'road'
@@ -1979,6 +2032,8 @@ export class RegionSim {
       buildings: [],
       construction: null,
       focus: 'balanced',
+      activeEvents: [],
+      policies: { ...DEFAULT_CITY_POLICIES },
     };
     region.settlements.push(home);
 
@@ -2236,6 +2291,8 @@ export class RegionSim {
       }
     }
     for (const t of this.settlements) this.updateSectors(t); // Phase 1: labor follows the technology
+    this.tickRegionalEvents(); // Phase 4: disasters and windfalls
+    this.updateRouteCargo();   // Phase 6: cargo labels follow sector surplus
     this.migrate();
     this.caravans();
     this.traders();
@@ -2395,6 +2452,7 @@ export class RegionSim {
       pop * 0.03 * this.militiaLevel +
       this.settlements.length * 5 + // administration
       this.buildingUpkeep() + // Phase 2: the civic works keep their lights on
+      this.policyServiceUpkeep() + // Phase 5: generous city services cost the treasury
       this.policyUpkeep() + // active policy running costs
       (this.passedLaws.includes('welfare_benefits') ? pop * 0.01 : 0) + // welfare relief payments
       (warMob ? pop * warMob.upkeepPerPop : 0) + // …and the drain runs concurrently (GDD §7.2)
@@ -2659,6 +2717,12 @@ export class RegionSim {
     const strike = this.day < t.strikeUntil ? 0.6 : 1;
     // A resentful town works at half-heart (Phase 0 loyalty feeds Phase 1 output).
     const loyalty = 0.7 + 0.3 * (t.loyaltyToFaction / 100);
+    // Phase 5: service level improves sector productivity
+    const svcIdx = Math.min(2, Math.max(0, Math.round(t.policies.serviceLevel)));
+    const svcMult = SERVICE_PROD_MULT[svcIdx];
+    // Phase 5: tax band reduces effective sector output
+    const taxRate = TAX_BAND_RATES[Math.min(3, Math.max(0, t.policies.taxBand))];
+    const taxMult = 1 - taxRate;
     for (const id of SECTOR_IDS) {
       const s = t.sectors[id];
       const before = s.share;
@@ -2667,9 +2731,25 @@ export class RegionSim {
       const landTerm = id === 'agriculture' ? 0.6 + 0.4 * t.landQuality : 1;
       // Phase 2: civic works multiply what each hand produces
       const perWorker = SECTOR_BASE_OUTPUT[id] * this.sectorProductivity(id) * landTerm * (1 + this.buildingBonus(t, id));
-      s.output = workers * s.share * perWorker * strike * loyalty;
-      s.wage = perWorker * strike * loyalty;
+      // Phase 4: active event modifiers (disasters reduce, windfalls boost)
+      const eventMult = this.eventOutputMult(t, id);
+      s.output = workers * s.share * perWorker * strike * loyalty * eventMult * svcMult * taxMult;
+      // Phase 5: wage policy adjusts the migration signal without affecting output
+      const wagePolicyMult = t.policies.wagePolicy === 'low' ? 0.85 : t.policies.wagePolicy === 'high' ? 1.20 : 1.0;
+      s.wage = perWorker * strike * loyalty * eventMult * svcMult * wagePolicyMult;
     }
+  }
+
+  /** Combined output multiplier from all active events for a given sector. */
+  private eventOutputMult(t: Settlement, sector: SectorId): number {
+    let mult = 1;
+    for (const ev of t.activeEvents) {
+      if (ev.untilDay <= this.day) continue;
+      const def = REGION_EVENT_DEFS.find((d) => d.kind === ev.kind);
+      if (!def) continue;
+      if (def.sector === sector || def.sector === 'all') mult *= def.outputMult;
+    }
+    return mult;
   }
 
   /** Total sector output, £/month — the town's contribution to GDP. */
@@ -2772,6 +2852,76 @@ export class RegionSim {
       for (const id of t.buildings) total += REGION_BUILDINGS.find((b) => b.id === id)?.upkeep ?? 0;
     }
     return total;
+  }
+
+  // ---- Phase 4: Regional Events ----
+
+  /** Fire and expire settlement-level events monthly. */
+  private tickRegionalEvents(): void {
+    for (const t of this.settlements) {
+      // Expire events whose duration has run
+      t.activeEvents = t.activeEvents.filter((ev) => ev.untilDay > this.day);
+      // Roll each event definition per settlement
+      for (const def of REGION_EVENT_DEFS) {
+        if (!this.rng.chance(def.probability)) continue;
+        if (t.activeEvents.some((ev) => ev.kind === def.kind)) continue; // no stacking
+        t.activeEvents.push({ kind: def.kind, untilDay: this.day + def.durationDays, severity: 1 });
+        const good = def.outputMult >= 1.0;
+        this.townEvent(t, `${def.name}: ${def.desc}`, good ? 'good' : 'bad');
+        this.addLog(`${def.name} strikes ${t.name} — ${def.desc}`, good ? 'good' : 'bad');
+      }
+    }
+  }
+
+  // ---- Phase 5: Local Policies ----
+
+  /** Change a local governance policy for a managed city. */
+  setCityPolicy(townId: number, key: keyof CityPolicies, value: number | WagePolicy): boolean {
+    const t = this.settlement(townId);
+    if (!t || !this.canManageCity(t).ok) return false;
+    if (key === 'taxBand') {
+      const v = Number(value);
+      if (v < 0 || v > 3 || !Number.isInteger(v)) return false;
+      t.policies.taxBand = v;
+    } else if (key === 'wagePolicy') {
+      if (value !== 'low' && value !== 'market' && value !== 'high') return false;
+      t.policies.wagePolicy = value as WagePolicy;
+    } else if (key === 'serviceLevel') {
+      const v = Number(value);
+      if (v < 0 || v > 2 || !Number.isInteger(v)) return false;
+      t.policies.serviceLevel = v;
+    }
+    return true;
+  }
+
+  /** Extra monthly treasury cost for cities running generous services. */
+  private policyServiceUpkeep(): number {
+    let total = 0;
+    for (const t of this.settlements) {
+      if (!this.canManageCity(t).ok) continue;
+      if (t.policies.serviceLevel >= 2) total += this.popOf(t) * 0.002;
+    }
+    return total;
+  }
+
+  // ---- Phase 6: Trade Route Cargo ----
+
+  /** Monthly: tag each route with its dominant cargo based on the output gap
+   *  between connected settlements. The greater the surplus difference in a
+   *  sector, the more that sector's goods fill the wagons. */
+  private updateRouteCargo(): void {
+    for (const route of this.routes) {
+      const a = this.settlement(route.a);
+      const b = this.settlement(route.b);
+      if (!a || !b) { route.cargoType = null; continue; }
+      let maxDiff = 0;
+      let dominant: SectorId | null = null;
+      for (const id of SECTOR_IDS) {
+        const diff = Math.abs(a.sectors[id].output - b.sectors[id].output);
+        if (diff > maxDiff) { maxDiff = diff; dominant = id; }
+      }
+      route.cargoType = maxDiff > 0.5 ? dominant : null;
+    }
   }
 
   /** Finish any construction whose day has come. */
@@ -3087,6 +3237,8 @@ export class RegionSim {
           buildings: [],
           construction: null,
           focus: 'balanced',
+          activeEvents: [],
+          policies: { ...DEFAULT_CITY_POLICIES },
         };
         this.settlements.push(town);
         // Reveal the new settlement and surrounding area
@@ -4614,10 +4766,12 @@ export class RegionSim {
       buildings: s.buildings ?? [],
       construction: s.construction ?? null,
       focus: s.focus ?? 'balanced',
+      activeEvents: s.activeEvents ?? [],
+      policies: s.policies ?? { ...DEFAULT_CITY_POLICIES },
     }));
     r.notables = d.notables;
     r.expeditions = d.expeditions;
-    r.routes = d.routes;
+    r.routes = (d.routes as Route[]).map((rt) => ({ ...rt, cargoType: rt.cargoType ?? null }));
     r.log = d.log;
     r.stateProclaimed = d.stateProclaimed;
     r.ceremonyPending = d.ceremonyPending;
