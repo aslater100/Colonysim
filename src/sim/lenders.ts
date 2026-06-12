@@ -20,10 +20,10 @@ export function createInitialLenders(): Lender[] {
     lenders.push({
       id: i,
       name: lenderNames[i],
-      maxLoan: 10000 + i * 2000, // varying max loan amounts
-      interestRate: 0.05 + i * 0.01, // 5%, 6%, 7% interest rates
+      maxLoan: 5000 + i * 1000, // £5k, £6k, £7k — useful for cash flow, not gate-clearing
+      interestRate: 0.05 + i * 0.01, // 5%, 6%, 7% annual interest
       reliability: 80 - i * 5, // 80, 75, 70 reliability scores
-      liquidCash: 50000 + i * 10000, // varying available capital
+      liquidCash: 15000 + i * 3000, // £15k, £18k, £21k available capital
     });
   }
 

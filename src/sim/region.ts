@@ -127,10 +127,11 @@ const SECTOR_BASE_SHARES: Record<SectorId, number> = {
   agriculture: 0.72, industry: 0.14, services: 0.11, information: 0.03,
 };
 
-/** Base output per worker per month (£), before tech multipliers. Richer
- *  sectors pay more — that wage gap is what pulls labor off the land. */
+/** Base output per worker per month (£), before tech multipliers. Calibrated
+ *  so that a 200-worker region earns ~£2,400/mo GDP (taxes cover services at
+ *  10% rate). Richer sectors pay more — the wage gap pulls labor off the land. */
 const SECTOR_BASE_OUTPUT: Record<SectorId, number> = {
-  agriculture: 1.0, industry: 1.4, services: 1.3, information: 1.8,
+  agriculture: 10.0, industry: 14.0, services: 13.0, information: 18.0,
 };
 
 export function defaultSectors(): Sectors {
@@ -3279,8 +3280,8 @@ export class RegionSim {
   charterEligible(): boolean {
     // GDD §2.2: 3 towns, 500 citizens, all connected by routes, plus economic and military strength
     if (this.settlements.length < 3 || this.totalPop() < 500 || !this.connectedToAll()) return false;
-    // Economic gate: must have £50k for state administration
-    if (this.treasury < 50000) return false;
+    // Economic gate: £8k net (after loans) — roughly 3-4 months of surplus at charter scale
+    if (this.getNetTreasury() < 8000) return false;
     // Military gate: must have 10+ garrison across all settlements
     const totalGarrison = this.settlements.reduce((sum, s) => sum + (s.garrisonStrength || 0), 0);
     if (totalGarrison < 10) return false;
@@ -3347,8 +3348,8 @@ export class RegionSim {
     this.stateProclaimed = true;
     this.stateName = stateName.trim() || 'The Valley State';
     this.govLean = lean;
-    // Charter ceremony costs 30k; remaining treasury becomes state capital (minimum 50k residual)
-    const charterCost = 30000;
+    // Charter ceremony costs £4k; remaining treasury becomes state capital (minimum 50 residual)
+    const charterCost = 4000;
     this.treasury = Math.max(50, this.treasury - charterCost);
     const mayor = this.notables.find((n) => n.alive && n.role === 'Mayor');
     this.addLog(
@@ -3551,8 +3552,8 @@ export class RegionSim {
       !this.has('statecraft') ||
       this.totalPop() < 1500
     ) return false;
-    // Economic gate: must have £250k for nation-founding
-    if (this.treasury < 250000) return false;
+    // Economic gate: £35k net (after loans) — ~15 months of state-level surplus
+    if (this.getNetTreasury() < 35000) return false;
     // Military gate: must have 15+ combined garrison + militia
     const totalGarrison = this.settlements.reduce((sum, s) => sum + (s.garrisonStrength || 0), 0);
     const combinedMilitary = totalGarrison + (this.militiaLevel || 0) * 3;
@@ -3577,9 +3578,9 @@ export class RegionSim {
       m.notableId = assignments[m.role] ?? null;
     }
     if (!def.electionsRequired) this.nextElectionDay = -1;
-    // Constitutional Convention cost: £200k for administrative setup
-    const convocationCost = 200000;
-    this.treasury = Math.max(50000, this.treasury - convocationCost);
+    // Constitutional Convention cost: £25k for administrative setup
+    const convocationCost = 25000;
+    this.treasury = Math.max(5000, this.treasury - convocationCost);
     this.addLog(
       `THE PROCLAMATION OF ${name.toUpperCase()}: The Constitutional Convention has spoken. ` +
       `${def.name} — the form of government is set. Constitutional expenses: £${convocationCost}. A new era begins.`,
@@ -5049,6 +5050,14 @@ export class RegionSim {
    */
   getTotalDebt(): number {
     return this.loans.reduce((sum, loan) => sum + (loan.defaulted ? 0 : loan.borrowed), 0);
+  }
+
+  /**
+   * Treasury minus outstanding loan debt — used for progression gate checks
+   * so loans can't trivially bypass economic gates.
+   */
+  getNetTreasury(): number {
+    return this.treasury - this.getTotalDebt();
   }
 
   /**

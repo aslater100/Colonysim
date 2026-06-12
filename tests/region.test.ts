@@ -85,7 +85,7 @@ describe('RegionSim (aggregate model)', () => {
   function toStatehood(r: RegionSim): void {
     for (let year = 0; year < 30 && !r.ceremonyPending; year++) {
       // keep the charter's economic and military gates satisfied as towns appear
-      r.treasury = Math.max(r.treasury, 50000);
+      r.treasury = Math.max(r.treasury, 8000);
       for (const t of r.settlements) {
         t.garrisonStrength = Math.max(t.garrisonStrength || 0, 5);
       }
@@ -267,7 +267,7 @@ describe('Region save/load', () => {
     const { sim, r } = flippedPair(42);
     for (let year = 0; year < 30 && !r.ceremonyPending; year++) {
       // keep the charter's economic and military gates satisfied as towns appear
-      r.treasury = Math.max(r.treasury, 50000);
+      r.treasury = Math.max(r.treasury, 8000);
       for (const t of r.settlements) {
         t.garrisonStrength = Math.max(t.garrisonStrength || 0, 5);
       }
@@ -460,7 +460,7 @@ describe('Constitutional Convention & Nation Proclamation (v0.15.0)', () => {
     r.stateProclaimed = true;
     r.stateName = 'Testonia';
     r.govLean = 'council';
-    r.treasury = 250000; // Nation requires £250k
+    r.treasury = 40000; // Nation requires £35k net
     r.militiaLevel = 2; // Militia contributes to military requirement (2*3=6 + 10 garrison = 16 >= 15)
     r.researched.push('statecraft', 'universal_suffrage', 'income_tax', 'free_press', 'labor_law', 'public_education');
     // Force population above threshold
@@ -637,7 +637,7 @@ describe('Policy slots & expanded statute book (v0.16.0)', () => {
     r.stateProclaimed = true;
     r.stateName = 'Testonia';
     r.govLean = 'council';
-    r.treasury = 500000; // Nation costs £200k, start with £500k
+    r.treasury = 50000; // Nation costs £25k, start with £50k
     r.militiaLevel = 2; // Militia contributes to military requirement (2*3=6 + 10 garrison = 16 >= 15)
     r.researched.push('statecraft', 'universal_suffrage', 'income_tax', 'free_press', 'labor_law', 'public_education');
     for (const t of r.settlements) {
