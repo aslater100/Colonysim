@@ -802,10 +802,14 @@ export class Simulation {
 
   // ---- the flip trigger (GDD §2.3): outgrow the valley, found town #2 ----
   canFoundSecondTown(): { ok: boolean; reason: string } {
+    const t = TUNING;
     if (this.settlers.length < 20) return { ok: false, reason: `needs 20 settlers (has ${this.settlers.length})` };
     if (this.stock.wood < 100) return { ok: false, reason: `needs 100 wood (has ${this.stock.wood})` };
     if (this.stock.meal + this.stock.grain < 120) {
       return { ok: false, reason: `needs 120 food (has ${this.stock.meal + this.stock.grain})` };
+    }
+    if (this.economy.cash < t.townFoundingMinCash) {
+      return { ok: false, reason: `needs £${t.townFoundingMinCash} cash (has £${Math.round(this.economy.cash)})` };
     }
     if (this.raidActive) return { ok: false, reason: 'not during a raid' };
     return { ok: true, reason: '' };

@@ -215,6 +215,9 @@ export const TUNING = {
   immigrantStopPop: 133, // GDD §2.3: "wagons stop arriving — overcrowding"
   birthChancePerCoupleDay: 0.006,
   birthMinPop: 4,
+  // Town founding (economic gate)
+  townFoundingMinCash: 2000,  // minimum cash balance required to found a town
+  townFoundingCost: 1500,     // cost to launch founding expedition
   // Burial
   buryWork: 45,
   unburiedMoodPenalty: 6,

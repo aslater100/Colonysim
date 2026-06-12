@@ -1,7 +1,7 @@
 import './style.css';
 import { Simulation } from './sim/sim';
 import { RegionSim } from './sim/region';
-import { TICKS_PER_SECOND } from './sim/defs';
+import { TICKS_PER_SECOND, TUNING } from './sim/defs';
 import { MAP_W, MAP_H } from './sim/world';
 import { Renderer, drawMinimap } from './ui/render';
 import type { Camera } from './ui/render';
@@ -165,7 +165,13 @@ function enterRegionMode(r: RegionSim): void {
   hud.setRegionMode(true);
 }
 
-hud.onFoundTown = () => enterRegionMode(RegionSim.fromTown(sim, 8, 80, 80));
+hud.onFoundTown = () => {
+  // Deduct founding cost from town economy before creating region
+  if (sim.canFoundSecondTown().ok) {
+    sim.economy.cash -= TUNING.townFoundingCost;
+  }
+  enterRegionMode(RegionSim.fromTown(sim, 8, 80, 80));
+};
 if (boot.region) enterRegionMode(boot.region);
 
 // ---- input ----
