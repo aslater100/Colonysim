@@ -3,8 +3,8 @@
  * operating altitude after the flip (GDD §2.5). Painterly backdrop, town
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
-import type { RegionSim, Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, TownFocus } from '../sim/region';
-import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST } from '../sim/region';
+import type { RegionSim, Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, TownFocus, WagePolicy } from '../sim/region';
+import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, DEFAULT_CITY_POLICIES } from '../sim/region';
 
 export class RegionView {
   selectedId: number | null = null;
@@ -165,6 +165,25 @@ export class RegionView {
           this.drawPod(pts, r.condition);
         }
       }
+    }
+
+    // Phase 6: Cargo flow indicators — a small colored dot at each route midpoint
+    const cargoRgb: Record<string, string> = {
+      agriculture: '194,161,77', industry: '140,104,72', services: '74,127,164', information: '122,90,154',
+    };
+    for (const r of region.routes) {
+      if (!r.cargoType || r.kind === 'trail' || r.path.length < 2) continue;
+      const mid = r.path[Math.floor(r.path.length / 2)];
+      const mc = region.map.cellToCoord(mid.x, mid.y);
+      const mp = this.toPx(mc.rx, mc.ry);
+      const rgb = cargoRgb[r.cargoType];
+      if (!rgb) continue;
+      g.fillStyle = `rgba(${rgb},0.85)`;
+      g.fillRect(Math.round(mp.px) - 3, Math.round(mp.py) - 3, 6, 6);
+      g.fillStyle = `rgba(10,10,10,0.7)`;
+      g.fillRect(Math.round(mp.px) - 2, Math.round(mp.py) - 2, 4, 4);
+      g.fillStyle = `rgba(${rgb},1)`;
+      g.fillRect(Math.round(mp.px) - 1, Math.round(mp.py) - 1, 2, 2);
     }
 
     // Settlements — tiered sprites: shack → cottage → house → town → manor → castle
@@ -1383,6 +1402,15 @@ export class RegionView {
     for (const fb of this.panel.querySelectorAll<HTMLButtonElement>('.focus-btn')) {
       fb.onclick = () => { this.region.setTownFocus(t.id, fb.dataset.f as TownFocus); this.refreshPanel(); };
     }
+    for (const tb of this.panel.querySelectorAll<HTMLButtonElement>('.policy-tax-btn')) {
+      tb.onclick = () => { this.region.setCityPolicy(t.id, 'taxBand', Number(tb.dataset.tax)); this.refreshPanel(); };
+    }
+    for (const wb of this.panel.querySelectorAll<HTMLButtonElement>('.policy-wage-btn')) {
+      wb.onclick = () => { this.region.setCityPolicy(t.id, 'wagePolicy', wb.dataset.wage as WagePolicy); this.refreshPanel(); };
+    }
+    for (const sb of this.panel.querySelectorAll<HTMLButtonElement>('.policy-svc-btn')) {
+      sb.onclick = () => { this.region.setCityPolicy(t.id, 'serviceLevel', Number(sb.dataset.svc)); this.refreshPanel(); };
+    }
   }
 
   /** Route list to every other town, with terrain-priced build/repair buttons. */
@@ -1392,7 +1420,11 @@ export class RegionView {
       .filter((o) => o.id !== t.id)
       .map((o) => {
         const route = r.routeBetween(t.id, o.id);
-        const status = route ? `${route.kind} · ${Math.round(route.condition)}%` : 'no route';
+        const cargoColors: Record<string, string> = { agriculture: '#c2a14d', industry: '#8c6848', services: '#4a7fa4', information: '#7a5a9a' };
+        const cargoBadge = route?.cargoType
+          ? ` <span style="color:${cargoColors[route.cargoType]}">[${route.cargoType.slice(0, 3)}]</span>`
+          : '';
+        const status = route ? `${route.kind} · ${Math.round(route.condition)}%${cargoBadge}` : 'no route';
         let btn = '';
         if (r.stateProclaimed && (!route || route.kind === 'trail')) {
           const cost = r.roadCost(t.id, o.id);
@@ -1484,6 +1516,90 @@ export class RegionView {
     );
   }
 
+  /** Phase 3: Sector bars — four colored bands showing where labor sits and
+   *  what it earns, with a growth arrow so the player can read the trend. */
+  private sectorsHtml(t: Settlement): string {
+    const r = this.region;
+    const SECTOR_COLORS: Record<string, string> = {
+      agriculture: '#c2a14d', industry: '#8c6848', services: '#4a7fa4', information: '#7a5a9a',
+    };
+    const CARGO_ICONS: Record<string, string> = {
+      agriculture: 'agri', industry: 'ind', services: 'svc', information: 'info',
+    };
+    // Compute GDP contribution of this town for context
+    const totalOutput = SECTOR_IDS.reduce((s, id) => s + t.sectors[id].output, 0);
+    const rows = SECTOR_IDS.map((id) => {
+      const s = t.sectors[id];
+      const pct = Math.round(s.share * 100);
+      const arrow = s.growth > 0.001 ? '+' : s.growth < -0.001 ? '-' : '=';
+      const arrowClass = s.growth > 0.001 ? 'insp-state' : s.growth < -0.001 ? 'insp-cond' : 'insp-skills';
+      const color = SECTOR_COLORS[id];
+      void CARGO_ICONS[id];
+      // Active events affecting this sector
+      const activeEvt = t.activeEvents.find((ev) => {
+        const def = REGION_EVENT_DEFS.find((d) => d.kind === ev.kind);
+        return def && (def.sector === id || def.sector === 'all') && ev.untilDay > r.day;
+      });
+      const evtBadge = activeEvt ? ` <span class="insp-cond">[${REGION_EVENT_DEFS.find((d) => d.kind === activeEvt.kind)?.name ?? '!'}]</span>` : '';
+      return (
+        `<div class="bar-row">` +
+        `<span style="color:${color};min-width:70px">${SECTOR_NAMES[id]}</span>` +
+        `<div class="bar" style="flex:1">` +
+        `<div class="bar-fill" style="width:${pct}%;background:${color}"></div>` +
+        `</div>` +
+        `<span style="min-width:28px;text-align:right">${pct}%</span>` +
+        `<span class="${arrowClass}" style="min-width:12px;text-align:center">${arrow}</span>` +
+        `<span class="insp-skills" style="min-width:52px;text-align:right">${s.output.toFixed(1)}/m</span>` +
+        `<span class="insp-skills" style="min-width:40px;text-align:right">w${s.wage.toFixed(2)}</span>` +
+        evtBadge +
+        `</div>`
+      );
+    }).join('');
+    const gdpNote = totalOutput > 0 ? `<span class="insp-skills">GDP contribution £${(totalOutput * 1.08).toFixed(1)}/month</span>` : '';
+    return `<p class="insp-skills">SECTORS${gdpNote ? ' · ' : ''}${gdpNote}</p>${rows}`;
+  }
+
+  /** Phase 5: local governance policies panel — tax band, wage policy, service
+   *  level — shown only in managed cities. */
+  private policiesHtml(t: Settlement): string {
+    const r = this.region;
+    if (!r.canManageCity(t).ok) return '';
+    const p = t.policies;
+
+    const taxBtns = TAX_BAND_LABELS.map((label, i) =>
+      p.taxBand === i
+        ? `<b>${label}</b>`
+        : `<button class="mini policy-tax-btn" data-tax="${i}" title="Set settlement tax to ${label}">${label}</button>`
+    ).join(' ');
+
+    const wagePolicies: WagePolicy[] = ['low', 'market', 'high'];
+    const wageBtns = wagePolicies.map((wp) =>
+      p.wagePolicy === wp
+        ? `<b>${wp}</b>`
+        : `<button class="mini policy-wage-btn" data-wage="${wp}" title="Set wage policy to ${wp}">${wp}</button>`
+    ).join(' ');
+
+    const svcLevels = ['minimal', 'standard', 'generous'];
+    const svcBtns = svcLevels.map((label, i) =>
+      p.serviceLevel === i
+        ? `<b>${label}</b>`
+        : `<button class="mini policy-svc-btn" data-svc="${i}" title="Set service level to ${label}">${label}</button>`
+    ).join(' ');
+
+    const taxRevNote = p.taxBand > 0
+      ? ` <span class="insp-skills">(+${(DEFAULT_CITY_POLICIES.taxBand !== p.taxBand ? p.taxBand * 5 : 0)}% local tax)</span>`
+      : '';
+
+    return (
+      `<p class="insp-skills">LOCAL POLICIES</p>` +
+      `<p class="insp-skills">tax: ${taxBtns}${taxRevNote}</p>` +
+      `<p class="insp-skills">wages: ${wageBtns}</p>` +
+      `<p class="insp-skills">services: ${svcBtns}` +
+      (p.serviceLevel >= 2 ? ` <span class="insp-cond">(+£${(r.popOf(t) * 0.002).toFixed(1)}/month)</span>` : '') +
+      `</p>`
+    );
+  }
+
   /** Research panel: tech + civics tree progress, node browser, start/cancel. */
   private drawResearchPanel(): void {
     const r = this.region;
@@ -1572,6 +1688,8 @@ export class RegionView {
           `title="Granite and pumps against the rising sea (GDD §8.2) — tidal flooding never touches a walled town">` +
           `sea wall £${r.seaWallCost(t)}</button></p>`
         : '') +
+      this.sectorsHtml(t) +
+      this.policiesHtml(t) +
       this.cityHtml(t) +
       this.routesHtml(t) +
       recentHtml +
