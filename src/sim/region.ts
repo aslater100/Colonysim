@@ -1988,6 +1988,8 @@ export class RegionSim {
     // The region inherits the town's world: same map, same weather, one truth.
     const region = new RegionSim(sim.rng, sim.minute, sim.regionMap, sim.weather);
     region.log = [...sim.log];
+    // Transfer town's cash to regional treasury
+    region.treasury = Math.max(0, Math.round(sim.economy.cash));
 
     // Town #1 cohortifies: real settler ages, minus those leaving on the expedition.
     const stayers = sim.settlers.length - expeditionPop;
@@ -3265,8 +3267,14 @@ export class RegionSim {
 
   // ---- the State gate (GDD §2.2) ----
   charterEligible(): boolean {
-    // GDD §2.2: 3 towns, 500 citizens — and all of them connected by routes
-    return this.settlements.length >= 3 && this.totalPop() >= 500 && this.connectedToAll();
+    // GDD §2.2: 3 towns, 500 citizens, all connected by routes, plus economic and military strength
+    if (this.settlements.length < 3 || this.totalPop() < 500 || !this.connectedToAll()) return false;
+    // Economic gate: must have £50k for state administration
+    if (this.treasury < 50000) return false;
+    // Military gate: must have 10+ garrison across all settlements
+    const totalGarrison = this.settlements.reduce((sum, s) => sum + (s.garrisonStrength || 0), 0);
+    if (totalGarrison < 10) return false;
+    return true;
   }
 
   private updateCharter(): void {
@@ -3329,12 +3337,14 @@ export class RegionSim {
     this.stateProclaimed = true;
     this.stateName = stateName.trim() || 'The Valley State';
     this.govLean = lean;
-    this.treasury = 50;
+    // Charter ceremony costs 30k; remaining treasury becomes state capital (minimum 50k residual)
+    const charterCost = 30000;
+    this.treasury = Math.max(50, this.treasury - charterCost);
     const mayor = this.notables.find((n) => n.alive && n.role === 'Mayor');
     this.addLog(
       `INCORPORATION: with ${this.settlements.length} towns and ${this.totalPop()} citizens, ` +
       `${mayor ? mayor.name + ' signs' : 'the council signs'} the Regional Charter under the banner of ` +
-      `${GOV_LEANS[lean].name}. ${this.stateName} is proclaimed — Tier 2 begins here.`,
+      `${GOV_LEANS[lean].name}. Charter ceremony costs £${charterCost}. ${this.stateName} is proclaimed — Tier 2 begins here.`,
       'good',
     );
     if (mayor) mayor.bio.push(`Signed the Regional Charter of ${this.stateName}, ${this.year}.`);
@@ -3525,12 +3535,19 @@ export class RegionSim {
 
   /** True when the player may call the Constitutional Convention. */
   canCallConvention(): boolean {
-    return (
-      this.stateProclaimed &&
-      !this.nationProclaimed &&
-      this.has('statecraft') &&
-      this.totalPop() >= 1500
-    );
+    if (
+      !this.stateProclaimed ||
+      this.nationProclaimed ||
+      !this.has('statecraft') ||
+      this.totalPop() < 1500
+    ) return false;
+    // Economic gate: must have £250k for nation-founding
+    if (this.treasury < 250000) return false;
+    // Military gate: must have 15+ combined garrison + militia
+    const totalGarrison = this.settlements.reduce((sum, s) => sum + (s.garrisonStrength || 0), 0);
+    const combinedMilitary = totalGarrison + (this.militiaLevel || 0) * 3;
+    if (combinedMilitary < 15) return false;
+    return true;
   }
 
   /** Confirm the Constitutional Convention — names the nation, sets gov type, assigns ministers. */
@@ -3550,9 +3567,12 @@ export class RegionSim {
       m.notableId = assignments[m.role] ?? null;
     }
     if (!def.electionsRequired) this.nextElectionDay = -1;
+    // Constitutional Convention cost: £200k for administrative setup
+    const convocationCost = 200000;
+    this.treasury = Math.max(50000, this.treasury - convocationCost);
     this.addLog(
       `THE PROCLAMATION OF ${name.toUpperCase()}: The Constitutional Convention has spoken. ` +
-      `${def.name} — the form of government is set. A new era begins.`,
+      `${def.name} — the form of government is set. Constitutional expenses: £${convocationCost}. A new era begins.`,
       'good',
     );
   }
