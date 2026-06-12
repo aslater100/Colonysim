@@ -103,6 +103,8 @@ export interface Settler {
   armed: boolean;
   /** last food resource kind consumed — drives food variety mood system */
   lastFoodType: ResourceKind | null;
+  /** rolling log of the last 7 food kinds consumed (newest first) */
+  foodLog: ResourceKind[];
   /** housing preference from traits — affects which bed type gives mood bonus */
   housingPreference: 'private' | 'communal' | 'military' | null;
 }
@@ -341,6 +343,7 @@ export class Simulation {
       clothedUntil: 0,
       armed: false,
       lastFoodType: null,
+      foodLog: [],
       housingPreference: null,
     };
     this.settlers.push(s);
@@ -1572,7 +1575,9 @@ export class Simulation {
     const night = this.hour >= 22 || this.hour < 6;
     // Hunger comes before everything — bed rest and sleep used to outrank it,
     // and settlers starved in bed beside a stocked larder (0.1 death-spiral fix).
-    if (s.needs.food < 30 && (this.stock.meal > 0 || this.stock.grain > 0)) {
+    if (s.needs.food < 30 && (this.stock.meal > 0 || this.stock.game_meal > 0 || this.stock.fish_meal > 0 ||
+        this.stock.produce > 0 || this.stock.bread > 0 || this.stock.dairy > 0 ||
+        this.stock.preserved > 0 || this.stock.grain > 0)) {
       const spTile = this.nearestStockpileTile(s.pos);
       if (spTile) this.setDestination(s, spTile);
       s.state = 'eating'; // if the walk fails, eat where you stand rather than starve
@@ -1694,15 +1699,27 @@ export class Simulation {
     // cookhouse (faster, bigger batches), so it takes over when built.
     const cookShops = this.builtOf('cook');
     const kitchen = cookShops.find((b) => b.defId === 'bakery') ?? cookShops[0];
-    if (kitchen && this.stock.grain > 0 && this.stock.meal < this.settlers.length * 3) {
+    if (kitchen && this.stock.grain > 0 && this.totalFood() < this.settlers.length * 3) {
       const { workPerMeal, batch } = this.cookParams(kitchen);
       push({ kind: 'cook', x: kitchen.x, y: kitchen.y, buildingId: kitchen.id, workLeft: workPerMeal * batch, label: 'cook meals' }, 'cook');
+    }
+    // Mill: convert grain to flour (2:2, counts as distinct food variety).
+    for (const mill of this.builtOf('milling')) {
+      if (this.stock.grain >= 2) {
+        push({ kind: 'mill', x: mill.x, y: mill.y, buildingId: mill.id, workLeft: 60, label: 'mill flour' }, 'mill');
+      }
+    }
+    // Brewery: convert grain to ale for settler recreation/morale.
+    for (const brewery of this.builtOf('brewing')) {
+      if (this.stock.grain >= TUNING.brewGrainPerAle && this.stock.ale < this.settlers.length) {
+        push({ kind: 'cook', x: brewery.x, y: brewery.y, buildingId: brewery.id, workLeft: TUNING.cookWorkPerMeal * 2, label: 'brew ale' }, 'cook');
+      }
     }
     // Hunting trips: one hunter per lodge (the lodge id reserves the task)
     // heads out while meals run short — food without grain. With game on the
     // map the hunt is real: stalk the nearest animal and bring back the kill.
     // With the woods empty, fall back to an abstract trip from the lodge.
-    if (this.stock.meal < this.settlers.length * 3) {
+    if (this.totalFood() < this.settlers.length * 3) {
       for (const lodge of this.builtOf('hunt')) {
         const c = this.buildingCenter(lodge);
         let prey: Animal | null = null;
@@ -1722,7 +1739,7 @@ export class Simulation {
         }
       }
     }
-    if (this.stock.meal < this.settlers.length * 3) {
+    if (this.totalFood() < this.settlers.length * 3) {
       for (const dock of this.builtOf('fishing')) {
         const c = this.buildingCenter(dock);
         const waterSpot = this.nearestWaterTile(c, TUNING.fishRange);
@@ -1986,9 +2003,32 @@ export class Simulation {
         }
         return;
       }
+      case 'mill': {
+        const mill = this.building(task.buildingId);
+        if (!mill?.built || this.stock.grain < 2) return this.finishTask(s);
+        task.workLeft -= work;
+        if (task.workLeft <= 0) {
+          this.stock.grain -= 2;
+          this.stock.produce += 2;  // flour → produce-style food variety item
+          this.finishTask(s);
+        }
+        return;
+      }
       case 'cook': {
         const k = this.building(task.buildingId);
         if (!k?.built || this.stock.grain <= 0) return this.finishTask(s);
+        // Brewery produces ale; everything else produces meal.
+        if (k.defId === 'brewery') {
+          task.workLeft -= work;
+          if (task.workLeft <= 0) {
+            if (this.stock.grain >= TUNING.brewGrainPerAle) {
+              this.stock.grain -= TUNING.brewGrainPerAle;
+              this.stock.ale++;
+            }
+            this.finishTask(s);
+          }
+          return;
+        }
         const { workPerMeal } = this.cookParams(k);
         k.cookProgress += work;
         task.workLeft -= work;
@@ -2015,7 +2055,7 @@ export class Simulation {
           // from the lodge still feeds the pot.
           task.workLeft -= work;
           if (task.workLeft <= 0) {
-            this.stock.meal += TUNING.huntMealYield;
+            this.stock.game_meal += TUNING.huntMealYield;
             this.finishTask(s);
           }
           return;
@@ -2034,10 +2074,10 @@ export class Simulation {
           this.addLog(`${s.name} brings down a ${prey.kind}.`, 'good');
           const spTile = this.nearestStockpileTile(s.pos);
           if (!spTile) {
-            this.dropItem('meal', qty, Math.round(s.pos.x), Math.round(s.pos.y));
+            this.dropItem('game_meal', qty, Math.round(s.pos.x), Math.round(s.pos.y));
             return this.finishTask(s);
           }
-          s.carrying = { kind: 'meal', qty };
+          s.carrying = { kind: 'game_meal', qty };
           s.state = 'moving';
           this.setDestination(s, spTile);
         }
@@ -2056,10 +2096,10 @@ export class Simulation {
           const qty = TUNING.fishMealYield;
           const spTile = this.nearestStockpileTile(s.pos);
           if (!spTile) {
-            this.stock.meal += qty;
+            this.stock.fish_meal += qty;
             return this.finishTask(s);
           }
-          s.carrying = { kind: 'meal', qty };
+          s.carrying = { kind: 'fish_meal', qty };
           s.state = 'moving';
           this.setDestination(s, spTile);
         }
@@ -2310,16 +2350,45 @@ export class Simulation {
     return this.temperature();
   }
 
+  /** Total ready-to-eat food units across all food kinds. */
+  totalFood(): number {
+    return this.stock.meal + this.stock.game_meal + this.stock.fish_meal +
+      this.stock.produce + this.stock.bread + this.stock.dairy +
+      this.stock.ale + this.stock.preserved;
+  }
+
   /** Eat one unit from the stores; raw grain costs a little mood. */
   private consumeFood(s: Settler): void {
-    if (this.stock.meal > 0) {
-      this.stock.meal--;
-      s.needs.food = Math.min(100, s.needs.food + TUNING.mealFoodValue);
-    } else if (this.stock.grain > 0) {
+    let eaten: ResourceKind | null = null;
+    // Priority: cooked meals and their variants first; raw grain as fallback.
+    const mealKinds: ResourceKind[] = ['meal', 'game_meal', 'fish_meal', 'produce', 'bread', 'dairy', 'ale', 'preserved'];
+    for (const k of mealKinds) {
+      if (this.stock[k] > 0) {
+        this.stock[k]--;
+        s.needs.food = Math.min(100, s.needs.food + TUNING.mealFoodValue);
+        eaten = k;
+        break;
+      }
+    }
+    if (!eaten && this.stock.grain > 0) {
       this.stock.grain--;
       s.needs.food = Math.min(100, s.needs.food + TUNING.rawGrainFoodValue);
       this.addThought(s, 'Ate raw grain', -4, MINUTES_PER_DAY);
+      eaten = 'grain';
     }
+    if (!eaten) return;
+    // Food variety tracking: rolling 7-item log.
+    s.foodLog.unshift(eaten);
+    if (s.foodLog.length > 7) s.foodLog.length = 7;
+    const same3 = s.foodLog.length >= 3 && s.foodLog.slice(0, 3).every((k) => k === eaten);
+    if (same3) this.addThought(s, 'Same meal again', -TUNING.foodVarietyPenalty, MINUTES_PER_DAY);
+    const distinct = new Set(s.foodLog).size;
+    if (distinct >= 4 && s.lastFoodType !== eaten) {
+      this.addThought(s, 'Enjoying varied meals', TUNING.foodVarietyBonus4, MINUTES_PER_DAY * 3);
+    } else if (distinct >= 3 && s.lastFoodType !== eaten) {
+      this.addThought(s, 'Good variety of food', TUNING.foodVarietyBonus3, MINUTES_PER_DAY * 2);
+    }
+    s.lastFoodType = eaten;
   }
 
   /** Where to thaw out: the nearest hearth, else any heated shelter. */
@@ -2525,7 +2594,7 @@ export class Simulation {
         if (skills[k] === undefined) skills[k] = 0;
         if (priorities[k] === undefined) priorities[k] = 1;
       }
-      return { ...s, skills, priorities, lastFoodType: s.lastFoodType ?? null, housingPreference: s.housingPreference ?? null };
+      return { ...s, skills, priorities, lastFoodType: s.lastFoodType ?? null, foodLog: s.foodLog ?? [], housingPreference: s.housingPreference ?? null };
     });
     sim.buildings = d.buildings.map((b: Building) => ({
       ...b,

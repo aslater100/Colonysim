@@ -185,6 +185,46 @@
       ]
     },
     {
+      "id": "mill",
+      "name": "Mill",
+      "w": 2,
+      "h": 3,
+      "cost": { "wood": 40, "stone": 5 },
+      "buildWork": 540,
+      "provides": "milling",
+      "desc": "Waterwheel-driven millstones grind grain into flour — a distinct food type for variety bonuses. Requires Milling tech.",
+      "upgrades": [
+        { "cost": { "wood": 25 }, "capacityBonus": 0, "desc": "Better stones: milling 30% faster." },
+        { "cost": { "stone": 15 }, "capacityBonus": 0, "desc": "Second wheel: milling 60% faster." }
+      ]
+    },
+    {
+      "id": "brewery",
+      "name": "Brewery",
+      "w": 2,
+      "h": 2,
+      "cost": { "wood": 30 },
+      "buildWork": 420,
+      "provides": "brewing",
+      "desc": "Ferments grain into ale (2 grain → 1 ale). Ale counts as a distinct food type and boosts settler morale. Requires Fermentation tech.",
+      "upgrades": [
+        { "cost": { "wood": 20 }, "capacityBonus": 0, "desc": "Larger vats: brewing 30% faster." }
+      ]
+    },
+    {
+      "id": "kitchen_garden",
+      "name": "Kitchen Garden",
+      "w": 2,
+      "h": 2,
+      "cost": { "wood": 15 },
+      "buildWork": 240,
+      "provides": "ranching",
+      "desc": "A tended kitchen garden yields fresh produce — variety food with no grain cost. Requires Horticulture tech.",
+      "upgrades": [
+        { "cost": { "wood": 10 }, "capacityBonus": 0, "desc": "Cold frames: harvest year-round." }
+      ]
+    },
+    {
       "id": "town_hall",
       "name": "Town Hall",
       "w": 3,

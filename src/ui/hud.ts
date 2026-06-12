@@ -54,8 +54,11 @@ const BUILD_CATEGORIES: BuildCategory[] = [
       { kind: 'building', id: 'kitchen', label: 'Cookhouse', cost: '30w', desc: 'Turns grain into meals.' },
       { kind: 'building', id: 'bakery', label: 'Bakery', cost: '45w', desc: 'Faster batch cooking.' },
       { kind: 'building', id: 'granary', label: 'Granary', cost: '35w', desc: '+150 meal storage cap.' },
-      { kind: 'building', id: 'lodge', label: 'Hunt Lodge', cost: '30w', desc: 'Hunters bring back game.' },
-      { kind: 'building', id: 'fishing_dock', label: 'Fish Dock', cost: '15w', desc: 'Fish for meals near water.' },
+      { kind: 'building', id: 'lodge', label: 'Hunt Lodge', cost: '30w', desc: 'Hunters bring back game_meal.' },
+      { kind: 'building', id: 'fishing_dock', label: 'Fish Dock', cost: '15w', desc: 'Fish for fish_meal near water.' },
+      { kind: 'building', id: 'mill', label: 'Mill', cost: '40w+5s', desc: 'Grain→produce (variety food). Needs Milling tech.' },
+      { kind: 'building', id: 'brewery', label: 'Brewery', cost: '30w', desc: 'Grain→ale for morale. Needs Fermentation tech.' },
+      { kind: 'building', id: 'kitchen_garden', label: 'Kitchen Garden', cost: '15w', desc: 'Free produce over time. Needs Horticulture tech.' },
     ],
   },
   {
