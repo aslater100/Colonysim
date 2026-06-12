@@ -11,6 +11,8 @@ import { TILE } from './ui/sprites';
 import { Sfx } from './ui/audio';
 import { Music } from './ui/music';
 import { Soundscape } from './ui/soundscape';
+import { DesignScreen } from './ui/designscreen';
+import type { TownDesign } from './sim/defs';
 
 const root = document.getElementById('app')!;
 const canvas = document.createElement('canvas');
@@ -29,11 +31,14 @@ const minimapCtx = minimapCanvas.getContext('2d')!;
 minimapCtx.imageSmoothingEnabled = false;
 
 const SAVE_KEY = 'centuria-save';
+const DESIGN_KEY = 'centuria-town-design';
 
 // Booting after "Load Game": the menu sets a one-shot flag and reloads, and
 // we resume from the snapshot instead of seeding a fresh colony. Saves are
 // either a bare town snapshot (v1) or a combined town+region one (v2).
-function bootSim(): { sim: Simulation; region: RegionSim | null } {
+// A fresh game first shows the town design screen; the choice is stashed in
+// sessionStorage and the page reloads to build the world from it.
+function bootSim(): { sim: Simulation; region: RegionSim | null; needsDesign: boolean } {
   try {
     const pending = sessionStorage.getItem('centuria-load-on-boot');
     if (pending) {
@@ -43,15 +48,21 @@ function bootSim(): { sim: Simulation; region: RegionSim | null } {
         const d = JSON.parse(data);
         if (d.v === 2 && d.mode === 'region') {
           const town = Simulation.deserialize(d.town);
-          return { sim: town, region: RegionSim.deserialize(d.region, town) };
+          return { sim: town, region: RegionSim.deserialize(d.region, town), needsDesign: false };
         }
-        return { sim: Simulation.deserialize(data), region: null };
+        return { sim: Simulation.deserialize(data), region: null, needsDesign: false };
       }
+    }
+    const designJson = sessionStorage.getItem(DESIGN_KEY);
+    if (designJson) {
+      sessionStorage.removeItem(DESIGN_KEY);
+      const design = JSON.parse(designJson) as TownDesign;
+      return { sim: new Simulation(Date.now() % 100000, design), region: null, needsDesign: false };
     }
   } catch (err) {
     console.error('load failed, starting fresh:', err);
   }
-  return { sim: new Simulation(Date.now() % 100000), region: null };
+  return { sim: new Simulation(Date.now() % 100000), region: null, needsDesign: true };
 }
 
 const boot = bootSim();
@@ -166,13 +177,28 @@ function enterRegionMode(r: RegionSim): void {
 }
 
 hud.onFoundTown = () => {
-  // Deduct founding cost from town economy before creating region
-  if (sim.canFoundSecondTown().ok) {
+  if (!sim.canFoundSecondTown().ok) return;
+  // The region flip is a moment of decision: the design screen asks how the
+  // new tier will be run before the wagons roll.
+  hud.paused = true;
+  new DesignScreen().showRegionDesign((design) => {
     sim.economy.cash -= TUNING.townFoundingCost;
-  }
-  enterRegionMode(RegionSim.fromTown(sim, 8, 80, 80));
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    r.applyRegionDesign(design);
+    enterRegionMode(r);
+    hud.paused = false;
+  });
 };
 if (boot.region) enterRegionMode(boot.region);
+
+// A fresh world waits on the founder's choices: currency, site, party, odds.
+if (boot.needsDesign) {
+  hud.paused = true;
+  new DesignScreen().showTownDesign((design) => {
+    sessionStorage.setItem(DESIGN_KEY, JSON.stringify(design));
+    location.reload();
+  });
+}
 
 // ---- input ----
 const keys = new Set<string>();

@@ -7,11 +7,16 @@
  * performance answer that lets the game scale to a State and beyond.
  */
 import { Rng } from './rng';
-import { MINUTES_PER_DAY, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR } from './defs';
+import { MINUTES_PER_DAY, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, formatCurrency, setCurrencySymbol } from './defs';
+import type { CurrencySymbol, RegionDesign, NationDesign } from './defs';
+import { computePenalty, transitionEfficiency, ANNOUNCE_LEAD_DAYS } from './currency';
+import type { CurrencyChangeCause, CurrencyAnnouncement, CurrencyTransition } from './currency';
 import type { Simulation, Settler, LogEntry } from './sim';
 import { RegionMap } from './worldgen';
 import type { TownSite } from './worldgen';
 import { Weather } from './weather';
+import type { Lender, Loan } from './economy';
+import { createInitialLenders } from './lenders';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 
@@ -125,10 +130,11 @@ const SECTOR_BASE_SHARES: Record<SectorId, number> = {
   agriculture: 0.72, industry: 0.14, services: 0.11, information: 0.03,
 };
 
-/** Base output per worker per month (£), before tech multipliers. Richer
- *  sectors pay more — that wage gap is what pulls labor off the land. */
+/** Base output per worker per month (£), before tech multipliers. Calibrated
+ *  so that a 200-worker region earns ~£2,400/mo GDP (taxes cover services at
+ *  10% rate). Richer sectors pay more — the wage gap pulls labor off the land. */
 const SECTOR_BASE_OUTPUT: Record<SectorId, number> = {
-  agriculture: 1.0, industry: 1.4, services: 1.3, information: 1.8,
+  agriculture: 10.0, industry: 14.0, services: 13.0, information: 30.0,
 };
 
 export function defaultSectors(): Sectors {
@@ -1164,6 +1170,22 @@ export class RegionSim {
   exchangeRate = 1.0;
   /** Prevents the 1929-analog crash from firing twice. */
   private crashFired = false;
+  // ---- Lender system: NPC bankers and merchants offering loans ----
+  lenders: Lender[] = [];
+  /** Player's active loans from lenders. */
+  loans: Loan[] = [];
+  currencySymbol: CurrencySymbol = '$';
+  marketDisruptionEnd = 0;
+  /** A telegraphed future switch; softens the shock if 6+ months old. */
+  currencyAnnouncement: CurrencyAnnouncement | null = null;
+  /** In-progress currency transition; output recovers linearly to endDay. */
+  currencyTransition: CurrencyTransition | null = null;
+  // ---- Design-screen choices (region flip / nation flip) ----
+  expansionSpeed: 'cautious' | 'steady' | 'aggressive' = 'steady';
+  tradeOpenness: 'protectionist' | 'balanced' | 'free-trade' = 'balanced';
+  economicSystem: 'laissez-faire' | 'mixed' | 'planned' = 'mixed';
+  militaryDoctrine: 'defensive' | 'professional' | 'expansionist' = 'professional';
+  allianceStance: 'isolationist' | 'opportunist' | 'coalition-builder' = 'opportunist';
   // ---- Phase 0: Regional Gameplay Expansion ----
   /** 100×100 grid tracking tile visibility: fogged/explored/scouted */
   explorationMap: TileVisibility[][] = [];
@@ -1743,7 +1765,7 @@ export class RegionSim {
     this.treasury -= cost;
     t.seaWall = true;
     this.addLog(
-      `The sea wall at ${t.name} tops out — £${cost} of granite and pumps between the town and the tide.`,
+      `The sea wall at ${t.name} tops out — ` + formatCurrency(cost) + ` of granite and pumps between the town and the tide.`,
       'good',
     );
     return true;
@@ -1819,12 +1841,12 @@ export class RegionSim {
     }
     this.addLog(
       kind === 'road'
-        ? `A wagon road opens between ${a.name} and ${b.name} — £${cost.total} of grading and bridgework.`
+        ? `A wagon road opens between ${a.name} and ${b.name} — ` + formatCurrency(cost.total) + ` of grading and bridgework.`
         : kind === 'rail'
-          ? `Steel rails link ${a.name} and ${b.name} — £${cost.total} of cuttings, trestles, and track. The whistle carries for miles.`
+          ? `Steel rails link ${a.name} and ${b.name} — ` + formatCurrency(cost.total) + ` of cuttings, trestles, and track. The whistle carries for miles.`
           : kind === 'highway'
-            ? `Fresh asphalt runs from ${a.name} to ${b.name} — £${cost.total} of paving${wasRail ? '. The old rail bed goes quiet' : ''}.`
-            : `A maglev guideway hums between ${a.name} and ${b.name} — £${cost.total} of pylons and superconductors. The freight drives itself now.`,
+            ? `Fresh asphalt runs from ${a.name} to ${b.name} — ` + formatCurrency(cost.total) + ` of paving${wasRail ? '. The old rail bed goes quiet' : ''}.`
+            : `A maglev guideway hums between ${a.name} and ${b.name} — ` + formatCurrency(cost.total) + ` of pylons and superconductors. The freight drives itself now.`,
       'good',
     );
     return true;
@@ -1864,7 +1886,7 @@ export class RegionSim {
     r.condition = 100;
     const a = this.settlement(aId)?.name ?? '?';
     const b = this.settlement(bId)?.name ?? '?';
-    this.addLog(`Repair gangs put the ${r.kind} between ${a} and ${b} back in order — £${cost}.`, 'good');
+    this.addLog(`Repair gangs put the ${r.kind} between ${a} and ${b} back in order — ` + formatCurrency(cost) + `.`, 'good');
     return true;
   }
 
@@ -1948,7 +1970,7 @@ export class RegionSim {
         const b = this.settlement(r.b)?.name ?? '?';
         this.addLog(
           `Storm washout: the ${r.kind} between ${a} and ${b} is cut — ` +
-          `${r.kind === 'rail' ? 'a trestle is down' : r.kind === 'maglev' ? 'a guideway pylon is down' : 'a bridge is out'}. Repairs would cost £${this.repairCost(r)}.`,
+          `${r.kind === 'rail' ? 'a trestle is down' : r.kind === 'maglev' ? 'a guideway pylon is down' : 'a bridge is out'}. Repairs would cost ` + formatCurrency(this.repairCost(r)) + `.`,
           'bad',
         );
       }
@@ -1990,6 +2012,8 @@ export class RegionSim {
     region.log = [...sim.log];
     // Transfer town's cash to regional treasury
     region.treasury = Math.max(0, Math.round(sim.economy.cash));
+    // Inherit the town's currency symbol
+    region.currencySymbol = sim.currencySymbol;
 
     // Town #1 cohortifies: real settler ages, minus those leaving on the expedition.
     const stayers = sim.settlers.length - expeditionPop;
@@ -2038,6 +2062,9 @@ export class RegionSim {
       policies: { ...DEFAULT_CITY_POLICIES },
     };
     region.settlements.push(home);
+
+    // Initialize NPC lenders for the region
+    region.lenders = createInitialLenders();
 
     // Initialize player faction (will be refined with full faction system later)
     region.regionalizeFactionSystem(home);
@@ -2304,6 +2331,7 @@ export class RegionSim {
     this.updateDiplomacy();
     this.tickClimate(); // the ledger runs from the first decade (GDD §8.2)
     if (this.passedLaws.includes('central_bank_charter')) this.tickMonetary();
+    this.updateLoans(); // process loan interest and check for defaults
   }
 
   // ---- local markets & trade (GDD §5.2, first slice) ----
@@ -2524,7 +2552,7 @@ export class RegionSim {
     this.nationalDebt += amount;
     this.treasury += amount;
     this.creditRating = this.computeCreditRating();
-    this.addLog(`Issued £${Math.floor(amount)} in bonds at ${(this.bondRate * 100).toFixed(1)}% (${this.creditRating}).`, 'info');
+    this.addLog(`Issued ` + formatCurrency(Math.floor(amount)) + ` in bonds at ${(this.bondRate * 100).toFixed(1)}% (${this.creditRating}).`, 'info');
     return true;
   }
 
@@ -2661,31 +2689,44 @@ export class RegionSim {
       (this.has('maglev') ? 0.15 : 0);
   }
 
-  /** Tech multipliers on output per worker, by sector. */
+  /** Tech multipliers on output per worker, by sector.
+   *
+   *  Calibrated so wages feel right for each era:
+   *    1900 (base):    £10–18/mo  ≈ £0.33–0.60/day  (frontier subsistence)
+   *    1930 (steel+e): £25–50/mo  ≈ £0.83–1.67/day  (early industrial)
+   *    1960 (mass):    £55–130/mo ≈ £1.83–4.33/day  (post-war boom)
+   *    2000+ (info):   £80–220/mo ≈ £2.67–7.33/day  (knowledge economy)
+   *
+   *  Cumulative maximums: agri ~4x, industry ~9x, services ~7x, info ~12x. */
   private sectorProductivity(id: SectorId): number {
     let m = 1;
     const boost = (node: string, mult: number) => { if (this.has(node)) m *= mult; };
     switch (id) {
       case 'agriculture':
-        boost('combustion_engine', 1.15); // tractors replace the horse
-        boost('mass_production', 1.3);
-        boost('renewables', 1.1);
+        boost('electrical_grid', 1.5);     // electrified irrigation and tools
+        boost('combustion_engine', 2.5);   // tractors replace the horse
+        boost('mass_production', 3.5);     // industrialised farming at scale
+        boost('renewables', 2.0);          // precision agriculture, sustainable yields
         break;
       case 'industry':
-        boost('steel_industry', 1.3);
-        boost('electrical_grid', 1.25);
-        boost('mass_production', 1.35);
-        boost('atomic_age', 1.15);
+        boost('steel_industry', 2.0);      // steel mills and heavy equipment
+        boost('electrical_grid', 2.0);     // electrified factories
+        boost('mass_production', 4.0);     // assembly lines, Fordism
+        boost('atomic_age', 2.5);          // nuclear power drives heavy industry
+        boost('automated_logistics', 2.5); // robotic supply chains
         break;
       case 'services':
-        boost('electrical_grid', 1.2);
-        boost('asphalt', 1.2); // mobility is commerce
-        boost('computing', 1.3);
+        boost('free_press', 1.5);          // literacy drives commerce
+        boost('labor_law', 1.3);           // protected workers are productive workers
+        boost('electrical_grid', 2.0);     // electrified retail, refrigeration
+        boost('asphalt', 2.0);             // road mobility multiplies trade
+        boost('computing', 8.0);           // the productivity leap of the office PC
         break;
       case 'information':
-        boost('free_press', 1.25);
-        boost('computing', 1.6);
-        boost('automated_logistics', 1.35);
+        boost('free_press', 2.0);          // free information accelerates learning
+        boost('computing', 10.0);          // digital revolution, internet economy
+        boost('automated_logistics', 5.0); // global information networks
+        boost('maglev', 2.0);              // ultra-fast connectivity
         break;
     }
     return m;
@@ -2735,10 +2776,13 @@ export class RegionSim {
       const perWorker = SECTOR_BASE_OUTPUT[id] * this.sectorProductivity(id) * landTerm * (1 + this.buildingBonus(t, id));
       // Phase 4: active event modifiers (disasters reduce, windfalls boost)
       const eventMult = this.eventOutputMult(t, id);
-      s.output = workers * s.share * perWorker * strike * loyalty * eventMult * svcMult * taxMult;
+      // Currency transition dents output until markets stabilize; the economic
+      // system (design choice at nation flip) sets the steady-state multiplier.
+      const fxMult = this.currencyEfficiency() * this.economyOutputMult();
+      s.output = workers * s.share * perWorker * strike * loyalty * eventMult * svcMult * taxMult * fxMult;
       // Phase 5: wage policy adjusts the migration signal without affecting output
       const wagePolicyMult = t.policies.wagePolicy === 'low' ? 0.85 : t.policies.wagePolicy === 'high' ? 1.20 : 1.0;
-      s.wage = perWorker * strike * loyalty * eventMult * svcMult * wagePolicyMult;
+      s.wage = perWorker * strike * loyalty * eventMult * svcMult * wagePolicyMult * fxMult;
     }
   }
 
@@ -2793,7 +2837,7 @@ export class RegionSim {
       return { ok: false, reason: `requires ${node?.name ?? def.prereq}` };
     }
     if (this.buildingCount(t, def.id) >= def.max) return { ok: false, reason: 'already built' };
-    if (this.treasury < def.cost) return { ok: false, reason: `needs £${def.cost}` };
+    if (this.treasury < def.cost) return { ok: false, reason: `needs ` + formatCurrency(def.cost) + `` };
     return { ok: true, reason: '' };
   }
 
@@ -2805,7 +2849,7 @@ export class RegionSim {
     if (!t || !def || !this.cityBuildCheck(t, def).ok) return false;
     this.treasury -= def.cost;
     t.construction = { id: def.id, doneDay: this.day + def.days };
-    this.addLog(`Ground is broken for the ${def.name} at ${t.name} — £${def.cost}, ${def.days} days.`, 'info');
+    this.addLog(`Ground is broken for the ${def.name} at ${t.name} — ` + formatCurrency(def.cost) + `, ${def.days} days.`, 'info');
     return true;
   }
 
@@ -3034,7 +3078,9 @@ export class RegionSim {
     const relief = this.reliefLine(t);
     // A Defensive Pact (GDD §5.4) puts allied arms behind the militia
     const pact = this.rivals.some((rv) => rv.treaties.includes('defensive_pact'));
-    const militia = this.workersOf(t) * 0.12 * captain * funded * (relief ? 1.25 : 1) * (pact ? 1.15 : 1);
+    // Defensive doctrine (nation design): the homeland is where the drills pay
+    const doctrine = this.militaryDoctrine === 'defensive' ? 1.2 : 1;
+    const militia = this.workersOf(t) * 0.12 * captain * funded * (relief ? 1.25 : 1) * (pact ? 1.15 : 1) * doctrine;
     t.lastRaidDay = this.day;
     const foreignArms = sponsored ? ` The dead carried rifles of foreign make — ${sponsor!.name}'s hand, deniably.` : '';
     if (militia >= strength) {
@@ -3158,7 +3204,7 @@ export class RegionSim {
     if (this.stateProclaimed) {
       const find = 15 + this.rng.int(20);
       this.treasury += find;
-      this.addLog(`Prospectors file a claim in the hills above ${t.name} — £${find} in fees and assay to the treasury.`, 'good');
+      this.addLog(`Prospectors file a claim in the hills above ${t.name} — ` + formatCurrency(find) + ` in fees and assay to the treasury.`, 'good');
     } else {
       const timber = 20 + this.rng.int(15);
       t.wood += timber;
@@ -3173,9 +3219,11 @@ export class RegionSim {
     if (this.settlements.length + this.expeditions.length >= MAX_SETTLEMENTS) {
       return { ok: false, reason: 'region fully settled (see map-scale design)' };
     }
-    if (this.popOf(t) < 24) return { ok: false, reason: `needs 24 pop (has ${Math.floor(this.popOf(t))})` };
-    if (t.food < 80) return { ok: false, reason: `needs 80 food (has ${Math.floor(t.food)})` };
-    if (t.wood < 80) return { ok: false, reason: `needs 80 wood (has ${Math.floor(t.wood)})` };
+    const m = this.expansionCostMult();
+    const needPop = Math.round(24 * m), needFood = Math.round(80 * m), needWood = Math.round(80 * m);
+    if (this.popOf(t) < needPop) return { ok: false, reason: `needs ${needPop} pop (has ${Math.floor(this.popOf(t))})` };
+    if (t.food < needFood) return { ok: false, reason: `needs ${needFood} food (has ${Math.floor(t.food)})` };
+    if (t.wood < needWood) return { ok: false, reason: `needs ${needWood} wood (has ${Math.floor(t.wood)})` };
     const fromCell = this.map.coordToCell(t.x, t.y);
     const claimed = this.settlements
       .map((s) => this.map.coordToCell(s.x, s.y))
@@ -3190,10 +3238,12 @@ export class RegionSim {
     const check = this.canFoundTown(fromId);
     const t = this.settlement(fromId);
     if (!check.ok || !t) return false;
-    if (!this.launchExpedition(t, 8, 80, 80)) return false;
+    const m = this.expansionCostMult();
+    const food = Math.round(80 * m), wood = Math.round(80 * m);
+    if (!this.launchExpedition(t, 8, food, wood)) return false;
     this.removePop(t, 8);
-    t.food -= 80;
-    t.wood -= 80;
+    t.food -= food;
+    t.wood -= wood;
     const e = this.expeditions[this.expeditions.length - 1];
     const days = e.arrivesDay - this.day;
     this.addLog(
@@ -3269,8 +3319,8 @@ export class RegionSim {
   charterEligible(): boolean {
     // GDD §2.2: 3 towns, 500 citizens, all connected by routes, plus economic and military strength
     if (this.settlements.length < 3 || this.totalPop() < 500 || !this.connectedToAll()) return false;
-    // Economic gate: must have £50k for state administration
-    if (this.treasury < 50000) return false;
+    // Economic gate: £8k net (after loans) — roughly 3-4 months of surplus at charter scale
+    if (this.getNetTreasury() < 8000) return false;
     // Military gate: must have 10+ garrison across all settlements
     const totalGarrison = this.settlements.reduce((sum, s) => sum + (s.garrisonStrength || 0), 0);
     if (totalGarrison < 10) return false;
@@ -3337,14 +3387,14 @@ export class RegionSim {
     this.stateProclaimed = true;
     this.stateName = stateName.trim() || 'The Valley State';
     this.govLean = lean;
-    // Charter ceremony costs 30k; remaining treasury becomes state capital (minimum 50k residual)
-    const charterCost = 30000;
+    // Charter ceremony costs £4k; remaining treasury becomes state capital (minimum 50 residual)
+    const charterCost = 4000;
     this.treasury = Math.max(50, this.treasury - charterCost);
     const mayor = this.notables.find((n) => n.alive && n.role === 'Mayor');
     this.addLog(
       `INCORPORATION: with ${this.settlements.length} towns and ${this.totalPop()} citizens, ` +
       `${mayor ? mayor.name + ' signs' : 'the council signs'} the Regional Charter under the banner of ` +
-      `${GOV_LEANS[lean].name}. Charter ceremony costs £${charterCost}. ${this.stateName} is proclaimed — Tier 2 begins here.`,
+      `${GOV_LEANS[lean].name}. Charter ceremony costs ` + formatCurrency(charterCost) + `. ${this.stateName} is proclaimed — Tier 2 begins here.`,
       'good',
     );
     if (mayor) mayor.bio.push(`Signed the Regional Charter of ${this.stateName}, ${this.year}.`);
@@ -3541,8 +3591,8 @@ export class RegionSim {
       !this.has('statecraft') ||
       this.totalPop() < 1500
     ) return false;
-    // Economic gate: must have £250k for nation-founding
-    if (this.treasury < 250000) return false;
+    // Economic gate: £35k net (after loans) — ~15 months of state-level surplus
+    if (this.getNetTreasury() < 35000) return false;
     // Military gate: must have 15+ combined garrison + militia
     const totalGarrison = this.settlements.reduce((sum, s) => sum + (s.garrisonStrength || 0), 0);
     const combinedMilitary = totalGarrison + (this.militiaLevel || 0) * 3;
@@ -3567,12 +3617,12 @@ export class RegionSim {
       m.notableId = assignments[m.role] ?? null;
     }
     if (!def.electionsRequired) this.nextElectionDay = -1;
-    // Constitutional Convention cost: £200k for administrative setup
-    const convocationCost = 200000;
-    this.treasury = Math.max(50000, this.treasury - convocationCost);
+    // Constitutional Convention cost: £25k for administrative setup
+    const convocationCost = 25000;
+    this.treasury = Math.max(5000, this.treasury - convocationCost);
     this.addLog(
       `THE PROCLAMATION OF ${name.toUpperCase()}: The Constitutional Convention has spoken. ` +
-      `${def.name} — the form of government is set. Constitutional expenses: £${convocationCost}. A new era begins.`,
+      `${def.name} — the form of government is set. Constitutional expenses: ` + formatCurrency(convocationCost) + `. A new era begins.`,
       'good',
     );
   }
@@ -3743,6 +3793,10 @@ export class RegionSim {
     if (kind === 'non_aggression') ask -= 10 - rv.weights.risk; // the cautious want fences
     if (kind === 'defensive_pact') ask -= rv.weights.honor * 1.5;
     if (kind === 'climate_accord') ask += rv.weights.expansion * 2 - rv.weights.commerce * 1.5;
+    // Alliance stance (nation design): a coalition-builder's word is easier
+    // to take; an isolationist's signature is worth less to everyone.
+    if (this.allianceStance === 'coalition-builder') ask -= 5;
+    else if (this.allianceStance === 'isolationist') ask += 5;
     return Math.round(ask);
   }
 
@@ -3892,8 +3946,8 @@ export class RegionSim {
   basketLabel(b: DealBasket): string {
     const parts = b.treaties.map((k) => TREATY_DEFS[k].name);
     if (b.borderSettlement) parts.push('Border Settlement');
-    if (b.goldToThem > 0) parts.push(`£${b.goldToThem} to them`);
-    if (b.goldToYou > 0) parts.push(`£${b.goldToYou} to you`);
+    if (b.goldToThem > 0) parts.push(`` + formatCurrency(b.goldToThem) + ` to them`);
+    if (b.goldToYou > 0) parts.push(`` + formatCurrency(b.goldToYou) + ` to you`);
     return parts.join(' + ') || 'nothing';
   }
 
@@ -3936,7 +3990,9 @@ export class RegionSim {
     if (this.day - rv.lastEnvoyDay < ENVOY_COOLDOWN_DAYS) return false;
     this.treasury -= ENVOY_COST;
     rv.lastEnvoyDay = this.day;
-    const gain = 4 + Math.round(rv.weights.commerce * 0.3);
+    // Alliance stance (nation design): coalition-builders' letters land warmer
+    const stanceBonus = this.allianceStance === 'coalition-builder' ? 2 : this.allianceStance === 'isolationist' ? -2 : 0;
+    const gain = Math.max(1, 4 + Math.round(rv.weights.commerce * 0.3) + stanceBonus);
     rv.relations = this.clampRel(rv.relations + gain);
     this.addLog(`An envoy rides for ${rv.name} with letters and samples of the valley's grain — relations warm (+${gain}).`, 'good');
     return true;
@@ -4075,7 +4131,7 @@ export class RegionSim {
         } else {
           const toll = Math.min(this.treasury, 5 + this.rng.int(10));
           this.treasury -= toll;
-          this.addLog(`${rv.name}'s customs men shake down caravans at the frontier — £${toll} in seized goods and bribes.`, 'bad');
+          this.addLog(`${rv.name}'s customs men shake down caravans at the frontier — ` + formatCurrency(toll) + ` in seized goods and bribes.`, 'bad');
         }
       }
       // Beyond mischief (GDD §7.1): an emboldened hostile power declares war outright
@@ -4294,7 +4350,10 @@ export class RegionSim {
       (1 + 0.25 * this.militiaLevel + (this.policyActive('standing_army') ? 0.5 : 0)) *
       (this.ministerFor('defence') ? 1.2 : 1) *
       (this.passedLaws.includes('military_reform') ? 1.2 : 1) *
-      (this.govType === 'junta' ? 1.15 : 1);
+      (this.govType === 'junta' ? 1.15 : 1) *
+      // Doctrine (nation design): expansionists drill for the offensive,
+      // defensive doctrines trade punch for cheaper, homeland-bound garrisons.
+      (this.militaryDoctrine === 'expansionist' ? 1.15 : this.militaryDoctrine === 'defensive' ? 0.9 : 1);
     const mob = this.playerWar ? MOBILIZATION_DEFS[this.playerWar.mobilization].power : 1;
     // Defensive pacts put allied arms on your front (GDD §5.4); a called
     // co-belligerent commits its army, not just its sympathy (GDD §7.3)
@@ -4504,7 +4563,7 @@ export class RegionSim {
         this.treasury += tranche;
         rv.relations = this.clampRel(rv.relations - 10);
         this.noteHistory(rv, `Paid reparations to ${nation} after defeat, ${this.year}.`);
-        this.addLog(`PEACE: ${rv.name} signs — and pays. £${tranche} in reparations reaches the treasury.`, 'good');
+        this.addLog(`PEACE: ${rv.name} signs — and pays. ` + formatCurrency(tranche) + ` in reparations reaches the treasury.`, 'good');
         break;
       }
       case 'border_province': {
@@ -4765,6 +4824,17 @@ export class RegionSim {
       exchangeRates: this.exchangeRates,
       globalTradeVolume: this.globalTradeVolume,
       nextScoutId: this.nextScoutId,
+      lenders: this.lenders,
+      loans: this.loans,
+      currencySymbol: this.currencySymbol,
+      marketDisruptionEnd: this.marketDisruptionEnd,
+      currencyAnnouncement: this.currencyAnnouncement,
+      currencyTransition: this.currencyTransition,
+      expansionSpeed: this.expansionSpeed,
+      tradeOpenness: this.tradeOpenness,
+      economicSystem: this.economicSystem,
+      militaryDoctrine: this.militaryDoctrine,
+      allianceStance: this.allianceStance,
     });
   }
 
@@ -4867,6 +4937,18 @@ export class RegionSim {
     r.creditRating = d.creditRating ?? 'AA';
     r.exchangeRate = d.exchangeRate ?? 1.0;
     r.crashFired = d.crashFired ?? false;
+    // Lender system: initialize lenders if not in save, or load existing ones
+    r.lenders = d.lenders ?? createInitialLenders();
+    r.loans = d.loans ?? [];
+    r.currencySymbol = d.currencySymbol ?? '$';
+    r.marketDisruptionEnd = d.marketDisruptionEnd ?? 0;
+    r.currencyAnnouncement = d.currencyAnnouncement ?? null;
+    r.currencyTransition = d.currencyTransition ?? null;
+    r.expansionSpeed = d.expansionSpeed ?? 'steady';
+    r.tradeOpenness = d.tradeOpenness ?? 'balanced';
+    r.economicSystem = d.economicSystem ?? 'mixed';
+    r.militaryDoctrine = d.militaryDoctrine ?? 'professional';
+    r.allianceStance = d.allianceStance ?? 'opportunist';
     r.nextId = d.nextId;
     r.nextEventDay = d.nextEventDay;
     r.townNamePool = d.townNamePool;
@@ -4906,5 +4988,264 @@ export class RegionSim {
   private townEvent(t: Settlement, text: string, kind: 'good' | 'bad' | 'info'): void {
     t.recentEvents.unshift({ day: this.day, text, kind });
     if (t.recentEvents.length > 12) t.recentEvents.pop();
+  }
+
+  // ---- Lender system: loans, interest, and loan management ----
+
+  /**
+   * Request a loan from a lender.
+   * Returns { ok: true, loanId } or { ok: false, reason }.
+   */
+  requestLoan(
+    lenderId: number,
+    amount: number,
+    termMonths: number,
+  ): { ok: boolean; reason?: string; loanId?: number } {
+    const lender = this.lenders.find((l) => l.id === lenderId);
+    if (!lender) return { ok: false, reason: 'Lender not found' };
+
+    // Check lender's availability and capacity
+    if (amount > lender.maxLoan) {
+      return { ok: false, reason: `This lender can only offer up to ` + formatCurrency(lender.maxLoan) + `` };
+    }
+    if (amount > lender.liquidCash) {
+      return { ok: false, reason: `This lender currently has only ` + formatCurrency(lender.liquidCash) + ` available` };
+    }
+
+    // Create and record the loan
+    const loan: Loan = {
+      id: Math.random(),
+      lenderId,
+      principal: amount,
+      borrowed: amount,
+      interestRate: lender.interestRate,
+      termYears: Math.round(termMonths / 12 * 100) / 100,
+      borrowedAt: this.day,
+      nextPaymentDue: this.day + 30, // first payment due in 1 month
+      defaulted: false,
+    };
+
+    this.loans.push(loan);
+    lender.liquidCash -= amount; // lender's cash is tied up
+    this.treasury += amount; // treasury receives the loan proceeds
+
+    this.addLog(
+      `Borrowed ` + formatCurrency(amount) + ` from ${lender.name} at ${(lender.interestRate * 100).toFixed(1)}% annual interest, due in ${termMonths} months.`,
+      'info',
+    );
+
+    return { ok: true, loanId: loan.id };
+  }
+
+  /**
+   * Make a payment on an active loan.
+   * Returns { ok: true, remaining } or { ok: false, reason }.
+   */
+  repayLoan(loanId: number, paymentAmount: number): { ok: boolean; remaining?: number; reason?: string } {
+    const loan = this.loans.find((l) => l.id === loanId);
+    if (!loan) return { ok: false, reason: 'Loan not found' };
+
+    if (loan.defaulted) {
+      return { ok: false, reason: 'This loan has defaulted and cannot be repaid' };
+    }
+
+    if (paymentAmount <= 0) {
+      return { ok: false, reason: 'Payment must be positive' };
+    }
+
+    if (this.treasury < paymentAmount) {
+      return { ok: false, reason: 'Insufficient treasury funds for this payment' };
+    }
+
+    // Process the payment
+    this.treasury -= paymentAmount;
+    loan.borrowed = Math.max(0, loan.borrowed - paymentAmount);
+
+    // Move next payment due forward by 1 month if this was an on-time payment
+    if (this.day <= loan.nextPaymentDue) {
+      loan.nextPaymentDue += 30;
+    } else {
+      // Make up a late payment but don't move next due date back
+      loan.nextPaymentDue = this.day + 30;
+    }
+
+    const lender = this.lenders.find((l) => l.id === loan.lenderId);
+    if (lender) {
+      lender.liquidCash += paymentAmount; // lender recovers the principal
+    }
+
+    this.addLog(
+      `Paid ` + formatCurrency(paymentAmount) + ` toward outstanding loan. Remaining: ` + formatCurrency(Math.round(loan.borrowed)) + ``,
+      'info',
+    );
+
+    return { ok: true, remaining: loan.borrowed };
+  }
+
+  /**
+   * Called monthly to process loan interest accrual and check for defaults.
+   */
+  updateLoans(): void {
+    for (const loan of this.loans) {
+      if (loan.defaulted) continue;
+
+      // Calculate interest accrued this month
+      const monthlyRate = loan.interestRate / 12;
+      const interestThisMonth = loan.borrowed * monthlyRate;
+      loan.borrowed += interestThisMonth;
+
+      // Check for default: payment overdue by 90+ days (3 months grace)
+      if (this.day > loan.nextPaymentDue + 90 && !loan.defaulted) {
+        loan.defaulted = true;
+        const lender = this.lenders.find((l) => l.id === loan.lenderId);
+        if (lender) {
+          lender.reliability = Math.max(0, lender.reliability - 10); // lender loses confidence in player
+          lender.liquidCash = 0; // lender becomes cautious
+        }
+        this.addLog(
+          `Loan from ${lender?.name ?? 'lender'} has defaulted. Credit damaged.`,
+          'bad',
+        );
+      }
+    }
+
+    // Remove fully repaid loans
+    this.loans = this.loans.filter((l) => l.borrowed > 0.01 || l.defaulted);
+  }
+
+  /**
+   * Get total outstanding loan debt.
+   */
+  getTotalDebt(): number {
+    return this.loans.reduce((sum, loan) => sum + (loan.defaulted ? 0 : loan.borrowed), 0);
+  }
+
+  /**
+   * Treasury minus outstanding loan debt — used for progression gate checks
+   * so loans can't trivially bypass economic gates.
+   */
+  getNetTreasury(): number {
+    return this.treasury - this.getTotalDebt();
+  }
+
+  /**
+   * Employment-weighted average daily wage across all settlements.
+   * Scales with tech era: $0.33/d at 1900 → $200+/d at full info-age tech.
+   */
+  avgDailyWage(): number {
+    let totalWorkers = 0;
+    let totalWageMonth = 0;
+    for (const t of this.settlements) {
+      const workers = this.workersOf(t);
+      totalWorkers += workers;
+      totalWageMonth += workers * this.avgWageOf(t);
+    }
+    if (totalWorkers === 0) return 0;
+    return (totalWageMonth / totalWorkers) / 30;
+  }
+
+  /**
+   * Announce a future currency switch. Telegraphing the change 6+ months
+   * ahead reads as deliberate policy and softens the eventual shock by 25%.
+   */
+  announceCurrencyChange(newSymbol: CurrencySymbol): { ok: boolean; reason: string } {
+    if (newSymbol === this.currencySymbol) return { ok: false, reason: 'Already on that standard' };
+    this.currencyAnnouncement = { newSymbol, announcedDay: this.day };
+    this.addLog(
+      `The treasury signals an intent to adopt the ${newSymbol} standard. Markets begin pricing it in.`,
+      'info',
+    );
+    return { ok: true, reason: '' };
+  }
+
+  /**
+   * Switch currency standards. The penalty depends on WHY (GDD §5.1 ext):
+   * crisis-forced switches are forgiven, political ones tolerated, arbitrary
+   * ones punished. Advance announcement and deep reserves both soften it.
+   */
+  changeCurrency(newSymbol: CurrencySymbol, cause: CurrencyChangeCause = 'strategic'): { ok: boolean; reason: string } {
+    if (newSymbol === this.currencySymbol) return { ok: false, reason: 'No change' };
+
+    const announced =
+      this.currencyAnnouncement?.newSymbol === newSymbol &&
+      this.day - this.currencyAnnouncement.announcedDay >= ANNOUNCE_LEAD_DAYS;
+    const reserveRatio = this.gdpLastMonth > 0 ? this.treasury / this.gdpLastMonth : 0;
+    const penalty = computePenalty(cause, announced, reserveRatio);
+
+    const flight = Math.floor(this.treasury * penalty.capitalFlightFrac);
+    this.treasury -= flight;
+    this.currencySymbol = newSymbol;
+    setCurrencySymbol(newSymbol);
+    this.currencyAnnouncement = null;
+    this.currencyTransition = {
+      newSymbol,
+      cause,
+      startDay: this.day,
+      endDay: this.day + penalty.recoveryDays,
+      startEfficiencyMult: penalty.efficiencyMult,
+    };
+    this.marketDisruptionEnd = this.day + penalty.recoveryDays;
+
+    this.addLog(
+      `The ${newSymbol} standard is adopted. ${penalty.narrative} ` +
+        `Capital flight: ` + formatCurrency(flight) + `. ` +
+        `Markets expect ~${Math.round(penalty.recoveryDays / 30)} months to stabilize.` +
+        (announced ? ' The advance notice cushioned the blow.' : ''),
+      cause === 'crisis' ? 'info' : 'bad',
+    );
+    return { ok: true, reason: '' };
+  }
+
+  /** Output multiplier from an in-progress currency transition (1 = stable). */
+  currencyEfficiency(): number {
+    return transitionEfficiency(this.currencyTransition, this.day);
+  }
+
+  /** The region-flip design screen: doctrine for the new tier. */
+  applyRegionDesign(d: RegionDesign): void {
+    this.expansionSpeed = d.expansionSpeed;
+    this.tradeOpenness = d.tradeOpenness;
+    this.taxRate = Math.min(0.3, Math.max(0.05, d.taxRate));
+    this.servicesLevel = d.servicesLevel;
+    this.tradeLevyRate = d.tradeOpenness === 'protectionist' ? 0.08 : d.tradeOpenness === 'free-trade' ? 0.03 : 0.05;
+    this.addLog(
+      `The region sets its course: ${d.expansionSpeed} expansion, ${d.tradeOpenness} trade, ` +
+        `${Math.round(d.taxRate * 100)}% levy.`,
+      'info',
+    );
+  }
+
+  /** The nation-flip design screen: national identity, and the one sanctioned
+   *  chance to re-pick the currency (a political-cause transition, not free). */
+  applyNationDesign(d: NationDesign): void {
+    this.economicSystem = d.economicSystem;
+    this.militaryDoctrine = d.militaryDoctrine;
+    this.allianceStance = d.allianceStance;
+    this.addLog(
+      `The constitution enshrines a ${d.economicSystem} economy, a ${d.militaryDoctrine} military, ` +
+        `and a ${d.allianceStance.replace('-', ' ')} foreign policy.`,
+      'info',
+    );
+    if (d.currencySymbol && d.currencySymbol !== this.currencySymbol) {
+      this.changeCurrency(d.currencySymbol, 'political');
+    }
+  }
+
+  /** Expedition requirements scale with the expansion doctrine. */
+  expansionCostMult(): number {
+    return this.expansionSpeed === 'aggressive' ? 0.75 : this.expansionSpeed === 'cautious' ? 1.25 : 1;
+  }
+
+  /** Steady-state output multiplier from the economic system. Markets squeeze
+   *  more from each hand; planning trades a slice of output for stability. */
+  economyOutputMult(): number {
+    return this.economicSystem === 'laissez-faire' ? 1.10 : this.economicSystem === 'planned' ? 0.92 : 1;
+  }
+
+  /**
+   * Get list of active loans (not defaulted).
+   */
+  getActiveLoans(): Loan[] {
+    return this.loans.filter((l) => !l.defaulted);
   }
 }

@@ -28,7 +28,7 @@ function flipped(seed: number): RegionSim {
 function toStatehood(r: RegionSim): void {
   for (let year = 0; year < 30 && !r.ceremonyPending; year++) {
     // Ensure charter requirements stay met during loop (including new settlements)
-    r.treasury = Math.max(r.treasury, 50000);
+    r.treasury = Math.max(r.treasury, 8000);
     for (const t of r.settlements) {
       t.garrisonStrength = Math.max(t.garrisonStrength || 0, 5);
     }
@@ -396,7 +396,7 @@ describe('The charter rides the network (GDD §2.2)', () => {
     });
     expect(r.connectedToAll()).toBe(true);
     // Set up charter requirements: treasury and garrison
-    r.treasury = 50000;
+    r.treasury = 8000;
     for (const t of r.settlements) {
       t.garrisonStrength = 5;
     }

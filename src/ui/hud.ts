@@ -3,7 +3,7 @@
  * inspector panel, work priorities, event log.
  */
 import type { Simulation, Settler, Building } from '../sim/sim';
-import { buildingDef, traitDef, WORK_KINDS, TUNING, TOWN_TECH_DEFS } from '../sim/defs';
+import { buildingDef, traitDef, WORK_KINDS, TUNING, TOWN_TECH_DEFS, formatCurrency } from '../sim/defs';
 import type { ResourceKind, WorkKind } from '../sim/defs';
 import { getMarketPrice } from '../sim/economy';
 import type { Camera } from './render';
@@ -549,7 +549,7 @@ export class Hud {
       `<span class="tb-date">${s.dateLabel} ${hh}:${mm}</span>` +
       `<span>${skyIcon} ${Math.round(s.temperature())}°C${drought}</span>` +
       `<span>${popDisplay}${capWarn}</span>` +
-      `<span>💰£${Math.round(s.economy.cash)}</span>` +
+      `<span>💰` + formatCurrency(Math.round(s.economy.cash)) + `</span>` +
       `<span>🪵${s.stock.wood} ⛏${s.stock.stone} 🌾${s.stock.grain} 🍖${s.stock.meal} 👕${s.stock.clothes}${s.stock.weapons ? ` ⚔${s.stock.weapons}` : ''}</span>` +
       `<span title="average mood">♥${Math.round(s.avgMood())}</span>` +
       (s.raidActive ? `<span class="tb-over">⚔ RAID ${s.raiders.length}!</span>` : '') +
@@ -668,10 +668,10 @@ export class Hud {
     const sells = sellable.map((kind) => {
       const price = getMarketPrice(this.sim.economy, kind);
       const can = this.sim.stock[kind] >= 5;
-      return `<button class="sell-cash-btn" data-kind="${kind}"${can ? '' : ' disabled'}>5 ${kind} → £${price * 5}</button>`;
+      return `<button class="sell-cash-btn" data-kind="${kind}"${can ? '' : ' disabled'}>5 ${kind} → ` + formatCurrency(price * 5) + `</button>`;
     }).join(' ');
     return `<p class="insp-skills">BARTER:</p><p>${offers}</p>` +
-      `<p class="insp-skills">SELL FOR COIN (£${Math.round(this.sim.economy.cash)}):</p><p>${sells}</p>`;
+      `<p class="insp-skills">SELL FOR COIN (` + formatCurrency(Math.round(this.sim.economy.cash)) + `):</p><p>${sells}</p>`;
   }
 
   private civicPanel(bid: number): string {

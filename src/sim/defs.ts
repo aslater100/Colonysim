@@ -42,6 +42,61 @@ export const WORK_KINDS: WorkKind[] = [
 // ---- Town focus (used by player and Notable Mayor post-flip) ----
 export type TownFocus = 'balanced' | 'agricultural' | 'military' | 'trade' | 'industrial' | 'cultural';
 
+// ---- Currency system ----
+export type CurrencySymbol = '$' | '£' | '€' | 'CA$' | 'A$';
+export const CURRENCY_SYMBOLS: CurrencySymbol[] = ['$', '£', '€', 'CA$', 'A$'];
+
+// Headless harness (vitest/node) has no localStorage; fall back to a module var.
+let currencyFallback: CurrencySymbol = '$';
+
+export function getCurrencySymbol(): CurrencySymbol {
+  if (typeof localStorage === 'undefined') return currencyFallback;
+  return (localStorage.getItem('centuria-currency') ?? '$') as CurrencySymbol;
+}
+
+export function setCurrencySymbol(sym: CurrencySymbol): void {
+  currencyFallback = sym;
+  if (typeof localStorage !== 'undefined') localStorage.setItem('centuria-currency', sym);
+}
+
+export function formatCurrency(amount: number, decimals?: number): string {
+  if (decimals !== undefined) {
+    return `${getCurrencySymbol()}${amount.toFixed(decimals)}`;
+  }
+  return `${getCurrencySymbol()}${Math.round(amount)}`;
+}
+
+// ---- Design screens (game start / region flip / nation flip) ----
+export interface TownDesign {
+  currencySymbol: CurrencySymbol;
+  difficulty: 'easy' | 'normal' | 'hard';
+  /** Map site preference; worldgen picks the best matching start. */
+  location: 'river-valley' | 'coastal' | 'highlands' | 'surprise';
+  startingPop: 8 | 12 | 16;
+}
+
+export interface RegionDesign {
+  expansionSpeed: 'cautious' | 'steady' | 'aggressive';
+  tradeOpenness: 'protectionist' | 'balanced' | 'free-trade';
+  taxRate: number; // 0.05–0.30
+  servicesLevel: 0 | 1 | 2;
+}
+
+export interface NationDesign {
+  economicSystem: 'laissez-faire' | 'mixed' | 'planned';
+  militaryDoctrine: 'defensive' | 'professional' | 'expansionist';
+  allianceStance: 'isolationist' | 'opportunist' | 'coalition-builder';
+  /** If set and different from current, triggers a currency transition. */
+  currencySymbol?: CurrencySymbol;
+}
+
+/** Difficulty scales the founding stores and seed money. */
+export const DIFFICULTY_PRESETS = {
+  easy: { stockMult: 1.5, startCash: 800 },
+  normal: { stockMult: 1.0, startCash: 500 },
+  hard: { stockMult: 0.6, startCash: 200 },
+} as const;
+
 // ---- Market automation ----
 export interface TradeOrder {
   id: number;

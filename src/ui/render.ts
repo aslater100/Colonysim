@@ -155,7 +155,9 @@ export class Renderer {
   }
 
   private isInViewport(px: number, py: number, buffer: number = TILE * 2): boolean {
-    return px >= -buffer && py >= -buffer && px < this.canvas.width + buffer && py < this.canvas.height + buffer;
+    // Coordinates are in the zoom-scaled context: the visible area spans canvas/zoom world-pixels.
+    const zoom = this.cam.zoom;
+    return px >= -buffer && py >= -buffer && px < this.canvas.width / zoom + buffer && py < this.canvas.height / zoom + buffer;
   }
 
   tileAt(px: number, py: number): { x: number; y: number } {
@@ -171,14 +173,23 @@ export class Renderer {
     const { ox, oy } = this.mapOrigin();
     const anim = Math.floor(this.frame / 30) % 2;
 
+    // Visible tile bounds: the context is zoom-scaled, so the viewport spans
+    // canvas/zoom world-pixels. Iterating only these tiles (instead of the
+    // full map with per-tile checks) keeps the frame cheap at high population.
+    const vw = this.canvas.width / this.cam.zoom;
+    const vh = this.canvas.height / this.cam.zoom;
+    const tx0 = Math.max(0, Math.floor((-ox - TILE * 2) / TILE));
+    const ty0 = Math.max(0, Math.floor((-oy - TILE * 2) / TILE));
+    const tx1 = Math.min(MAP_W, Math.ceil((vw - ox + TILE * 2) / TILE));
+    const ty1 = Math.min(MAP_H, Math.ceil((vh - oy + TILE * 2) / TILE));
+
     // Pass 1: ground (grass clusters via coarse hash so tones form patches),
     // water, soil, roads. Trees draw in pass 2 so canopies overlap properly.
-    for (let y = 0; y < MAP_H; y++) {
-      for (let x = 0; x < MAP_W; x++) {
+    for (let y = ty0; y < ty1; y++) {
+      for (let x = tx0; x < tx1; x++) {
         const t = sim.world.at(x, y);
         const px = ox + x * TILE;
         const py = oy + y * TILE;
-        if (px < -TILE * 2 || py < -TILE * 2 || px > this.canvas.width || py > this.canvas.height) continue;
         if (t.kind === 'water') {
           g.drawImage(sprites.water[anim], px, py);
         } else if (t.kind === 'soil') {
@@ -199,12 +210,11 @@ export class Renderer {
       }
     }
     // Pass 2: standing terrain (rocks, palisades, then trees with overhanging canopies)
-    for (let y = 0; y < MAP_H; y++) {
-      for (let x = 0; x < MAP_W; x++) {
+    for (let y = ty0; y < ty1; y++) {
+      for (let x = tx0; x < tx1; x++) {
         const t = sim.world.at(x, y);
         const px = ox + x * TILE;
         const py = oy + y * TILE;
-        if (px < -TILE * 2 || py < -TILE * 2 || px > this.canvas.width || py > this.canvas.height) continue;
         if (t.kind === 'rock') g.drawImage(t.marked ? sprites.rockMarked : sprites.rock, px, py);
         else if (t.wall) {
           const mask =
@@ -219,24 +229,20 @@ export class Renderer {
       }
     }
     // Wall & gate HP bars
-    for (let y = 0; y < MAP_H; y++) {
-      for (let x = 0; x < MAP_W; x++) {
+    for (let y = ty0; y < ty1; y++) {
+      for (let x = tx0; x < tx1; x++) {
         const t = sim.world.at(x, y);
         const maxHp = t.wall ? TUNING.wallMaxHp : t.gate ? TUNING.gateMaxHp : 0;
         if (maxHp && t.wallHp < maxHp) {
-          const px = ox + x * TILE;
-          const py = oy + y * TILE;
-          if (px >= -TILE && py >= -TILE && px < this.canvas.width && py < this.canvas.height) {
-            this.hpBar(px, py - 3, t.wallHp / maxHp);
-          }
+          this.hpBar(ox + x * TILE, oy + y * TILE - 3, t.wallHp / maxHp);
         }
       }
     }
 
     // Traffic overlay: warm heatmap of recent transits
     if (this.cam.overlay === 'traffic') {
-      for (let y = 0; y < MAP_H; y++) {
-        for (let x = 0; x < MAP_W; x++) {
+      for (let y = ty0; y < ty1; y++) {
+        for (let x = tx0; x < tx1; x++) {
           const v = sim.traffic[y * MAP_W + x];
           if (v < 0.5) continue;
           g.fillStyle = `rgba(232,150,60,${Math.min(0.65, v / 40)})`;
@@ -254,6 +260,7 @@ export class Renderer {
       const rh = rot % 2 === 1 ? def.w : def.h;
       const bx = ox + b.x * TILE;
       const by = oy + b.y * TILE;
+      if (!this.isInViewport(bx, by, TILE * (Math.max(rw, rh) + 1))) continue;
       if (rot !== 0) {
         g.save();
         g.translate(bx + rw * TILE / 2, by + rh * TILE / 2);
@@ -283,7 +290,7 @@ export class Renderer {
       const rw = rot % 2 === 1 ? def.h : def.w;
       const bx = ox + b.x * TILE;
       const by = oy + b.y * TILE;
-      if (bx < -TILE * 4 || by < -TILE * 4 || bx > this.canvas.width || by > this.canvas.height) continue;
+      if (!this.isInViewport(bx, by, TILE * 4)) continue;
       const cx = b.defId === 'hearth' ? bx + TILE / 2 - 1 : bx + rw * TILE - 7;
       for (let p = 0; p < 3; p++) {
         const t = ((this.frame + b.id * 41 + p * 40) % 120) / 120;
@@ -297,13 +304,19 @@ export class Renderer {
 
     // Graves (over the burial-ground plot), then ground items, then the unburied
     for (const gr of sim.graves) {
-      g.drawImage(this.sprites.grave, ox + gr.x * TILE, oy + gr.y * TILE);
+      const px = ox + gr.x * TILE, py = oy + gr.y * TILE;
+      if (!this.isInViewport(px, py)) continue;
+      g.drawImage(this.sprites.grave, px, py);
     }
     for (const it of sim.items) {
-      g.drawImage(this.sprites.items[it.kind], ox + it.x * TILE, oy + it.y * TILE);
+      const px = ox + it.x * TILE, py = oy + it.y * TILE;
+      if (!this.isInViewport(px, py)) continue;
+      g.drawImage(this.sprites.items[it.kind], px, py);
     }
     for (const c of sim.corpses) {
-      g.drawImage(this.sprites.corpse, ox + c.x * TILE, oy + c.y * TILE);
+      const px = ox + c.x * TILE, py = oy + c.y * TILE;
+      if (!this.isInViewport(px, py)) continue;
+      g.drawImage(this.sprites.corpse, px, py);
     }
 
     // Wildlife
@@ -352,9 +365,6 @@ export class Renderer {
 
     // Weather: precipitation streaks and storm gloom over the whole scene
     // (canvas dimensions divided by zoom since we're inside the scaled context)
-    const zoom = this.cam.zoom;
-    const vw = this.canvas.width / zoom;
-    const vh = this.canvas.height / zoom;
     const wx = sim.weatherToday();
     if (wx.sky === 'overcast' || wx.sky === 'rain' || wx.sky === 'storm') {
       g.fillStyle = `rgba(40,48,60,${wx.sky === 'storm' ? 0.28 : wx.sky === 'rain' ? 0.18 : 0.1})`;
@@ -407,13 +417,10 @@ export class Renderer {
 
     // Fog of war: hard black over unexplored tiles
     g.fillStyle = '#000';
-    for (let y = 0; y < MAP_H; y++) {
-      for (let x = 0; x < MAP_W; x++) {
+    for (let y = ty0; y < ty1; y++) {
+      for (let x = tx0; x < tx1; x++) {
         if (sim.world.at(x, y).explored) continue;
-        const px = ox + x * TILE;
-        const py = oy + y * TILE;
-        if (px < -TILE || py < -TILE || px > vw || py > vh) continue;
-        g.fillRect(px, py, TILE, TILE);
+        g.fillRect(ox + x * TILE, oy + y * TILE, TILE, TILE);
       }
     }
   }

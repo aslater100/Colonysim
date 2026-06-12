@@ -246,13 +246,21 @@ export class RegionMap {
     };
   }
 
-  /** The founding valley: the best river-blessed plains cell near the map's heart. */
-  startSite(): TownSite {
+  /** The founding valley: the best river-blessed plains cell near the map's heart.
+   *  An optional preference biases the pick toward coast, highlands, or river. */
+  startSite(pref: 'river-valley' | 'coastal' | 'highlands' | 'surprise' = 'river-valley'): TownSite {
     let best = { x: REGION_N / 2, y: REGION_N / 2, score: -Infinity };
     for (let y = 8; y < REGION_N - 8; y++) {
       for (let x = 8; x < REGION_N - 8; x++) {
         const centerBias = 1 - (Math.abs(x - REGION_N / 2) + Math.abs(y - REGION_N / 2)) / REGION_N;
-        const score = this.siteScore(x, y) + centerBias * 1.2;
+        let score = this.siteScore(x, y) + centerBias * 1.2;
+        if (this.siteScore(x, y) < 0) continue; // never settle water or peaks
+        const c = this.at(x, y);
+        const coastal = this.neighbors(x, y).some((n) => n.biome === 'sea' || n.biome === 'lake');
+        const nearRiver = c.river || this.neighbors(x, y).some((n) => n.river);
+        if (pref === 'coastal' && coastal) score += 3;
+        else if (pref === 'highlands') score += c.roughness * 2.5;
+        else if (pref === 'river-valley' && nearRiver) score += 1;
         if (score > best.score) best = { x, y, score };
       }
     }
