@@ -451,7 +451,7 @@ describe('Constitutional Convention & Nation Proclamation (v0.15.0)', () => {
     r.stateName = 'Testonia';
     r.govLean = 'council';
     r.treasury = 250000; // Nation requires £250k
-    r.militiaLevel = 5; // Militia contributes to military requirement
+    r.militiaLevel = 2; // Militia contributes to military requirement (2*3=6 + 10 garrison = 16 >= 15)
     r.researched.push('statecraft', 'universal_suffrage', 'income_tax', 'free_press', 'labor_law', 'public_education');
     // Force population above threshold
     for (const t of r.settlements) {
@@ -628,7 +628,7 @@ describe('Policy slots & expanded statute book (v0.16.0)', () => {
     r.stateName = 'Testonia';
     r.govLean = 'council';
     r.treasury = 500000; // Nation costs £200k, start with £500k
-    r.militiaLevel = 5; // Militia contributes to military requirement
+    r.militiaLevel = 2; // Militia contributes to military requirement (2*3=6 + 10 garrison = 16 >= 15)
     r.researched.push('statecraft', 'universal_suffrage', 'income_tax', 'free_press', 'labor_law', 'public_education');
     for (const t of r.settlements) {
       t.cohorts.bands[2] += 800;
