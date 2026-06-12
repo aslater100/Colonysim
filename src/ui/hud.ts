@@ -3,13 +3,14 @@
  * inspector panel, work priorities, event log.
  */
 import type { Simulation, Settler, Building } from '../sim/sim';
-import { buildingDef, traitDef, WORK_KINDS, TUNING } from '../sim/defs';
+import { buildingDef, traitDef, WORK_KINDS, TUNING, TOWN_TECH_DEFS } from '../sim/defs';
 import type { ResourceKind, WorkKind } from '../sim/defs';
 import type { Camera } from './render';
 import type { PaintKind } from '../sim/world';
 import type { Sfx } from './audio';
 import type { Music } from './music';
 import type { Soundscape } from './soundscape';
+import { TechPanel } from './TechPanel';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -53,8 +54,11 @@ const BUILD_CATEGORIES: BuildCategory[] = [
       { kind: 'building', id: 'kitchen', label: 'Cookhouse', cost: '30w', desc: 'Turns grain into meals.' },
       { kind: 'building', id: 'bakery', label: 'Bakery', cost: '45w', desc: 'Faster batch cooking.' },
       { kind: 'building', id: 'granary', label: 'Granary', cost: '35w', desc: '+150 meal storage cap.' },
-      { kind: 'building', id: 'lodge', label: 'Hunt Lodge', cost: '30w', desc: 'Hunters bring back game.' },
-      { kind: 'building', id: 'fishing_dock', label: 'Fish Dock', cost: '15w', desc: 'Fish for meals near water.' },
+      { kind: 'building', id: 'lodge', label: 'Hunt Lodge', cost: '30w', desc: 'Hunters bring back game_meal.' },
+      { kind: 'building', id: 'fishing_dock', label: 'Fish Dock', cost: '15w', desc: 'Fish for fish_meal near water.' },
+      { kind: 'building', id: 'mill', label: 'Mill', cost: '40w+5s', desc: 'Grain→produce (variety food). Needs Milling tech.' },
+      { kind: 'building', id: 'brewery', label: 'Brewery', cost: '30w', desc: 'Grain→ale for morale. Needs Fermentation tech.' },
+      { kind: 'building', id: 'kitchen_garden', label: 'Kitchen Garden', cost: '15w', desc: 'Free produce over time. Needs Horticulture tech.' },
     ],
   },
   {
@@ -71,6 +75,7 @@ const BUILD_CATEGORIES: BuildCategory[] = [
     icon: '⚑',
     label: 'CIVIL',
     items: [
+      { kind: 'building', id: 'town_hall', label: 'Town Hall', cost: '60w+20s', desc: 'Enables town research tree [K]. Assign researcher.' },
       { kind: 'building', id: 'hall', label: 'Meeting Hall', cost: '40w', desc: 'Recreation and society.' },
       { kind: 'building', id: 'hearth', label: 'Hearth', cost: '10w', desc: 'Keeps settlers warm in winter.' },
       { kind: 'building', id: 'market', label: 'Market', cost: '50w', desc: 'Trade with passing merchants.' },
@@ -84,6 +89,8 @@ const BUILD_CATEGORIES: BuildCategory[] = [
     items: [
       { kind: 'zone', id: 'wall', label: 'Palisade [L]', cost: '3w/tile', hotkey: 'l', desc: 'Wooden wall — blocks raiders.' },
       { kind: 'zone', id: 'gate', label: 'Gate [G]', cost: '5w/tile', hotkey: 'g', desc: 'Settlers pass; raiders must break it.' },
+      { kind: 'zone', id: 'trap', label: 'Spike Trap [X]', cost: '2w/tile', hotkey: 'x', desc: 'One-shot spike trap. Damages raiders on contact.' },
+      { kind: 'building', id: 'armory', label: 'Armoury', cost: '30w', desc: 'Forges weapons from wood. Armed settlers deal more damage.' },
     ],
   },
   {
@@ -134,6 +141,7 @@ export class Hud {
   private lastLogLen = 0;
   private foundBtn: HTMLButtonElement | null = null;
   private htmlCache = new Map<HTMLElement, string>();
+  private techPanel!: TechPanel;
 
   constructor(
     root: HTMLElement,
@@ -155,6 +163,7 @@ export class Hud {
     this.menuBox = el('div', 'menu hidden', root);
 
     this.buildBuildBar();
+    this.techPanel = new TechPanel(root, sim);
 
     // Delegate clicks on the submenu
     this.buildSubmenu.addEventListener('mousedown', (e) => {
@@ -213,6 +222,9 @@ export class Hud {
           if (b) b.workerLimit = null;
           break;
         }
+        case 'open-tech':
+          this.techPanel.show();
+          break;
       }
     });
 
@@ -374,7 +386,7 @@ export class Hud {
       return k.length === 1;
     }
     const zoneMap: Record<string, PaintKind> = {
-      f: 'farm', t: 'stockpile', l: 'wall', g: 'gate',
+      f: 'farm', t: 'stockpile', l: 'wall', g: 'gate', x: 'trap',
       '4': 'dirt', '5': 'plank', '6': 'gravel', '7': 'bridge',
     };
     if (zoneMap[k]) {
@@ -384,7 +396,7 @@ export class Hud {
       this.refreshBuildBarState();
       // Auto-open defense/roads/zones category
       const catForZone: Record<string, string> = {
-        wall: 'defense', gate: 'defense',
+        wall: 'defense', gate: 'defense', trap: 'defense',
         dirt: 'roads', plank: 'roads', gravel: 'roads', bridge: 'roads',
         farm: 'zones', stockpile: 'zones',
       };
@@ -399,6 +411,7 @@ export class Hud {
       this.refreshBuildBarState();
       return true;
     }
+    if (k === 'k') { this.techPanel.toggle(); return true; }
     if (k === 'o') { this.cam.overlay = this.cam.overlay === 'traffic' ? 'none' : 'traffic'; return true; }
     if (k === 'p') { this.togglePriorities(); return true; }
     if (k === 'm') { this.toggleMenu(); return true; }
@@ -483,6 +496,7 @@ export class Hud {
     this.drawLog();
     this.drawGameOver();
     if (this.showPriorities) this.drawPriorities();
+    this.techPanel.update();
     if (this.foundBtn) {
       const can = this.sim.canFoundSecondTown();
       this.foundBtn.disabled = !can.ok;
@@ -502,7 +516,7 @@ export class Hud {
       `<span class="tb-date">${s.dateLabel} ${hh}:${mm}</span>` +
       `<span>${skyIcon} ${Math.round(s.temperature())}°C${drought}</span>` +
       `<span>POP ${s.settlers.length}${capWarn}</span>` +
-      `<span>🪵${s.stock.wood} ⛏${s.stock.stone} 🌾${s.stock.grain} 🍖${s.stock.meal} 👕${s.stock.clothes}</span>` +
+      `<span>🪵${s.stock.wood} ⛏${s.stock.stone} 🌾${s.stock.grain} 🍖${s.stock.meal} 👕${s.stock.clothes}${s.stock.weapons ? ` ⚔${s.stock.weapons}` : ''}</span>` +
       `<span title="average mood">♥${Math.round(s.avgMood())}</span>` +
       (s.raidActive ? `<span class="tb-over">⚔ RAID ${s.raiders.length}!</span>` : '') +
       `<span class="tb-speed">${this.paused ? '⏸' : '▶'.repeat(this.speed)} <i>(space 1-3)</i></span>`);
@@ -537,6 +551,7 @@ export class Hud {
       ['Grain', s.stock.grain, '∞'],
       ['Meals', s.stock.meal, mealCap],
       ['Clothes', s.stock.clothes, '∞'],
+      ['Weapons', s.stock.weapons, '∞'],
     ].map(([label, val, cap]) =>
       `<div class="bar-row"><span>${label}</span><div class="bar"><div class="bar-fill" style="width:${cap === '∞' ? 50 : Math.min(100, Math.round(Number(val) / Number(cap) * 100))}%"></div></div><span>${val}/${cap}</span></div>`
     ).join('');
@@ -576,6 +591,7 @@ export class Hud {
         const used = s.settlers.filter((p) => p.bedId === b.id).length;
         details += `<p class="insp-state">Occupancy: ${used}/${cap}</p>`;
       }
+      if (def.provides === 'civic') details += this.civicPanel(b.id);
       if (def.provides === 'trade') details += this.tradePanel();
       if (def.provides === 'granary') {
         details += `<p class="insp-state">Adds ${TUNING.mealCapPerGranary + s.buildingEffectiveCapacity(b)} meal capacity</p>`;
@@ -614,6 +630,26 @@ export class Hud {
       return `<button class="trade-btn" data-give="${give}" data-get="${get}"${can ? '' : ' disabled'}>${r.give}${give[0]}→${r.get}${get[0]}</button>`;
     }).join(' ');
     return `<p class="insp-skills">BARTER:</p><p>${offers}</p>`;
+  }
+
+  private civicPanel(bid: number): string {
+    const s = this.sim;
+    const done = s.townTechsResearched.length;
+    let researchLine = '';
+    if (s.activeResearch) {
+      const def = TOWN_TECH_DEFS.find((d) => d.id === s.activeResearch!.techId);
+      const pct = def
+        ? Math.round((1 - s.activeResearch.workLeft / (def.days * 1440)) * 100)
+        : 0;
+      researchLine = `<p class="insp-state">Researching: ${def?.name ?? s.activeResearch.techId} (${pct}%)</p>`;
+    } else if (s.researchQueue.length > 0) {
+      researchLine = `<p class="insp-state">Queued: ${s.researchQueue.length} tech(s)</p>`;
+    } else {
+      researchLine = `<p class="insp-state" style="color:#554e44">No active research</p>`;
+    }
+    return researchLine +
+      `<p class="insp-skills">Techs researched: ${done}</p>` +
+      `<button data-action="open-tech" data-bid="${bid}">Tech Tree [K]</button>`;
   }
 
   private drawGameOver(): void {

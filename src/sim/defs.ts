@@ -1,15 +1,75 @@
 import buildingsJson from '../data/buildings.json';
 import traitsJson from '../data/traits.json';
 import namesJson from '../data/names.json';
+import townTechsJson from '../data/town_techs.json';
 
 /** All content defs load from JSON so they are moddable without touching code (GDD §8.8). */
 
-export type ResourceKind = 'wood' | 'grain' | 'meal' | 'stone' | 'clothes';
+// ---- Resource kinds ----
+// Founding resources are available from day 1. Era-1 resources unlock via the town tech tree.
+export type ResourceKind =
+  // Founding (day 1)
+  | 'wood' | 'grain' | 'meal' | 'stone' | 'clothes' | 'weapons'
+  // Raw — unlocked by town tech tree
+  | 'clay' | 'coal' | 'iron_ore' | 'flax' | 'herbs'
+  // Processed — unlocked by town tech tree
+  | 'timber' | 'brick' | 'iron' | 'tools' | 'rope' | 'flour' | 'ale' | 'medicine'
+  // Food variety — unlocked by respective techs; distinct types for the mood system
+  | 'bread' | 'dairy' | 'produce' | 'game_meal' | 'fish_meal' | 'preserved';
+
 export type Provides =
+  // Existing
   | 'storage' | 'sleep' | 'cook' | 'recreation' | 'warmth' | 'craft' | 'burial'
-  | 'hunt' | 'trade' | 'forestry' | 'granary' | 'medical' | 'fishing';
-export type WorkKind = 'build' | 'farm' | 'chop' | 'cook' | 'haul' | 'medic' | 'craft' | 'bury' | 'hunt' | 'plant' | 'fish';
-export const WORK_KINDS: WorkKind[] = ['build', 'farm', 'chop', 'cook', 'haul', 'medic', 'craft', 'bury', 'hunt', 'plant', 'fish'];
+  | 'hunt' | 'trade' | 'forestry' | 'granary' | 'medical' | 'fishing' | 'forge'
+  // New — town expansion
+  | 'civic' | 'ranching' | 'milling' | 'brewing' | 'preservation'
+  | 'smithing' | 'sawmill' | 'kiln' | 'well' | 'watchtower' | 'warehouse';
+
+export type WorkKind =
+  // Existing
+  | 'build' | 'farm' | 'chop' | 'cook' | 'haul' | 'medic' | 'craft'
+  | 'bury' | 'hunt' | 'plant' | 'fish' | 'forge'
+  // New — town expansion
+  | 'research' | 'ranch' | 'mine' | 'mill' | 'smelt' | 'store';
+
+export const WORK_KINDS: WorkKind[] = [
+  'build', 'farm', 'chop', 'cook', 'haul', 'medic', 'craft',
+  'bury', 'hunt', 'plant', 'fish', 'forge',
+  'research', 'ranch', 'mine', 'mill', 'smelt', 'store',
+];
+
+// ---- Town focus (used by player and Notable Mayor post-flip) ----
+export type TownFocus = 'balanced' | 'agricultural' | 'military' | 'trade' | 'industrial' | 'cultural';
+
+// ---- Market automation ----
+export interface TradeOrder {
+  id: number;
+  kind: 'sell' | 'buy';
+  resource: ResourceKind;
+  quantity: number;
+  trigger: 'periodic' | 'threshold';
+  periodDays?: number;
+  thresholdMin?: number;
+  thresholdMax?: number;
+  enabled: boolean;
+}
+
+export interface TradeRecord {
+  day: number;
+  kind: 'sell' | 'buy';
+  resource: ResourceKind;
+  quantity: number;
+  auto: boolean;
+}
+
+// ---- Interactive events ----
+export interface PendingEvent {
+  /** Key into the handler table — stored so text survives save/load. */
+  id: string;
+  title: string;
+  text: string;
+  choices: { label: string; desc: string }[];
+}
 
 export interface UpgradeLevel {
   cost: Partial<Record<ResourceKind, number>>;
@@ -25,6 +85,7 @@ export interface BuildingDef {
   cost: Partial<Record<ResourceKind, number>>;
   buildWork: number; // settler-minutes at skill 5
   provides: Provides;
+  homeType?: 'communal' | 'military' | 'private' | 'neutral';
   capacity?: number;
   maxHp?: number; // only damageable structures define this
   desc: string;
@@ -39,6 +100,7 @@ export interface TraitDef {
   moodBase?: number; // additive
   warmthDecay?: number; // multiplier
   foodDecay?: number; // multiplier
+  housingPreference?: 'private' | 'communal' | 'military';
 }
 
 export const BUILDING_DEFS: BuildingDef[] = buildingsJson.buildings as BuildingDef[];
@@ -55,6 +117,29 @@ export function buildingDef(id: string): BuildingDef {
 export function traitDef(id: string): TraitDef {
   const def = TRAIT_DEFS.find((d) => d.id === id);
   if (!def) throw new Error(`unknown trait def: ${id}`);
+  return def;
+}
+
+export interface TownTechDef {
+  id: string;
+  name: string;
+  branch: string;
+  prereqs: string[];
+  /** Base research time in game days at researcher skill 5. */
+  days: number;
+  cost: Partial<Record<ResourceKind, number>>;
+  /** Tech is locked before this calendar year. */
+  minYear?: number;
+  desc: string;
+  /** Informational list of what this tech enables. */
+  unlocks: string[];
+}
+
+export const TOWN_TECH_DEFS: TownTechDef[] = townTechsJson.techs as TownTechDef[];
+
+export function townTechDef(id: string): TownTechDef {
+  const def = TOWN_TECH_DEFS.find((d) => d.id === id);
+  if (!def) throw new Error(`unknown town tech: ${id}`);
   return def;
 }
 
@@ -162,6 +247,13 @@ export const TUNING = {
   // Armed pawns: fighters grab a spear from the stores when the horn sounds
   spearWoodCost: 3,
   spearDamageBonus: 12,
+  // Armoury: forged weapons cost wood, deal more damage than improvised spears
+  forgeWoodCost: 4,        // wood per forged weapon
+  forgeWorkPerWeapon: 90,  // settler-minutes at skill 5
+  forgedWeaponBonus: 22,   // damage bonus (vs spearDamageBonus 12)
+  // Spike traps: painted tiles that damage raiders on contact, one-shot
+  trapWoodCost: 2,         // wood deducted immediately when painted
+  trapDamage: 45,          // damage dealt when a raider triggers the trap
   // Animals: deer to hunt, wolves to fear
   deerStartCount: 8,
   deerMaxCount: 10,
@@ -190,4 +282,42 @@ export const TUNING = {
   // Relationships
   friendThreshold: 15,
   bondPerHourTogether: 0.8,
+  // ---- Town expansion (Phase 0 foundations) ----
+  // Food variety mood bonuses
+  foodVarietyBonus3: 3,   // mood bonus with 3+ distinct food types in last 7 days
+  foodVarietyBonus4: 6,   // mood bonus with 4+ distinct food types
+  foodVarietyPenalty: 2,  // mood penalty for eating same type 3+ days running
+  // Animal husbandry
+  livestockGrowthPerTend: 1,
+  livestockMaxPerBuilding: 8,
+  ranchMealPerHeadPerDay: 0.5,
+  dairyPerHeadPerDay: 0.3,
+  tendWork: 90,
+  // Production chains
+  sawmillWoodPerTimber: 2,    // 2 wood → 1 timber
+  kilnClayPerBrick: 2,        // 3 clay → 2 brick (net ratio)
+  smeltOrePerIron: 2,         // 2 iron_ore + 1 coal → 1 iron
+  smithIronPerTools: 2,       // 2 iron → 1 tools
+  toolsBuildSpeedBonus: 0.2,  // 20% faster build work while tools in stock
+  millGrainPerFlour: 1,       // 1 grain → 1.2 flour equivalent (ratio applied in cook)
+  brewGrainPerAle: 2,         // 2 grain → 1 ale
+  herbsHealBonus: 0.5,        // apothecary adds 50% regen on top of clinic base
+  herbsPerHarvest: 3,
+  herbGrowDays: 6,
+  // Town research
+  researchWorkBase: 1440,     // settler-minutes for a 10-day tech at skill 5 (10 × 144)
+  // Well / water
+  wellInfectionReduction: 0.1,
+  // Watchtower
+  watchtowerWarningDays: 1,   // extra days of warning before raid arrives
+  // Warehouse / storage
+  warehouseBaseCap: 500,
+  // Town identity
+  prestigePerBuilding: 2,
+  prestigePerRaidSurvived: 2,
+  festivalCooldownDays: 30,
+  festivalMealCost: 20,
+  festivalWoodCost: 5,
+  festivalMoodBonus: 15,
+  festivalMoodDays: 3,
 };

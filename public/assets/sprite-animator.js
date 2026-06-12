@@ -12,6 +12,9 @@ class SpriteAnimator {
     return { frames, frameRate, loop: true, type };
   }
 
+  /**
+   * Idle / ambient animations (breathing, head bobs, growth cycles)
+   */
   idleAnimation(spriteType, params = {}) {
     const g = this.gen;
     if (spriteType === 'settler') {
@@ -41,6 +44,9 @@ class SpriteAnimator {
     return this._anim([], 10);
   }
 
+  /**
+   * Work animations (farming hoe swing, mining pickaxe)
+   */
   workAnimation(workType, params = {}) {
     const g = this.gen, p = params;
     if (workType === 'farming') {
@@ -56,6 +62,9 @@ class SpriteAnimator {
     return this._anim([], 10);
   }
 
+  /**
+   * Movement animations (walking cycle)
+   */
   movementAnimation(movementType, params = {}) {
     const g = this.gen, p = params;
     if (movementType === 'walk') {
@@ -66,6 +75,9 @@ class SpriteAnimator {
     return this._anim([], 10);
   }
 
+  /**
+   * Get the frame canvas for a given elapsed time (ms)
+   */
   render(animation, timeMs = 0) {
     if (!animation.frames || animation.frames.length === 0) return null;
     const frameDuration = 1000 / animation.frameRate;

@@ -1,0 +1,57 @@
+/*
+  Colony Sim Icon System
+  Inspired by RimWorld & Songs of Syx philosophy:
+  - Abstracted, not realistic
+  - Story-enabling (force player imagination)
+  - Minimal effort, maximum benefit
+  - Black borders for clarity
+  - Supports light & dark themes via CSS variables
+*/
+
+:root {
+  /* Icon configuration */
+  --icon-size-sm: 16px;
+  --icon-size-md: 24px;
+  --icon-size-lg: 32px;
+  --icon-stroke: 1.5px;
+  --icon-fill: var(--color-text-primary);
+  --icon-stroke-color: var(--color-outline);
+}
+
+/* Base icon styles */
+.icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.125em;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.icon svg {
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Size variants */
+.icon.icon-sm { font-size: var(--icon-size-sm); }
+.icon.icon-md { font-size: var(--icon-size-md); }
+.icon.icon-lg { font-size: var(--icon-size-lg); }
+
+/* Fill color variants */
+.icon.icon-success { --icon-fill: var(--color-success); }
+.icon.icon-warning { --icon-fill: var(--color-warning); }
+.icon.icon-danger { --icon-fill: var(--color-danger); }
+.icon.icon-info { --icon-fill: var(--color-text-info); }
+
+/* Animated icon (pulse) */
+.icon.icon-pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}

@@ -5,7 +5,7 @@ import type { TownSite } from './worldgen';
 export type TileKind = 'grass' | 'tree' | 'water' | 'soil' | 'rock';
 
 export type RoadKind = 'dirt' | 'plank' | 'gravel' | 'bridge';
-export type ZoneKind = 'farm' | 'stockpile' | 'wall' | 'gate';
+export type ZoneKind = 'farm' | 'stockpile' | 'wall' | 'gate' | 'trap' | 'pasture' | 'orchard' | 'mine' | 'flax';
 export type PaintKind = RoadKind | ZoneKind;
 
 /** Speed multiplier walking this road type (design: docs/design/transportation.md §2). */
@@ -44,11 +44,22 @@ export interface Tile {
   gatePlan: boolean;
   /** forester-planted sapling growing here (reuses growth; matures into a tree) */
   sapling: boolean;
+  /** player-placed spike trap: damages raiders on contact, then consumed */
+  trapZone: boolean;
   /** HP of built wall or gate on this tile */
   wallHp: number;
   buildingId: number | null;
   /** fog of war: true once a settler has been within sight range */
   explored: boolean;
+  // ---- town expansion zones ----
+  pastureZone: boolean;
+  orchardZone: boolean;
+  /** exhausts after several mine cycles; converts to grass when depleted */
+  mineZone: boolean;
+  mineCharges: number;
+  flaxZone: boolean;
+  /** district label id (null = no district) */
+  districtId: number | null;
 }
 
 export interface Vec {
@@ -56,16 +67,22 @@ export interface Vec {
   y: number;
 }
 
-export const MAP_W = 64;
-export const MAP_H = 64;
+export const MAP_W = 96;
+export const MAP_H = 96;
 
 const DEFAULT_SITE: TownSite = {
-  cellX: 32, cellY: 32, fertility: 1, forest: 0.4, roughness: 0.2, river: true, coastal: false,
+  cellX: 48, cellY: 48, fertility: 1, forest: 0.4, roughness: 0.2, river: true, coastal: false,
 };
 
 export class World {
   tiles: Tile[] = [];
   site: TownSite;
+
+  // Pre-allocated A* buffers — avoids per-pathfind GC pressure on a 96×96 grid.
+  private readonly _pathDist = new Float64Array(MAP_W * MAP_H);
+  private readonly _pathPrev = new Int32Array(MAP_W * MAP_H);
+  // Path result cache; cleared by invalidatePathCache() when terrain changes.
+  private _pathCache = new Map<string, Vec[] | null>();
 
   constructor(rng: Rng, site: TownSite = DEFAULT_SITE) {
     this.site = site;
@@ -74,8 +91,10 @@ export class World {
         kind: 'grass', growth: 0, sown: false, marked: false, wall: false,
         fertility: 1, road: null, roadPlan: null,
         farmZone: false, stockpileZone: false, wallPlan: false,
-        gate: false, gatePlan: false, sapling: false, wallHp: 0,
+        gate: false, gatePlan: false, sapling: false, trapZone: false, wallHp: 0,
         buildingId: null, explored: false,
+        pastureZone: false, orchardZone: false, mineZone: false, mineCharges: 0,
+        flaxZone: false, districtId: null,
       });
     }
     this.generate(rng);
@@ -116,28 +135,31 @@ export class World {
   private generate(rng: Rng): void {
     const s = this.site;
     const seed = rng.int(1 << 30);
+    const scale = MAP_W / 64;          // noise scale factor for 96×96
+    const blobMult = scale ** 1.5;     // proportionally more blobs on the larger map
 
     // Per-tile fertility: the site's base modulated by smooth noise; river
     // and coast proximity irrigate (filled in after water placement).
     for (let y = 0; y < MAP_H; y++) {
       for (let x = 0; x < MAP_W; x++) {
-        const n = fbm(x / 18, y / 18, seed + 5, 3);
+        const n = fbm(x / (18 * scale), y / (18 * scale), seed + 5, 3);
         this.at(x, y).fertility = Math.max(0.3, Math.min(1.5, s.fertility * (0.75 + n * 0.5)));
       }
     }
 
     // Water: a meandering river east of the start clearing, and/or a western sea.
     if (s.river) {
+      const riverCenter = Math.round(MAP_W * 0.8);
       for (let y = 0; y < MAP_H; y++) {
-        const center = 51 + Math.round((fbm(y / 14, 0.3, seed + 11, 3) - 0.5) * 10);
+        const center = riverCenter + Math.round((fbm(y / 14, 0.3, seed + 11, 3) - 0.5) * 10);
         const width = 2 + Math.round(fbm(y / 9, 4.2, seed + 13, 2) * 2);
         for (let x = center - Math.floor(width / 2); x <= center + Math.floor(width / 2); x++) {
           if (this.inBounds(x, y)) this.at(x, y).kind = 'water';
         }
       }
     } else {
-      const pondX = 8 + rng.int(10);
-      const pondY = 40 + rng.int(12);
+      const pondX = Math.round(MAP_W * 0.13) + rng.int(Math.round(MAP_W * 0.16));
+      const pondY = Math.round(MAP_H * 0.63) + rng.int(Math.round(MAP_H * 0.19));
       this.blob(pondX, pondY, 5 + rng.int(3), 'water', rng);
     }
     if (s.coastal) {
@@ -165,20 +187,22 @@ export class World {
     }
 
     // Timber by forest density; stone by roughness
-    const treeBlobs = Math.round(6 + s.forest * 22);
+    const treeBlobs = Math.round((6 + s.forest * 22) * blobMult);
     for (let i = 0; i < treeBlobs; i++) {
       const cx = rng.int(MAP_W);
       const cy = rng.int(MAP_H);
       this.blob(cx, cy, 2 + rng.int(4), 'tree', rng);
     }
-    const rockBlobs = Math.round(1 + s.roughness * 7);
+    const rockBlobs = Math.round((1 + s.roughness * 7) * blobMult);
     for (let i = 0; i < rockBlobs; i++) {
       this.blob(rng.int(MAP_W), rng.int(MAP_H), 1 + rng.int(2), 'rock', rng);
     }
 
     // The wagon clearing: a guaranteed buildable heart so no start is unwinnable.
-    for (let y = 24; y <= 44; y++) {
-      for (let x = 20; x <= 44; x++) {
+    const cx0 = Math.floor(MAP_W / 2);
+    const cy0 = Math.floor(MAP_H / 2);
+    for (let y = cy0 - 10; y <= cy0 + 10; y++) {
+      for (let x = cx0 - 14; x <= cx0 + 14; x++) {
         const t = this.at(x, y);
         if (t.kind === 'tree' || t.kind === 'rock') t.kind = 'grass';
       }
@@ -203,14 +227,21 @@ export class World {
    * prefer roads automatically. Returns waypoints excluding start.
    */
   findPath(from: Vec, to: Vec, hostile = false): Vec[] | null {
+    const cacheKey = `${from.x},${from.y}>${to.x},${to.y}:${hostile ? 1 : 0}`;
+    if (this._pathCache.has(cacheKey)) return this._pathCache.get(cacheKey)!;
+
     const key = (x: number, y: number) => y * MAP_W + x;
     if (from.x === to.x && from.y === to.y) return [];
     const target = this.passable(to.x, to.y, hostile) ? to : this.nearestPassable(to, hostile);
     if (!target) return null;
-    const prev = new Int32Array(MAP_W * MAP_H).fill(-1);
+
+    const prev = this._pathPrev;
     // Float64 — float32 rounding of road costs (e.g. 1/1.8) made popped
     // entries compare as stale and killed the search entirely.
-    const dist = new Float64Array(MAP_W * MAP_H).fill(Infinity);
+    const dist = this._pathDist;
+    prev.fill(-1);
+    dist.fill(Infinity);
+
     const startK = key(from.x, from.y);
     dist[startK] = 0;
     prev[startK] = startK;
@@ -271,13 +302,15 @@ export class World {
           path.push({ x: k % MAP_W, y: Math.floor(k / MAP_W) });
           k = prev[k];
         }
-        return path.reverse();
+        const result = path.reverse();
+        this._pathCache.set(cacheKey, result);
+        return result;
       }
-      const cx = cur.k % MAP_W;
-      const cy = Math.floor(cur.k / MAP_W);
+      const ox = cur.k % MAP_W;
+      const oy = Math.floor(cur.k / MAP_W);
       for (const [dx, dy] of dirs) {
-        const nx = cx + dx;
-        const ny = cy + dy;
+        const nx = ox + dx;
+        const ny = oy + dy;
         if (!this.passable(nx, ny, hostile)) continue;
         const nk = key(nx, ny);
         const stepCost = 1 / this.speedMult(nx, ny, false);
@@ -289,7 +322,13 @@ export class World {
         }
       }
     }
+    this._pathCache.set(cacheKey, null);
     return null;
+  }
+
+  /** Clear path cache; call after any tile passability or speed change. */
+  invalidatePathCache(): void {
+    this._pathCache.clear();
   }
 
   /** Mark all tiles within radius r of (cx, cy) as explored (fog of war lift). */

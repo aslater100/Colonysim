@@ -5,6 +5,9 @@
     { "id": "optimist", "name": "Optimist", "moodBase": 8, "desc": "+8 base mood." },
     { "id": "pessimist", "name": "Pessimist", "moodBase": -8, "desc": "-8 base mood." },
     { "id": "hardy", "name": "Hardy", "warmthDecay": 0.6, "desc": "Suffers the cold far less." },
-    { "id": "gourmand", "name": "Gourmand", "foodDecay": 1.3, "desc": "Gets hungry 30% faster." }
+    { "id": "gourmand", "name": "Gourmand", "foodDecay": 1.3, "desc": "Gets hungry 30% faster." },
+    { "id": "loner", "name": "Loner", "housingPreference": "private", "desc": "Prefers private quarters; moody in shared housing." },
+    { "id": "sociable", "name": "Sociable", "housingPreference": "communal", "desc": "Thrives in shared housing; uncomfortable alone." },
+    { "id": "disciplined", "name": "Disciplined", "housingPreference": "military", "desc": "Suited to barracks life; finds private quarters wasteful." }
   ]
 }

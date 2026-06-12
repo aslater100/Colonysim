@@ -4,7 +4,7 @@
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
 import type { RegionSim, Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy } from '../sim/region';
-import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP } from '../sim/region';
+import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING } from '../sim/region';
 
 export class RegionView {
   selectedId: number | null = null;
@@ -723,7 +723,12 @@ export class RegionView {
       `<p>GDP £${Math.floor(r.gdpLastMonth)}/mo</p>` +
       `<p title="The global ledger (GDD §8.2): every chimney on earth, projected to 2100. The verdict is read in 2040.">` +
       `CO₂ ${Math.round(r.co2ppm)} ppm · +${r.warmingC.toFixed(1)}°C` +
-      `${r.eraBranch ? ` · <b>${r.eraBranch.toUpperCase()}</b>` : ` (→ +${r.projectedWarming().toFixed(1)}°C by 2100)`}</p>` +
+      `${r.eraBranch ? ` · <b>${r.eraBranch.toUpperCase()}</b>` : ` (→ +${r.projectedWarming().toFixed(1)}°C by 2100)`}` +
+      (r.geoDeployed ? ` · <span style="color:#4cf" title="Stratospheric aerosols active — warming suppressed for two years">aerosols active</span>` : '') +
+      `</p>` +
+      (r.has('geoengineering') && !r.geoDeployed && r.nationProclaimed
+        ? `<p><button class="mini" id="geo-deploy-btn" title="Deploy stratospheric aerosols: −${GEOENGINEER_COOLING}°C over 2 years, but all rivals lose 15 relations (one-time)">⚗ deploy geoengineering</button></p>`
+        : '') +
       `<p>trade £${Math.floor(r.tradeValueLastMonth)}/mo turnover</p>` +
       `<p>tax <span id="tax-val">${Math.round(r.taxRate * 100)}%</span></p>` +
       `<input id="tax-slider" type="range" min="0" max="30" value="${Math.round(r.taxRate * 100)}">` +
@@ -828,6 +833,12 @@ export class RegionView {
       r.capitulate();
       this.peacePicks.clear();
     });
+    this.statePanel.querySelector<HTMLButtonElement>('#geo-deploy-btn')?.addEventListener('click', () => {
+      r.deployGeoengineering();
+    });
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-sanction-btn')) {
+      btn.onclick = () => r.sanctionAccordDefector(Number(btn.dataset.rival));
+    }
   }
 
   /** Diplomacy section (GDD §5.4): the rival ledger, treaties, and verbs. */
@@ -836,6 +847,7 @@ export class RegionView {
     if (r.rivals.length === 0) return '';
     const short: Record<TreatyKind, string> = {
       non_aggression: 'pact: NAP', trade_agreement: 'pact: trade', defensive_pact: 'pact: defense',
+      climate_accord: 'pact: climate',
     };
     const rows = r.rivals.map((rv) => {
       const rel = Math.round(rv.relations);
@@ -844,9 +856,20 @@ export class RegionView {
       const gov = r.regimeOf(rv).name;
       const recentHistory = rv.history.slice(-4).join(' ');
       const treaties = rv.treaties.length > 0
-        ? rv.treaties.map((k) =>
-            `${TREATY_DEFS[k].name} <button class="mini dip-break-btn" data-rival="${rv.id}" data-kind="${k}" ` +
-            `title="Tearing up a treaty is remembered by every chancery">✕</button>`).join(' · ')
+        ? rv.treaties.map((k) => {
+            const compLabel = k === 'climate_accord'
+              ? (() => {
+                  const comp = r.accordCompliance[rv.id] ?? 1;
+                  const pct = Math.round(comp * 100);
+                  const defecting = comp < ACCORD_DEFECT_THRESHOLD;
+                  return ` <span class="insp-skills" style="color:${defecting ? '#e55' : '#4e9'}">${pct}% compliant${defecting ? ' ⚠' : ''}</span>` +
+                    (defecting ? ` <button class="mini dip-sanction-btn" data-rival="${rv.id}" title="Sanction the defector: accord torn, −20 relations">sanction</button>` : '');
+                })()
+              : '';
+            return `${TREATY_DEFS[k].name}${compLabel} ` +
+              `<button class="mini dip-break-btn" data-rival="${rv.id}" data-kind="${k}" ` +
+              `title="Tearing up a treaty is remembered by every chancery">✕</button>`;
+          }).join(' · ')
         : 'no treaties';
       const offer = r.offerFor(rv.id);
       const offerRow = offer
@@ -865,7 +888,7 @@ export class RegionView {
       const canEnvoy = r.treasury >= ENVOY_COST && r.day - rv.lastEnvoyDay >= ENVOY_COOLDOWN_DAYS;
       const canGift = r.treasury >= GIFT_COST && r.day - rv.lastGiftDay >= GIFT_COOLDOWN_DAYS;
       const proposals = (Object.keys(TREATY_DEFS) as TreatyKind[])
-        .filter((k) => !rv.treaties.includes(k))
+        .filter((k) => !rv.treaties.includes(k) && (k !== 'climate_accord' || r.accordUnlocked()))
         .map((k) =>
           `<button class="mini dip-prop-btn" data-rival="${rv.id}" data-kind="${k}" ` +
           `title="${TREATY_DEFS[k].desc} (their ask: relations ≥ ${r.treatyAsk(rv, k)})">${short[k]}</button>`)
@@ -1173,14 +1196,16 @@ export class RegionView {
     const r = this.region;
     const rv = r.rival(this.dealRivalId);
     if (!rv) return;
-    const treatyRows = (Object.keys(TREATY_DEFS) as TreatyKind[]).map((k) => {
-      const signed = rv.treaties.includes(k);
-      const appetite = r.treatyAppetite(rv, k);
-      const hint = signed ? 'already in force' : appetite >= 0 ? 'they want this' : 'a concession — they want paying';
-      return `<p><label title="${TREATY_DEFS[k].desc}">` +
-        `<input type="checkbox" class="deal-treaty" data-kind="${k}" ${this.dealTreaties.has(k) ? 'checked' : ''} ${signed ? 'disabled' : ''}> ` +
-        `${TREATY_DEFS[k].name} <span class="insp-skills">— ${hint}</span></label></p>`;
-    }).join('');
+    const treatyRows = (Object.keys(TREATY_DEFS) as TreatyKind[])
+      .filter((k) => k !== 'climate_accord' || r.accordUnlocked())
+      .map((k) => {
+        const signed = rv.treaties.includes(k);
+        const appetite = r.treatyAppetite(rv, k);
+        const hint = signed ? 'already in force' : appetite >= 0 ? 'they want this' : 'a concession — they want paying';
+        return `<p><label title="${TREATY_DEFS[k].desc}">` +
+          `<input type="checkbox" class="deal-treaty" data-kind="${k}" ${this.dealTreaties.has(k) ? 'checked' : ''} ${signed ? 'disabled' : ''}> ` +
+          `${TREATY_DEFS[k].name} <span class="insp-skills">— ${hint}</span></label></p>`;
+      }).join('');
     const borderHint = rv.borderSettled
       ? 'already settled'
       : r.borderAppetite(rv) >= 0 ? 'they would welcome a fixed frontier' : 'they will not pin a border they mean to move';

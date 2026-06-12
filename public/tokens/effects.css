@@ -5,15 +5,15 @@
   --transition-fast: 0.15s ease-out; /* @kind other */
   --transition-base: 0.3s ease-out; /* @kind other */
   --transition-slow: 0.5s ease-out; /* @kind other */
-
+  
   /* Animations */
   --duration-pulse: 2s; /* @kind other */
   --duration-fade: 0.3s; /* @kind other */
   --duration-slide: 0.4s; /* @kind other */
-
+  
   /* Image Rendering */
   --image-rendering: pixelated; /* @kind other */
-
+  
   /* Text Effects */
   --text-shadow-sm: 1px 1px 0 #000; /* @kind shadow */
   --text-shadow-md: 2px 2px 0 #000; /* @kind shadow */

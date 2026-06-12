@@ -1,0 +1,248 @@
+{
+  "techs": [
+    {
+      "id": "crop_rotation",
+      "name": "Crop Rotation",
+      "branch": "agriculture",
+      "prereqs": [],
+      "days": 10,
+      "cost": {},
+      "desc": "Systematic field rotation restores soil nutrients. Farm yield +15%.",
+      "unlocks": ["mechanic:farmYieldBonus"]
+    },
+    {
+      "id": "milling",
+      "name": "Milling",
+      "branch": "agriculture",
+      "prereqs": ["crop_rotation"],
+      "days": 12,
+      "cost": { "wood": 10 },
+      "desc": "Waterwheel-driven millstones grind grain into flour for richer bread. Unlocks Mill.",
+      "unlocks": ["building:mill"]
+    },
+    {
+      "id": "animal_husbandry",
+      "name": "Animal Husbandry",
+      "branch": "agriculture",
+      "prereqs": ["crop_rotation"],
+      "days": 12,
+      "cost": { "wood": 20 },
+      "desc": "Domesticating livestock provides meat, dairy, and draught power. Unlocks Animal Pen, pasture zones.",
+      "unlocks": ["building:animal_pen", "zone:pasture"]
+    },
+    {
+      "id": "fermentation",
+      "name": "Fermentation",
+      "branch": "agriculture",
+      "prereqs": ["crop_rotation"],
+      "days": 10,
+      "cost": { "grain": 15 },
+      "desc": "Grain fermented into ale lifts settler morale. Unlocks Brewery.",
+      "unlocks": ["building:brewery", "resource:ale"]
+    },
+    {
+      "id": "horticulture",
+      "name": "Horticulture",
+      "branch": "agriculture",
+      "prereqs": ["crop_rotation"],
+      "days": 10,
+      "cost": { "grain": 5 },
+      "desc": "Kitchen gardens cultivate vegetables for dietary variety. Unlocks Kitchen Garden.",
+      "unlocks": ["building:kitchen_garden", "resource:produce"]
+    },
+    {
+      "id": "textile_farming",
+      "name": "Textile Farming",
+      "branch": "agriculture",
+      "prereqs": [],
+      "days": 12,
+      "cost": { "wood": 10 },
+      "desc": "Flax cultivation provides fibre for rope and cloth. Unlocks flax zones.",
+      "unlocks": ["zone:flax", "resource:flax"]
+    },
+    {
+      "id": "carpentry",
+      "name": "Carpentry",
+      "branch": "industry",
+      "prereqs": [],
+      "days": 10,
+      "cost": { "wood": 5 },
+      "desc": "Precision joinery and woodworking tools. Unlocks Sawmill for timber production.",
+      "unlocks": ["building:sawmill", "resource:timber"]
+    },
+    {
+      "id": "prospecting",
+      "name": "Prospecting",
+      "branch": "industry",
+      "prereqs": [],
+      "days": 8,
+      "cost": {},
+      "desc": "Geological surveys reveal clay and mineral deposits. Unlocks mine zones and clay.",
+      "unlocks": ["zone:mine", "resource:clay"]
+    },
+    {
+      "id": "brickwork",
+      "name": "Brickwork",
+      "branch": "industry",
+      "prereqs": ["prospecting"],
+      "days": 15,
+      "cost": { "stone": 10 },
+      "desc": "Clay baked into brick enables durable masonry. Unlocks Kiln.",
+      "unlocks": ["building:kiln", "resource:brick"]
+    },
+    {
+      "id": "blacksmithing",
+      "name": "Blacksmithing",
+      "branch": "industry",
+      "prereqs": ["carpentry"],
+      "days": 14,
+      "cost": { "wood": 10 },
+      "desc": "Iron tools accelerate construction and crafting. Unlocks Blacksmith, tools resource.",
+      "unlocks": ["building:blacksmith", "resource:tools"]
+    },
+    {
+      "id": "iron_mining",
+      "name": "Iron Mining",
+      "branch": "industry",
+      "prereqs": ["prospecting"],
+      "days": 15,
+      "cost": { "wood": 10 },
+      "desc": "Deep shaft mining extracts iron ore and coal seams. Unlocks Mine building.",
+      "unlocks": ["building:mine", "resource:iron_ore", "resource:coal"]
+    },
+    {
+      "id": "iron_smelting",
+      "name": "Iron Smelting",
+      "branch": "industry",
+      "prereqs": ["blacksmithing", "iron_mining"],
+      "days": 18,
+      "cost": { "stone": 10 },
+      "minYear": 1903,
+      "desc": "Smelting ore into wrought iron enables advanced tools and forged weapons.",
+      "unlocks": ["mechanic:ironSmelting", "resource:iron"]
+    },
+    {
+      "id": "stone_masonry",
+      "name": "Stone Masonry",
+      "branch": "construction",
+      "prereqs": ["brickwork"],
+      "days": 15,
+      "cost": { "stone": 15 },
+      "desc": "Dressed-stone construction unlocks sturdier homes and cheaper stone buildings.",
+      "unlocks": ["building:cottage", "building:longhouse", "mechanic:stoneBuildings"]
+    },
+    {
+      "id": "fortification",
+      "name": "Fortification",
+      "branch": "construction",
+      "prereqs": ["stone_masonry"],
+      "days": 18,
+      "cost": { "stone": 20 },
+      "desc": "Military engineering: stone wall upgrades, Watchtower for early raid warning.",
+      "unlocks": ["building:watchtower", "mechanic:stoneWalls"]
+    },
+    {
+      "id": "herbalism",
+      "name": "Herbalism",
+      "branch": "medicine",
+      "prereqs": [],
+      "days": 8,
+      "cost": {},
+      "desc": "Medicinal plant knowledge. Unlocks Herb Garden for cultivating healing herbs.",
+      "unlocks": ["building:herb_garden", "resource:herbs"]
+    },
+    {
+      "id": "first_aid",
+      "name": "First Aid",
+      "branch": "medicine",
+      "prereqs": ["herbalism"],
+      "days": 10,
+      "cost": { "wood": 5 },
+      "desc": "Wound treatment protocols cut infection risk. Unlocks Well for cleaner water.",
+      "unlocks": ["building:well", "mechanic:infectionReduction"]
+    },
+    {
+      "id": "germ_theory",
+      "name": "Germ Theory",
+      "branch": "medicine",
+      "prereqs": ["first_aid"],
+      "days": 15,
+      "cost": { "wood": 10 },
+      "minYear": 1904,
+      "desc": "Understanding disease transmission transforms healing. Unlocks Apothecary, medicine.",
+      "unlocks": ["building:apothecary", "resource:medicine"]
+    },
+    {
+      "id": "trade_organization",
+      "name": "Trade Organization",
+      "branch": "commerce",
+      "prereqs": [],
+      "days": 10,
+      "cost": { "wood": 20 },
+      "desc": "Systematised ledgers and routes. Enables market standing orders and custom quantities.",
+      "unlocks": ["mechanic:marketAutomation"]
+    },
+    {
+      "id": "commerce",
+      "name": "Commerce",
+      "branch": "commerce",
+      "prereqs": ["trade_organization"],
+      "days": 14,
+      "cost": { "wood": 30 },
+      "desc": "Organised warehousing and trade flows. Unlocks Warehouse for configurable bulk storage.",
+      "unlocks": ["building:warehouse"]
+    },
+    {
+      "id": "banking",
+      "name": "Banking",
+      "branch": "commerce",
+      "prereqs": ["commerce"],
+      "days": 20,
+      "cost": { "wood": 40, "stone": 10 },
+      "minYear": 1907,
+      "desc": "Financial instruments enable dynamic market pricing and credit lines.",
+      "unlocks": ["mechanic:dynamicPricing"]
+    },
+    {
+      "id": "militia_training",
+      "name": "Militia Training",
+      "branch": "military",
+      "prereqs": [],
+      "days": 8,
+      "cost": { "wood": 10 },
+      "desc": "Organised drills and arms practice. Unlocks Barracks for passive combat training.",
+      "unlocks": ["building:barracks", "mechanic:combatTraining"]
+    },
+    {
+      "id": "repeating_arms",
+      "name": "Repeating Arms",
+      "branch": "military",
+      "prereqs": ["militia_training", "blacksmithing"],
+      "days": 20,
+      "cost": { "wood": 20, "iron": 5 },
+      "minYear": 1906,
+      "desc": "Rifled and repeating weapons. Forged weapon damage +15.",
+      "unlocks": ["mechanic:repeatingArms"]
+    },
+    {
+      "id": "literacy",
+      "name": "Literacy",
+      "branch": "society",
+      "prereqs": [],
+      "days": 10,
+      "cost": { "wood": 15 },
+      "desc": "Reading and writing raises settler potential. All skill caps +1.",
+      "unlocks": ["mechanic:skillCapBonus"]
+    },
+    {
+      "id": "schooling",
+      "name": "Schooling",
+      "branch": "society",
+      "prereqs": ["literacy"],
+      "days": 14,
+      "cost": { "wood": 20 },
+      "desc": "Formal education accelerates skill growth. Unlocks Schoolhouse.",
+      "unlocks": ["building:schoolhouse", "mechanic:researchBonus"]
+    }
+  ]
+}

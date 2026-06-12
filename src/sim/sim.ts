@@ -8,9 +8,9 @@ import type { DayWeather } from './weather';
 import {
   BUILDING_DEFS, buildingDef, traitDef, FIRST_NAMES, LAST_NAMES, TRAIT_DEFS,
   MINUTES_PER_TICK, MINUTES_PER_DAY, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR,
-  TUNING, WORK_KINDS,
+  TUNING, WORK_KINDS, TOWN_TECH_DEFS,
 } from './defs';
-import type { ResourceKind, WorkKind } from './defs';
+import type { ResourceKind, WorkKind, TownFocus, TradeOrder, TradeRecord, PendingEvent } from './defs';
 
 export interface Needs {
   food: number;
@@ -101,6 +101,12 @@ export interface Settler {
   clothedUntil: number; // minute their clothes wear out; 0 = threadbare
   /** carries a spear: hits harder in melee (grabbed from stores when raids land) */
   armed: boolean;
+  /** last food resource kind consumed — drives food variety mood system */
+  lastFoodType: ResourceKind | null;
+  /** rolling log of the last 7 food kinds consumed (newest first) */
+  foodLog: ResourceKind[];
+  /** housing preference from traits — affects which bed type gives mood bonus */
+  housingPreference: 'private' | 'communal' | 'military' | null;
 }
 
 export interface Corpse {
@@ -164,7 +170,16 @@ export class Simulation {
   items: GroundItem[] = [];
   corpses: Corpse[] = [];
   graves: Grave[] = [];
-  stock: Record<ResourceKind, number> = { wood: 80, grain: 60, meal: 160, stone: 0, clothes: 0 };
+  stock: Record<ResourceKind, number> = {
+    // Founding resources
+    wood: 80, grain: 60, meal: 160, stone: 0, clothes: 0, weapons: 0,
+    // Raw — all start at 0; unlocked by town tech tree
+    clay: 0, coal: 0, iron_ore: 0, flax: 0, herbs: 0,
+    // Processed
+    timber: 0, brick: 0, iron: 0, tools: 0, rope: 0, flour: 0, ale: 0, medicine: 0,
+    // Food variety
+    bread: 0, dairy: 0, produce: 0, game_meal: 0, fish_meal: 0, preserved: 0,
+  };
   /** transits per tile for the traffic overlay; decays daily */
   traffic = new Float32Array(MAP_W * MAP_H);
   log: LogEntry[] = [];
@@ -182,6 +197,20 @@ export class Simulation {
   private nextId = 1;
   private nextEventDay: number;
   private reserved = new Set<string>(); // task target keys
+
+  // ---- town expansion fields ----
+  townName = 'New Settlement';
+  townFocus: TownFocus = 'balanced';
+  prestige = 0;
+  festivalCooldown = 0;
+  townTechsResearched: string[] = [];
+  activeResearch: { techId: string; workLeft: number } | null = null;
+  researchQueue: string[] = [];
+  tradeOrders: TradeOrder[] = [];
+  tradeHistory: TradeRecord[] = [];
+  pendingChoice: PendingEvent | null = null;
+  /** Notable id designated as mayor post-flip; null while player is in direct control */
+  mayorNotableId: number | null = null;
 
   readonly seed: number;
 
@@ -268,7 +297,7 @@ export class Simulation {
     for (let i = 0; i < 12; i++) {
       this.spawnSettler(cx - 3 + (i % 6), cy + 3 + Math.floor(i / 6));
     }
-    this.world.revealAround(cx, cy, 10);
+    this.world.revealAround(cx, cy, 12);
     this.addLog('Twelve settlers step off the wagon. Spring, 1900.', 'info');
   }
 
@@ -313,6 +342,12 @@ export class Simulation {
       bedId: null,
       clothedUntil: 0,
       armed: false,
+      lastFoodType: null,
+      foodLog: [],
+      housingPreference: traits.reduce<'private' | 'communal' | 'military' | null>(
+        (pref, id) => pref ?? traitDef(id).housingPreference ?? null,
+        null,
+      ),
     };
     this.settlers.push(s);
     return s;
@@ -489,6 +524,78 @@ export class Simulation {
   }
 
   /** Mark trees for felling or rock for quarrying with the same tool. */
+  // ---- Town tech tree ----
+
+  hasTech(id: string): boolean {
+    return this.townTechsResearched.includes(id);
+  }
+
+  canResearch(id: string): boolean {
+    if (this.hasTech(id)) return false;
+    if (this.researchQueue.includes(id) || this.activeResearch?.techId === id) return false;
+    const def = TOWN_TECH_DEFS.find((d) => d.id === id);
+    if (!def) return false;
+    if (def.minYear && this.year < def.minYear) return false;
+    return def.prereqs.every((p) => this.hasTech(p));
+  }
+
+  /** Add a tech to the research queue. Resources are deducted when it becomes active. */
+  queueResearch(techId: string): boolean {
+    if (!this.canResearch(techId)) return false;
+    if (this.researchQueue.length >= 3) return false;
+    this.researchQueue.push(techId);
+    this.advanceResearchQueue();
+    return true;
+  }
+
+  /** Remove a tech from the queue (or cancel active research, refunding work). */
+  dequeueResearch(techId: string): void {
+    this.researchQueue = this.researchQueue.filter((id) => id !== techId);
+    if (this.activeResearch?.techId === techId) {
+      this.activeResearch = null;
+      this.advanceResearchQueue();
+    }
+  }
+
+  private advanceResearchQueue(): void {
+    if (this.activeResearch) return;
+    const next = this.researchQueue.shift();
+    if (!next) return;
+    const def = TOWN_TECH_DEFS.find((d) => d.id === next);
+    if (!def) { this.advanceResearchQueue(); return; }
+    // Deduct resources on research start.
+    for (const [res, qty] of Object.entries(def.cost) as [ResourceKind, number][]) {
+      if ((this.stock[res] ?? 0) < qty) {
+        // Can't afford — put back at front and stop.
+        this.researchQueue.unshift(next);
+        return;
+      }
+    }
+    for (const [res, qty] of Object.entries(def.cost) as [ResourceKind, number][]) {
+      this.stock[res] -= qty;
+    }
+    this.activeResearch = { techId: next, workLeft: def.days * MINUTES_PER_DAY };
+  }
+
+  private completeResearch(): void {
+    if (!this.activeResearch) return;
+    const def = TOWN_TECH_DEFS.find((d) => d.id === this.activeResearch!.techId);
+    this.townTechsResearched.push(this.activeResearch.techId);
+    this.addLog(`Research complete: ${def?.name ?? this.activeResearch.techId}.`, 'good');
+    this.prestige += 1;
+    this.activeResearch = null;
+    this.advanceResearchQueue();
+  }
+
+  /** Town Hall research speed multiplier from upgrade level. */
+  private researchSpeedMult(): number {
+    const hall = this.buildings.find((b) => b.defId === 'town_hall' && b.built);
+    if (!hall) return 1;
+    if (hall.level >= 3) return 1.5;
+    if (hall.level >= 2) return 1.25;
+    return 1;
+  }
+
   markTree(x: number, y: number): void {
     if (!this.world.inBounds(x, y)) return;
     const t = this.world.at(x, y);
@@ -501,6 +608,7 @@ export class Simulation {
     const t = this.world.at(x, y);
     if (t.roadPlan === kind) {
       t.roadPlan = null; // toggle off
+      if (kind === 'bridge') this.world.invalidatePathCache();
       return true;
     }
     if (t.road === kind || t.wall || t.wallPlan || t.gate || t.gatePlan || t.buildingId !== null) return false;
@@ -510,6 +618,7 @@ export class Simulation {
       return false;
     }
     t.roadPlan = kind;
+    if (kind === 'bridge') this.world.invalidatePathCache();
     return true;
   }
 
@@ -542,19 +651,30 @@ export class Simulation {
     } else if (kind === 'wall') {
       if (t.wallPlan) {
         t.wallPlan = false;
+        this.world.invalidatePathCache();
         return true;
       }
       if (t.kind === 'water' || t.buildingId !== null || t.wall || t.gate || t.gatePlan) return false;
       t.wallPlan = true;
+      this.world.invalidatePathCache();
       return true;
     } else if (kind === 'gate') {
       if (t.gatePlan) {
         t.gatePlan = false;
+        this.world.invalidatePathCache();
         return true;
       }
       if (t.kind === 'water' || t.kind === 'rock' || t.kind === 'tree') return false;
       if (t.buildingId !== null || t.wall || t.wallPlan || t.gate) return false;
       t.gatePlan = true;
+      this.world.invalidatePathCache();
+      return true;
+    } else if (kind === 'trap') {
+      if (t.trapZone) { t.trapZone = false; this.stock.wood += TUNING.trapWoodCost; return true; }
+      if (t.kind === 'water' || t.kind === 'rock' || t.wall || t.gate || t.buildingId !== null) return false;
+      if (this.stock.wood < TUNING.trapWoodCost) return false;
+      this.stock.wood -= TUNING.trapWoodCost;
+      t.trapZone = true;
       return true;
     }
     return false;
@@ -570,10 +690,12 @@ export class Simulation {
     }
     if (t.wallPlan) {
       t.wallPlan = false;
+      this.world.invalidatePathCache();
       return;
     }
     if (t.gatePlan) {
       t.gatePlan = false;
+      this.world.invalidatePathCache();
       return;
     }
     if (t.sapling) {
@@ -597,11 +719,18 @@ export class Simulation {
     if (t.wall) {
       t.wall = false;
       t.wallHp = 0;
+      this.world.invalidatePathCache();
       return;
     }
     if (t.gate) {
       t.gate = false;
       t.wallHp = 0;
+      this.world.invalidatePathCache();
+      return;
+    }
+    if (t.trapZone) {
+      t.trapZone = false;
+      this.stock.wood += TUNING.trapWoodCost;
       return;
     }
   }
@@ -1042,6 +1171,7 @@ export class Simulation {
               wt.wall = false;
               wt.gate = false;
               wt.wallHp = 0;
+              this.world.invalidatePathCache();
             }
             continue;
           }
@@ -1052,6 +1182,14 @@ export class Simulation {
         }
       }
       this.stepAgent(r, 0.4);
+      // Spike trap: damages raider on contact, one-shot
+      const rt = this.world.inBounds(Math.round(r.pos.x), Math.round(r.pos.y))
+        ? this.world.at(Math.round(r.pos.x), Math.round(r.pos.y)) : null;
+      if (rt?.trapZone) {
+        rt.trapZone = false;
+        r.health -= TUNING.trapDamage;
+        this.addLog('A raider hits a spike trap!', 'good');
+      }
     }
   }
 
@@ -1092,8 +1230,11 @@ export class Simulation {
 
   /** Melee damage a settler deals per hour: base + skill, more with a spear in hand. */
   private settlerDamagePerHour(s: Settler): number {
-    return TUNING.combatDamagePerHour + s.combat * TUNING.combatDamagePerSkill +
-      (s.armed ? TUNING.spearDamageBonus : 0);
+    const armoury = this.builtOf('forge')[0];
+    const armedBonus = s.armed
+      ? (armoury ? TUNING.forgedWeaponBonus + (armoury.level >= 3 ? 10 : 0) : TUNING.spearDamageBonus)
+      : 0;
+    return TUNING.combatDamagePerHour + s.combat * TUNING.combatDamagePerSkill + armedBonus;
   }
 
   // ---- wildlife ----
@@ -1310,10 +1451,16 @@ export class Simulation {
       this.releaseTask(s);
       s.bedId = null;
       if (s.combat >= t.fightMinCombat && s.health > 50) {
-        // Fighters grab a spear from the stores on the way out (kept for good).
-        if (!s.armed && this.stock.wood >= t.spearWoodCost) {
-          this.stock.wood -= t.spearWoodCost;
-          s.armed = true;
+        // Arm: draw a forged weapon first (better), fall back to improvised spear.
+        if (!s.armed) {
+          if (this.stock.weapons > 0) {
+            this.stock.weapons--;
+            s.armed = true;
+            s.combat = Math.min(10, s.combat + 1); // forged weapon = sharper edge
+          } else if (this.stock.wood >= t.spearWoodCost) {
+            this.stock.wood -= t.spearWoodCost;
+            s.armed = true;
+          }
         }
         s.state = 'fighting';
       } else {
@@ -1383,7 +1530,11 @@ export class Simulation {
         // Bed rest: the badly hurt stay down until they're out of danger.
         if (s.health < t.bedRestThreshold) return;
         if (s.needs.rest >= 95 || (this.hour >= 6 && this.hour < 22 && s.needs.rest > 55)) {
-          if (!inBed) this.addThought(s, 'Slept on the ground', -6, MINUTES_PER_DAY);
+          if (!inBed) {
+            this.addThought(s, 'Slept on the ground', -6, MINUTES_PER_DAY);
+          } else {
+            this.applyHousingThought(s);
+          }
           s.bedId = null;
           s.state = 'idle';
         }
@@ -1431,7 +1582,9 @@ export class Simulation {
     const night = this.hour >= 22 || this.hour < 6;
     // Hunger comes before everything — bed rest and sleep used to outrank it,
     // and settlers starved in bed beside a stocked larder (0.1 death-spiral fix).
-    if (s.needs.food < 30 && (this.stock.meal > 0 || this.stock.grain > 0)) {
+    if (s.needs.food < 30 && (this.stock.meal > 0 || this.stock.game_meal > 0 || this.stock.fish_meal > 0 ||
+        this.stock.produce > 0 || this.stock.bread > 0 || this.stock.dairy > 0 ||
+        this.stock.preserved > 0 || this.stock.grain > 0)) {
       const spTile = this.nearestStockpileTile(s.pos);
       if (spTile) this.setDestination(s, spTile);
       s.state = 'eating'; // if the walk fails, eat where you stand rather than starve
@@ -1553,15 +1706,27 @@ export class Simulation {
     // cookhouse (faster, bigger batches), so it takes over when built.
     const cookShops = this.builtOf('cook');
     const kitchen = cookShops.find((b) => b.defId === 'bakery') ?? cookShops[0];
-    if (kitchen && this.stock.grain > 0 && this.stock.meal < this.settlers.length * 3) {
+    if (kitchen && this.stock.grain > 0 && this.totalFood() < this.settlers.length * 3) {
       const { workPerMeal, batch } = this.cookParams(kitchen);
       push({ kind: 'cook', x: kitchen.x, y: kitchen.y, buildingId: kitchen.id, workLeft: workPerMeal * batch, label: 'cook meals' }, 'cook');
+    }
+    // Mill: convert grain to flour (2:2, counts as distinct food variety).
+    for (const mill of this.builtOf('milling')) {
+      if (this.stock.grain >= 2) {
+        push({ kind: 'mill', x: mill.x, y: mill.y, buildingId: mill.id, workLeft: 60, label: 'mill flour' }, 'mill');
+      }
+    }
+    // Brewery: convert grain to ale for settler recreation/morale.
+    for (const brewery of this.builtOf('brewing')) {
+      if (this.stock.grain >= TUNING.brewGrainPerAle && this.stock.ale < this.settlers.length) {
+        push({ kind: 'cook', x: brewery.x, y: brewery.y, buildingId: brewery.id, workLeft: TUNING.cookWorkPerMeal * 2, label: 'brew ale' }, 'cook');
+      }
     }
     // Hunting trips: one hunter per lodge (the lodge id reserves the task)
     // heads out while meals run short — food without grain. With game on the
     // map the hunt is real: stalk the nearest animal and bring back the kill.
     // With the woods empty, fall back to an abstract trip from the lodge.
-    if (this.stock.meal < this.settlers.length * 3) {
+    if (this.totalFood() < this.settlers.length * 3) {
       for (const lodge of this.builtOf('hunt')) {
         const c = this.buildingCenter(lodge);
         let prey: Animal | null = null;
@@ -1581,7 +1746,7 @@ export class Simulation {
         }
       }
     }
-    if (this.stock.meal < this.settlers.length * 3) {
+    if (this.totalFood() < this.settlers.length * 3) {
       for (const dock of this.builtOf('fishing')) {
         const c = this.buildingCenter(dock);
         const waterSpot = this.nearestWaterTile(c, TUNING.fishRange);
@@ -1599,6 +1764,12 @@ export class Simulation {
       const spot = this.saplingSpot(f);
       if (spot) {
         push({ kind: 'plant', x: spot.x, y: spot.y, workLeft: TUNING.plantWork, label: 'plant sapling' }, 'plant');
+      }
+    }
+    // Armoury: forge weapons when wood is available (one job per armoury).
+    for (const a of this.builtOf('forge')) {
+      if (this.stock.wood >= TUNING.forgeWoodCost) {
+        push({ kind: 'forge', x: a.x, y: a.y, buildingId: a.id, workLeft: TUNING.forgeWorkPerWeapon, label: 'forge weapon' }, 'forge');
       }
     }
     // Weave clothes while anyone goes threadbare — but never eat the seed grain.
@@ -1623,6 +1794,14 @@ export class Simulation {
           kind: 'medic', x: Math.round(p.pos.x), y: Math.round(p.pos.y), patientId: p.id,
           workLeft: TUNING.treatWork, label: `treat ${p.name.split(' ')[0]}`,
         }, 'medic');
+      }
+    }
+
+    // Research: settler assigned to Town Hall contributes work to active research.
+    if (this.activeResearch) {
+      const hall = this.buildings.find((b) => b.defId === 'town_hall' && b.built);
+      if (hall) {
+        push({ kind: 'research', x: hall.x, y: hall.y, buildingId: hall.id, workLeft: 999999, label: 'research' }, 'research');
       }
     }
 
@@ -1671,6 +1850,7 @@ export class Simulation {
           const wasRock = tile.kind === 'rock';
           tile.kind = 'grass';
           tile.marked = false;
+          this.world.invalidatePathCache();
           if (wasRock) this.dropItem('stone', TUNING.rockStone, task.x, task.y);
           else this.dropItem('wood', TUNING.treeWood, task.x, task.y);
           this.finishTask(s);
@@ -1723,6 +1903,7 @@ export class Simulation {
             tile.wall = true;
             tile.wallPlan = false;
             tile.wallHp = TUNING.wallMaxHp;
+            this.world.invalidatePathCache();
             this.finishTask(s);
           }
           return;
@@ -1739,6 +1920,7 @@ export class Simulation {
             tile.gate = true;
             tile.gatePlan = false;
             tile.wallHp = TUNING.gateMaxHp;
+            this.world.invalidatePathCache();
             this.finishTask(s);
           }
           return;
@@ -1758,6 +1940,7 @@ export class Simulation {
             this.stock.stone -= cost.stone ?? 0;
             tile.road = plan;
             tile.roadPlan = null;
+            if (plan === 'bridge') this.world.invalidatePathCache();
             this.finishTask(s);
           }
           return;
@@ -1789,6 +1972,23 @@ export class Simulation {
         }
         return;
       }
+      case 'research': {
+        const hall = this.buildings.find((b) => b.defId === 'town_hall' && b.built);
+        if (!hall || !this.activeResearch) return this.finishTask(s);
+        const dist = Math.hypot(s.pos.x - hall.x, s.pos.y - hall.y);
+        if (dist > 2.5) {
+          s.state = 'moving';
+          this.setDestination(s, { x: hall.x, y: hall.y });
+          return;
+        }
+        const contribution = work * this.researchSpeedMult();
+        this.activeResearch.workLeft -= contribution;
+        if (this.activeResearch.workLeft <= 0) {
+          this.completeResearch();
+          return this.finishTask(s);
+        }
+        return;
+      }
       case 'medic': {
         const p = this.settlers.find((o) => o.id === task.patientId);
         if (!p || !(p.wound?.untreated || p.infection || p.sickUntil > this.minute)) {
@@ -1810,9 +2010,32 @@ export class Simulation {
         }
         return;
       }
+      case 'mill': {
+        const mill = this.building(task.buildingId);
+        if (!mill?.built || this.stock.grain < 2) return this.finishTask(s);
+        task.workLeft -= work;
+        if (task.workLeft <= 0) {
+          this.stock.grain -= 2;
+          this.stock.produce += 2;  // flour → produce-style food variety item
+          this.finishTask(s);
+        }
+        return;
+      }
       case 'cook': {
         const k = this.building(task.buildingId);
         if (!k?.built || this.stock.grain <= 0) return this.finishTask(s);
+        // Brewery produces ale; everything else produces meal.
+        if (k.defId === 'brewery') {
+          task.workLeft -= work;
+          if (task.workLeft <= 0) {
+            if (this.stock.grain >= TUNING.brewGrainPerAle) {
+              this.stock.grain -= TUNING.brewGrainPerAle;
+              this.stock.ale++;
+            }
+            this.finishTask(s);
+          }
+          return;
+        }
         const { workPerMeal } = this.cookParams(k);
         k.cookProgress += work;
         task.workLeft -= work;
@@ -1839,7 +2062,7 @@ export class Simulation {
           // from the lodge still feeds the pot.
           task.workLeft -= work;
           if (task.workLeft <= 0) {
-            this.stock.meal += TUNING.huntMealYield;
+            this.stock.game_meal += TUNING.huntMealYield;
             this.finishTask(s);
           }
           return;
@@ -1858,10 +2081,10 @@ export class Simulation {
           this.addLog(`${s.name} brings down a ${prey.kind}.`, 'good');
           const spTile = this.nearestStockpileTile(s.pos);
           if (!spTile) {
-            this.dropItem('meal', qty, Math.round(s.pos.x), Math.round(s.pos.y));
+            this.dropItem('game_meal', qty, Math.round(s.pos.x), Math.round(s.pos.y));
             return this.finishTask(s);
           }
-          s.carrying = { kind: 'meal', qty };
+          s.carrying = { kind: 'game_meal', qty };
           s.state = 'moving';
           this.setDestination(s, spTile);
         }
@@ -1880,10 +2103,10 @@ export class Simulation {
           const qty = TUNING.fishMealYield;
           const spTile = this.nearestStockpileTile(s.pos);
           if (!spTile) {
-            this.stock.meal += qty;
+            this.stock.fish_meal += qty;
             return this.finishTask(s);
           }
-          s.carrying = { kind: 'meal', qty };
+          s.carrying = { kind: 'fish_meal', qty };
           s.state = 'moving';
           this.setDestination(s, spTile);
         }
@@ -1907,6 +2130,18 @@ export class Simulation {
         if (task.workLeft <= 0) {
           this.stock.grain -= TUNING.clothesGrainCost;
           this.stock.clothes++;
+          this.finishTask(s);
+        }
+        return;
+      }
+      case 'forge': {
+        const forge = this.building(task.buildingId);
+        if (!forge?.built || this.stock.wood < TUNING.forgeWoodCost) return this.finishTask(s);
+        const speedMult = forge.level >= 2 ? 1.5 : 1;
+        task.workLeft -= work * speedMult;
+        if (task.workLeft <= 0) {
+          this.stock.wood -= TUNING.forgeWoodCost;
+          this.stock.weapons++;
           this.finishTask(s);
         }
         return;
@@ -1947,12 +2182,14 @@ export class Simulation {
       : { workPerMeal: TUNING.cookWorkPerMeal, batch: TUNING.cookBatch };
   }
 
-  /** Nearest free, unreserved grass tile in the forester's range, or null when saturated. */
+  /** Farthest free, unreserved grass tile in the forester's range (outermost first so the
+   *  lodge never gets boxed in). Requires a min clearance of 2 tiles from the lodge center
+   *  and at least one passable neighbour so the worker can actually reach the spot. */
   private saplingSpot(f: Building): Vec | null {
     const c = this.buildingCenter(f);
     const r = TUNING.foresterRadius;
     let best: Vec | null = null;
-    let bd = Infinity;
+    let bd = -Infinity;
     for (let y = c.y - r; y <= c.y + r; y++) {
       for (let x = c.x - r; x <= c.x + r; x++) {
         if (!this.world.inBounds(x, y)) continue;
@@ -1961,7 +2198,14 @@ export class Simulation {
             t.wall || t.wallPlan || t.gate || t.gatePlan || t.farmZone || t.stockpileZone) continue;
         if (this.reserved.has(`plant:${x},${y}`)) continue;
         const d = Math.hypot(x - c.x, y - c.y);
-        if (d <= r && d < bd) { bd = d; best = { x, y }; }
+        if (d < 2 || d > r) continue; // keep a 2-tile clear zone around the lodge
+        // Require at least one passable neighbour so the worker can reach the spot
+        const reachable = [[-1,0],[1,0],[0,-1],[0,1]].some(([dx, dy]) => {
+          const nx = x + dx, ny = y + dy;
+          return this.world.inBounds(nx, ny) && this.world.passable(nx, ny);
+        });
+        if (!reachable) continue;
+        if (d > bd) { bd = d; best = { x, y }; }
       }
     }
     return best;
@@ -2050,7 +2294,10 @@ export class Simulation {
         }
       }
     }
-    const houses = this.builtOf('sleep');
+    // Sort sleep buildings: preferred home type first, then others.
+    const houses = this.builtOf('sleep').sort((a, b) => {
+      return this.homeSortScore(b, s) - this.homeSortScore(a, s);
+    });
     for (const h of houses) {
       const cap = this.buildingEffectiveCapacity(h);
       const used = this.settlers.filter((o) => o.bedId === h.id).length;
@@ -2066,6 +2313,33 @@ export class Simulation {
     s.state = 'sleeping';
     const shelter = houses[0] ?? this.builtOf('recreation')[0];
     if (shelter) this.setDestination(s, this.buildingCenter(shelter));
+  }
+
+  /** Priority score for sorting sleep buildings to match a settler's housing preference. */
+  private homeSortScore(b: Building, s: Settler): number {
+    if (!s.housingPreference) return 0;
+    const ht = buildingDef(b.defId).homeType;
+    if (!ht || ht === 'neutral') return 0;
+    if (s.housingPreference === 'military' && (ht === 'military' || ht === 'communal')) return 2;
+    if (ht === s.housingPreference) return 2;
+    return -1;
+  }
+
+  /** Add a housing match/mismatch thought when a settler wakes from a bed. */
+  private applyHousingThought(s: Settler): void {
+    if (!s.housingPreference || s.bedId === null) return;
+    const bed = this.building(s.bedId);
+    if (!bed) return;
+    const ht = buildingDef(bed.defId).homeType;
+    if (!ht || ht === 'neutral') return;
+    const match =
+      ht === s.housingPreference ||
+      (s.housingPreference === 'military' && ht === 'communal');
+    if (match) {
+      this.refreshThought(s, 'Good fit housing', 5, 2 * MINUTES_PER_DAY);
+    } else {
+      this.refreshThought(s, 'Wrong type of housing', -5, 2 * MINUTES_PER_DAY);
+    }
   }
 
   // ---- helpers ----
@@ -2113,16 +2387,45 @@ export class Simulation {
     return this.temperature();
   }
 
+  /** Total ready-to-eat food units across all food kinds. */
+  totalFood(): number {
+    return this.stock.meal + this.stock.game_meal + this.stock.fish_meal +
+      this.stock.produce + this.stock.bread + this.stock.dairy +
+      this.stock.ale + this.stock.preserved;
+  }
+
   /** Eat one unit from the stores; raw grain costs a little mood. */
   private consumeFood(s: Settler): void {
-    if (this.stock.meal > 0) {
-      this.stock.meal--;
-      s.needs.food = Math.min(100, s.needs.food + TUNING.mealFoodValue);
-    } else if (this.stock.grain > 0) {
+    let eaten: ResourceKind | null = null;
+    // Priority: cooked meals and their variants first; raw grain as fallback.
+    const mealKinds: ResourceKind[] = ['meal', 'game_meal', 'fish_meal', 'produce', 'bread', 'dairy', 'ale', 'preserved'];
+    for (const k of mealKinds) {
+      if (this.stock[k] > 0) {
+        this.stock[k]--;
+        s.needs.food = Math.min(100, s.needs.food + TUNING.mealFoodValue);
+        eaten = k;
+        break;
+      }
+    }
+    if (!eaten && this.stock.grain > 0) {
       this.stock.grain--;
       s.needs.food = Math.min(100, s.needs.food + TUNING.rawGrainFoodValue);
       this.addThought(s, 'Ate raw grain', -4, MINUTES_PER_DAY);
+      eaten = 'grain';
     }
+    if (!eaten) return;
+    // Food variety tracking: rolling 7-item log.
+    s.foodLog.unshift(eaten);
+    if (s.foodLog.length > 7) s.foodLog.length = 7;
+    const same3 = s.foodLog.length >= 3 && s.foodLog.slice(0, 3).every((k) => k === eaten);
+    if (same3) this.addThought(s, 'Same meal again', -TUNING.foodVarietyPenalty, MINUTES_PER_DAY);
+    const distinct = new Set(s.foodLog).size;
+    if (distinct >= 4 && s.lastFoodType !== eaten) {
+      this.addThought(s, 'Enjoying varied meals', TUNING.foodVarietyBonus4, MINUTES_PER_DAY * 3);
+    } else if (distinct >= 3 && s.lastFoodType !== eaten) {
+      this.addThought(s, 'Good variety of food', TUNING.foodVarietyBonus3, MINUTES_PER_DAY * 2);
+    }
+    s.lastFoodType = eaten;
   }
 
   /** Where to thaw out: the nearest hearth, else any heated shelter. */
@@ -2265,7 +2568,7 @@ export class Simulation {
    */
   serialize(): string {
     return JSON.stringify({
-      v: 1,
+      v: 3,
       seed: this.seed,
       rng: this.rng.getState(),
       minute: this.minute,
@@ -2290,6 +2593,18 @@ export class Simulation {
       nextRaidDay: this.nextRaidDay,
       nextId: this.nextId,
       nextEventDay: this.nextEventDay,
+      // town expansion
+      townName: this.townName,
+      townFocus: this.townFocus,
+      prestige: this.prestige,
+      festivalCooldown: this.festivalCooldown,
+      townTechsResearched: this.townTechsResearched,
+      activeResearch: this.activeResearch,
+      researchQueue: this.researchQueue,
+      tradeOrders: this.tradeOrders,
+      tradeHistory: this.tradeHistory,
+      pendingChoice: this.pendingChoice,
+      mayorNotableId: this.mayorNotableId,
     });
   }
 
@@ -2298,8 +2613,26 @@ export class Simulation {
     const sim = new Simulation(d.seed);
     sim.rng.setState(d.rng);
     sim.minute = d.minute;
-    sim.world.tiles = d.tiles;
-    sim.settlers = d.settlers;
+    // Migrate tiles: add new zone fields with ?? defaults for old saves.
+    sim.world.tiles = (d.tiles as any[]).map((t) => ({
+      ...t,
+      pastureZone: t.pastureZone ?? false,
+      orchardZone: t.orchardZone ?? false,
+      mineZone: t.mineZone ?? false,
+      mineCharges: t.mineCharges ?? 0,
+      flaxZone: t.flaxZone ?? false,
+      districtId: t.districtId ?? null,
+    }));
+    // Migrate settlers: add new skill/priority entries and new fields for old saves.
+    sim.settlers = (d.settlers as any[]).map((s) => {
+      const skills = { ...s.skills } as Record<WorkKind, number>;
+      const priorities = { ...s.priorities } as Record<WorkKind, number>;
+      for (const k of WORK_KINDS) {
+        if (skills[k] === undefined) skills[k] = 0;
+        if (priorities[k] === undefined) priorities[k] = 1;
+      }
+      return { ...s, skills, priorities, lastFoodType: s.lastFoodType ?? null, foodLog: s.foodLog ?? [], housingPreference: s.housingPreference ?? null };
+    });
     sim.buildings = d.buildings.map((b: Building) => ({
       ...b,
       level: b.level ?? 1,
@@ -2309,7 +2642,19 @@ export class Simulation {
     sim.items = d.items;
     sim.corpses = d.corpses;
     sim.graves = d.graves;
-    sim.stock = d.stock;
+    // Migrate stock: add new resource kinds with ?? 0 defaults for old saves.
+    sim.stock = {
+      wood: d.stock.wood ?? 0, grain: d.stock.grain ?? 0, meal: d.stock.meal ?? 0,
+      stone: d.stock.stone ?? 0, clothes: d.stock.clothes ?? 0, weapons: d.stock.weapons ?? 0,
+      clay: d.stock.clay ?? 0, coal: d.stock.coal ?? 0, iron_ore: d.stock.iron_ore ?? 0,
+      flax: d.stock.flax ?? 0, herbs: d.stock.herbs ?? 0,
+      timber: d.stock.timber ?? 0, brick: d.stock.brick ?? 0, iron: d.stock.iron ?? 0,
+      tools: d.stock.tools ?? 0, rope: d.stock.rope ?? 0, flour: d.stock.flour ?? 0,
+      ale: d.stock.ale ?? 0, medicine: d.stock.medicine ?? 0,
+      bread: d.stock.bread ?? 0, dairy: d.stock.dairy ?? 0, produce: d.stock.produce ?? 0,
+      game_meal: d.stock.game_meal ?? 0, fish_meal: d.stock.fish_meal ?? 0,
+      preserved: d.stock.preserved ?? 0,
+    };
     sim.traffic = Float32Array.from(d.traffic);
     sim.log = d.log;
     sim.gameOver = d.gameOver;
@@ -2324,6 +2669,18 @@ export class Simulation {
     sim.nextRaidDay = d.nextRaidDay;
     sim.nextId = d.nextId;
     sim.nextEventDay = d.nextEventDay;
+    // Town expansion fields — all optional for save compat with pre-v3 saves.
+    sim.townName = d.townName ?? 'New Settlement';
+    sim.townFocus = d.townFocus ?? 'balanced';
+    sim.prestige = d.prestige ?? 0;
+    sim.festivalCooldown = d.festivalCooldown ?? 0;
+    sim.townTechsResearched = d.townTechsResearched ?? [];
+    sim.activeResearch = d.activeResearch ?? null;
+    sim.researchQueue = d.researchQueue ?? [];
+    sim.tradeOrders = d.tradeOrders ?? [];
+    sim.tradeHistory = d.tradeHistory ?? [];
+    sim.pendingChoice = d.pendingChoice ?? null;
+    sim.mayorNotableId = d.mayorNotableId ?? null;
     // Task reservations aren't saved; rebuild them from in-flight tasks.
     sim.reserved = new Set(sim.settlers.filter((s) => s.task).map((s) => sim.taskKey(s.task!)));
     return sim;

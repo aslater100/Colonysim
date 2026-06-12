@@ -1,0 +1,12 @@
+
+
+
+
+
+
+<svg id="icon-cabin" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+  <rect x="4" y="16" width="24" height="12" fill="#9c7544" stroke="#26201a" stroke-width="2"></rect>
+  <polygon points="4,16 16,4 28,16" fill="#4a3a2c" stroke="#26201a" stroke-width="2"></polygon>
+  <rect x="10" y="20" width="4" height="4" fill="#3d586b" stroke="#26201a" stroke-width="1"></rect>
+  <rect x="18" y="20" width="4" height="4" fill="#3d586b" stroke="#26201a" stroke-width="1"></rect>
+</svg>

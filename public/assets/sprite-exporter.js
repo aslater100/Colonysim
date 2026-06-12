@@ -4,49 +4,74 @@
  */
 
 class SpriteExporter {
+  /**
+   * Export canvas to PNG blob
+   */
   static canvasToPNG(canvas) {
     return new Promise((resolve) => {
       canvas.toBlob(resolve, 'image/png');
     });
   }
 
+  /**
+   * Export canvas to data URL
+   */
   static canvasToDataURL(canvas) {
     return canvas.toDataURL('image/png');
   }
 
+  /**
+   * Create a spritesheet from multiple sprites
+   */
   static createSpritesheet(sprites, cols = 4) {
     if (!sprites || sprites.length === 0) return null;
+
     const spriteWidth = sprites[0].width;
     const spriteHeight = sprites[0].height;
     const rows = Math.ceil(sprites.length / cols);
+
     const sheet = document.createElement('canvas');
     sheet.width = spriteWidth * cols;
     sheet.height = spriteHeight * rows;
+
     const ctx = sheet.getContext('2d');
     ctx.imageSmoothingEnabled = false;
+
     sprites.forEach((sprite, i) => {
       const col = i % cols;
       const row = Math.floor(i / cols);
       ctx.drawImage(sprite, col * spriteWidth, row * spriteHeight);
     });
+
     return sheet;
   }
 
+  /**
+   * Create an animation spritesheet (horizontal strip)
+   */
   static createAnimationStrip(frames) {
     if (!frames || frames.length === 0) return null;
+
     const frameWidth = frames[0].width;
     const frameHeight = frames[0].height;
+
     const strip = document.createElement('canvas');
     strip.width = frameWidth * frames.length;
     strip.height = frameHeight;
+
     const ctx = strip.getContext('2d');
     ctx.imageSmoothingEnabled = false;
+
     frames.forEach((frame, i) => {
       ctx.drawImage(frame, i * frameWidth, 0);
     });
+
     return strip;
   }
 
+  /**
+   * Generate sprite metadata (for game engine import)
+   */
   static generateMetadata(sprites, config = {}) {
     return {
       version: '1.0',
@@ -61,9 +86,13 @@ class SpriteExporter {
     };
   }
 
+  /**
+   * Export as JSON + PNG (for game dev)
+   */
   static async exportForGameEngine(name, sprites, metadata = {}) {
     const spritesheet = this.createSpritesheet(sprites);
     const png = await this.canvasToPNG(spritesheet);
+
     const json = {
       name,
       spritesheet: `${name}.png`,
@@ -76,6 +105,7 @@ class SpriteExporter {
         name: `${name}_${i}`,
       })),
     };
+
     return {
       json,
       png,
