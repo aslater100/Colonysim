@@ -2046,7 +2046,7 @@ export class RegionSim {
     region.settlements.push(home);
 
     // Initialize NPC lenders for the region
-    region.lenders = createInitialLenders(region.nextId++);
+    region.lenders = createInitialLenders();
 
     // Initialize player faction (will be refined with full faction system later)
     region.regionalizeFactionSystem(home);
@@ -4878,7 +4878,7 @@ export class RegionSim {
     r.exchangeRate = d.exchangeRate ?? 1.0;
     r.crashFired = d.crashFired ?? false;
     // Lender system: initialize lenders if not in save, or load existing ones
-    r.lenders = d.lenders ?? createInitialLenders(0);
+    r.lenders = d.lenders ?? createInitialLenders();
     r.loans = d.loans ?? [];
     r.nextId = d.nextId;
     r.nextEventDay = d.nextEventDay;
@@ -5017,7 +5017,6 @@ export class RegionSim {
    * Called monthly to process loan interest accrual and check for defaults.
    */
   updateLoans(): void {
-    const ticksPerMonth = 30; // monthly update
     for (const loan of this.loans) {
       if (loan.defaulted) continue;
 

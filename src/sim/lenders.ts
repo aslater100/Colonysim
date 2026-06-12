@@ -6,7 +6,7 @@
 
 import { Lender, Loan } from './economy';
 
-export function createInitialLenders(regionId: number): Lender[] {
+export function createInitialLenders(): Lender[] {
   const lenders: Lender[] = [];
   const lenderNames = [
     'Aldrich the Goldkeeper',
@@ -35,7 +35,6 @@ export function createInitialLenders(regionId: number): Lender[] {
  * Availability gates: region tier and building requirements.
  */
 export function canBorrowFromLender(
-  lender: Lender,
   hasMarketBuilding: boolean,
   hasBankBuilding: boolean,
   tier: 'town' | 'region' | 'nation'
