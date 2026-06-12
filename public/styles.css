@@ -1,0 +1,62 @@
+/* Colony Sim Design System - Global Styles */
+/* Master stylesheet: imports all tokens and foundational styles */
+
+@import url('tokens/colors.css');
+@import url('tokens/typography.css');
+@import url('tokens/spacing.css');
+@import url('tokens/effects.css');
+
+/* Base HTML & Body */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-bg-dark);
+  font-family: var(--font-family-base);
+  color: var(--color-text-primary);
+  line-height: var(--line-height-normal);
+}
+
+/* Image Rendering for Pixel Art */
+img {
+  image-rendering: var(--image-rendering);
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+}
+
+canvas {
+  image-rendering: var(--image-rendering);
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+}
+
+/* Utility Classes */
+.hidden {
+  display: none !important;
+}
+
+.text-primary {
+  color: var(--color-text-primary);
+}
+
+.text-secondary {
+  color: var(--color-text-secondary);
+}
+
+.text-accent {
+  color: var(--color-text-accent);
+}
+
+.bg-surface {
+  background: var(--color-surface);
+}
+
+.border-standard {
+  border: var(--border-width-normal) solid var(--color-border);
+}
