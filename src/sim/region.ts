@@ -2672,31 +2672,44 @@ export class RegionSim {
       (this.has('maglev') ? 0.15 : 0);
   }
 
-  /** Tech multipliers on output per worker, by sector. */
+  /** Tech multipliers on output per worker, by sector.
+   *
+   *  Calibrated so wages feel right for each era:
+   *    1900 (base):    £10–18/mo  ≈ £0.33–0.60/day  (frontier subsistence)
+   *    1930 (steel+e): £25–50/mo  ≈ £0.83–1.67/day  (early industrial)
+   *    1960 (mass):    £55–130/mo ≈ £1.83–4.33/day  (post-war boom)
+   *    2000+ (info):   £80–220/mo ≈ £2.67–7.33/day  (knowledge economy)
+   *
+   *  Cumulative maximums: agri ~4x, industry ~9x, services ~7x, info ~12x. */
   private sectorProductivity(id: SectorId): number {
     let m = 1;
     const boost = (node: string, mult: number) => { if (this.has(node)) m *= mult; };
     switch (id) {
       case 'agriculture':
-        boost('combustion_engine', 1.15); // tractors replace the horse
-        boost('mass_production', 1.3);
-        boost('renewables', 1.1);
+        boost('electrical_grid', 1.2);     // electrified irrigation and tools
+        boost('combustion_engine', 1.4);   // tractors replace the horse
+        boost('mass_production', 1.8);     // industrialised farming at scale
+        boost('renewables', 1.4);          // precision agriculture, sustainable yields
         break;
       case 'industry':
-        boost('steel_industry', 1.3);
-        boost('electrical_grid', 1.25);
-        boost('mass_production', 1.35);
-        boost('atomic_age', 1.15);
+        boost('steel_industry', 1.6);      // steel mills and heavy equipment
+        boost('electrical_grid', 1.5);     // electrified factories
+        boost('mass_production', 2.0);     // assembly lines, Fordism
+        boost('atomic_age', 1.4);          // nuclear power drives heavy industry
+        boost('automated_logistics', 1.3); // robotic supply chains
         break;
       case 'services':
-        boost('electrical_grid', 1.2);
-        boost('asphalt', 1.2); // mobility is commerce
-        boost('computing', 1.3);
+        boost('free_press', 1.2);          // literacy drives commerce
+        boost('labor_law', 1.1);           // protected workers are productive workers
+        boost('electrical_grid', 1.4);     // electrified retail, refrigeration
+        boost('asphalt', 1.4);             // road mobility multiplies trade
+        boost('computing', 2.0);           // the productivity leap of the office PC
         break;
       case 'information':
-        boost('free_press', 1.25);
-        boost('computing', 1.6);
-        boost('automated_logistics', 1.35);
+        boost('free_press', 1.5);          // free information accelerates learning
+        boost('computing', 3.0);           // digital revolution, internet economy
+        boost('automated_logistics', 2.0); // global information networks
+        boost('maglev', 1.3);              // ultra-fast connectivity
         break;
     }
     return m;
@@ -5058,6 +5071,22 @@ export class RegionSim {
    */
   getNetTreasury(): number {
     return this.treasury - this.getTotalDebt();
+  }
+
+  /**
+   * Employment-weighted average daily wage across all settlements.
+   * Scales with tech era: £0.33/d at 1900 → £7+/d at full info-age tech.
+   */
+  avgDailyWage(): number {
+    let totalWorkers = 0;
+    let totalWageMonth = 0;
+    for (const t of this.settlements) {
+      const workers = this.workersOf(t);
+      totalWorkers += workers;
+      totalWageMonth += workers * this.avgWageOf(t);
+    }
+    if (totalWorkers === 0) return 0;
+    return (totalWageMonth / totalWorkers) / 30;
   }
 
   /**

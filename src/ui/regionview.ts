@@ -739,7 +739,7 @@ export class RegionView {
         : r.govLean ? GOV_LEANS[r.govLean].name : ''}</p>` +
       (r.nationProclaimed ? this.nationHtml() : '') +
       `<p>treasury £${Math.floor(r.treasury)}</p>` +
-      `<p>GDP £${Math.floor(r.gdpLastMonth)}/mo</p>` +
+      `<p>GDP £${Math.floor(r.gdpLastMonth)}/mo · avg wage £${r.avgDailyWage().toFixed(2)}/d</p>` +
       `<p title="The global ledger (GDD §8.2): every chimney on earth, projected to 2100. The verdict is read in 2040.">` +
       `CO₂ ${Math.round(r.co2ppm)} ppm · +${r.warmingC.toFixed(1)}°C` +
       `${r.eraBranch ? ` · <b>${r.eraBranch.toUpperCase()}</b>` : ` (→ +${r.projectedWarming().toFixed(1)}°C by 2100)`}` +
@@ -1597,7 +1597,7 @@ export class RegionView {
         `<span style="min-width:28px;text-align:right">${pct}%</span>` +
         `<span class="${arrowClass}" style="min-width:12px;text-align:center">${arrow}</span>` +
         `<span class="insp-skills" style="min-width:52px;text-align:right">${s.output.toFixed(1)}/m</span>` +
-        `<span class="insp-skills" style="min-width:40px;text-align:right">w${s.wage.toFixed(2)}</span>` +
+        `<span class="insp-skills" style="min-width:52px;text-align:right">£${(s.wage / 30).toFixed(2)}/d</span>` +
         evtBadge +
         `</div>`
       );
