@@ -3,13 +3,14 @@
  * inspector panel, work priorities, event log.
  */
 import type { Simulation, Settler, Building } from '../sim/sim';
-import { buildingDef, traitDef, WORK_KINDS, TUNING } from '../sim/defs';
+import { buildingDef, traitDef, WORK_KINDS, TUNING, TOWN_TECH_DEFS } from '../sim/defs';
 import type { ResourceKind, WorkKind } from '../sim/defs';
 import type { Camera } from './render';
 import type { PaintKind } from '../sim/world';
 import type { Sfx } from './audio';
 import type { Music } from './music';
 import type { Soundscape } from './soundscape';
+import { TechPanel } from './TechPanel';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -71,6 +72,7 @@ const BUILD_CATEGORIES: BuildCategory[] = [
     icon: '⚑',
     label: 'CIVIL',
     items: [
+      { kind: 'building', id: 'town_hall', label: 'Town Hall', cost: '60w+20s', desc: 'Enables town research tree [K]. Assign researcher.' },
       { kind: 'building', id: 'hall', label: 'Meeting Hall', cost: '40w', desc: 'Recreation and society.' },
       { kind: 'building', id: 'hearth', label: 'Hearth', cost: '10w', desc: 'Keeps settlers warm in winter.' },
       { kind: 'building', id: 'market', label: 'Market', cost: '50w', desc: 'Trade with passing merchants.' },
@@ -136,6 +138,7 @@ export class Hud {
   private lastLogLen = 0;
   private foundBtn: HTMLButtonElement | null = null;
   private htmlCache = new Map<HTMLElement, string>();
+  private techPanel!: TechPanel;
 
   constructor(
     root: HTMLElement,
@@ -157,6 +160,7 @@ export class Hud {
     this.menuBox = el('div', 'menu hidden', root);
 
     this.buildBuildBar();
+    this.techPanel = new TechPanel(root, sim);
 
     // Delegate clicks on the submenu
     this.buildSubmenu.addEventListener('mousedown', (e) => {
@@ -215,6 +219,9 @@ export class Hud {
           if (b) b.workerLimit = null;
           break;
         }
+        case 'open-tech':
+          this.techPanel.show();
+          break;
       }
     });
 
@@ -401,6 +408,7 @@ export class Hud {
       this.refreshBuildBarState();
       return true;
     }
+    if (k === 'k') { this.techPanel.toggle(); return true; }
     if (k === 'o') { this.cam.overlay = this.cam.overlay === 'traffic' ? 'none' : 'traffic'; return true; }
     if (k === 'p') { this.togglePriorities(); return true; }
     if (k === 'm') { this.toggleMenu(); return true; }
@@ -485,6 +493,7 @@ export class Hud {
     this.drawLog();
     this.drawGameOver();
     if (this.showPriorities) this.drawPriorities();
+    this.techPanel.update();
     if (this.foundBtn) {
       const can = this.sim.canFoundSecondTown();
       this.foundBtn.disabled = !can.ok;
@@ -579,6 +588,7 @@ export class Hud {
         const used = s.settlers.filter((p) => p.bedId === b.id).length;
         details += `<p class="insp-state">Occupancy: ${used}/${cap}</p>`;
       }
+      if (def.provides === 'civic') details += this.civicPanel(b.id);
       if (def.provides === 'trade') details += this.tradePanel();
       if (def.provides === 'granary') {
         details += `<p class="insp-state">Adds ${TUNING.mealCapPerGranary + s.buildingEffectiveCapacity(b)} meal capacity</p>`;
@@ -617,6 +627,26 @@ export class Hud {
       return `<button class="trade-btn" data-give="${give}" data-get="${get}"${can ? '' : ' disabled'}>${r.give}${give[0]}→${r.get}${get[0]}</button>`;
     }).join(' ');
     return `<p class="insp-skills">BARTER:</p><p>${offers}</p>`;
+  }
+
+  private civicPanel(bid: number): string {
+    const s = this.sim;
+    const done = s.townTechsResearched.length;
+    let researchLine = '';
+    if (s.activeResearch) {
+      const def = TOWN_TECH_DEFS.find((d) => d.id === s.activeResearch!.techId);
+      const pct = def
+        ? Math.round((1 - s.activeResearch.workLeft / (def.days * 1440)) * 100)
+        : 0;
+      researchLine = `<p class="insp-state">Researching: ${def?.name ?? s.activeResearch.techId} (${pct}%)</p>`;
+    } else if (s.researchQueue.length > 0) {
+      researchLine = `<p class="insp-state">Queued: ${s.researchQueue.length} tech(s)</p>`;
+    } else {
+      researchLine = `<p class="insp-state" style="color:#554e44">No active research</p>`;
+    }
+    return researchLine +
+      `<p class="insp-skills">Techs researched: ${done}</p>` +
+      `<button data-action="open-tech" data-bid="${bid}">Tech Tree [K]</button>`;
   }
 
   private drawGameOver(): void {

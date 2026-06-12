@@ -185,6 +185,20 @@
       ]
     },
     {
+      "id": "town_hall",
+      "name": "Town Hall",
+      "w": 3,
+      "h": 3,
+      "cost": { "wood": 60, "stone": 20 },
+      "buildWork": 900,
+      "provides": "civic",
+      "desc": "The seat of local governance. Enables the town research tree — assign a researcher to unlock new buildings and mechanics. [K] to open.",
+      "upgrades": [
+        { "cost": { "wood": 40, "stone": 20 }, "capacityBonus": 0, "desc": "Council chambers: research 25% faster." },
+        { "cost": { "stone": 40 }, "capacityBonus": 0, "desc": "Stone hall: research 50% faster, 2 researcher slots." }
+      ]
+    },
+    {
       "id": "armory",
       "name": "Armoury",
       "w": 2,

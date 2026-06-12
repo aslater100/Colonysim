@@ -8,7 +8,7 @@ import type { DayWeather } from './weather';
 import {
   BUILDING_DEFS, buildingDef, traitDef, FIRST_NAMES, LAST_NAMES, TRAIT_DEFS,
   MINUTES_PER_TICK, MINUTES_PER_DAY, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR,
-  TUNING, WORK_KINDS,
+  TUNING, WORK_KINDS, TOWN_TECH_DEFS,
 } from './defs';
 import type { ResourceKind, WorkKind, TownFocus, TradeOrder, TradeRecord, PendingEvent } from './defs';
 
@@ -203,6 +203,7 @@ export class Simulation {
   festivalCooldown = 0;
   townTechsResearched: string[] = [];
   activeResearch: { techId: string; workLeft: number } | null = null;
+  researchQueue: string[] = [];
   tradeOrders: TradeOrder[] = [];
   tradeHistory: TradeRecord[] = [];
   pendingChoice: PendingEvent | null = null;
@@ -517,6 +518,78 @@ export class Simulation {
   }
 
   /** Mark trees for felling or rock for quarrying with the same tool. */
+  // ---- Town tech tree ----
+
+  hasTech(id: string): boolean {
+    return this.townTechsResearched.includes(id);
+  }
+
+  canResearch(id: string): boolean {
+    if (this.hasTech(id)) return false;
+    if (this.researchQueue.includes(id) || this.activeResearch?.techId === id) return false;
+    const def = TOWN_TECH_DEFS.find((d) => d.id === id);
+    if (!def) return false;
+    if (def.minYear && this.year < def.minYear) return false;
+    return def.prereqs.every((p) => this.hasTech(p));
+  }
+
+  /** Add a tech to the research queue. Resources are deducted when it becomes active. */
+  queueResearch(techId: string): boolean {
+    if (!this.canResearch(techId)) return false;
+    if (this.researchQueue.length >= 3) return false;
+    this.researchQueue.push(techId);
+    this.advanceResearchQueue();
+    return true;
+  }
+
+  /** Remove a tech from the queue (or cancel active research, refunding work). */
+  dequeueResearch(techId: string): void {
+    this.researchQueue = this.researchQueue.filter((id) => id !== techId);
+    if (this.activeResearch?.techId === techId) {
+      this.activeResearch = null;
+      this.advanceResearchQueue();
+    }
+  }
+
+  private advanceResearchQueue(): void {
+    if (this.activeResearch) return;
+    const next = this.researchQueue.shift();
+    if (!next) return;
+    const def = TOWN_TECH_DEFS.find((d) => d.id === next);
+    if (!def) { this.advanceResearchQueue(); return; }
+    // Deduct resources on research start.
+    for (const [res, qty] of Object.entries(def.cost) as [ResourceKind, number][]) {
+      if ((this.stock[res] ?? 0) < qty) {
+        // Can't afford — put back at front and stop.
+        this.researchQueue.unshift(next);
+        return;
+      }
+    }
+    for (const [res, qty] of Object.entries(def.cost) as [ResourceKind, number][]) {
+      this.stock[res] -= qty;
+    }
+    this.activeResearch = { techId: next, workLeft: def.days * MINUTES_PER_DAY };
+  }
+
+  private completeResearch(): void {
+    if (!this.activeResearch) return;
+    const def = TOWN_TECH_DEFS.find((d) => d.id === this.activeResearch!.techId);
+    this.townTechsResearched.push(this.activeResearch.techId);
+    this.addLog(`Research complete: ${def?.name ?? this.activeResearch.techId}.`, 'good');
+    this.prestige += 1;
+    this.activeResearch = null;
+    this.advanceResearchQueue();
+  }
+
+  /** Town Hall research speed multiplier from upgrade level. */
+  private researchSpeedMult(): number {
+    const hall = this.buildings.find((b) => b.defId === 'town_hall' && b.built);
+    if (!hall) return 1;
+    if (hall.level >= 3) return 1.5;
+    if (hall.level >= 2) return 1.25;
+    return 1;
+  }
+
   markTree(x: number, y: number): void {
     if (!this.world.inBounds(x, y)) return;
     const t = this.world.at(x, y);
@@ -1700,6 +1773,14 @@ export class Simulation {
       }
     }
 
+    // Research: settler assigned to Town Hall contributes work to active research.
+    if (this.activeResearch) {
+      const hall = this.buildings.find((b) => b.defId === 'town_hall' && b.built);
+      if (hall) {
+        push({ kind: 'research', x: hall.x, y: hall.y, buildingId: hall.id, workLeft: 999999, label: 'research' }, 'research');
+      }
+    }
+
     if (candidates.length === 0) return null;
     candidates.sort((a, b) => b.prio - a.prio || a.dist - b.dist);
     const chosen = candidates[0].task;
@@ -1864,6 +1945,23 @@ export class Simulation {
           b.built = true;
           this.addLog(`${def.name} finished.`, 'good');
           this.finishTask(s);
+        }
+        return;
+      }
+      case 'research': {
+        const hall = this.buildings.find((b) => b.defId === 'town_hall' && b.built);
+        if (!hall || !this.activeResearch) return this.finishTask(s);
+        const dist = Math.hypot(s.pos.x - hall.x, s.pos.y - hall.y);
+        if (dist > 2.5) {
+          s.state = 'moving';
+          this.setDestination(s, { x: hall.x, y: hall.y });
+          return;
+        }
+        const contribution = work * this.researchSpeedMult();
+        this.activeResearch.workLeft -= contribution;
+        if (this.activeResearch.workLeft <= 0) {
+          this.completeResearch();
+          return this.finishTask(s);
         }
         return;
       }
@@ -2396,6 +2494,7 @@ export class Simulation {
       festivalCooldown: this.festivalCooldown,
       townTechsResearched: this.townTechsResearched,
       activeResearch: this.activeResearch,
+      researchQueue: this.researchQueue,
       tradeOrders: this.tradeOrders,
       tradeHistory: this.tradeHistory,
       pendingChoice: this.pendingChoice,
@@ -2471,6 +2570,7 @@ export class Simulation {
     sim.festivalCooldown = d.festivalCooldown ?? 0;
     sim.townTechsResearched = d.townTechsResearched ?? [];
     sim.activeResearch = d.activeResearch ?? null;
+    sim.researchQueue = d.researchQueue ?? [];
     sim.tradeOrders = d.tradeOrders ?? [];
     sim.tradeHistory = d.tradeHistory ?? [];
     sim.pendingChoice = d.pendingChoice ?? null;

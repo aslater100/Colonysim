@@ -1,6 +1,7 @@
 import buildingsJson from '../data/buildings.json';
 import traitsJson from '../data/traits.json';
 import namesJson from '../data/names.json';
+import townTechsJson from '../data/town_techs.json';
 
 /** All content defs load from JSON so they are moddable without touching code (GDD §8.8). */
 
@@ -114,6 +115,29 @@ export function buildingDef(id: string): BuildingDef {
 export function traitDef(id: string): TraitDef {
   const def = TRAIT_DEFS.find((d) => d.id === id);
   if (!def) throw new Error(`unknown trait def: ${id}`);
+  return def;
+}
+
+export interface TownTechDef {
+  id: string;
+  name: string;
+  branch: string;
+  prereqs: string[];
+  /** Base research time in game days at researcher skill 5. */
+  days: number;
+  cost: Partial<Record<ResourceKind, number>>;
+  /** Tech is locked before this calendar year. */
+  minYear?: number;
+  desc: string;
+  /** Informational list of what this tech enables. */
+  unlocks: string[];
+}
+
+export const TOWN_TECH_DEFS: TownTechDef[] = townTechsJson.techs as TownTechDef[];
+
+export function townTechDef(id: string): TownTechDef {
+  const def = TOWN_TECH_DEFS.find((d) => d.id === id);
+  if (!def) throw new Error(`unknown town tech: ${id}`);
   return def;
 }
 
