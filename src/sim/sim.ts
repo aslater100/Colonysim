@@ -10,7 +10,7 @@ import {
   MINUTES_PER_TICK, MINUTES_PER_DAY, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR,
   TUNING, WORK_KINDS,
 } from './defs';
-import type { ResourceKind, WorkKind } from './defs';
+import type { ResourceKind, WorkKind, TownFocus, TradeOrder, TradeRecord, PendingEvent } from './defs';
 
 export interface Needs {
   food: number;
@@ -101,6 +101,10 @@ export interface Settler {
   clothedUntil: number; // minute their clothes wear out; 0 = threadbare
   /** carries a spear: hits harder in melee (grabbed from stores when raids land) */
   armed: boolean;
+  /** last food resource kind consumed — drives food variety mood system */
+  lastFoodType: ResourceKind | null;
+  /** housing preference from traits — affects which bed type gives mood bonus */
+  housingPreference: 'private' | 'communal' | 'military' | null;
 }
 
 export interface Corpse {
@@ -164,7 +168,16 @@ export class Simulation {
   items: GroundItem[] = [];
   corpses: Corpse[] = [];
   graves: Grave[] = [];
-  stock: Record<ResourceKind, number> = { wood: 80, grain: 60, meal: 160, stone: 0, clothes: 0, weapons: 0 };
+  stock: Record<ResourceKind, number> = {
+    // Founding resources
+    wood: 80, grain: 60, meal: 160, stone: 0, clothes: 0, weapons: 0,
+    // Raw — all start at 0; unlocked by town tech tree
+    clay: 0, coal: 0, iron_ore: 0, flax: 0, herbs: 0,
+    // Processed
+    timber: 0, brick: 0, iron: 0, tools: 0, rope: 0, flour: 0, ale: 0, medicine: 0,
+    // Food variety
+    bread: 0, dairy: 0, produce: 0, game_meal: 0, fish_meal: 0, preserved: 0,
+  };
   /** transits per tile for the traffic overlay; decays daily */
   traffic = new Float32Array(MAP_W * MAP_H);
   log: LogEntry[] = [];
@@ -182,6 +195,19 @@ export class Simulation {
   private nextId = 1;
   private nextEventDay: number;
   private reserved = new Set<string>(); // task target keys
+
+  // ---- town expansion fields ----
+  townName = 'New Settlement';
+  townFocus: TownFocus = 'balanced';
+  prestige = 0;
+  festivalCooldown = 0;
+  townTechsResearched: string[] = [];
+  activeResearch: { techId: string; workLeft: number } | null = null;
+  tradeOrders: TradeOrder[] = [];
+  tradeHistory: TradeRecord[] = [];
+  pendingChoice: PendingEvent | null = null;
+  /** Notable id designated as mayor post-flip; null while player is in direct control */
+  mayorNotableId: number | null = null;
 
   readonly seed: number;
 
@@ -313,6 +339,8 @@ export class Simulation {
       bedId: null,
       clothedUntil: 0,
       armed: false,
+      lastFoodType: null,
+      housingPreference: null,
     };
     this.settlers.push(s);
     return s;
@@ -2321,7 +2349,7 @@ export class Simulation {
    */
   serialize(): string {
     return JSON.stringify({
-      v: 1,
+      v: 3,
       seed: this.seed,
       rng: this.rng.getState(),
       minute: this.minute,
@@ -2346,6 +2374,17 @@ export class Simulation {
       nextRaidDay: this.nextRaidDay,
       nextId: this.nextId,
       nextEventDay: this.nextEventDay,
+      // town expansion
+      townName: this.townName,
+      townFocus: this.townFocus,
+      prestige: this.prestige,
+      festivalCooldown: this.festivalCooldown,
+      townTechsResearched: this.townTechsResearched,
+      activeResearch: this.activeResearch,
+      tradeOrders: this.tradeOrders,
+      tradeHistory: this.tradeHistory,
+      pendingChoice: this.pendingChoice,
+      mayorNotableId: this.mayorNotableId,
     });
   }
 
@@ -2354,8 +2393,26 @@ export class Simulation {
     const sim = new Simulation(d.seed);
     sim.rng.setState(d.rng);
     sim.minute = d.minute;
-    sim.world.tiles = d.tiles;
-    sim.settlers = d.settlers;
+    // Migrate tiles: add new zone fields with ?? defaults for old saves.
+    sim.world.tiles = (d.tiles as any[]).map((t) => ({
+      ...t,
+      pastureZone: t.pastureZone ?? false,
+      orchardZone: t.orchardZone ?? false,
+      mineZone: t.mineZone ?? false,
+      mineCharges: t.mineCharges ?? 0,
+      flaxZone: t.flaxZone ?? false,
+      districtId: t.districtId ?? null,
+    }));
+    // Migrate settlers: add new skill/priority entries and new fields for old saves.
+    sim.settlers = (d.settlers as any[]).map((s) => {
+      const skills = { ...s.skills } as Record<WorkKind, number>;
+      const priorities = { ...s.priorities } as Record<WorkKind, number>;
+      for (const k of WORK_KINDS) {
+        if (skills[k] === undefined) skills[k] = 0;
+        if (priorities[k] === undefined) priorities[k] = 1;
+      }
+      return { ...s, skills, priorities, lastFoodType: s.lastFoodType ?? null, housingPreference: s.housingPreference ?? null };
+    });
     sim.buildings = d.buildings.map((b: Building) => ({
       ...b,
       level: b.level ?? 1,
@@ -2365,7 +2422,19 @@ export class Simulation {
     sim.items = d.items;
     sim.corpses = d.corpses;
     sim.graves = d.graves;
-    sim.stock = { ...d.stock, weapons: d.stock.weapons ?? 0 };
+    // Migrate stock: add new resource kinds with ?? 0 defaults for old saves.
+    sim.stock = {
+      wood: d.stock.wood ?? 0, grain: d.stock.grain ?? 0, meal: d.stock.meal ?? 0,
+      stone: d.stock.stone ?? 0, clothes: d.stock.clothes ?? 0, weapons: d.stock.weapons ?? 0,
+      clay: d.stock.clay ?? 0, coal: d.stock.coal ?? 0, iron_ore: d.stock.iron_ore ?? 0,
+      flax: d.stock.flax ?? 0, herbs: d.stock.herbs ?? 0,
+      timber: d.stock.timber ?? 0, brick: d.stock.brick ?? 0, iron: d.stock.iron ?? 0,
+      tools: d.stock.tools ?? 0, rope: d.stock.rope ?? 0, flour: d.stock.flour ?? 0,
+      ale: d.stock.ale ?? 0, medicine: d.stock.medicine ?? 0,
+      bread: d.stock.bread ?? 0, dairy: d.stock.dairy ?? 0, produce: d.stock.produce ?? 0,
+      game_meal: d.stock.game_meal ?? 0, fish_meal: d.stock.fish_meal ?? 0,
+      preserved: d.stock.preserved ?? 0,
+    };
     sim.traffic = Float32Array.from(d.traffic);
     sim.log = d.log;
     sim.gameOver = d.gameOver;
@@ -2380,6 +2449,17 @@ export class Simulation {
     sim.nextRaidDay = d.nextRaidDay;
     sim.nextId = d.nextId;
     sim.nextEventDay = d.nextEventDay;
+    // Town expansion fields — all optional for save compat with pre-v3 saves.
+    sim.townName = d.townName ?? 'New Settlement';
+    sim.townFocus = d.townFocus ?? 'balanced';
+    sim.prestige = d.prestige ?? 0;
+    sim.festivalCooldown = d.festivalCooldown ?? 0;
+    sim.townTechsResearched = d.townTechsResearched ?? [];
+    sim.activeResearch = d.activeResearch ?? null;
+    sim.tradeOrders = d.tradeOrders ?? [];
+    sim.tradeHistory = d.tradeHistory ?? [];
+    sim.pendingChoice = d.pendingChoice ?? null;
+    sim.mayorNotableId = d.mayorNotableId ?? null;
     // Task reservations aren't saved; rebuild them from in-flight tasks.
     sim.reserved = new Set(sim.settlers.filter((s) => s.task).map((s) => sim.taskKey(s.task!)));
     return sim;

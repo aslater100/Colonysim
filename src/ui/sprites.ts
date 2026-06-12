@@ -132,7 +132,7 @@ export interface SpriteSet {
   raider: HTMLCanvasElement[];
   deer: HTMLCanvasElement[];
   wolf: HTMLCanvasElement[];
-  items: Record<'wood' | 'grain' | 'meal' | 'stone' | 'clothes' | 'weapons', HTMLCanvasElement>;
+  items: Record<import('../sim/defs').ResourceKind, HTMLCanvasElement>;
   grave: HTMLCanvasElement;
   corpse: HTMLCanvasElement;
   buildings: Record<string, HTMLCanvasElement>;
@@ -659,6 +659,21 @@ function weaponSprite(): HTMLCanvasElement {
   return c;
 }
 
+/** Simple colored pile sprite for resources that don't have custom art yet. */
+function genericItemSprite(color: string, color2: string): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE; c.height = TILE;
+  const g = c.getContext('2d')!;
+  g.fillStyle = P.shadow;
+  g.fillRect(3, 10, 10, 3);
+  g.fillStyle = color2;
+  g.fillRect(4, 7, 8, 4);
+  g.fillStyle = color;
+  g.fillRect(5, 5, 6, 3);
+  g.fillRect(3, 8, 10, 2);
+  return c;
+}
+
 function itemSprite(kind: 'wood' | 'grain' | 'meal' | 'stone' | 'clothes'): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = TILE;
@@ -1053,12 +1068,35 @@ export function buildSprites(buildingDefs: { id: string; w: number; h: number }[
     deer: [deerSprite(0), deerSprite(1)],
     wolf: [wolfSprite(0), wolfSprite(1)],
     items: {
+      // Founding resources — custom sprites
       wood: itemSprite('wood'),
       grain: itemSprite('grain'),
       meal: itemSprite('meal'),
       stone: itemSprite('stone'),
       clothes: itemSprite('clothes'),
       weapons: weaponSprite(),
+      // Raw era-1 resources — generic colored piles (placeholder art)
+      clay:     genericItemSprite('#9c6b40', '#7a5030'),
+      coal:     genericItemSprite('#3c3830', '#2a2820'),
+      iron_ore: genericItemSprite('#786050', '#5e4840'),
+      flax:     genericItemSprite('#9cb060', '#7a9040'),
+      herbs:    genericItemSprite('#4a7040', '#365830'),
+      // Processed resources
+      timber:   genericItemSprite('#b08850', '#8c6a38'),
+      brick:    genericItemSprite('#8c5040', '#6e3c30'),
+      iron:     genericItemSprite('#707080', '#505060'),
+      tools:    genericItemSprite('#606070', '#484858'),
+      rope:     genericItemSprite('#9c8858', '#7a6840'),
+      flour:    genericItemSprite('#c8c0a8', '#a8a088'),
+      ale:      genericItemSprite('#a07830', '#7a5a20'),
+      medicine: genericItemSprite('#5a8870', '#406858'),
+      // Food variety
+      bread:    genericItemSprite('#c09050', '#a07038'),
+      dairy:    genericItemSprite('#d0c898', '#b0a878'),
+      produce:  genericItemSprite('#608040', '#486030'),
+      game_meal:  genericItemSprite('#8c5c3c', '#6a4028'),
+      fish_meal:  genericItemSprite('#6080a0', '#486080'),
+      preserved:  genericItemSprite('#6a4030', '#502820'),
     },
     grave: graveSprite(),
     corpse: corpseSprite(),

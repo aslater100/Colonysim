@@ -5,7 +5,7 @@ import type { TownSite } from './worldgen';
 export type TileKind = 'grass' | 'tree' | 'water' | 'soil' | 'rock';
 
 export type RoadKind = 'dirt' | 'plank' | 'gravel' | 'bridge';
-export type ZoneKind = 'farm' | 'stockpile' | 'wall' | 'gate' | 'trap';
+export type ZoneKind = 'farm' | 'stockpile' | 'wall' | 'gate' | 'trap' | 'pasture' | 'orchard' | 'mine' | 'flax';
 export type PaintKind = RoadKind | ZoneKind;
 
 /** Speed multiplier walking this road type (design: docs/design/transportation.md §2). */
@@ -51,6 +51,15 @@ export interface Tile {
   buildingId: number | null;
   /** fog of war: true once a settler has been within sight range */
   explored: boolean;
+  // ---- town expansion zones ----
+  pastureZone: boolean;
+  orchardZone: boolean;
+  /** exhausts after several mine cycles; converts to grass when depleted */
+  mineZone: boolean;
+  mineCharges: number;
+  flaxZone: boolean;
+  /** district label id (null = no district) */
+  districtId: number | null;
 }
 
 export interface Vec {
@@ -78,6 +87,8 @@ export class World {
         farmZone: false, stockpileZone: false, wallPlan: false,
         gate: false, gatePlan: false, sapling: false, trapZone: false, wallHp: 0,
         buildingId: null, explored: false,
+        pastureZone: false, orchardZone: false, mineZone: false, mineCharges: 0,
+        flaxZone: false, districtId: null,
       });
     }
     this.generate(rng);

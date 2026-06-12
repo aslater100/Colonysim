@@ -1,7 +1,7 @@
 {
   "name": "centuria",
   "private": true,
-  "version": "0.22.0",
+  "version": "0.23.0",
   "description": "A colony-to-nation deep-simulation builder, 1900–2100.",
   "author": "aslater100",
   "type": "module",
