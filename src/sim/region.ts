@@ -2039,6 +2039,7 @@ export class RegionSim {
     }
     this.updateExpeditions();
     this.updateCharter();
+    this.updateExploration(); // Phase 0: Update fog of war based on scouts and settlements
     if (this.totalPop() <= 0) {
       this.gameOver = true;
       this.addLog('The last settlement is empty. (Failure state: depopulation.)', 'bad');
@@ -2765,6 +2766,45 @@ export class RegionSim {
       }
     } else {
       this.charterProgress = Math.max(0, this.charterProgress - 0.5);
+    }
+  }
+
+  // ---- Phase 0: Exploration & Fog of War ----
+
+  /** Update exploration visibility based on settlements and caravan routes. */
+  private updateExploration(): void {
+    // Settlements and routes automatically reveal tiles around them
+    for (const settlement of this.settlements) {
+      // Each settlement reveals a small radius based on local scouting
+      let sightRadius = 2; // base sight radius
+      // Technology improvements to sight range
+      if (this.has('telegraph')) sightRadius += 1;
+      if (this.has('radio')) sightRadius += 2;
+      if (this.has('satellite')) {
+        // Satellite tech reveals the entire map
+        for (let x = 0; x < 100; x++) {
+          for (let y = 0; y < 100; y++) {
+            this.explorationMap[x][y] = 'explored';
+          }
+        }
+        return; // early exit if satellite tech unlocked
+      }
+      this.revealTiles(settlement.x, settlement.y, sightRadius, 'explored');
+    }
+
+    // Routes also reveal tiles (caravans passively explore)
+    for (const route of this.routes) {
+      const a = this.settlement(route.a);
+      const b = this.settlement(route.b);
+      if (!a || !b) continue;
+      // Reveal a corridor along the route (simplified: just endpoints)
+      this.revealTiles(a.x, a.y, 1, 'explored');
+      this.revealTiles(b.x, b.y, 1, 'explored');
+    }
+
+    // Scout units reveal tiles
+    for (const scout of this.scouts) {
+      this.revealTiles(scout.x, scout.y, 5, 'explored');
     }
   }
 
