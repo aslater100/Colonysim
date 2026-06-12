@@ -11,6 +11,8 @@ import {
   TUNING, WORK_KINDS, TOWN_TECH_DEFS,
 } from './defs';
 import type { ResourceKind, WorkKind, TownFocus, TradeOrder, TradeRecord, PendingEvent } from './defs';
+import type { EconomyData } from './economy';
+import { createTownEconomy, getMarketPrice } from './economy';
 
 export interface Needs {
   food: number;
@@ -182,6 +184,7 @@ export class Simulation {
     // Food variety
     bread: 0, dairy: 0, produce: 0, game_meal: 0, fish_meal: 0, preserved: 0,
   };
+  economy: EconomyData = createTownEconomy(500); // 500 gold seed money
   /** transits per tile for the traffic overlay; decays daily */
   traffic = new Float32Array(MAP_W * MAP_H);
   log: LogEntry[] = [];
@@ -799,10 +802,14 @@ export class Simulation {
 
   // ---- the flip trigger (GDD §2.3): outgrow the valley, found town #2 ----
   canFoundSecondTown(): { ok: boolean; reason: string } {
+    const t = TUNING;
     if (this.settlers.length < 20) return { ok: false, reason: `needs 20 settlers (has ${this.settlers.length})` };
     if (this.stock.wood < 100) return { ok: false, reason: `needs 100 wood (has ${this.stock.wood})` };
     if (this.stock.meal + this.stock.grain < 120) {
       return { ok: false, reason: `needs 120 food (has ${this.stock.meal + this.stock.grain})` };
+    }
+    if (this.economy.cash < t.townFoundingMinCash) {
+      return { ok: false, reason: `needs £${t.townFoundingMinCash} cash (has £${Math.round(this.economy.cash)})` };
     }
     if (this.raidActive) return { ok: false, reason: 'not during a raid' };
     return { ok: true, reason: '' };
@@ -939,6 +946,7 @@ export class Simulation {
   /**
    * Steady immigration plus a slow birth trickle: a colony that can feed
    * people recovers its losses instead of bleeding out (0.1 death-spiral fix).
+   * Emigration: overcrowding causes families to leave.
    */
   private updatePopulationFlows(): void {
     const t = TUNING;
@@ -966,6 +974,46 @@ export class Simulation {
       for (const k of WORK_KINDS) s.skills[k] = Math.min(s.skills[k], 3); // young and green
       this.addLog(`A child of the colony, ${s.name}, comes of age.`, 'good');
     }
+    // Emigration: overcrowding causes families to leave for less crowded places
+    if (pop >= t.hardCapPop && this.rng.chance(0.1)) {
+      const idx = Math.floor(this.rng.next() * this.settlers.length);
+      const leaving = this.settlers[idx];
+      this.settlers.splice(idx, 1);
+      this.releaseTask(leaving);
+      this.addLog(`${leaving.name}'s family packs their wagon—too crowded here.`, 'info');
+    }
+  }
+
+  /**
+   * Sell a resource to the market, converting it to cash.
+   * Returns amount of cash received.
+   */
+  sellToMarket(resource: ResourceKind, quantity: number): number {
+    if (this.stock[resource] < quantity) return 0;
+    const pricePerUnit = getMarketPrice(this.economy, resource);
+    const cash = pricePerUnit * quantity;
+    this.stock[resource] -= quantity;
+    this.economy.cash += cash;
+    this.addLog(`Sold ${quantity} ${resource} for £${cash}.`, 'good');
+    return cash;
+  }
+
+  /**
+   * Try to buy a resource from the market with cash.
+   * Returns quantity purchased.
+   */
+  buyFromMarket(resource: ResourceKind, quantity: number): number {
+    const pricePerUnit = getMarketPrice(this.economy, resource);
+    const cost = pricePerUnit * quantity;
+    if (this.economy.cash < cost) {
+      const affordable = Math.floor(this.economy.cash / pricePerUnit);
+      if (affordable <= 0) return 0;
+      return this.buyFromMarket(resource, affordable); // recursive with affordable amount
+    }
+    this.stock[resource] += quantity;
+    this.economy.cash -= cost;
+    this.addLog(`Bought ${quantity} ${resource} for £${cost}.`, 'info');
+    return quantity;
   }
 
   /** Town-tier incident deck — 12 named events, ~45% bad / 55% good (GDD §3.3). */
@@ -2853,6 +2901,12 @@ export class Simulation {
       corpses: this.corpses,
       graves: this.graves,
       stock: this.stock,
+      economy: {
+        cash: this.economy.cash,
+        savings: this.economy.savings,
+        inflation: this.economy.inflation,
+        marketPrices: [...this.economy.marketPrices.entries()],
+      },
       traffic: Array.from(this.traffic),
       log: this.log,
       gameOver: this.gameOver,
@@ -2934,6 +2988,13 @@ export class Simulation {
       bread: d.stock.bread ?? 0, dairy: d.stock.dairy ?? 0, produce: d.stock.produce ?? 0,
       game_meal: d.stock.game_meal ?? 0, fish_meal: d.stock.fish_meal ?? 0,
       preserved: d.stock.preserved ?? 0,
+    };
+    // Economy: restore from save or initialize with defaults
+    sim.economy = {
+      cash: d.economy?.cash ?? 500,
+      savings: d.economy?.savings ?? 0,
+      inflation: d.economy?.inflation ?? 0,
+      marketPrices: d.economy?.marketPrices ? new Map(d.economy.marketPrices) : createTownEconomy().marketPrices,
     };
     sim.traffic = Float32Array.from(d.traffic);
     sim.log = d.log;

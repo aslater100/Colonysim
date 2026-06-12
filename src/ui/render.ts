@@ -154,6 +154,10 @@ export class Renderer {
     return { ox: Math.round(-this.cam.x), oy: Math.round(-this.cam.y) };
   }
 
+  private isInViewport(px: number, py: number, buffer: number = TILE * 2): boolean {
+    return px >= -buffer && py >= -buffer && px < this.canvas.width + buffer && py < this.canvas.height + buffer;
+  }
+
   tileAt(px: number, py: number): { x: number; y: number } {
     const zoom = this.cam.zoom;
     return {
@@ -304,9 +308,10 @@ export class Renderer {
 
     // Wildlife
     for (const a of sim.animals) {
-      const fr = Math.floor(this.frame / 14) % 2;
       const px = ox + Math.round(a.pos.x * TILE);
       const py = oy + Math.round(a.pos.y * TILE);
+      if (!this.isInViewport(px, py)) continue;
+      const fr = Math.floor(this.frame / 14) % 2;
       g.drawImage(a.kind === 'wolf' ? this.sprites.wolf[fr] : this.sprites.deer[fr], px, py);
       const maxHp = a.kind === 'wolf' ? TUNING.wolfHealth : TUNING.deerHealth;
       if (a.health < maxHp) this.hpBar(px, py - 2, a.health / maxHp);
@@ -314,19 +319,21 @@ export class Renderer {
 
     // Raiders
     for (const r of sim.raiders) {
-      const fr = Math.floor(this.frame / 10) % 2;
       const px = ox + Math.round(r.pos.x * TILE);
       const py = oy + Math.round(r.pos.y * TILE) - 4;
+      if (!this.isInViewport(px, py)) continue;
+      const fr = Math.floor(this.frame / 10) % 2;
       g.drawImage(this.sprites.raider[fr], px, py);
       this.hpBar(px, py + 2, r.health / 70);
     }
 
     // Settlers with a 2-frame walk bob (spear carriers draw armed)
     for (const s of sim.settlers) {
-      const variant = s.id % this.sprites.settler.length;
-      const fr = s.state === 'sleeping' ? 0 : Math.floor(this.frame / 12) % 2;
       const px = ox + Math.round(s.pos.x * TILE);
       const py = oy + Math.round(s.pos.y * TILE) - 4;
+      if (!this.isInViewport(px, py)) continue;
+      const variant = s.id % this.sprites.settler.length;
+      const fr = s.state === 'sleeping' ? 0 : Math.floor(this.frame / 12) % 2;
       g.drawImage((s.armed ? this.sprites.settlerArmed : this.sprites.settler)[variant][fr], px, py);
       if (s.state === 'sleeping') {
         g.fillStyle = '#cfd4e0';

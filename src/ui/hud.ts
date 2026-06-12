@@ -531,14 +531,19 @@ export class Hud {
     const s = this.sim;
     const hh = String(Math.floor(s.hour)).padStart(2, '0');
     const mm = String(Math.floor((s.hour % 1) * 60)).padStart(2, '0');
-    const over = s.settlers.length - TUNING.softCapPop;
-    const capWarn = over > 0 ? ` ⚠ −${Math.round((1 - s.softCapWorkMult()) * 100)}%` : '';
+    const pop = s.settlers.length;
+    const hardCap = TUNING.hardCapPop;
+    const softCap = TUNING.softCapPop;
+    const over = pop - softCap;
+    const popDisplay = pop >= hardCap ? `<span class="tb-over">POP ${pop}/${hardCap}</span>` : `POP ${pop}/${hardCap}`;
+    const capWarn = over > 0 && pop < hardCap ? ` ⚠ −${Math.round((1 - s.softCapWorkMult()) * 100)}%` : '';
     const skyIcon = { clear: '☀', overcast: '☁', rain: '☔', storm: '⛈', snow: '❄' }[s.weatherToday().sky];
     const drought = s.weather.isDrought(s.day) && s.growingSeason ? ' <span class="tb-over">DROUGHT</span>' : '';
     this.setHtml(this.topBar,
       `<span class="tb-date">${s.dateLabel} ${hh}:${mm}</span>` +
       `<span>${skyIcon} ${Math.round(s.temperature())}°C${drought}</span>` +
-      `<span>POP ${s.settlers.length}${capWarn}</span>` +
+      `<span>${popDisplay}${capWarn}</span>` +
+      `<span>💰£${Math.round(s.economy.cash)}</span>` +
       `<span>🪵${s.stock.wood} ⛏${s.stock.stone} 🌾${s.stock.grain} 🍖${s.stock.meal} 👕${s.stock.clothes}${s.stock.weapons ? ` ⚔${s.stock.weapons}` : ''}</span>` +
       `<span title="average mood">♥${Math.round(s.avgMood())}</span>` +
       (s.raidActive ? `<span class="tb-over">⚔ RAID ${s.raiders.length}!</span>` : '') +

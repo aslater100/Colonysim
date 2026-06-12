@@ -207,14 +207,17 @@ export const TUNING = {
   softCapPop: 60,
   softCapWorkPenaltyPer: 0.0075,
   softCapMoodPenaltyPer10: 1,
-  hardCapPop: 150,
+  hardCapPop: 200,
   // Population flows: a fed colony recovers its losses (0.1 death-spiral fix)
   immigrantFoodPerCapita: 8, // stores per settler before word spreads
   immigrantChancePerDay: 0.15,
   firstImmigrantDay: 12, // no arrivals until the colony has survived its first weeks
-  immigrantStopPop: 100, // GDD §2.3: "wagons stop arriving — no room"
+  immigrantStopPop: 133, // GDD §2.3: "wagons stop arriving — overcrowding"
   birthChancePerCoupleDay: 0.006,
   birthMinPop: 4,
+  // Town founding (economic gate)
+  townFoundingMinCash: 2000,  // minimum cash balance required to found a town
+  townFoundingCost: 1500,     // cost to launch founding expedition
   // Burial
   buryWork: 45,
   unburiedMoodPenalty: 6,

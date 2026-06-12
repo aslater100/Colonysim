@@ -27,6 +27,11 @@ function flipped(seed: number): RegionSim {
 
 function toStatehood(r: RegionSim): void {
   for (let year = 0; year < 30 && !r.ceremonyPending; year++) {
+    // Ensure charter requirements stay met during loop (including new settlements)
+    r.treasury = Math.max(r.treasury, 50000);
+    for (const t of r.settlements) {
+      t.garrisonStrength = Math.max(t.garrisonStrength || 0, 5);
+    }
     runDays(r, 60);
     for (const t of r.settlements) {
       if (r.settlements.length + r.expeditions.length < 4 && r.canFoundTown(t.id).ok) {
@@ -34,6 +39,11 @@ function toStatehood(r: RegionSim): void {
         break;
       }
     }
+  }
+  // Final ensure requirements are met before completing incorporation
+  r.treasury = Math.max(r.treasury, 50000);
+  for (const t of r.settlements) {
+    t.garrisonStrength = Math.max(t.garrisonStrength || 0, 5);
   }
   r.completeIncorporation('Testonia', 'council');
 }
@@ -385,6 +395,11 @@ describe('The charter rides the network (GDD §2.2)', () => {
       path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], terrainCost: 2, freight: 0,
     });
     expect(r.connectedToAll()).toBe(true);
+    // Set up charter requirements: treasury and garrison
+    r.treasury = 50000;
+    for (const t of r.settlements) {
+      t.garrisonStrength = 5;
+    }
     expect(r.charterEligible()).toBe(true);
   });
 });
