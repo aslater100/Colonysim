@@ -403,7 +403,7 @@ export const RIVAL_ARCHETYPES: Record<RivalArchetype, { name: string; weights: R
   opportunist: { name: 'the Opportunist', weights: { expansion: 6, commerce: 6, ideology: 2, honor: 2, risk: 9, grudge: 4 } },
 };
 
-export type TreatyKind = 'non_aggression' | 'trade_agreement' | 'defensive_pact';
+export type TreatyKind = 'non_aggression' | 'trade_agreement' | 'defensive_pact' | 'climate_accord';
 
 /** First slice of the GDD §5.4 treaty table. `baseAsk` is the relations
  *  level the rival wants before personality adjusts the price. */
@@ -419,6 +419,10 @@ export const TREATY_DEFS: Record<TreatyKind, { name: string; baseAsk: number; de
   defensive_pact: {
     name: 'Defensive Pact', baseAsk: 45,
     desc: 'Allied arms: militia +15% when raiders strike.',
+  },
+  climate_accord: {
+    name: 'Climate Accord', baseAsk: 25,
+    desc: 'Both parties pledge emission reductions. Compliant signatories bend the world curve; free-riders can be sanctioned if detected.',
   },
 };
 
@@ -785,6 +789,14 @@ export const SEA_WALL_YEAR = 2025;
 export const BRANCH_YEAR = 2040;
 /** The game ends 1 Jan 2100 with the Century Report — sandbox continues. */
 export const CENTURY_YEAR = 2100;
+/** Geoengineering: total °C shed by stratospheric aerosol injection. */
+export const GEOENGINEER_COOLING = 0.4;
+/** How long the aerosols stay effective: 2 years × 60 days/year. */
+export const GEOENGINEER_DURATION_DAYS = 120;
+/** Accord compliance: below this fraction the signatory is a free-rider. */
+export const ACCORD_DEFECT_THRESHOLD = 0.35;
+/** Maximum world-emissions cut from fully compliant accord coverage. */
+export const ACCORD_EMISSION_CUT = 0.28;
 
 /** The endgame's three skies (GDD §3.2): chosen by your climate, economy,
  *  and regime outcomes — not the calendar. */
@@ -908,6 +920,15 @@ export class RegionSim {
   eraBranch: EraBranch | null = null;
   /** The 1 Jan 2100 Century Report; sandbox continues after it. */
   centuryReport: CenturyReport | null = null;
+  /** Compliance per rival (0–1): drifts monthly, commerce-driven. Below
+   *  ACCORD_DEFECT_THRESHOLD = free-rider. Cleared when accord torn. */
+  accordCompliance: Record<number, number> = {};
+  /** Rivals whose defection has already triggered a log (transient: resets on load). */
+  private accordDefectLogged = new Set<number>();
+  /** True once Deploy is activated; the aerosols are in the stratosphere. */
+  geoDeployed = false;
+  /** Day the aerosols were injected; used to phase the cooling. */
+  geoDeployDay = -1;
   private seaRiseAnnounced = false;
   private lastTidalLogDay = -999;
   private droughtAnnounced = false;
@@ -1144,7 +1165,8 @@ export class RegionSim {
   /** Everyone else's chimneys. The old world industrializes whether you
    *  meet it or not; after 2030 it slowly decarbonizes on its own — but
    *  only proven green tech *diffuses* fast enough to bend the curve
-   *  (GDD §5.6: lagging nations adopt proven tech at discount). */
+   *  (GDD §5.6: lagging nations adopt proven tech at discount). Climate
+   *  accords with compliant signatories add a further cut. */
   worldEmissions(): number {
     const rivalPop = this.rivals.reduce((s, rv) => s + rv.pop, 0);
     const worldPop = Math.max(rivalPop, 12000) / 1000;
@@ -1153,7 +1175,19 @@ export class RegionSim {
     let diffusion = 1;
     if (this.has('renewables')) diffusion *= 0.8;
     if (this.has('fusion_power')) diffusion *= 0.5;
-    return worldPop * 0.045 * ramp * decarb * diffusion;
+    // Climate accords: each compliant signatory drags their share down
+    let accordFactor = 1;
+    if (this.rivals.length > 0) {
+      const totalPop = this.rivals.reduce((s, rv) => s + rv.pop, 0);
+      let coveredPop = 0;
+      for (const rv of this.rivals) {
+        if (rv.treaties.includes('climate_accord')) {
+          coveredPop += rv.pop * (this.accordCompliance[rv.id] ?? 1);
+        }
+      }
+      if (totalPop > 0) accordFactor = 1 - (coveredPop / totalPop) * ACCORD_EMISSION_CUT;
+    }
+    return worldPop * 0.045 * ramp * decarb * diffusion * accordFactor;
   }
 
   /** The thin blue ghost-line (GDD §8.2): where the ledger lands by 2100
@@ -1173,6 +1207,12 @@ export class RegionSim {
     this.co2ppm += emit;
     const equilibrium = Math.max(0, (this.co2ppm - CO2_BASE_PPM) * WARMING_PER_PPM);
     this.warmingC += (equilibrium - this.warmingC) / WARMING_LAG_TICKS;
+    // Geoengineering: phased aerosol cooling over the active window
+    if (this.geoDeployed && this.day - this.geoDeployDay < GEOENGINEER_DURATION_DAYS) {
+      const ticksInWindow = GEOENGINEER_DURATION_DAYS / 30; // 30-day climate ticks
+      this.warmingC = Math.max(0, this.warmingC - GEOENGINEER_COOLING / ticksInWindow);
+    }
+    this.tickAccords();
     // The ghost-line announcement: quiet dread as UI (GDD §8.2)
     if (!this.seaRiseAnnounced && this.warmingC >= 1.2 && this.settlements.some((t) => t.site.coastal)) {
       this.seaRiseAnnounced = true;
@@ -1203,6 +1243,85 @@ export class RegionSim {
     }
     if (this.eraBranch === null && this.year >= BRANCH_YEAR) this.decideBranch();
     if (!this.centuryReport && this.year >= CENTURY_YEAR) this.buildCenturyReport();
+  }
+
+  /** Monthly: drift accord compliance and detect free-riders (GDD §8.2).
+   *  Commerce-driven signatories stay honest; expansion-minded ones quietly
+   *  cheat. First detection triggers one log entry; the player can sanction. */
+  private tickAccords(): void {
+    for (const rv of this.rivals) {
+      if (!rv.treaties.includes('climate_accord')) {
+        if (this.accordCompliance[rv.id] !== undefined) {
+          delete this.accordCompliance[rv.id];
+          this.accordDefectLogged.delete(rv.id);
+        }
+        continue;
+      }
+      let comp = this.accordCompliance[rv.id] ?? 1.0;
+      // High-commerce powers keep their word; expansion hawks cut corners
+      const drift = (rv.weights.commerce - rv.weights.expansion) * 0.006;
+      comp = Math.max(0, Math.min(1, comp + drift + (this.rng.next() - 0.55) * 0.04));
+      this.accordCompliance[rv.id] = comp;
+      if (comp < ACCORD_DEFECT_THRESHOLD && !this.accordDefectLogged.has(rv.id)) {
+        this.accordDefectLogged.add(rv.id);
+        this.addLog(
+          `ACCORD DEFECTION: satellite readings show ${rv.name}'s emissions climbing behind diplomatic smiles. ` +
+          `Sanction them (−20 relations, accord torn) or absorb the betrayal to keep the network intact.`,
+          'bad',
+        );
+      }
+      if (comp >= ACCORD_DEFECT_THRESHOLD + 0.1) {
+        this.accordDefectLogged.delete(rv.id);
+      }
+    }
+  }
+
+  /** True once `environmentalism` is researched and the year is right —
+   *  this gates the Climate Accord treaty type in diplomacy. */
+  accordUnlocked(): boolean {
+    return this.has('environmentalism') && this.year >= 2010 && this.stateProclaimed;
+  }
+
+  /** Deploy stratospheric aerosol injection (GDD §8.2 geoengineering).
+   *  One-time; arrests warming fast but infuriates every rival. */
+  deployGeoengineering(): boolean {
+    if (this.geoDeployed || !this.has('geoengineering') || !this.nationProclaimed) return false;
+    this.geoDeployed = true;
+    this.geoDeployDay = this.day;
+    const SIDE_EFFECTS = [
+      'Monsoon patterns shift — distant regions report anomalous drought, and diplomatic notes arrive within the week.',
+      'UV anomalies bleach shallow reefs; three fishing nations demand compensation.',
+      'Polar ice rebounds faster than the models predicted — sea-level projections are revised downward.',
+      'A thin permanent haze rings the equatorial sky. Crop yields drag 5% in low latitudes.',
+    ];
+    const fx = SIDE_EFFECTS[this.rng.int(SIDE_EFFECTS.length)];
+    for (const rv of this.rivals) {
+      rv.relations = Math.max(-100, rv.relations - 15);
+      this.noteHistory(rv, `${this.year}: unilateral geoengineering deployed without their consent.`);
+    }
+    this.addLog(
+      `GEOENGINEERING DEPLOYED: stratospheric aerosol injection begins. Warming will ease ~${GEOENGINEER_COOLING}°C ` +
+      `over two years — but every rival calls it a unilateral act on the shared sky. ${fx}`,
+      'bad',
+    );
+    return true;
+  }
+
+  /** Sanction a Climate Accord defector: tear the accord, cost relations.
+   *  Unlike breakTreaty, this does not increment treatiesBroken — they defected. */
+  sanctionAccordDefector(id: number): boolean {
+    const rv = this.rival(id);
+    if (!rv || !rv.treaties.includes('climate_accord')) return false;
+    if ((this.accordCompliance[rv.id] ?? 1) >= ACCORD_DEFECT_THRESHOLD) return false;
+    rv.treaties = rv.treaties.filter((k) => k !== 'climate_accord');
+    this.onBreakTreaty(rv, 'climate_accord');
+    rv.relations = this.clampRel(rv.relations - 20);
+    this.addLog(
+      `SANCTION: ${rv.name}'s Climate Accord suspended — satellite data is the stated cause. ` +
+      `The diplomatic chill is real. Their emissions record is now the continent's business.`,
+      'bad',
+    );
+    return true;
   }
 
   /** Era 8 opens and the verdict is read (GDD §3.2): the sky you get was
@@ -2699,6 +2818,7 @@ export class RegionSim {
     if (kind === 'trade_agreement') ask -= rv.weights.commerce * 2.5;
     if (kind === 'non_aggression') ask -= 10 - rv.weights.risk; // the cautious want fences
     if (kind === 'defensive_pact') ask -= rv.weights.honor * 1.5;
+    if (kind === 'climate_accord') ask += rv.weights.expansion * 2 - rv.weights.commerce * 1.5;
     return Math.round(ask);
   }
 
@@ -2717,6 +2837,9 @@ export class RegionSim {
       case 'defensive_pact':
         // an entangling commitment: the honorable mean it, the rash resent it
         return rv.weights.honor * 0.8 - rv.weights.risk * 0.5 - 5;
+      case 'climate_accord':
+        // commerce-driven powers value stable, shared rules; expansion hawks balk
+        return rv.weights.commerce * 1.2 - rv.weights.expansion * 0.8 - 3;
     }
   }
 
@@ -2852,7 +2975,10 @@ export class RegionSim {
 
   /** Ink, gold, and surveys change hands. */
   private executeDeal(rv: RivalNation, b: DealBasket): void {
-    for (const k of b.treaties) rv.treaties.push(k);
+    for (const k of b.treaties) {
+      rv.treaties.push(k);
+      this.onSignTreaty(rv, k);
+    }
     this.treasury += b.goldToYou - b.goldToThem;
     if (b.borderSettlement) {
       rv.borderSettled = true;
@@ -2860,6 +2986,22 @@ export class RegionSim {
     }
     rv.relations = this.clampRel(rv.relations + 4 + b.treaties.length * 2);
     this.addLog(`ACCORD: ${this.stateName || 'the State'} and ${rv.name} sign — ${this.basketLabel(b)}.`, 'good');
+  }
+
+  /** Initialize per-kind state when a treaty is inked. */
+  private onSignTreaty(rv: RivalNation, kind: TreatyKind): void {
+    if (kind === 'climate_accord') {
+      this.accordCompliance[rv.id] = 1.0;
+      this.accordDefectLogged.delete(rv.id);
+    }
+  }
+
+  /** Clean up per-kind state when a treaty is torn. */
+  private onBreakTreaty(rv: RivalNation, kind: TreatyKind): void {
+    if (kind === 'climate_accord') {
+      delete this.accordCompliance[rv.id];
+      this.accordDefectLogged.delete(rv.id);
+    }
   }
 
   /** Send a paid envoy: the cheap, repeatable relations verb. */
@@ -2896,8 +3038,10 @@ export class RegionSim {
     const rv = this.rival(id);
     if (!rv || !this.stateProclaimed || rv.treaties.includes(kind)) return false;
     if (this.playerWar?.rivalId === id) return false; // peace is made at the peace table
+    if (kind === 'climate_accord' && !this.accordUnlocked()) return false;
     if (rv.relations >= this.treatyAsk(rv, kind)) {
       rv.treaties.push(kind);
+      this.onSignTreaty(rv, kind);
       rv.relations = this.clampRel(rv.relations + 5);
       this.addLog(`TREATY: ${this.stateName || 'the State'} and ${rv.name} sign a ${TREATY_DEFS[kind].name}.`, 'good');
       return true;
@@ -2916,6 +3060,7 @@ export class RegionSim {
     const rv = this.rival(id);
     if (!rv || !rv.treaties.includes(kind)) return false;
     rv.treaties = rv.treaties.filter((k) => k !== kind);
+    this.onBreakTreaty(rv, kind);
     this.treatiesBroken++;
     rv.relations = this.clampRel(rv.relations - (25 + rv.weights.grudge * 2));
     this.addLog(
@@ -2937,7 +3082,10 @@ export class RegionSim {
     const rv = this.rival(rivalId);
     if (!o || !rv) return false;
     this.offers = this.offers.filter((x) => x !== o);
-    if (!rv.treaties.includes(o.kind)) rv.treaties.push(o.kind);
+    if (!rv.treaties.includes(o.kind)) {
+      rv.treaties.push(o.kind);
+      this.onSignTreaty(rv, o.kind);
+    }
     rv.relations = this.clampRel(rv.relations + 8);
     this.addLog(`TREATY: ${rv.name}'s offered ${TREATY_DEFS[o.kind].name} is signed.`, 'good');
     return true;
@@ -3670,6 +3818,9 @@ export class RegionSim {
       centuryReport: this.centuryReport,
       seaRiseAnnounced: this.seaRiseAnnounced,
       lastTidalLogDay: this.lastTidalLogDay,
+      accordCompliance: this.accordCompliance,
+      geoDeployed: this.geoDeployed,
+      geoDeployDay: this.geoDeployDay,
       nextId: this.nextId,
       nextEventDay: this.nextEventDay,
       townNamePool: this.townNamePool,
@@ -3749,6 +3900,9 @@ export class RegionSim {
     r.centuryReport = d.centuryReport ?? null;
     r.seaRiseAnnounced = d.seaRiseAnnounced ?? false;
     r.lastTidalLogDay = d.lastTidalLogDay ?? -999;
+    r.accordCompliance = d.accordCompliance ?? {};
+    r.geoDeployed = d.geoDeployed ?? false;
+    r.geoDeployDay = d.geoDeployDay ?? -1;
     r.nextId = d.nextId;
     r.nextEventDay = d.nextEventDay;
     r.townNamePool = d.townNamePool;

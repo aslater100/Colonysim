@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Simulation } from '../src/sim/sim';
 import {
   RegionSim, REGION_MINUTES_PER_TICK, CO2_BASE_PPM, SEA_WALL_YEAR, BRANCH_YEAR, CENTURY_YEAR,
+  ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, GEOENGINEER_DURATION_DAYS,
 } from '../src/sim/region';
 import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
 
@@ -237,5 +238,165 @@ describe('Climate persists across saves', () => {
     expect(back.eraBranch).toBe('dystopia');
     expect(back.settlements[0].seaWall).toBe(true);
     expect(back.centuryReport).toBeNull();
+  });
+
+  it('roundtrips accord compliance and geoengineering state', () => {
+    const { sim, r } = flippedPair(42);
+    r.stateProclaimed = true;
+    r.stateName = 'Testonia';
+    r.govLean = 'council';
+    r.treasury = 500;
+    r.proclaimNation('Testland', 'democracy', {});
+    r.geoDeployed = true;
+    r.geoDeployDay = 100;
+    r.accordCompliance[7] = 0.8;
+    const back = RegionSim.deserialize(r.serialize(), sim);
+    expect(back.geoDeployed).toBe(true);
+    expect(back.geoDeployDay).toBe(100);
+    expect(back.accordCompliance[7]).toBeCloseTo(0.8);
+  });
+});
+
+function makeRivalWith(r: RegionSim, commerce: number, expansion: number) {
+  const rv = {
+    id: 99, name: 'Testovia', leader: 'Dr. Test', archetype: 'trading_republic' as const,
+    weights: { commerce, expansion, ideology: 3, honor: 5, risk: 3, grudge: 2 },
+    regime: 'parliamentary', agenda: 'expand trade', compass: 'east' as const,
+    pop: 8000, relations: 50, treaties: [] as import('../src/sim/region').TreatyKind[],
+    borderSettled: false, emergedYear: 1930, history: [],
+    lastEnvoyDay: -9999, lastGiftDay: -9999,
+  };
+  r.rivals.push(rv);
+  return rv;
+}
+
+describe('Climate Accords (GDD §8.2)', () => {
+  it('a signed accord cuts world emissions proportional to signatory pop', () => {
+    const r = nationReady();
+    setYear(r, 2030);
+    const baseLine = r.worldEmissions();
+    const rv = makeRivalWith(r, 7, 2);
+    rv.treaties.push('climate_accord');
+    r.accordCompliance[rv.id] = 1.0;
+    expect(r.worldEmissions()).toBeLessThan(baseLine);
+  });
+
+  it('a defecting signatory (low compliance) barely cuts world emissions', () => {
+    const r = nationReady();
+    setYear(r, 2030);
+    const rv = makeRivalWith(r, 7, 2);
+    rv.treaties.push('climate_accord');
+    r.accordCompliance[rv.id] = 0.0; // full defector
+    const defectorEmissions = r.worldEmissions();
+    r.accordCompliance[rv.id] = 1.0; // compliant
+    const compliantEmissions = r.worldEmissions();
+    expect(compliantEmissions).toBeLessThan(defectorEmissions);
+  });
+
+  it('accordUnlocked() gates the treaty behind environmentalism + year', () => {
+    const r = nationReady();
+    setYear(r, 2008);
+    r.researched.push('environmentalism');
+    expect(r.accordUnlocked()).toBe(false); // not yet 2010
+    setYear(r, 2010);
+    expect(r.accordUnlocked()).toBe(true);
+  });
+
+  it('proposeTreaty rejects climate_accord before accordUnlocked()', () => {
+    const r = nationReady();
+    setYear(r, 2005); // before the accord era
+    const rv = makeRivalWith(r, 9, 1);
+    rv.relations = 80;
+    expect(r.proposeTreaty(rv.id, 'climate_accord')).toBe(false);
+  });
+
+  it('sanctionAccordDefector tears the accord without incrementing treatiesBroken', () => {
+    const r = nationReady();
+    setYear(r, 2025);
+    const rv = makeRivalWith(r, 3, 8);
+    rv.treaties.push('climate_accord');
+    r.accordCompliance[rv.id] = 0.1; // clear defector
+    const brokenBefore = r.treatiesBroken;
+    expect(r.sanctionAccordDefector(rv.id)).toBe(true);
+    expect(rv.treaties.includes('climate_accord')).toBe(false);
+    expect(r.treatiesBroken).toBe(brokenBefore); // their fault — not a breach
+    expect(r.accordCompliance[rv.id]).toBeUndefined();
+  });
+
+  it('cannot sanction a compliant signatory', () => {
+    const r = nationReady();
+    const rv = makeRivalWith(r, 8, 2);
+    rv.treaties.push('climate_accord');
+    r.accordCompliance[rv.id] = 0.9; // fully compliant
+    expect(r.sanctionAccordDefector(rv.id)).toBe(false);
+  });
+});
+
+describe('Geoengineering (GDD §8.2)', () => {
+  it('deployGeoengineering() requires the tech and nation tier', () => {
+    const r = nationReady();
+    setYear(r, 2055);
+    expect(r.deployGeoengineering()).toBe(false); // no tech yet
+    r.researched.push('renewables', 'computing', 'geoengineering');
+    expect(r.deployGeoengineering()).toBe(true);
+    expect(r.geoDeployed).toBe(true);
+  });
+
+  it('can only deploy once', () => {
+    const r = nationReady();
+    setYear(r, 2055);
+    r.researched.push('renewables', 'computing', 'geoengineering');
+    r.deployGeoengineering();
+    expect(r.deployGeoengineering()).toBe(false);
+  });
+
+  it('geoengineering suppresses warmingC over the active window', () => {
+    const r = nationReady();
+    setYear(r, 2055);
+    r.co2ppm = 500;
+    r.warmingC = 2.0;
+    r.researched.push('renewables', 'computing', 'geoengineering');
+    r.deployGeoengineering();
+    // Run climate ticks inside the active window
+    const before = r.warmingC;
+    for (let i = 0; i < 4; i++) climateTick(r);
+    expect(r.warmingC).toBeLessThan(before);
+  });
+
+  it('geoengineering cools by the full GEOENGINEER_COOLING amount within the window', () => {
+    const r = nationReady();
+    setYear(r, 2055);
+    r.co2ppm = CO2_BASE_PPM; // no natural warming pressure
+    r.warmingC = 1.5;
+    r.researched.push('renewables', 'computing', 'geoengineering');
+    r.deployGeoengineering();
+    const ticksInWindow = GEOENGINEER_DURATION_DAYS / 30;
+    for (let i = 0; i < ticksInWindow; i++) climateTick(r);
+    expect(r.warmingC).toBeLessThan(1.5 - GEOENGINEER_COOLING * 0.9); // most of the cooling applied
+  });
+
+  it('geoengineering stops cooling after the duration', () => {
+    const r = nationReady();
+    setYear(r, 2055);
+    r.co2ppm = CO2_BASE_PPM;
+    r.warmingC = 1.0;
+    r.researched.push('renewables', 'computing', 'geoengineering');
+    r.deployGeoengineering();
+    // advance past the window
+    r.geoDeployDay = r.day - GEOENGINEER_DURATION_DAYS - 1;
+    const before = r.warmingC;
+    climateTick(r);
+    // Without pressure (CO2 at base), warming should not decrease further
+    expect(r.warmingC).toBeGreaterThanOrEqual(before - 0.01);
+  });
+
+  it('geoengineering is a diplomacy bomb: all rivals lose 15 relations', () => {
+    const r = nationReady();
+    setYear(r, 2055);
+    r.researched.push('renewables', 'computing', 'geoengineering');
+    const rv = makeRivalWith(r, 5, 5);
+    rv.relations = 40;
+    r.deployGeoengineering();
+    expect(rv.relations).toBe(25);
   });
 });
