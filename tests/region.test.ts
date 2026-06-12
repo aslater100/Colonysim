@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Simulation } from '../src/sim/sim';
-import { RegionSim, REGION_MINUTES_PER_TICK, REGION_LAWS, GOV_TYPES, POLICY_CARDS, POLICY_SWAP_COST } from '../src/sim/region';
+import { RegionSim, REGION_MINUTES_PER_TICK, REGION_LAWS, GOV_TYPES, POLICY_CARDS, POLICY_SWAP_COST, REGION_BUILDINGS } from '../src/sim/region';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
@@ -896,5 +896,108 @@ describe('Faction & fog-of-war persistence (Phase 0)', () => {
     }
     const home = r2.settlements[0];
     expect(r2.explorationMap[Math.round(home.x)][Math.round(home.y)]).toBe('explored');
+  });
+});
+
+describe('City works & zoning (Phase 2)', () => {
+  function stateCity(seed: number): RegionSim {
+    const sim = new Simulation(seed);
+    grow(sim);
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    runDays(r, 5);
+    r.stateProclaimed = true;
+    r.stateName = 'Test State';
+    r.govLean = 'council';
+    r.treasury = 500;
+    return r;
+  }
+
+  it('the capital opens to direct management at Incorporation; hamlets do not', () => {
+    const r = stateCity(42);
+    const capital = r.settlements[0];
+    const hamlet = r.settlements[1];
+    expect(r.canManageCity(capital).ok).toBe(true);
+    expect(r.canManageCity(hamlet).ok).toBe(false); // tiny town, not the capital
+  });
+
+  it('no drafting table before Incorporation', () => {
+    const sim = new Simulation(42);
+    grow(sim);
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    runDays(r, 5);
+    r.treasury = 500;
+    expect(r.canManageCity(r.settlements[0]).ok).toBe(false);
+    expect(r.buildCity(r.settlements[0].id, 'grain_exchange')).toBe(false);
+  });
+
+  it('ground breaks, the treasury pays, and the doors open on schedule', () => {
+    const r = stateCity(42);
+    const capital = r.settlements[0];
+    expect(r.buildCity(capital.id, 'grain_exchange')).toBe(true);
+    expect(r.treasury).toBe(440); // 500 − 60
+    expect(capital.construction?.id).toBe('grain_exchange');
+    expect(r.buildCity(capital.id, 'market_hall')).toBe(false); // one project at a time
+    runDays(r, 41);
+    expect(capital.buildings).toContain('grain_exchange');
+    expect(capital.construction).toBeNull();
+    expect(r.log.some((l) => l.text.includes('Grain Exchange opens'))).toBe(true);
+  });
+
+  it('tech-gated works stay on the drawing board until the science lands', () => {
+    const r = stateCity(42);
+    const capital = r.settlements[0];
+    const factory = REGION_BUILDINGS.find((b) => b.id === 'factory')!;
+    expect(r.cityBuildCheck(capital, factory).reason).toContain('requires');
+    r.researched.push('steel_industry', 'mass_production');
+    expect(r.cityBuildCheck(capital, factory).ok).toBe(true);
+  });
+
+  it('a grain exchange raises what every farmhand brings home', () => {
+    const r = stateCity(42);
+    const capital = r.settlements[0];
+    runDays(r, 35);
+    const wageBefore = capital.sectors.agriculture.wage;
+    capital.buildings.push('grain_exchange');
+    runDays(r, 30);
+    expect(capital.sectors.agriculture.wage).toBeGreaterThan(wageBefore * 1.15);
+  });
+
+  it('zoning pulls labor toward the designation over the months', () => {
+    const r = stateCity(42);
+    const capital = r.settlements[0];
+    runDays(r, 35);
+    const before = capital.sectors.industry.share;
+    const cash = r.treasury;
+    expect(r.setTownFocus(capital.id, 'industry')).toBe(true);
+    expect(r.treasury).toBeCloseTo(cash - 10, 6); // the survey fee
+    runDays(r, 100);
+    expect(capital.sectors.industry.share).toBeGreaterThan(before + 0.005);
+  });
+
+  it('a university multiplies the research effort', () => {
+    const r = stateCity(42);
+    const before = r.researchRate();
+    r.settlements[0].buildings.push('university');
+    expect(r.researchRate()).toBeCloseTo(before * 1.15, 5);
+  });
+
+  it('civic works survive save/load, mid-construction and all', () => {
+    const sim = new Simulation(42);
+    grow(sim);
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    runDays(r, 5);
+    r.stateProclaimed = true;
+    r.stateName = 'Test State';
+    r.govLean = 'council';
+    r.treasury = 500;
+    const capital = r.settlements[0];
+    capital.buildings.push('waterworks');
+    r.buildCity(capital.id, 'grain_exchange');
+    r.setTownFocus(capital.id, 'agriculture');
+    const r2 = RegionSim.deserialize(r.serialize(), sim);
+    const c2 = r2.settlements[0];
+    expect(c2.buildings).toContain('waterworks');
+    expect(c2.construction?.id).toBe('grain_exchange');
+    expect(c2.focus).toBe('agriculture');
   });
 });

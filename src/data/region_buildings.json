@@ -1,0 +1,124 @@
+{
+  "buildings": [
+    {
+      "id": "grain_exchange",
+      "name": "Grain Exchange",
+      "cost": 60,
+      "days": 40,
+      "upkeep": 1,
+      "max": 1,
+      "sector": "agriculture",
+      "bonus": 0.2,
+      "desc": "A trading floor for the harvest — farmers capture the price, not the middleman. Agriculture +20%."
+    },
+    {
+      "id": "waterworks",
+      "name": "Waterworks",
+      "cost": 60,
+      "days": 45,
+      "upkeep": 1,
+      "max": 1,
+      "sector": "services",
+      "bonus": 0.05,
+      "satisfaction": 5,
+      "desc": "Clean water on tap — the cheapest public health there is. Services +5%, satisfaction +5."
+    },
+    {
+      "id": "market_hall",
+      "name": "Market Hall",
+      "cost": 70,
+      "days": 40,
+      "upkeep": 1,
+      "max": 1,
+      "sector": "services",
+      "bonus": 0.2,
+      "desc": "Stalls, scales, and a clock tower — commerce gets a home. Services +20%."
+    },
+    {
+      "id": "hospital",
+      "name": "Hospital",
+      "cost": 90,
+      "days": 60,
+      "upkeep": 2,
+      "max": 1,
+      "sector": "services",
+      "bonus": 0.1,
+      "satisfaction": 4,
+      "desc": "Wards and trained nurses; the town sleeps easier. Services +10%, satisfaction +4."
+    },
+    {
+      "id": "ironworks",
+      "name": "Ironworks",
+      "cost": 80,
+      "days": 50,
+      "upkeep": 2,
+      "max": 2,
+      "prereq": "steel_industry",
+      "sector": "industry",
+      "bonus": 0.2,
+      "desc": "Blast furnaces and rolling mills — the muscle of an industrial town. Industry +20%."
+    },
+    {
+      "id": "factory",
+      "name": "Factory",
+      "cost": 100,
+      "days": 60,
+      "upkeep": 2,
+      "max": 2,
+      "prereq": "mass_production",
+      "sector": "industry",
+      "bonus": 0.25,
+      "desc": "The assembly line: one roof, a thousand identical things a day. Industry +25%."
+    },
+    {
+      "id": "power_station",
+      "name": "Power Station",
+      "cost": 120,
+      "days": 70,
+      "upkeep": 3,
+      "max": 1,
+      "prereq": "electrical_grid",
+      "sector": "all",
+      "bonus": 0.1,
+      "desc": "Light after dark and power on demand: every sector works better wired. All sectors +10%."
+    },
+    {
+      "id": "telegraph_office",
+      "name": "Telegraph Office",
+      "cost": 50,
+      "days": 30,
+      "upkeep": 1,
+      "max": 1,
+      "prereq": "electrical_grid",
+      "sector": "information",
+      "bonus": 0.15,
+      "sight": 2,
+      "desc": "Wires to the horizon — news arrives before the dust of the rider. Information +15%, survey range +2."
+    },
+    {
+      "id": "university",
+      "name": "University",
+      "cost": 120,
+      "days": 80,
+      "upkeep": 3,
+      "max": 1,
+      "prereq": "public_education",
+      "sector": "information",
+      "bonus": 0.3,
+      "research": 0.15,
+      "desc": "Lecture halls and laboratories — the town starts selling ideas. Information +30%, research +15%."
+    },
+    {
+      "id": "data_exchange",
+      "name": "Data Exchange",
+      "cost": 150,
+      "days": 70,
+      "upkeep": 4,
+      "max": 1,
+      "prereq": "computing",
+      "sector": "information",
+      "bonus": 0.4,
+      "desc": "Racks, cables, and cold air: the information economy's freight yard. Information +40%."
+    }
+  ]
+}

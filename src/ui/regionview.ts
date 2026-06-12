@@ -3,8 +3,8 @@
  * operating altitude after the flip (GDD §2.5). Painterly backdrop, town
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
-import type { RegionSim, Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime } from '../sim/region';
-import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE } from '../sim/region';
+import type { RegionSim, Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, TownFocus } from '../sim/region';
+import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST } from '../sim/region';
 
 export class RegionView {
   selectedId: number | null = null;
@@ -1377,6 +1377,12 @@ export class RegionView {
     }
     const sw = this.panel.querySelector<HTMLButtonElement>('#seawall-btn');
     if (sw) sw.onclick = () => { this.region.buildSeaWall(t.id); this.refreshPanel(); };
+    for (const cb of this.panel.querySelectorAll<HTMLButtonElement>('.city-build-btn')) {
+      cb.onclick = () => { this.region.buildCity(t.id, cb.dataset.b!); this.refreshPanel(); };
+    }
+    for (const fb of this.panel.querySelectorAll<HTMLButtonElement>('.focus-btn')) {
+      fb.onclick = () => { this.region.setTownFocus(t.id, fb.dataset.f as TownFocus); this.refreshPanel(); };
+    }
   }
 
   /** Route list to every other town, with terrain-priced build/repair buttons. */
@@ -1432,6 +1438,50 @@ export class RegionView {
       .join('');
     if (!rows) return '';
     return `<p class="insp-skills">ROUTES</p><ul class="thoughts">${rows}</ul>`;
+  }
+
+  /** Phase 2: the drafting table — civic works and zoning for managed cities. */
+  private cityHtml(t: Settlement): string {
+    const r = this.region;
+    if (!r.stateProclaimed) return '';
+    const manage = r.canManageCity(t);
+    if (!manage.ok) {
+      // the player's own towns advertise the gate; the hamlets run themselves
+      return t.factionId === r.playerFactionId
+        ? `<p class="insp-skills">CITY WORKS · ${manage.reason}</p>`
+        : '';
+    }
+    const built = t.buildings
+      .map((id) => REGION_BUILDINGS.find((b) => b.id === id))
+      .filter((d) => d)
+      .map((d) => `<abbr title="${d!.desc}">${d!.name}</abbr>`);
+    const builtHtml = built.length ? `<p>${built.join(' · ')}</p>` : '';
+    const consDef = t.construction ? REGION_BUILDINGS.find((b) => b.id === t.construction!.id) : null;
+    const consHtml = consDef && t.construction
+      ? `<p class="insp-skills">⚒ building ${consDef.name} — ${Math.max(0, t.construction.doneDay - r.day)} days</p>`
+      : '';
+    const rows = REGION_BUILDINGS
+      .filter((def) => (!def.prereq || r.has(def.prereq)) && r.buildingCount(t, def.id) < def.max)
+      .map((def) => {
+        const check = r.cityBuildCheck(t, def);
+        return `<li>${def.name} <button class="mini city-build-btn" data-b="${def.id}" ${check.ok ? '' : 'disabled'} ` +
+          `title="${def.desc}${check.ok ? '' : ' — ' + check.reason}">£${def.cost} · ${def.days}d</button></li>`;
+      })
+      .join('');
+    const focusBtns = (['balanced', ...SECTOR_IDS] as TownFocus[])
+      .map((f) => {
+        const label = f === 'balanced' ? 'balanced' : SECTOR_NAMES[f].toLowerCase();
+        return t.focus === f
+          ? `<b>${label}</b>`
+          : `<button class="mini focus-btn" data-f="${f}" title="Repaint the designation (£${FOCUS_CHANGE_COST}) — labor drifts toward it over the months">${label}</button>`;
+      })
+      .join(' ');
+    return (
+      `<p class="insp-skills">CITY WORKS</p>` +
+      builtHtml + consHtml +
+      (rows ? `<ul class="thoughts">${rows}</ul>` : '') +
+      `<p class="insp-skills">zoning: ${focusBtns}</p>`
+    );
   }
 
   /** Research panel: tech + civics tree progress, node browser, start/cancel. */
@@ -1522,6 +1572,7 @@ export class RegionView {
           `title="Granite and pumps against the rising sea (GDD §8.2) — tidal flooding never touches a walled town">` +
           `sea wall £${r.seaWallCost(t)}</button></p>`
         : '') +
+      this.cityHtml(t) +
       this.routesHtml(t) +
       recentHtml +
       `<p class="insp-skills">COHORTS</p>` + bands +

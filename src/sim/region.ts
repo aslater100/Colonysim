@@ -13,6 +13,7 @@ import { RegionMap } from './worldgen';
 import type { TownSite } from './worldgen';
 import { Weather } from './weather';
 import techTreeJson from '../data/techtree.json';
+import regionBuildingsJson from '../data/region_buildings.json';
 
 export interface TechNode {
   id: string;
@@ -69,6 +70,12 @@ export interface Settlement {
   loyaltyToFaction: number;
   /** Phase 1: where this town's labor works, what it produces, what it pays. */
   sectors: Sectors;
+  /** Phase 2: civic works raised in a managed city (building def ids). */
+  buildings: string[];
+  /** Construction underway, if any — one project at a time per town. */
+  construction: CityConstruction | null;
+  /** Development focus: biases where this town's labor drifts. */
+  focus: TownFocus;
 }
 
 /** Local markets (GDD §5.2, first slice): each town prices the two goods
@@ -127,6 +134,41 @@ export function defaultSectors(): Sectors {
   }
   return s;
 }
+
+// ---- Phase 2: civic works & development focus (deep management for managed cities) ----
+
+/** A regional-tier building: raised with treasury money in a city the player
+ *  manages directly (the capital, or any town grown past city size). */
+export interface RegionalBuildingDef {
+  id: string;
+  name: string;
+  cost: number;    // £ from the treasury
+  days: number;    // construction time
+  upkeep: number;  // £/month
+  max: number;     // per settlement
+  prereq?: string; // tech node id
+  sector: SectorId | 'all';
+  bonus: number;   // sector output multiplier add (+0.25 = +25%)
+  research?: number;     // research rate multiplier add
+  satisfaction?: number; // flat satisfaction-target bonus
+  sight?: number;        // survey radius bonus for this town
+  desc: string;
+}
+
+export const REGION_BUILDINGS: RegionalBuildingDef[] = regionBuildingsJson.buildings as RegionalBuildingDef[];
+
+/** A construction site in a managed city: one project at a time per town. */
+export interface CityConstruction {
+  id: string;      // building def id
+  doneDay: number; // absolute day it completes
+}
+
+/** Population at which a town (beyond the capital) opens to direct management. */
+export const CITY_MANAGEMENT_POP = 400;
+/** Repainting a town's development focus costs a survey and some bureaucracy. */
+export const FOCUS_CHANGE_COST = 10;
+
+export type TownFocus = SectorId | 'balanced';
 
 /** Provisional government lean chosen at the Incorporation ceremony. */
 export type GovLean = 'council' | 'mayor' | 'compact';
@@ -1354,6 +1396,13 @@ export class RegionSim {
     if (this.has('electrical_grid')) mult *= 1.25;
     if (this.has('computing')) mult *= 1.25;
     if (this.passedLaws.includes('national_education_act')) mult *= 1.3;
+    // Phase 2: every university adds its laboratories to the effort
+    for (const t of this.settlements) {
+      for (const id of t.buildings) {
+        const def = REGION_BUILDINGS.find((b) => b.id === id);
+        if (def?.research) mult *= 1 + def.research;
+      }
+    }
     return base * mult;
   }
 
@@ -1927,6 +1976,9 @@ export class RegionSim {
       garrisonStrength: 5, // starting militia
       loyaltyToFaction: 100, // starting settlement is fully loyal
       sectors: defaultSectors(),
+      buildings: [],
+      construction: null,
+      focus: 'balanced',
     };
     region.settlements.push(home);
 
@@ -2063,6 +2115,7 @@ export class RegionSim {
         (this.day - t.lastRaidDay < 10 ? 10 : 0) +
         5 * this.roleMult(t, 'Mayor') +
         (this.has('universal_suffrage') ? 3 : 0) +
+        this.buildingSatisfaction(t) + // Phase 2: waterworks and wards make town life kinder
         stateTerms;
       t.satisfaction += (Math.max(0, Math.min(100, target)) - t.satisfaction) * 0.08;
       // Grievance: heavy taxes build pressure daily; services and contentment vent it.
@@ -2131,6 +2184,7 @@ export class RegionSim {
     }
     this.updateExpeditions();
     this.updateCharter();
+    this.updateConstruction(); // Phase 2: scaffolding comes down, doors open
     this.updateExploration(); // Phase 0: Update fog of war based on scouts and settlements
     if (this.totalPop() <= 0) {
       this.gameOver = true;
@@ -2340,6 +2394,7 @@ export class RegionSim {
       pop * 0.05 * this.servicesLevel * serviceCost +
       pop * 0.03 * this.militiaLevel +
       this.settlements.length * 5 + // administration
+      this.buildingUpkeep() + // Phase 2: the civic works keep their lights on
       this.policyUpkeep() + // active policy running costs
       (this.passedLaws.includes('welfare_benefits') ? pop * 0.01 : 0) + // welfare relief payments
       (warMob ? pop * warMob.upkeepPerPop : 0) + // …and the drain runs concurrently (GDD §7.2)
@@ -2589,8 +2644,12 @@ export class RegionSim {
     agri = Math.max(0.02, agri);
     let services = Math.max(0.05, 1 - agri - industry - info);
     if (t.site.coastal) services += 0.02;
-    const sum = agri + industry + services + info;
-    return { agriculture: agri / sum, industry: industry / sum, services: services / sum, information: info / sum };
+    const shares = { agriculture: agri, industry, services, information: info };
+    // Phase 2: a zoned town pulls an extra tenth of its labor to the designation
+    if (t.focus !== 'balanced') shares[t.focus] += 0.10;
+    const sum = shares.agriculture + shares.industry + shares.services + shares.information;
+    for (const id of SECTOR_IDS) shares[id] /= sum;
+    return shares;
   }
 
   /** Monthly: shares drift toward the tech-set target, output and wages follow. */
@@ -2606,7 +2665,8 @@ export class RegionSim {
       s.share += (target[id] - s.share) * 0.03; // a generation-scale drift, not a snap
       s.growth = s.share - before;
       const landTerm = id === 'agriculture' ? 0.6 + 0.4 * t.landQuality : 1;
-      const perWorker = SECTOR_BASE_OUTPUT[id] * this.sectorProductivity(id) * landTerm;
+      // Phase 2: civic works multiply what each hand produces
+      const perWorker = SECTOR_BASE_OUTPUT[id] * this.sectorProductivity(id) * landTerm * (1 + this.buildingBonus(t, id));
       s.output = workers * s.share * perWorker * strike * loyalty;
       s.wage = perWorker * strike * loyalty;
     }
@@ -2620,6 +2680,113 @@ export class RegionSim {
   /** Employment-weighted average wage — the migration signal. */
   avgWageOf(t: Settlement): number {
     return SECTOR_IDS.reduce((sum, id) => sum + t.sectors[id].share * t.sectors[id].wage, 0);
+  }
+
+  // ---- Phase 2: civic works & development focus ----
+
+  /** Deep management opens for the capital from Incorporation, and for any
+   *  other town that grows past city size (the hybrid: your seat of power
+   *  gets the drafting table; the hamlets run themselves). */
+  canManageCity(t: Settlement): { ok: boolean; reason: string } {
+    if (!this.stateProclaimed) return { ok: false, reason: 'city management opens at Incorporation' };
+    if (t.factionId !== this.playerFactionId) return { ok: false, reason: 'not your town' };
+    const isCapital = this.faction(this.playerFactionId)?.capital === t.id;
+    if (!isCapital && this.popOf(t) < CITY_MANAGEMENT_POP) {
+      return { ok: false, reason: `direct management at ${CITY_MANAGEMENT_POP} pop (or the capital)` };
+    }
+    return { ok: true, reason: '' };
+  }
+
+  buildingCount(t: Settlement, defId: string): number {
+    return t.buildings.filter((b) => b === defId).length + (t.construction?.id === defId ? 1 : 0);
+  }
+
+  /** Why this building can't be raised here right now — or ok. */
+  cityBuildCheck(t: Settlement, def: RegionalBuildingDef): { ok: boolean; reason: string } {
+    const manage = this.canManageCity(t);
+    if (!manage.ok) return manage;
+    if (t.construction) return { ok: false, reason: 'a project is already underway' };
+    if (def.prereq && !this.has(def.prereq)) {
+      const node = TECH_TREE.find((n) => n.id === def.prereq);
+      return { ok: false, reason: `requires ${node?.name ?? def.prereq}` };
+    }
+    if (this.buildingCount(t, def.id) >= def.max) return { ok: false, reason: 'already built' };
+    if (this.treasury < def.cost) return { ok: false, reason: `needs £${def.cost}` };
+    return { ok: true, reason: '' };
+  }
+
+  /** Break ground on a civic work. The treasury pays now; the bonus arrives
+   *  when the scaffolding comes down. */
+  buildCity(townId: number, defId: string): boolean {
+    const t = this.settlement(townId);
+    const def = REGION_BUILDINGS.find((b) => b.id === defId);
+    if (!t || !def || !this.cityBuildCheck(t, def).ok) return false;
+    this.treasury -= def.cost;
+    t.construction = { id: def.id, doneDay: this.day + def.days };
+    this.addLog(`Ground is broken for the ${def.name} at ${t.name} — £${def.cost}, ${def.days} days.`, 'info');
+    return true;
+  }
+
+  /** Repaint a town's development focus: labor drifts toward the favored
+   *  sector starting next month. */
+  setTownFocus(townId: number, focus: TownFocus): boolean {
+    const t = this.settlement(townId);
+    if (!t || !this.canManageCity(t).ok || t.focus === focus) return false;
+    if (this.treasury < FOCUS_CHANGE_COST) return false;
+    this.treasury -= FOCUS_CHANGE_COST;
+    t.focus = focus;
+    this.addLog(
+      focus === 'balanced'
+        ? `${t.name} returns to balanced development.`
+        : `${t.name} is zoned for ${SECTOR_NAMES[focus].toLowerCase()} — labor will follow the designation.`,
+      'info',
+    );
+    return true;
+  }
+
+  /** Sum of building output bonuses for one sector in this town. */
+  private buildingBonus(t: Settlement, sector: SectorId): number {
+    let bonus = 0;
+    for (const id of t.buildings) {
+      const def = REGION_BUILDINGS.find((b) => b.id === id);
+      if (def && (def.sector === sector || def.sector === 'all')) bonus += def.bonus;
+    }
+    return bonus;
+  }
+
+  /** Flat satisfaction bonus from civic works (waterworks, hospital…). */
+  private buildingSatisfaction(t: Settlement): number {
+    return t.buildings.reduce((s, id) => s + (REGION_BUILDINGS.find((b) => b.id === id)?.satisfaction ?? 0), 0);
+  }
+
+  /** Extra survey radius from this town's works (telegraph office). */
+  private buildingSight(t: Settlement): number {
+    return t.buildings.reduce((s, id) => s + (REGION_BUILDINGS.find((b) => b.id === id)?.sight ?? 0), 0);
+  }
+
+  /** £/month the built works cost to keep running. */
+  private buildingUpkeep(): number {
+    let total = 0;
+    for (const t of this.settlements) {
+      if (t.factionId !== this.playerFactionId) continue;
+      for (const id of t.buildings) total += REGION_BUILDINGS.find((b) => b.id === id)?.upkeep ?? 0;
+    }
+    return total;
+  }
+
+  /** Finish any construction whose day has come. */
+  private updateConstruction(): void {
+    for (const t of this.settlements) {
+      if (t.construction && this.day >= t.construction.doneDay) {
+        const def = REGION_BUILDINGS.find((b) => b.id === t.construction!.id);
+        t.buildings.push(t.construction.id);
+        t.construction = null;
+        if (def) {
+          this.addLog(`The ${def.name} opens at ${t.name}.`, 'good');
+          this.townEvent(t, `The ${def.name} opens its doors.`, 'good');
+        }
+      }
+    }
   }
 
   private migrate(): void {
@@ -2917,6 +3084,9 @@ export class RegionSim {
           garrisonStrength: 2, // new towns have smaller garrisons
           loyaltyToFaction: 100,
           sectors: defaultSectors(),
+          buildings: [],
+          construction: null,
+          focus: 'balanced',
         };
         this.settlements.push(town);
         // Reveal the new settlement and surrounding area
@@ -2980,7 +3150,8 @@ export class RegionSim {
     if (this.has('electrical_grid')) sightRadius += 1; // telegraph lines along every road
     if (this.has('combustion_engine')) sightRadius += 2; // aerial survey
     for (const settlement of this.settlements) {
-      this.revealTiles(settlement.x, settlement.y, sightRadius, 'explored');
+      // Phase 2: a telegraph office extends this town's survey reach
+      this.revealTiles(settlement.x, settlement.y, sightRadius + this.buildingSight(settlement), 'explored');
     }
 
     // Routes also reveal tiles (caravans passively explore)
@@ -4440,6 +4611,9 @@ export class RegionSim {
       garrisonStrength: s.garrisonStrength ?? 2,
       loyaltyToFaction: s.loyaltyToFaction ?? 100,
       sectors: s.sectors ?? defaultSectors(),
+      buildings: s.buildings ?? [],
+      construction: s.construction ?? null,
+      focus: s.focus ?? 'balanced',
     }));
     r.notables = d.notables;
     r.expeditions = d.expeditions;
