@@ -498,10 +498,8 @@ function buildingSprite(defId: string, w: number, h: number, ghost: boolean): HT
 
   } else {
     // Residential/workshop buildings: roof at top, front wall + door below.
-    // Each building type has a distinct colour scheme and optional extras.
     const roofH = Math.floor(H * 0.55);
 
-    // Defaults (overridden per type when !ghost)
     let roofBase = gR ?? P.roofWood;
     let roofHigh = gRl ?? P.roofLight;
     let wallBase = gW ?? P.wall;
@@ -510,21 +508,23 @@ function buildingSprite(defId: string, w: number, h: number, ghost: boolean): HT
     let rightChimney = false;
     let leftChimney = false;
     let special: string | null = null;
+    let halfTimbered = false;
+    let brickWall = false;
 
     if (!ghost) {
       switch (defId) {
         case 'house':
           roofBase = P.roofRed; roofHigh = P.roofRedLt;
-          wallBase = P.wallLight; wallBase2 = P.wallLightDk;
-          winColor = P.winGold; break;
+          wallBase = '#d4c8a8'; wallBase2 = '#2e1e0c';
+          winColor = P.winGold; halfTimbered = true; rightChimney = true; break;
         case 'kitchen':
           roofBase = '#4a3a2a'; roofHigh = '#6a5238';
-          wallBase = '#9a7858'; wallBase2 = '#7a5c40';
-          winColor = P.winOrange; rightChimney = true; break;
+          wallBase = P.wallBrick; wallBase2 = P.wallBrickDk;
+          winColor = P.winOrange; brickWall = true; rightChimney = true; break;
         case 'hall':
           roofBase = '#5c3e28'; roofHigh = '#7c5840';
-          wallBase = P.wallLight; wallBase2 = P.wallLightDk;
-          winColor = P.winGold; break;
+          wallBase = '#d4c8a8'; wallBase2 = '#2e1e0c';
+          winColor = P.winGold; halfTimbered = true; break;
         case 'tailor':
           roofBase = P.roofSlate; roofHigh = P.roofSlateLt;
           wallBase = '#8a8878'; wallBase2 = '#6a6858';
@@ -532,7 +532,7 @@ function buildingSprite(defId: string, w: number, h: number, ghost: boolean): HT
         case 'bakery':
           roofBase = '#6a3c2a'; roofHigh = '#8a5840';
           wallBase = P.wallBrick; wallBase2 = P.wallBrickDk;
-          winColor = P.winOrange;
+          winColor = P.winOrange; brickWall = true;
           leftChimney = true; rightChimney = true; break;
         case 'lodge':
           roofBase = '#3c3428'; roofHigh = '#5a4c38';
@@ -557,23 +557,42 @@ function buildingSprite(defId: string, w: number, h: number, ghost: boolean): HT
       }
     }
 
-    // Chimneys drawn before roof so the roof face overlaps the chimney base
-    const drawChimney = (cx: number) => {
-      g.fillStyle = P.rockDark;
-      g.fillRect(cx, 0, 5, roofH + 2);
-      g.fillStyle = P.rock;
-      g.fillRect(cx + 1, 0, 3, roofH + 1);
-      g.fillStyle = P.rockLight;
-      g.fillRect(cx + 1, 0, 3, 2);
-    };
-    if (rightChimney) drawChimney(W - 9);
-    if (leftChimney) drawChimney(3);
-
-    // Wall
+    // Wall fill
     g.fillStyle = wallBase;
     g.fillRect(1, roofH, W - 2, H - roofH - 1);
-    g.fillStyle = wallBase2;
-    g.fillRect(1, roofH, W - 2, 2);
+
+    // Brick coursing: horizontal mortar lines every 3px
+    if (brickWall && !ghost) {
+      g.fillStyle = '#5a3a28';
+      for (let y = roofH + 3; y < H - 2; y += 3) g.fillRect(2, y, W - 4, 1);
+    }
+
+    // Half-timber frame: dark beam posts, plates, rail, and knee braces over cream plaster
+    if (halfTimbered && !ghost) {
+      const wallH = H - roofH - 1;
+      g.fillStyle = wallBase2;
+      g.fillRect(1, roofH, 2, wallH);                              // left corner post
+      g.fillRect(W - 3, roofH, 2, wallH);                         // right corner post
+      g.fillRect(1, roofH, W - 2, 2);                             // top plate
+      g.fillRect(1, H - 4, W - 2, 2);                             // sole plate
+      if (wallH >= 10) {
+        g.fillRect(3, roofH + Math.floor(wallH / 2), W - 6, 1);  // mid horizontal rail
+      }
+      const braceLen = Math.min(5, Math.floor(wallH / 3));
+      for (let i = 0; i < braceLen; i++) {
+        g.fillRect(3 + i, roofH + 2 + i, 1, 1);                  // left knee brace
+        g.fillRect(W - 4 - i, roofH + 2 + i, 1, 1);              // right knee brace
+      }
+    } else {
+      g.fillStyle = wallBase2;
+      g.fillRect(1, roofH, W - 2, 2);
+    }
+
+    // Stone foundation strip at wall base
+    if (!ghost) {
+      g.fillStyle = P.rockDark;
+      g.fillRect(1, H - 3, W - 2, 2);
+    }
 
     // Door
     const dw = defId === 'hall' ? 7 : 5;
@@ -584,12 +603,11 @@ function buildingSprite(defId: string, w: number, h: number, ghost: boolean): HT
     g.fillStyle = wallBase2;
     g.fillRect(dx + 1, H - dh, dw - 2, dh);
     if (!ghost) {
-      // door-knob pixel
       g.fillStyle = P.grain;
       g.fillRect(dx + dw - 2, H - Math.floor(dh * 0.5) - 1, 1, 1);
     }
 
-    // Windows on either side of the door
+    // Windows with cross-mullion
     if (winColor) {
       const wh = Math.min(4, H - roofH - dh - 4);
       const wy = roofH + 3;
@@ -605,33 +623,52 @@ function buildingSprite(defId: string, w: number, h: number, ghost: boolean): HT
             g.fillRect(wx, wy, 5, wh + 1);
             g.fillStyle = winColor;
             g.fillRect(wx + 1, wy + 1, 3, wh - 1);
+            if (!ghost && wh >= 3) {
+              g.fillStyle = P.outline;
+              g.fillRect(wx + 2, wy + 1, 1, wh - 1);                         // vertical bar
+              g.fillRect(wx + 1, wy + 1 + Math.floor((wh - 1) / 2), 3, 1);  // horizontal bar
+            }
           }
         }
       }
     }
 
-    // Roof with shingle texture
+    // Roof: horizontal shingle courses replacing old vertical stripes
     g.fillStyle = roofBase;
     g.fillRect(1, 1, W - 2, roofH);
-    g.fillStyle = roofHigh;
-    g.fillRect(1, 1, W - 2, 2);                                // ridge highlight
-    for (let x = 3; x < W - 3; x += 5) g.fillRect(x, 3, 2, roofH - 5);  // shingle rows
     g.fillStyle = '#20180e';
-    g.fillRect(1, roofH - 2, W - 2, 2);                        // eave shadow
+    g.fillRect(1, 1, W - 2, 2);                           // dark ridge cap
+    for (let y = 3; y < roofH - 2; y += 3) {
+      g.fillStyle = (Math.floor((y - 3) / 3) % 2 === 0) ? roofHigh : roofBase;
+      g.fillRect(1, y, W - 2, 2);                         // alternating shingle band
+    }
+    g.fillStyle = '#20180e';
+    g.fillRect(1, roofH - 2, W - 2, 2);                   // eave shadow
 
-    // Per-building special features (drawn on top)
+    // Chimneys drawn after roof so they appear above it; cap overhangs shaft by 1px each side
+    const drawChimney = (cx: number) => {
+      g.fillStyle = P.rockDark;
+      g.fillRect(cx - 1, 1, 7, 2);                        // wide cap
+      g.fillRect(cx, 3, 5, roofH - 4);                    // shaft
+      g.fillStyle = P.rock;
+      g.fillRect(cx + 1, 3, 3, roofH - 4);
+      g.fillStyle = P.rockLight;
+      g.fillRect(cx - 1, 1, 7, 1);                        // cap highlight
+      g.fillStyle = '#1a1208';
+      g.fillRect(cx + 1, 1, 3, 2);                        // smoke-blackened opening
+    };
+    if (rightChimney) drawChimney(W - 9);
+    if (leftChimney) drawChimney(3);
+
     if (special === 'market' && !ghost) {
-      // Red/cream awning stripes across the wall top
       for (let x = 1; x < W - 1; x += 4) {
         g.fillStyle = P.awningRed;   g.fillRect(x, roofH, 2, 3);
         g.fillStyle = P.awningCream; g.fillRect(x + 2, roofH, 2, 3);
       }
     } else if (special === 'granary') {
-      // Horizontal band lines on roof (silo ribs)
-      g.fillStyle = roofHigh;
-      for (let y = 4; y < roofH - 2; y += 3) g.fillRect(2, y, W - 4, 1);
+      g.fillStyle = '#8a6010';
+      for (let y = 5; y < roofH - 3; y += 4) g.fillRect(2, y + 1, W - 4, 1);
     } else if (special === 'clinic' && !ghost) {
-      // Red cross on front wall
       const cx = Math.floor(W / 2);
       const cy = roofH + Math.floor((H - roofH) / 2);
       g.fillStyle = '#cc3333';

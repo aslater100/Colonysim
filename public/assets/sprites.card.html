@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Colony Sim — Sprite Gallery</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #12161f; color: #dfe6ee; font: 11px/1.4 'Courier New', monospace; padding: 16px; }
+  h1 { color: #e8d27a; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 16px; border-bottom: 1px solid #6e4a2f; padding-bottom: 8px; }
+  h2 { color: #9c7544; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; margin: 24px 0 8px; }
+  .grid { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+  .sprite-cell { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px; background: #1c1812; border: 1px solid #6e4a2f; }
+  .sprite-cell canvas { image-rendering: pixelated; }
+  .sprite-cell span { font-size: 9px; color: #9a8060; text-align: center; max-width: 80px; word-break: break-word; }
+  .scale-4 canvas { transform: scale(4); transform-origin: center; margin: 12px; }
+  .scale-6 canvas { transform: scale(6); transform-origin: center; margin: 24px; }
+  #status { color: #e8d27a; font-size: 10px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<h1>Colony Sim — Sprite Gallery</h1>
+<div id="status">Loading sprites…</div>
+<div id="gallery"></div>
+
+<script src="sprite-generator.js"></script>
+<script>
+(function () {
+  const gallery = document.getElementById('gallery');
+  const status  = document.getElementById('status');
+
+  function section(title) {
+    const h = document.createElement('h2');
+    h.textContent = title;
+    gallery.appendChild(h);
+  }
+
+  function spriteGrid(items, scaleClass) {
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    for (const { canvas, label } of items) {
+      const cell = document.createElement('div');
+      cell.className = 'sprite-cell ' + (scaleClass || 'scale-4');
+      cell.appendChild(canvas);
+      const lbl = document.createElement('span');
+      lbl.textContent = label;
+      cell.appendChild(lbl);
+      grid.appendChild(cell);
+    }
+    gallery.appendChild(grid);
+  }
+
+  try {
+    const gen = new SpriteGenerator();
+
+    // Terrain
+    section('Terrain');
+    spriteGrid([
+      { canvas: gen.grassTile(0), label: 'grass 0' },
+      { canvas: gen.grassTile(1), label: 'grass 1' },
+      { canvas: gen.grassTile(2), label: 'grass 2' },
+      { canvas: gen.soilTile('bare'), label: 'soil bare' },
+      { canvas: gen.soilTile('sown'), label: 'soil sown' },
+      { canvas: gen.soilTile('grown'), label: 'soil grown' },
+      { canvas: gen.soilTile('ripe'), label: 'soil ripe' },
+      { canvas: gen.sandTile(0), label: 'sand 0' },
+      { canvas: gen.stoneTile(0), label: 'stone 0' },
+      { canvas: gen.waterTile(0), label: 'water 0' },
+      { canvas: gen.waterTile(1), label: 'water 1' },
+      { canvas: gen.waterTile(2), label: 'water 2' },
+    ], 'scale-4');
+
+    // Plants
+    section('Plants');
+    spriteGrid([
+      { canvas: gen.grainPlant(1), label: 'grain 1' },
+      { canvas: gen.grainPlant(2), label: 'grain 2' },
+      { canvas: gen.grainPlant(3), label: 'grain 3' },
+      { canvas: gen.tree(1, 0), label: 'tree 1' },
+      { canvas: gen.tree(2, 0), label: 'tree 2' },
+      { canvas: gen.tree(3, 0), label: 'tree 3' },
+      { canvas: gen.pine(1, 0), label: 'pine 1' },
+      { canvas: gen.pine(2, 0), label: 'pine 2' },
+      { canvas: gen.shrub(0), label: 'shrub 0' },
+      { canvas: gen.shrub(1), label: 'shrub 1' },
+    ], 'scale-4');
+
+    // Livestock
+    section('Livestock');
+    spriteGrid([
+      { canvas: gen.livestock('cow', 0, 0), label: 'cow idle' },
+      { canvas: gen.livestock('cow', 0, 1), label: 'cow step' },
+      { canvas: gen.livestock('sheep', 0, 0), label: 'sheep idle' },
+      { canvas: gen.livestock('sheep', 0, 1), label: 'sheep step' },
+      { canvas: gen.livestock('pig', 0, 0), label: 'pig idle' },
+    ], 'scale-4');
+
+    // Wild Animals
+    section('Wild Animals');
+    spriteGrid([
+      { canvas: gen.wildAnimal('deer', 0, 0), label: 'deer idle' },
+      { canvas: gen.wildAnimal('deer', 0, 1), label: 'deer step' },
+      { canvas: gen.wildAnimal('wolf', 0, 0), label: 'wolf idle' },
+      { canvas: gen.wildAnimal('wolf', 0, 1), label: 'wolf step' },
+      { canvas: gen.wildAnimal('boar', 0, 0), label: 'boar idle' },
+    ], 'scale-4');
+
+    // Settlers
+    section('Settlers');
+    const poses = ['idle', 'walk', 'farm', 'mine'];
+    const settlItems = [];
+    for (const pose of poses) {
+      for (let f = 0; f < 2; f++) {
+        settlItems.push({ canvas: gen.settler('male', 0, 0, { pose, frame: f }), label: `${pose} f${f}` });
+      }
+    }
+    spriteGrid(settlItems, 'scale-6');
+
+    // Structures
+    section('Structures');
+    spriteGrid([
+      { canvas: gen.house(0), label: 'house 0' },
+      { canvas: gen.house(1), label: 'house 1' },
+      { canvas: gen.house(2), label: 'house 2' },
+    ], 'scale-4');
+
+    // Resource Items
+    section('Resources');
+    spriteGrid([
+      { canvas: gen.resourceItem('wood', 0), label: 'wood' },
+      { canvas: gen.resourceItem('grain', 0), label: 'grain' },
+      { canvas: gen.resourceItem('stone', 0), label: 'stone' },
+      { canvas: gen.resourceItem('food', 0), label: 'food' },
+      { canvas: gen.resourceItem('cloth', 0), label: 'cloth' },
+    ], 'scale-4');
+
+    // Weather
+    section('Weather');
+    spriteGrid([
+      { canvas: gen.weatherEffect('rain', 0), label: 'rain 0' },
+      { canvas: gen.weatherEffect('rain', 1), label: 'rain 1' },
+      { canvas: gen.weatherEffect('snow', 0), label: 'snow 0' },
+      { canvas: gen.weatherEffect('snow', 1), label: 'snow 1' },
+    ], 'scale-4');
+
+    status.textContent = 'Sprites rendered — ' + new Date().toLocaleTimeString();
+  } catch (err) {
+    status.style.color = '#cc3333';
+    status.textContent = 'Error: ' + err.message;
+    console.error(err);
+  }
+})();
+</script>
+</body>
+</html>
