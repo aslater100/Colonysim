@@ -497,6 +497,271 @@ function buildingSprite(defId: string, w: number, h: number, ghost: boolean): HT
     g.fillStyle = gR ?? P.trunk;
     g.fillRect(2, H - 6, 2, 5); g.fillRect(W - 4, H - 6, 2, 5);
 
+  } else if (defId === 'well') {
+    // Stone ring with a timber frame, rope and bucket
+    g.fillStyle = P.grassB;
+    g.fillRect(1, 1, W - 2, H - 2);
+    g.fillStyle = P.shadow;
+    g.fillRect(3, 12, 11, 3);
+    g.fillStyle = gWd ?? P.rockDark;
+    g.fillRect(3, 7, 10, 7);
+    g.fillStyle = gW ?? P.rock;
+    g.fillRect(4, 8, 8, 5);
+    g.fillStyle = '#14100c';
+    g.fillRect(6, 9, 4, 3);
+    g.fillStyle = gWd ?? P.woodDark;
+    g.fillRect(3, 2, 2, 6);
+    g.fillRect(11, 2, 2, 6);
+    g.fillStyle = gW ?? P.wood;
+    g.fillRect(2, 1, 12, 2);
+    if (!ghost) {
+      g.fillStyle = P.grain;
+      g.fillRect(7, 3, 1, 5); // rope
+      g.fillStyle = P.wood;
+      g.fillRect(6, 8, 4, 2); // bucket over the mouth
+    }
+
+  } else if (defId === 'watchtower') {
+    // Tall timber lookout: braced legs, plank platform, lookout cabin
+    g.fillStyle = P.grassB;
+    g.fillRect(1, 1, W - 2, H - 2);
+    g.fillStyle = P.shadow;
+    g.fillRect(4, H - 4, W - 8, 3);
+    g.fillStyle = gWd ?? P.woodDark;
+    g.fillRect(5, 14, 3, H - 16);
+    g.fillRect(W - 8, 14, 3, H - 16);
+    if (!ghost) {
+      g.fillStyle = P.trunk; // cross-brace between the legs
+      for (let i = 0; i < W - 17; i++) {
+        const yy = 15 + Math.floor((i * (H - 21)) / (W - 17));
+        g.fillRect(8 + i, yy, 1, 2);
+        g.fillRect(W - 9 - i, yy, 1, 2);
+      }
+    }
+    g.fillStyle = gW ?? P.plank;
+    g.fillRect(2, 11, W - 4, 3);
+    g.fillStyle = gWd ?? P.plankDark;
+    g.fillRect(2, 13, W - 4, 1);
+    g.fillStyle = gW ?? P.wood;
+    g.fillRect(6, 3, W - 12, 8);
+    g.fillStyle = gWd ?? P.woodDark;
+    g.fillRect(6, 3, W - 12, 1);
+    g.fillRect(6, 3, 1, 8);
+    g.fillStyle = '#1a1208';
+    g.fillRect(Math.floor(W / 2) - 3, 5, 6, 4);
+    g.fillStyle = gWd ?? P.trunk;
+    g.fillRect(4, 1, W - 8, 2);
+
+  } else if (defId === 'mill') {
+    // Stone windmill tower with lattice sails
+    g.fillStyle = P.grassB;
+    g.fillRect(1, 1, W - 2, H - 2);
+    g.fillStyle = P.shadow;
+    g.fillRect(6, H - 4, W - 10, 3);
+    g.fillStyle = gW ?? P.wallCream;
+    g.fillRect(9, 16, W - 18, H - 17);
+    g.fillRect(10, 13, W - 20, 3);
+    g.fillStyle = gWd ?? P.wallCreamDk;
+    g.fillRect(9, 16, 2, H - 17);
+    if (!ghost) {
+      for (let y = 19; y < H - 2; y += 5) g.fillRect(10, y, W - 20, 1);
+    }
+    g.fillStyle = gWd ?? P.roofWood;
+    g.fillRect(8, 9, W - 16, 5);
+    g.fillStyle = P.outline;
+    g.fillRect(Math.floor(W / 2) - 3, H - 9, 6, 8);
+    g.fillStyle = gWd ?? P.wallDark;
+    g.fillRect(Math.floor(W / 2) - 2, H - 8, 4, 7);
+    if (!ghost) {
+      g.fillStyle = P.outline;
+      g.fillRect(Math.floor(W / 2) - 2, 22, 4, 4);
+      g.fillStyle = P.winGold;
+      g.fillRect(Math.floor(W / 2) - 1, 23, 2, 2);
+    }
+    const hubX = Math.floor(W / 2), hubY = 11;
+    g.fillStyle = gRl ?? '#d8d0b8';
+    for (let i = 1; i <= 9; i++) {
+      g.fillRect(hubX - 1 - i, hubY - 1 - i, 2, 2);
+      g.fillRect(hubX + i, hubY - 1 - i, 2, 2);
+      g.fillRect(hubX - 1 - i, hubY + i, 2, 2);
+      g.fillRect(hubX + i, hubY + i, 2, 2);
+    }
+    g.fillStyle = gWd ?? P.trunk;
+    g.fillRect(hubX - 2, hubY - 2, 4, 4);
+
+  } else if (defId === 'sawmill') {
+    // Open-sided cutting shed: shingled roof on posts, saw blade, log pile
+    g.fillStyle = P.floor;
+    g.fillRect(1, 1, W - 2, H - 2);
+    g.fillStyle = gWd ?? P.plankDark;
+    for (let y = 14; y < H - 1; y += 6) g.fillRect(1, y, W - 2, 1);
+    g.fillStyle = gWd ?? P.woodDark;
+    g.fillRect(2, 12, 3, H - 14);
+    g.fillRect(W - 5, 12, 3, H - 14);
+    g.fillStyle = gR ?? P.roofWood;
+    g.fillRect(1, 1, W - 2, 11);
+    g.fillStyle = gRl ?? P.roofLight;
+    g.fillRect(1, 4, W - 2, 2);
+    g.fillRect(1, 8, W - 2, 2);
+    if (!ghost) {
+      g.fillStyle = P.woodDark; // saw bench
+      g.fillRect(8, 24, W - 16, 4);
+      const sx = Math.floor(W / 2), sy = 22, r = 5;
+      g.fillStyle = P.rockLight; // circular blade
+      for (let dy = -r; dy <= r; dy++) {
+        const w2 = Math.floor(Math.sqrt(r * r - dy * dy));
+        g.fillRect(sx - w2, sy + dy, w2 * 2 + 1, 1);
+      }
+      g.fillStyle = P.rockDark;
+      g.fillRect(sx - 1, sy - 1, 2, 2);
+      g.fillStyle = P.trunk; // log pile
+      g.fillRect(5, H - 12, W - 10, 4);
+      g.fillRect(8, H - 16, W - 16, 4);
+      g.fillStyle = P.wood;
+      g.fillRect(5, H - 11, 2, 2); g.fillRect(W - 7, H - 11, 2, 2);
+      g.fillRect(8, H - 15, 2, 2); g.fillRect(W - 10, H - 15, 2, 2);
+    }
+
+  } else if (defId === 'mine') {
+    // Rocky spoil mound with a timber-framed shaft portal
+    g.fillStyle = P.grassC;
+    g.fillRect(1, 1, W - 2, H - 2);
+    g.fillStyle = gWd ?? P.rockDark;
+    g.fillRect(3, 8, W - 6, H - 10);
+    g.fillRect(6, 5, W - 12, 4);
+    g.fillStyle = gW ?? P.rock;
+    g.fillRect(5, 9, W - 10, H - 13);
+    g.fillRect(8, 6, W - 16, 4);
+    g.fillStyle = P.rockLight;
+    g.fillRect(9, 7, 6, 2);
+    g.fillRect(6, 12, 4, 2);
+    g.fillStyle = gWd ?? P.woodDark;
+    g.fillRect(10, 15, 3, H - 17);
+    g.fillRect(W - 13, 15, 3, H - 17);
+    g.fillRect(9, 13, W - 18, 3);
+    g.fillStyle = '#0e0c08';
+    g.fillRect(13, 16, W - 26, H - 18);
+    if (!ghost) {
+      g.fillStyle = P.grain; // glints of ore in the spoil
+      g.fillRect(7, 19, 2, 1);
+      g.fillRect(W - 8, 11, 2, 1);
+    }
+
+  } else if (defId === 'kiln') {
+    // Domed brick kiln with a glowing fire mouth
+    g.fillStyle = P.grassC;
+    g.fillRect(1, 1, W - 2, H - 2);
+    g.fillStyle = P.shadow;
+    g.fillRect(4, H - 5, W - 8, 4);
+    g.fillStyle = gWd ?? P.wallBrickDk;
+    g.fillRect(4, 10, W - 8, H - 12);
+    g.fillRect(7, 6, W - 14, 5);
+    g.fillRect(11, 4, W - 22, 3);
+    g.fillStyle = gW ?? P.wallBrick;
+    g.fillRect(5, 11, W - 10, H - 14);
+    g.fillRect(8, 7, W - 16, 5);
+    if (!ghost) {
+      g.fillStyle = P.wallBrickDk;
+      for (let y = 13; y < H - 4; y += 4) g.fillRect(6, y, W - 12, 1);
+    }
+    g.fillStyle = gWd ?? P.rockDark; // vent
+    g.fillRect(Math.floor(W / 2) - 2, 2, 4, 3);
+    g.fillStyle = '#140e08'; // mouth
+    g.fillRect(Math.floor(W / 2) - 4, H - 9, 8, 7);
+    if (!ghost) {
+      g.fillStyle = P.winOrange;
+      g.fillRect(Math.floor(W / 2) - 3, H - 6, 6, 3);
+      g.fillStyle = '#f0d060';
+      g.fillRect(Math.floor(W / 2) - 1, H - 5, 2, 2);
+    }
+
+  } else if (defId === 'animal_pen') {
+    // Fenced paddock: rails all round, trough, hay, livestock
+    g.fillStyle = P.grassA;
+    g.fillRect(1, 1, W - 2, H - 2);
+    g.fillStyle = P.grassB;
+    g.fillRect(8, 12, 14, 9);
+    g.fillRect(W - 22, H - 20, 14, 10);
+    g.fillStyle = P.dirtPatch;
+    g.fillRect(Math.floor(W / 2) - 5, H - 10, 10, 7);
+    g.fillStyle = gRl ?? '#b0a890';
+    g.fillRect(1, 3, W - 2, 1);
+    g.fillRect(1, 6, W - 2, 1);
+    g.fillRect(1, H - 7, W - 2, 1);
+    g.fillRect(1, H - 4, W - 2, 1);
+    g.fillRect(2, 3, 1, H - 6);
+    g.fillRect(W - 3, 3, 1, H - 6);
+    g.fillStyle = gW ?? '#8a806a';
+    for (let x = 1; x < W - 2; x += 6) {
+      g.fillRect(x, 1, 2, 7);
+      g.fillRect(x, H - 8, 2, 7);
+    }
+    for (let y = 7; y < H - 8; y += 6) {
+      g.fillRect(1, y, 2, 2);
+      g.fillRect(W - 3, y, 2, 2);
+    }
+    if (!ghost) {
+      g.fillStyle = P.woodDark; // water trough
+      g.fillRect(6, H - 14, 12, 5);
+      g.fillStyle = P.water2;
+      g.fillRect(7, H - 13, 10, 3);
+      g.fillStyle = P.cropRipe; // hay pile
+      g.fillRect(W - 14, 9, 9, 6);
+      g.fillStyle = P.grain;
+      g.fillRect(W - 12, 8, 5, 2);
+      const beast = (sx: number, sy: number, body: string, head: string) => {
+        g.fillStyle = P.shadow; g.fillRect(sx, sy + 5, 10, 2);
+        g.fillStyle = body; g.fillRect(sx, sy, 8, 5);
+        g.fillStyle = head; g.fillRect(sx + 7, sy + 1, 3, 3);
+        g.fillStyle = P.outline;
+        g.fillRect(sx + 1, sy + 5, 1, 2);
+        g.fillRect(sx + 6, sy + 5, 1, 2);
+      };
+      beast(12, 18, '#ddd6c6', '#8a8074');
+      beast(W - 20, H - 18, '#b89868', '#7a6040');
+    }
+
+  } else if (defId === 'kitchen_garden') {
+    // Raised plank beds with vegetable rows
+    g.fillStyle = P.grassB;
+    g.fillRect(1, 1, W - 2, H - 2);
+    for (const by of [3, 17]) {
+      g.fillStyle = gWd ?? P.plankDark;
+      g.fillRect(3, by, W - 6, 12);
+      g.fillStyle = P.soil;
+      g.fillRect(4, by + 1, W - 8, 10);
+      g.fillStyle = P.soilDark;
+      g.fillRect(4, by + 5, W - 8, 1);
+      if (!ghost) {
+        for (let x = 6; x < W - 6; x += 4) {
+          g.fillStyle = P.crop;
+          g.fillRect(x, by + 2, 2, 2);
+          g.fillStyle = x % 8 === 6 ? '#c25b2e' : P.crop;
+          g.fillRect(x, by + 7, 2, 2);
+        }
+      }
+    }
+
+  } else if (defId === 'herb_garden') {
+    // Herb rows split by a gravel path, dotted with flowers
+    g.fillStyle = P.grassB;
+    g.fillRect(1, 1, W - 2, H - 2);
+    g.fillStyle = P.gravelB;
+    g.fillRect(Math.floor(W / 2) - 2, 1, 4, H - 2);
+    for (const bx of [3, Math.floor(W / 2) + 3]) {
+      g.fillStyle = P.soil;
+      g.fillRect(bx, 3, Math.floor(W / 2) - 6, H - 6);
+      if (!ghost) {
+        for (let y = 5; y < H - 4; y += 4) {
+          g.fillStyle = '#4a7040';
+          g.fillRect(bx + 2, y, 2, 2);
+          g.fillRect(bx + 6, y + 1, 2, 2);
+          g.fillStyle = y % 8 === 5 ? '#b8a0d0' : '#e8e0c0';
+          g.fillRect(bx + 5, y, 1, 1);
+        }
+      }
+    }
+
   } else {
     // Residential/workshop buildings: roof at top, front wall + door below.
     const roofH = Math.floor(H * 0.55);
@@ -555,6 +820,46 @@ function buildingSprite(defId: string, w: number, h: number, ghost: boolean): HT
           roofBase = '#3c4c5e'; roofHigh = '#5c6c7e';
           wallBase = P.wallCream; wallBase2 = P.wallCreamDk;
           winColor = P.winBlue; special = 'clinic'; break;
+        case 'cottage':
+          roofBase = P.roofThatch; roofHigh = P.roofThatchLt;
+          wallBase = '#d4c8a8'; wallBase2 = '#8a7a5c';
+          winColor = P.winGold; rightChimney = true; break;
+        case 'barracks':
+          roofBase = '#4a4438'; roofHigh = '#66604c';
+          wallBase = '#6a5236'; wallBase2 = '#4e3a24';
+          winColor = P.winAmber; break;
+        case 'longhouse':
+          roofBase = P.roofThatch; roofHigh = P.roofThatchLt;
+          wallBase = '#7a6040'; wallBase2 = '#5a4428';
+          winColor = P.winAmber; special = 'longhouse'; break;
+        case 'town_hall':
+          roofBase = P.roofSlate; roofHigh = P.roofSlateLt;
+          wallBase = P.wallCream; wallBase2 = P.wallCreamDk;
+          winColor = P.winGold; special = 'townhall'; break;
+        case 'armory':
+          roofBase = '#3c3c44'; roofHigh = '#5a5a64';
+          wallBase = '#8a8878'; wallBase2 = '#6a6858';
+          special = 'armory'; break;
+        case 'warehouse':
+          roofBase = '#5a4a34'; roofHigh = '#7a6648';
+          wallBase = P.plank; wallBase2 = P.plankDark;
+          special = 'warehouse'; break;
+        case 'apothecary':
+          roofBase = '#4c5e3c'; roofHigh = '#6c7e58';
+          wallBase = P.wallCream; wallBase2 = P.wallCreamDk;
+          winColor = P.winGreen; special = 'apothecary'; break;
+        case 'blacksmith':
+          roofBase = '#33302c'; roofHigh = '#4e4a44';
+          wallBase = '#5e5a50'; wallBase2 = '#4a463e';
+          special = 'forge'; rightChimney = true; break;
+        case 'schoolhouse':
+          roofBase = P.roofRed; roofHigh = P.roofRedLt;
+          wallBase = '#a85040'; wallBase2 = '#7a3a2e';
+          winColor = P.winGold; special = 'school'; break;
+        case 'brewery':
+          roofBase = '#6a5228'; roofHigh = '#8a7038';
+          wallBase = P.wallBrick; wallBase2 = P.wallBrickDk;
+          winColor = P.winOrange; brickWall = true; special = 'brewery'; break;
       }
     }
 
@@ -596,7 +901,9 @@ function buildingSprite(defId: string, w: number, h: number, ghost: boolean): HT
     }
 
     // Door
-    const dw = defId === 'hall' ? 7 : 5;
+    const wideDoor = defId === 'hall' || defId === 'town_hall' || defId === 'longhouse' ||
+                     defId === 'warehouse' || defId === 'barracks';
+    const dw = wideDoor ? 7 : 5;
     const dh = Math.min(8, H - roofH - 3);
     const dx = Math.floor(W / 2) - Math.floor(dw / 2);
     g.fillStyle = P.outline;
@@ -675,6 +982,75 @@ function buildingSprite(defId: string, w: number, h: number, ghost: boolean): HT
       g.fillStyle = '#cc3333';
       g.fillRect(cx - 1, cy - 3, 2, 6);
       g.fillRect(cx - 3, cy - 1, 6, 2);
+    } else if (special === 'townhall' && !ghost) {
+      // flag above the ridge + gilded door lintel
+      const cx = Math.floor(W / 2);
+      g.fillStyle = P.rockLight;
+      g.fillRect(cx, 1, 1, 5);
+      g.fillStyle = P.awningRed;
+      g.fillRect(cx + 1, 1, 5, 3);
+      g.fillStyle = P.grain;
+      g.fillRect(dx - 1, H - dh - 2, dw + 2, 1);
+    } else if (special === 'armory' && !ghost) {
+      // shield emblem on the wall
+      const ax = Math.floor(W / 2) - 3;
+      const ay = roofH + 3;
+      g.fillStyle = P.rockLight;
+      g.fillRect(ax, ay, 6, 5);
+      g.fillStyle = P.awningRed;
+      g.fillRect(ax + 1, ay + 1, 4, 3);
+      g.fillRect(ax + 2, ay + 4, 2, 1);
+    } else if (special === 'warehouse' && !ghost) {
+      // double-door seam + a crate waiting outside
+      g.fillStyle = P.outline;
+      g.fillRect(dx + Math.floor(dw / 2), H - dh, 1, dh);
+      g.fillStyle = P.rockLight;
+      g.fillRect(dx + 1, H - dh + 1, dw - 2, 1);
+      g.fillStyle = P.wood;
+      g.fillRect(3, H - 7, 6, 6);
+      g.fillStyle = P.woodDark;
+      g.fillRect(3, H - 7, 6, 1);
+      g.fillRect(5, H - 7, 1, 6);
+    } else if (special === 'apothecary' && !ghost) {
+      // green cross beside the door
+      g.fillStyle = '#3c8a4c';
+      g.fillRect(4, roofH + 3, 2, 6);
+      g.fillRect(2, roofH + 5, 6, 2);
+    } else if (special === 'forge' && !ghost) {
+      // glowing forge arch and an anvil out front
+      g.fillStyle = '#1a1208';
+      g.fillRect(3, H - 9, 7, 8);
+      g.fillStyle = P.winOrange;
+      g.fillRect(4, H - 7, 5, 5);
+      g.fillStyle = '#f0d060';
+      g.fillRect(5, H - 5, 3, 2);
+      g.fillStyle = '#3a3a44';
+      g.fillRect(W - 9, H - 5, 6, 2);
+      g.fillRect(W - 8, H - 7, 4, 2);
+    } else if (special === 'school' && !ghost) {
+      // belfry on the ridge
+      const cx = Math.floor(W / 2);
+      g.fillStyle = P.woodDark;
+      g.fillRect(cx - 3, 1, 7, 5);
+      g.fillStyle = '#1a1208';
+      g.fillRect(cx - 1, 2, 3, 3);
+      g.fillStyle = P.grain;
+      g.fillRect(cx, 3, 1, 2);
+    } else if (special === 'brewery' && !ghost) {
+      // barrels stacked by the wall
+      for (const bx of [3, W - 9]) {
+        g.fillStyle = P.wood;
+        g.fillRect(bx, H - 8, 6, 7);
+        g.fillStyle = P.woodDark;
+        g.fillRect(bx, H - 6, 6, 1);
+        g.fillRect(bx, H - 3, 6, 1);
+      }
+    } else if (special === 'longhouse' && !ghost) {
+      // a second doorway toward the gable end
+      g.fillStyle = P.outline;
+      g.fillRect(6, H - dh - 1, 5, dh + 1);
+      g.fillStyle = wallBase2;
+      g.fillRect(7, H - dh, 3, dh);
     }
   }
 
@@ -746,6 +1122,92 @@ function itemSprite(kind: 'wood' | 'grain' | 'meal' | 'stone' | 'clothes'): HTML
     g.fillRect(6, 4, 4, 2);
     g.fillStyle = P.outline;
     g.fillRect(4, 11, 8, 1);
+  }
+  return c;
+}
+
+/** Distinct pixel art for processed goods (replaces the generic piles). */
+function craftedItemSprite(kind: string): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE;
+  c.height = TILE;
+  const g = c.getContext('2d')!;
+  g.fillStyle = P.shadow;
+  g.fillRect(3, 11, 10, 3);
+  switch (kind) {
+    case 'timber': // squared planks, not raw logs
+      g.fillStyle = P.plankDark; g.fillRect(2, 8, 12, 3);
+      g.fillStyle = P.plank;     g.fillRect(3, 5, 12, 3);
+      g.fillStyle = '#a8854e';   g.fillRect(3, 5, 12, 1);
+      break;
+    case 'brick': // courses of fired brick
+      g.fillStyle = P.wallBrickDk; g.fillRect(3, 8, 10, 4);
+      g.fillStyle = P.wallBrick;   g.fillRect(4, 5, 4, 3); g.fillRect(9, 5, 4, 3);
+      g.fillStyle = '#b88070';     g.fillRect(4, 5, 4, 1); g.fillRect(9, 5, 4, 1);
+      break;
+    case 'iron': // stacked ingots
+      g.fillStyle = '#505060'; g.fillRect(3, 8, 10, 4);
+      g.fillStyle = '#707080'; g.fillRect(5, 5, 7, 3);
+      g.fillStyle = '#9a9aac'; g.fillRect(5, 5, 7, 1);
+      break;
+    case 'tools': // hammer over a chisel
+      g.fillStyle = P.wood;    g.fillRect(7, 4, 2, 8);
+      g.fillStyle = '#8a8a96'; g.fillRect(5, 3, 6, 3);
+      g.fillStyle = '#aaaab6'; g.fillRect(5, 3, 6, 1);
+      g.fillStyle = '#707080'; g.fillRect(3, 10, 8, 2);
+      break;
+    case 'rope': // a coiled ring
+      g.fillStyle = '#7a6840'; g.fillRect(4, 5, 9, 7);
+      g.fillStyle = '#9c8858'; g.fillRect(5, 6, 7, 5);
+      g.fillStyle = '#5a4c30'; g.fillRect(7, 8, 3, 2);
+      break;
+    case 'flour': // tied sack
+      g.fillStyle = '#a8a088'; g.fillRect(4, 6, 8, 6);
+      g.fillStyle = '#c8c0a8'; g.fillRect(5, 6, 6, 5);
+      g.fillStyle = '#7a7460'; g.fillRect(6, 4, 4, 2);
+      break;
+    case 'ale': // barrel
+      g.fillStyle = P.wood;     g.fillRect(4, 4, 8, 8);
+      g.fillStyle = '#a8854e';  g.fillRect(5, 4, 2, 8);
+      g.fillStyle = P.woodDark; g.fillRect(4, 6, 8, 1); g.fillRect(4, 9, 8, 1);
+      break;
+    case 'bread': // two loaves
+      g.fillStyle = '#a07038'; g.fillRect(3, 8, 7, 4);
+      g.fillStyle = '#c09050'; g.fillRect(3, 7, 7, 3);
+      g.fillStyle = '#e0b878'; g.fillRect(4, 7, 5, 1);
+      g.fillStyle = '#c09050'; g.fillRect(9, 5, 5, 4);
+      g.fillStyle = '#e0b878'; g.fillRect(10, 5, 3, 1);
+      break;
+    case 'medicine': // stoppered bottle
+      g.fillStyle = '#406858'; g.fillRect(6, 6, 5, 6);
+      g.fillStyle = '#5a8870'; g.fillRect(7, 7, 3, 4);
+      g.fillStyle = '#88b8a0'; g.fillRect(7, 7, 1, 3);
+      g.fillStyle = P.wood;    g.fillRect(7, 4, 3, 2);
+      break;
+    case 'herbs': // tied green bundle
+      g.fillStyle = '#365830'; g.fillRect(4, 5, 8, 6);
+      g.fillStyle = '#4a7040'; g.fillRect(5, 4, 6, 6);
+      g.fillStyle = '#6a9050'; g.fillRect(6, 4, 2, 3);
+      g.fillStyle = P.grain;   g.fillRect(5, 9, 6, 1);
+      break;
+    case 'dairy': // cheese wheel with a wedge cut
+      g.fillStyle = '#b0a060'; g.fillRect(3, 7, 10, 5);
+      g.fillStyle = '#d8c070'; g.fillRect(3, 5, 10, 4);
+      g.fillStyle = '#f0e0a0'; g.fillRect(9, 5, 4, 4);
+      break;
+    case 'fish_meal': // a fish
+      g.fillStyle = '#6080a0'; g.fillRect(3, 7, 9, 4);
+      g.fillStyle = '#88a8c0'; g.fillRect(4, 7, 7, 1);
+      g.fillStyle = '#486080'; g.fillRect(12, 6, 2, 6);
+      g.fillStyle = P.outline; g.fillRect(4, 8, 1, 1);
+      break;
+    case 'produce': // basket of vegetables
+      g.fillStyle = P.woodDark; g.fillRect(4, 8, 9, 4);
+      g.fillStyle = P.wood;     g.fillRect(4, 8, 9, 1);
+      g.fillStyle = '#608040';  g.fillRect(5, 6, 3, 3);
+      g.fillStyle = '#c25b2e';  g.fillRect(8, 6, 3, 3);
+      g.fillStyle = '#c8a830';  g.fillRect(11, 7, 2, 2);
+      break;
   }
   return c;
 }
@@ -1112,27 +1574,27 @@ export function buildSprites(buildingDefs: { id: string; w: number; h: number }[
       stone: itemSprite('stone'),
       clothes: itemSprite('clothes'),
       weapons: weaponSprite(),
-      // Raw era-1 resources — generic colored piles (placeholder art)
+      // Raw era-1 resources — generic colored piles
       clay:     genericItemSprite('#9c6b40', '#7a5030'),
       coal:     genericItemSprite('#3c3830', '#2a2820'),
       iron_ore: genericItemSprite('#786050', '#5e4840'),
       flax:     genericItemSprite('#9cb060', '#7a9040'),
-      herbs:    genericItemSprite('#4a7040', '#365830'),
-      // Processed resources
-      timber:   genericItemSprite('#b08850', '#8c6a38'),
-      brick:    genericItemSprite('#8c5040', '#6e3c30'),
-      iron:     genericItemSprite('#707080', '#505060'),
-      tools:    genericItemSprite('#606070', '#484858'),
-      rope:     genericItemSprite('#9c8858', '#7a6840'),
-      flour:    genericItemSprite('#c8c0a8', '#a8a088'),
-      ale:      genericItemSprite('#a07830', '#7a5a20'),
-      medicine: genericItemSprite('#5a8870', '#406858'),
+      herbs:    craftedItemSprite('herbs'),
+      // Processed resources — custom art
+      timber:   craftedItemSprite('timber'),
+      brick:    craftedItemSprite('brick'),
+      iron:     craftedItemSprite('iron'),
+      tools:    craftedItemSprite('tools'),
+      rope:     craftedItemSprite('rope'),
+      flour:    craftedItemSprite('flour'),
+      ale:      craftedItemSprite('ale'),
+      medicine: craftedItemSprite('medicine'),
       // Food variety
-      bread:    genericItemSprite('#c09050', '#a07038'),
-      dairy:    genericItemSprite('#d0c898', '#b0a878'),
-      produce:  genericItemSprite('#608040', '#486030'),
+      bread:    craftedItemSprite('bread'),
+      dairy:    craftedItemSprite('dairy'),
+      produce:  craftedItemSprite('produce'),
       game_meal:  genericItemSprite('#8c5c3c', '#6a4028'),
-      fish_meal:  genericItemSprite('#6080a0', '#486080'),
+      fish_meal:  craftedItemSprite('fish_meal'),
       preserved:  genericItemSprite('#6a4030', '#502820'),
     },
     grave: graveSprite(),
