@@ -788,3 +788,113 @@ describe('Policy slots & expanded statute book (v0.16.0)', () => {
     }
   });
 });
+
+describe('Sectoral economy (Phase 1)', () => {
+  function flipped(seed: number): RegionSim {
+    const sim = new Simulation(seed);
+    grow(sim);
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    runDays(r, 5);
+    return r;
+  }
+
+  it('settlements open at 1900 labor shares: the plough takes seven hands in ten', () => {
+    const r = flipped(42);
+    for (const t of r.settlements) {
+      expect(t.sectors.agriculture.share).toBeCloseTo(0.72, 1);
+      const sum = t.sectors.agriculture.share + t.sectors.industry.share +
+        t.sectors.services.share + t.sectors.information.share;
+      expect(sum).toBeCloseTo(1, 5);
+    }
+  });
+
+  it('technology pulls labor off the land and into the terminal', () => {
+    const r = flipped(42);
+    const t = r.settlements[0];
+    const agriBefore = t.sectors.agriculture.share;
+    const infoBefore = t.sectors.information.share;
+    r.researched.push('steel_industry', 'electrical_grid', 'combustion_engine',
+      'mass_production', 'asphalt', 'atomic_age', 'computing', 'automated_logistics');
+    runDays(r, 200);
+    expect(t.sectors.agriculture.share).toBeLessThan(agriBefore);
+    expect(t.sectors.information.share).toBeGreaterThan(infoBefore);
+  });
+
+  it('a disloyal town works at half-heart: loyalty cuts wages and output', () => {
+    const r = flipped(42);
+    const t = r.settlements[0];
+    runDays(r, 35); // one monthly update to populate outputs
+    const wageLoyal = r.avgWageOf(t);
+    t.loyaltyToFaction = 0;
+    runDays(r, 30);
+    expect(r.avgWageOf(t)).toBeLessThan(wageLoyal);
+  });
+
+  it('tech multiplies sector productivity, and GDP grows with it', () => {
+    const a = flipped(42);
+    const b = flipped(42);
+    b.researched.push('steel_industry', 'electrical_grid', 'mass_production');
+    for (const r of [a, b]) {
+      r.stateProclaimed = true;
+      r.stateName = 'Test State';
+      r.govLean = 'council';
+      runDays(r, 35);
+    }
+    expect(b.gdpLastMonth).toBeGreaterThan(a.gdpLastMonth);
+  });
+});
+
+describe('Faction & fog-of-war persistence (Phase 0)', () => {
+  function flippedPair(seed: number): { sim: Simulation; r: RegionSim } {
+    const sim = new Simulation(seed);
+    grow(sim);
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    runDays(r, 5);
+    return { sim, r };
+  }
+
+  it('the flip raises the player banner and fogs the rest of the world', () => {
+    const { r } = flippedPair(42);
+    expect(r.regionalFactions.length).toBeGreaterThanOrEqual(3); // player + 2-3 rivals
+    expect(r.faction(0)?.capital).toBe(r.settlements[0].id);
+    const home = r.settlements[0];
+    expect(r.explorationMap[Math.round(home.x)][Math.round(home.y)]).toBe('explored');
+    const fogged = r.explorationMap.flat().filter((v) => v === 'fogged').length;
+    expect(fogged).toBeGreaterThan(5000); // most of the map is still unknown
+  });
+
+  it('factions, sectors, and the fog survive save/load', () => {
+    const { sim, r } = flippedPair(42);
+    runDays(r, 35);
+    const r2 = RegionSim.deserialize(r.serialize(), sim);
+    expect(r2.regionalFactions.length).toBe(r.regionalFactions.length);
+    expect(r2.settlements[0].factionId).toBe(0);
+    expect(r2.settlements[0].sectors.agriculture.share)
+      .toBeCloseTo(r.settlements[0].sectors.agriculture.share, 6);
+    expect(r2.explorationMap.flat().filter((v) => v === 'explored').length)
+      .toBe(r.explorationMap.flat().filter((v) => v === 'explored').length);
+  });
+
+  it('pre-faction saves are backfilled: every town flies the player flag', () => {
+    const { sim, r } = flippedPair(42);
+    runDays(r, 5);
+    const old = JSON.parse(r.serialize());
+    delete old.regionalFactions;
+    delete old.explorationMap;
+    delete old.scouts;
+    old.settlements = old.settlements.map((s: Record<string, unknown>) => {
+      const { factionId, garrisonStrength, loyaltyToFaction, sectors, ...rest } = s;
+      void factionId; void garrisonStrength; void loyaltyToFaction; void sectors;
+      return rest;
+    });
+    const r2 = RegionSim.deserialize(JSON.stringify(old), sim);
+    expect(r2.regionalFactions.length).toBeGreaterThanOrEqual(1);
+    expect(r2.faction(0)?.settlementIds.length).toBe(r2.settlements.length);
+    for (const t of r2.settlements) {
+      expect(t.factionId).toBe(0);
+      expect(t.sectors.agriculture.share).toBeCloseTo(0.72, 2);
+    }
+    const home = r2.settlements[0];
+    expect(r2.explorationMap[Math.round(home.x)][Math.round(home.y)]).toBe('explored');
+  });
+});

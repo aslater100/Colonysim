@@ -67,6 +67,8 @@ export interface Settlement {
   garrisonStrength: number;
   /** Loyalty to controlling faction (0–100); affects labor productivity and revolt risk */
   loyaltyToFaction: number;
+  /** Phase 1: where this town's labor works, what it produces, what it pays. */
+  sectors: Sectors;
 }
 
 /** Local markets (GDD §5.2, first slice): each town prices the two goods
@@ -78,6 +80,52 @@ export type MarketPrices = Record<TradeGood, number>;
 export const BASE_PRICE: MarketPrices = { food: 0.08, wood: 0.12 };
 export function defaultPrices(): MarketPrices {
   return { ...BASE_PRICE };
+}
+
+// ---- Phase 1: Sectoral economy (GDD §5.2: the century's structural transformation) ----
+
+/** The four sectors every settlement's labor splits across. In 1900 the
+ *  frontier farms; by 2000 it files, codes, and serves. The shift is driven
+ *  by technology, not script. */
+export type SectorId = 'agriculture' | 'industry' | 'services' | 'information';
+export const SECTOR_IDS: SectorId[] = ['agriculture', 'industry', 'services', 'information'];
+export const SECTOR_NAMES: Record<SectorId, string> = {
+  agriculture: 'Agriculture',
+  industry: 'Industry',
+  services: 'Services',
+  information: 'Information',
+};
+
+export interface Sector {
+  /** Employment share of the settlement's workers, 0..1 (shares sum to 1). */
+  share: number;
+  /** £/month produced by this sector last month. */
+  output: number;
+  /** £/worker/month — the wage signal that pulls migrants. */
+  wage: number;
+  /** Monthly share trend (for UI arrows): + growing, − shrinking. */
+  growth: number;
+}
+
+export type Sectors = Record<SectorId, Sector>;
+
+/** 1900 frontier employment: the plough takes seven hands in ten. */
+const SECTOR_BASE_SHARES: Record<SectorId, number> = {
+  agriculture: 0.72, industry: 0.14, services: 0.11, information: 0.03,
+};
+
+/** Base output per worker per month (£), before tech multipliers. Richer
+ *  sectors pay more — that wage gap is what pulls labor off the land. */
+const SECTOR_BASE_OUTPUT: Record<SectorId, number> = {
+  agriculture: 1.0, industry: 1.4, services: 1.3, information: 1.8,
+};
+
+export function defaultSectors(): Sectors {
+  const s = {} as Sectors;
+  for (const id of SECTOR_IDS) {
+    s[id] = { share: SECTOR_BASE_SHARES[id], output: 0, wage: SECTOR_BASE_OUTPUT[id], growth: 0 };
+  }
+  return s;
 }
 
 /** Provisional government lean chosen at the Incorporation ceremony. */
@@ -1878,6 +1926,7 @@ export class RegionSim {
       factionId: 0, // player faction
       garrisonStrength: 5, // starting militia
       loyaltyToFaction: 100, // starting settlement is fully loyal
+      sectors: defaultSectors(),
     };
     region.settlements.push(home);
 
@@ -2132,6 +2181,7 @@ export class RegionSim {
         }
       }
     }
+    for (const t of this.settlements) this.updateSectors(t); // Phase 1: labor follows the technology
     this.migrate();
     this.caravans();
     this.traders();
@@ -2262,9 +2312,11 @@ export class RegionSim {
     const collection = this.govLean === 'council' ? 0.85 : this.govLean === 'mayor' ? 1.2 : 1;
     const serviceCost = this.govLean === 'compact' ? 1.25 : 1;
     let gdp = 0;
+    // Phase 1: GDP is the sum of what the sectors actually made — the same
+    // magnitude as the old flat formula at 1900 tech (calibration ×1.08),
+    // but now it grows as labor climbs the value chain.
     for (const t of this.settlements) {
-      const strike = this.day < t.strikeUntil ? 0.6 : 1;
-      gdp += this.workersOf(t) * 1.2 * (0.8 + t.landQuality * 0.2) * incomeMult * strike;
+      gdp += this.sectorOutputOf(t) * 1.08 * incomeMult;
     }
     gdp += this.tradeValueLastMonth; // commerce counts (GDD §5.2)
     // War economy (GDD §7.2): armaments demand is a stimulus first…
@@ -2435,7 +2487,8 @@ export class RegionSim {
       // Peg: hold exchange rate; drain reserves if trade is unfavorable
       const deficit = Math.max(0, this.totalPop() * 0.025 - this.exportEarningsLastMonth);
       this.treasury -= deficit * 0.12;
-      if (this.treasury < gdp * 0.25 && this.rng.chance(0.25)) {
+      // An exhausted treasury cannot defend a peg at all; a thin one gambles.
+      if (this.treasury < gdp * 0.1 || (this.treasury < gdp * 0.25 && this.rng.chance(0.25))) {
         this.monetaryRegime = 'float';
         this.confidence = Math.max(5, this.confidence - 25);
         this.exchangeRate = Math.max(this.exchangeRate * 0.82, 0.30);
@@ -2478,12 +2531,107 @@ export class RegionSim {
     }
   }
 
+  // ---- Phase 1: the sectoral economy (GDD §5.2) ----
+
+  /** How industrialized the region is, 0..1 — counted off the tech tree. */
+  private modernizationIndex(): number {
+    const nodes = ['steel_industry', 'electrical_grid', 'combustion_engine', 'mass_production', 'asphalt', 'atomic_age'];
+    return nodes.filter((n) => this.has(n)).length / nodes.length;
+  }
+
+  /** How far into the information age, 0..1. */
+  private informationIndex(): number {
+    return (this.has('computing') ? 0.5 : 0) +
+      (this.has('automated_logistics') ? 0.35 : 0) +
+      (this.has('maglev') ? 0.15 : 0);
+  }
+
+  /** Tech multipliers on output per worker, by sector. */
+  private sectorProductivity(id: SectorId): number {
+    let m = 1;
+    const boost = (node: string, mult: number) => { if (this.has(node)) m *= mult; };
+    switch (id) {
+      case 'agriculture':
+        boost('combustion_engine', 1.15); // tractors replace the horse
+        boost('mass_production', 1.3);
+        boost('renewables', 1.1);
+        break;
+      case 'industry':
+        boost('steel_industry', 1.3);
+        boost('electrical_grid', 1.25);
+        boost('mass_production', 1.35);
+        boost('atomic_age', 1.15);
+        break;
+      case 'services':
+        boost('electrical_grid', 1.2);
+        boost('asphalt', 1.2); // mobility is commerce
+        boost('computing', 1.3);
+        break;
+      case 'information':
+        boost('free_press', 1.25);
+        boost('computing', 1.6);
+        boost('automated_logistics', 1.35);
+        break;
+    }
+    return m;
+  }
+
+  /** Where this town's labor wants to be, given the technology and the land.
+   *  The century's arc: plough → mill → counter → terminal. */
+  private sectorTargetShares(t: Settlement): Record<SectorId, number> {
+    const m = this.modernizationIndex();
+    const i = this.informationIndex();
+    const lerp = (a: number, b: number, f: number) => a + (b - a) * f;
+    // Good land holds people on the farms a little longer; ports trade sooner.
+    let agri = lerp(0.72, 0.04, m) + (t.landQuality - 1) * 0.08;
+    let info = lerp(0.03, 0.30, i);
+    let industry = lerp(0.14, 0.40, m) * (1 - 0.5 * i); // industrialize, then deindustrialize
+    agri = Math.max(0.02, agri);
+    let services = Math.max(0.05, 1 - agri - industry - info);
+    if (t.site.coastal) services += 0.02;
+    const sum = agri + industry + services + info;
+    return { agriculture: agri / sum, industry: industry / sum, services: services / sum, information: info / sum };
+  }
+
+  /** Monthly: shares drift toward the tech-set target, output and wages follow. */
+  private updateSectors(t: Settlement): void {
+    const workers = this.workersOf(t);
+    const target = this.sectorTargetShares(t);
+    const strike = this.day < t.strikeUntil ? 0.6 : 1;
+    // A resentful town works at half-heart (Phase 0 loyalty feeds Phase 1 output).
+    const loyalty = 0.7 + 0.3 * (t.loyaltyToFaction / 100);
+    for (const id of SECTOR_IDS) {
+      const s = t.sectors[id];
+      const before = s.share;
+      s.share += (target[id] - s.share) * 0.03; // a generation-scale drift, not a snap
+      s.growth = s.share - before;
+      const landTerm = id === 'agriculture' ? 0.6 + 0.4 * t.landQuality : 1;
+      const perWorker = SECTOR_BASE_OUTPUT[id] * this.sectorProductivity(id) * landTerm;
+      s.output = workers * s.share * perWorker * strike * loyalty;
+      s.wage = perWorker * strike * loyalty;
+    }
+  }
+
+  /** Total sector output, £/month — the town's contribution to GDP. */
+  sectorOutputOf(t: Settlement): number {
+    return SECTOR_IDS.reduce((sum, id) => sum + t.sectors[id].output, 0);
+  }
+
+  /** Employment-weighted average wage — the migration signal. */
+  avgWageOf(t: Settlement): number {
+    return SECTOR_IDS.reduce((sum, id) => sum + t.sectors[id].share * t.sectors[id].wage, 0);
+  }
+
   private migrate(): void {
     if (this.settlements.length < 2) return;
-    const ranked = [...this.settlements].sort((a, b) => b.satisfaction - a.satisfaction);
+    // People follow both contentment and pay (Phase 1): a booming mill town
+    // pulls labor off poor farms even when life there is pleasant enough.
+    const regionWage = this.settlements.reduce((s, t) => s + this.avgWageOf(t), 0) / this.settlements.length;
+    const score = (t: Settlement) => t.satisfaction + (this.avgWageOf(t) - regionWage) * 30;
+    const ranked = [...this.settlements].sort((a, b) => score(b) - score(a));
     const best = ranked[0];
     const worst = ranked[ranked.length - 1];
-    if (best.satisfaction - worst.satisfaction > 15 && this.popOf(worst) > 10) {
+    if (score(best) - score(worst) > 15 && this.popOf(worst) > 10) {
       // movers ride the network too: without a route, only a trickle walks out
       const connected = this.routePath(worst.id, best.id) !== null;
       const movers = this.popOf(worst) * 0.02 * (connected ? 1 : 0.3);
@@ -2768,6 +2916,7 @@ export class RegionSim {
           factionId: this.playerFactionId,
           garrisonStrength: 2, // new towns have smaller garrisons
           loyaltyToFaction: 100,
+          sectors: defaultSectors(),
         };
         this.settlements.push(town);
         // Reveal the new settlement and surrounding area
@@ -2816,22 +2965,21 @@ export class RegionSim {
 
   /** Update exploration visibility based on settlements and caravan routes. */
   private updateExploration(): void {
-    // Settlements and routes automatically reveal tiles around them
-    for (const settlement of this.settlements) {
-      // Each settlement reveals a small radius based on local scouting
-      let sightRadius = 2; // base sight radius
-      // Technology improvements to sight range
-      if (this.has('telegraph')) sightRadius += 1;
-      if (this.has('radio')) sightRadius += 2;
-      if (this.has('satellite')) {
-        // Satellite tech reveals the entire map
-        for (let x = 0; x < 100; x++) {
-          for (let y = 0; y < 100; y++) {
-            this.explorationMap[x][y] = 'explored';
-          }
+    // The space age ends the fog for good: orbital survey sees everything.
+    if (this.has('computing')) {
+      for (let x = 0; x < 100; x++) {
+        for (let y = 0; y < 100; y++) {
+          this.explorationMap[x][y] = 'explored';
         }
-        return; // early exit if satellite tech unlocked
       }
+      return;
+    }
+    // Settlements and routes automatically reveal tiles around them
+    let sightRadius = 2; // base sight radius
+    // Technology improvements to sight: wires, then wings
+    if (this.has('electrical_grid')) sightRadius += 1; // telegraph lines along every road
+    if (this.has('combustion_engine')) sightRadius += 2; // aerial survey
+    for (const settlement of this.settlements) {
       this.revealTiles(settlement.x, settlement.y, sightRadius, 'explored');
     }
 
@@ -4266,6 +4414,14 @@ export class RegionSim {
       nextId: this.nextId,
       nextEventDay: this.nextEventDay,
       townNamePool: this.townNamePool,
+      // Phase 0: factions, scouts, currency — the map packs to one char per tile
+      explorationMap: this.explorationMap.map((row) => row.map((v) => (v === 'fogged' ? '0' : '1')).join('')),
+      scouts: this.scouts,
+      regionalFactions: this.regionalFactions,
+      playerFactionId: this.playerFactionId,
+      exchangeRates: this.exchangeRates,
+      globalTradeVolume: this.globalTradeVolume,
+      nextScoutId: this.nextScoutId,
     });
   }
 
@@ -4274,8 +4430,17 @@ export class RegionSim {
   static deserialize(json: string, sim: Simulation): RegionSim {
     const d = JSON.parse(json);
     const r = new RegionSim(sim.rng, d.minute, sim.regionMap, sim.weather);
-    // pre-market saves carry no prices: open those towns at the base rates
-    r.settlements = (d.settlements as Settlement[]).map((s) => ({ ...s, prices: s.prices ?? defaultPrices(), recentEvents: s.recentEvents ?? [] }));
+    // pre-market saves carry no prices: open those towns at the base rates;
+    // pre-faction saves fly the player's banner; pre-sector saves start at 1900 labor shares
+    r.settlements = (d.settlements as Settlement[]).map((s) => ({
+      ...s,
+      prices: s.prices ?? defaultPrices(),
+      recentEvents: s.recentEvents ?? [],
+      factionId: s.factionId ?? 0,
+      garrisonStrength: s.garrisonStrength ?? 2,
+      loyaltyToFaction: s.loyaltyToFaction ?? 100,
+      sectors: s.sectors ?? defaultSectors(),
+    }));
     r.notables = d.notables;
     r.expeditions = d.expeditions;
     r.routes = d.routes;
@@ -4357,6 +4522,28 @@ export class RegionSim {
     r.nextId = d.nextId;
     r.nextEventDay = d.nextEventDay;
     r.townNamePool = d.townNamePool;
+    // Phase 0: factions, scouts, fog of war — older saves rebuild them in place
+    if (d.regionalFactions) {
+      r.regionalFactions = d.regionalFactions;
+      r.playerFactionId = d.playerFactionId ?? 0;
+      r.scouts = d.scouts ?? [];
+      r.exchangeRates = d.exchangeRates ?? { '0:0': 1.0 };
+      r.globalTradeVolume = d.globalTradeVolume ?? 0;
+      r.nextScoutId = d.nextScoutId ?? 5000;
+    } else if (r.settlements.length > 0) {
+      // pre-faction save: raise the player's banner over every existing town
+      r.regionalizeFactionSystem(r.settlements[0]);
+      const pf = r.faction(r.playerFactionId);
+      if (pf) pf.settlementIds = r.settlements.map((s) => s.id);
+    }
+    if (d.explorationMap) {
+      r.explorationMap = (d.explorationMap as string[]).map((row) =>
+        [...row].map((c) => (c === '1' ? 'explored' : 'fogged') as TileVisibility),
+      );
+    } else {
+      // pre-fog save: what the towns can see today is what's on the maps
+      for (const s of r.settlements) r.revealTiles(s.x, s.y, 3, 'explored');
+    }
     // last: the constructor consumed a draw scheduling its event day
     r.rng.setState(d.rng);
     return r;
