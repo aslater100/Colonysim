@@ -12,6 +12,8 @@ import type { Simulation, Settler, LogEntry } from './sim';
 import { RegionMap } from './worldgen';
 import type { TownSite } from './worldgen';
 import { Weather } from './weather';
+import type { Lender, Loan } from './economy';
+import { createInitialLenders } from './lenders';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 
@@ -1164,6 +1166,10 @@ export class RegionSim {
   exchangeRate = 1.0;
   /** Prevents the 1929-analog crash from firing twice. */
   private crashFired = false;
+  // ---- Lender system: NPC bankers and merchants offering loans ----
+  lenders: Lender[] = [];
+  /** Player's active loans from lenders. */
+  loans: Loan[] = [];
   // ---- Phase 0: Regional Gameplay Expansion ----
   /** 100×100 grid tracking tile visibility: fogged/explored/scouted */
   explorationMap: TileVisibility[][] = [];
@@ -2039,6 +2045,9 @@ export class RegionSim {
     };
     region.settlements.push(home);
 
+    // Initialize NPC lenders for the region
+    region.lenders = createInitialLenders(region.nextId++);
+
     // Initialize player faction (will be refined with full faction system later)
     region.regionalizeFactionSystem(home);
 
@@ -2304,6 +2313,7 @@ export class RegionSim {
     this.updateDiplomacy();
     this.tickClimate(); // the ledger runs from the first decade (GDD §8.2)
     if (this.passedLaws.includes('central_bank_charter')) this.tickMonetary();
+    this.updateLoans(); // process loan interest and check for defaults
   }
 
   // ---- local markets & trade (GDD §5.2, first slice) ----
@@ -4867,6 +4877,9 @@ export class RegionSim {
     r.creditRating = d.creditRating ?? 'AA';
     r.exchangeRate = d.exchangeRate ?? 1.0;
     r.crashFired = d.crashFired ?? false;
+    // Lender system: initialize lenders if not in save, or load existing ones
+    r.lenders = d.lenders ?? createInitialLenders(0);
+    r.loans = d.loans ?? [];
     r.nextId = d.nextId;
     r.nextEventDay = d.nextEventDay;
     r.townNamePool = d.townNamePool;
@@ -4906,5 +4919,143 @@ export class RegionSim {
   private townEvent(t: Settlement, text: string, kind: 'good' | 'bad' | 'info'): void {
     t.recentEvents.unshift({ day: this.day, text, kind });
     if (t.recentEvents.length > 12) t.recentEvents.pop();
+  }
+
+  // ---- Lender system: loans, interest, and loan management ----
+
+  /**
+   * Request a loan from a lender.
+   * Returns { ok: true, loanId } or { ok: false, reason }.
+   */
+  requestLoan(
+    lenderId: number,
+    amount: number,
+    termMonths: number,
+  ): { ok: boolean; reason?: string; loanId?: number } {
+    const lender = this.lenders.find((l) => l.id === lenderId);
+    if (!lender) return { ok: false, reason: 'Lender not found' };
+
+    // Check lender's availability and capacity
+    if (amount > lender.maxLoan) {
+      return { ok: false, reason: `This lender can only offer up to £${lender.maxLoan}` };
+    }
+    if (amount > lender.liquidCash) {
+      return { ok: false, reason: `This lender currently has only £${lender.liquidCash} available` };
+    }
+
+    // Create and record the loan
+    const loan: Loan = {
+      id: Math.random(),
+      lenderId,
+      principal: amount,
+      borrowed: amount,
+      interestRate: lender.interestRate,
+      termYears: Math.round(termMonths / 12 * 100) / 100,
+      borrowedAt: this.day,
+      nextPaymentDue: this.day + 30, // first payment due in 1 month
+      defaulted: false,
+    };
+
+    this.loans.push(loan);
+    lender.liquidCash -= amount; // lender's cash is tied up
+    this.treasury += amount; // treasury receives the loan proceeds
+
+    this.addLog(
+      `Borrowed £${amount} from ${lender.name} at ${(lender.interestRate * 100).toFixed(1)}% annual interest, due in ${termMonths} months.`,
+      'info',
+    );
+
+    return { ok: true, loanId: loan.id };
+  }
+
+  /**
+   * Make a payment on an active loan.
+   * Returns { ok: true, remaining } or { ok: false, reason }.
+   */
+  repayLoan(loanId: number, paymentAmount: number): { ok: boolean; remaining?: number; reason?: string } {
+    const loan = this.loans.find((l) => l.id === loanId);
+    if (!loan) return { ok: false, reason: 'Loan not found' };
+
+    if (loan.defaulted) {
+      return { ok: false, reason: 'This loan has defaulted and cannot be repaid' };
+    }
+
+    if (paymentAmount <= 0) {
+      return { ok: false, reason: 'Payment must be positive' };
+    }
+
+    if (this.treasury < paymentAmount) {
+      return { ok: false, reason: 'Insufficient treasury funds for this payment' };
+    }
+
+    // Process the payment
+    this.treasury -= paymentAmount;
+    loan.borrowed = Math.max(0, loan.borrowed - paymentAmount);
+
+    // Move next payment due forward by 1 month if this was an on-time payment
+    if (this.day <= loan.nextPaymentDue) {
+      loan.nextPaymentDue += 30;
+    } else {
+      // Make up a late payment but don't move next due date back
+      loan.nextPaymentDue = this.day + 30;
+    }
+
+    const lender = this.lenders.find((l) => l.id === loan.lenderId);
+    if (lender) {
+      lender.liquidCash += paymentAmount; // lender recovers the principal
+    }
+
+    this.addLog(
+      `Paid £${paymentAmount} toward outstanding loan. Remaining: £${Math.round(loan.borrowed)}`,
+      'info',
+    );
+
+    return { ok: true, remaining: loan.borrowed };
+  }
+
+  /**
+   * Called monthly to process loan interest accrual and check for defaults.
+   */
+  updateLoans(): void {
+    const ticksPerMonth = 30; // monthly update
+    for (const loan of this.loans) {
+      if (loan.defaulted) continue;
+
+      // Calculate interest accrued this month
+      const monthlyRate = loan.interestRate / 12;
+      const interestThisMonth = loan.borrowed * monthlyRate;
+      loan.borrowed += interestThisMonth;
+
+      // Check for default: payment overdue by 90+ days (3 months grace)
+      if (this.day > loan.nextPaymentDue + 90 && !loan.defaulted) {
+        loan.defaulted = true;
+        const lender = this.lenders.find((l) => l.id === loan.lenderId);
+        if (lender) {
+          lender.reliability = Math.max(0, lender.reliability - 10); // lender loses confidence in player
+          lender.liquidCash = 0; // lender becomes cautious
+        }
+        this.addLog(
+          `Loan from ${lender?.name ?? 'lender'} has defaulted. Credit damaged.`,
+          'bad',
+        );
+      }
+    }
+
+    // Remove fully repaid loans
+    this.loans = this.loans.filter((l) => l.borrowed > 0.01 || l.defaulted);
+  }
+
+  /**
+   * Get total outstanding loan debt.
+   */
+  getTotalDebt(): number {
+    return this.loans.reduce((sum, loan) => sum + (loan.defaulted ? 0 : loan.borrowed), 0);
+  }
+
+  /**
+   * Get list of active loans (not defaulted).
+   */
+  getActiveLoans(): Loan[] {
+    return this.loans.filter((l) => !l.defaulted);
   }
 }

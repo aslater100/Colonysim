@@ -750,6 +750,7 @@ export class RegionView {
         : '') +
       `<p>trade £${Math.floor(r.tradeValueLastMonth)}/mo turnover</p>` +
       this.monetaryHtml() +
+      this.lendersHtml() +
       `<p>tax <span id="tax-val">${Math.round(r.taxRate * 100)}%</span></p>` +
       `<input id="tax-slider" type="range" min="0" max="30" value="${Math.round(r.taxRate * 100)}">` +
       `<p>services: <b>${lvl(r.servicesLevel)}</b> <button class="mini" id="svc-up">+</button><button class="mini" id="svc-dn">−</button></p>` +
@@ -819,6 +820,12 @@ export class RegionView {
     }
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-prop-btn')) {
       btn.onclick = () => r.proposeTreaty(Number(btn.dataset.rival), btn.dataset.kind as TreatyKind);
+    }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.lender-btn')) {
+      btn.onclick = () => this.showLoanDialog(Number(btn.dataset.lender));
+    }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.loan-repay-btn')) {
+      btn.onclick = () => this.showRepayDialog(Number(btn.dataset.loan));
     }
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-break-btn')) {
       btn.onclick = () => r.breakTreaty(Number(btn.dataset.rival), btn.dataset.kind as TreatyKind);
@@ -1344,6 +1351,46 @@ export class RegionView {
         : '');
   }
 
+  private lendersHtml(): string {
+    const r = this.region;
+    // Lenders only available at region tier with Market building, or nation tier
+    if (!r.stateProclaimed) return '';
+    const hasMarket = r.settlements.some((s) => s.buildings.some((b) => b.includes('market')));
+    const hasBank = r.settlements.some((s) => s.buildings.some((b) => b.includes('bank')));
+    if (!hasMarket && !hasBank) return '';
+
+    let html = `<p class="insp-skills">LENDERS</p>`;
+
+    // Show available lenders
+    if (r.lenders.length > 0) {
+      html += `<div style="font-size:11px;margin:4px 0">Available lenders:</div>`;
+      for (const lender of r.lenders) {
+        const canBorrow = r.treasury > 0 && lender.liquidCash > 0;
+        html += `<p style="margin:2px 0;font-size:10px">` +
+          `${lender.name} — max £${lender.maxLoan} @ ${(lender.interestRate * 100).toFixed(1)}% ` +
+          (canBorrow ? `<button class="mini lender-btn" data-lender="${lender.id}">borrow</button>` : '') +
+          `</p>`;
+      }
+    }
+
+    // Show active loans
+    const activeLoans = r.getActiveLoans();
+    if (activeLoans.length > 0) {
+      html += `<div style="font-size:11px;margin:8px 0 4px 0">Active loans:</div>`;
+      for (const loan of activeLoans) {
+        const lender = r.lenders.find((l) => l.id === loan.lenderId);
+        const owing = Math.round(loan.borrowed);
+        const canRepay = r.treasury >= owing * 0.1; // can repay at least 10%
+        html += `<p style="margin:2px 0;font-size:10px">` +
+          `${lender?.name ?? 'lender'} — £${owing} owing ` +
+          (canRepay ? `<button class="mini loan-repay-btn" data-loan="${loan.id}" data-lender="${loan.lenderId}">repay</button>` : '') +
+          `</p>`;
+      }
+    }
+
+    return html;
+  }
+
   /** Force the panel to rebuild its HTML on the next frame (called after game actions). */
   private refreshPanel(): void {
     this.lastPanelBuildFrame = -999;
@@ -1698,5 +1745,81 @@ export class RegionView {
       `<button id="found-btn" ${can.ok ? '' : 'disabled'} title="${can.reason}">Found new town (8 pop, 80 food, 80 wood)</button>` +
       (can.ok ? '' : `<p class="insp-skills">${can.reason}</p>`)
     );
+  }
+
+  private showLoanDialog(lenderId: number): void {
+    const r = this.region;
+    const lender = r.lenders.find((l) => l.id === lenderId);
+    if (!lender) return;
+
+    const maxBorrow = Math.min(lender.maxLoan, lender.liquidCash);
+    const amountStr = prompt(
+      `${lender.name}\nMax loan: £${maxBorrow}\nInterest rate: ${(lender.interestRate * 100).toFixed(1)}% annual\n\nBorrow amount (£):`,
+      String(Math.min(1000, maxBorrow / 2)),
+    );
+    if (!amountStr) return;
+
+    const amount = Number(amountStr);
+    if (isNaN(amount) || amount <= 0) {
+      alert('Invalid amount');
+      return;
+    }
+    if (amount > maxBorrow) {
+      alert(`Cannot borrow more than £${maxBorrow}`);
+      return;
+    }
+
+    const termStr = prompt(`Loan term (months, 1-120):`, '12');
+    if (!termStr) return;
+
+    const term = Number(termStr);
+    if (isNaN(term) || term < 1 || term > 120) {
+      alert('Invalid term (must be 1-120 months)');
+      return;
+    }
+
+    const result = r.requestLoan(lenderId, amount, term);
+    if (result.ok) {
+      this.refreshPanel();
+    } else {
+      alert(`Loan rejected: ${result.reason}`);
+    }
+  }
+
+  private showRepayDialog(loanId: number): void {
+    const r = this.region;
+    const loan = r.loans.find((l) => l.id === loanId);
+    if (!loan) return;
+
+    const owing = Math.round(loan.borrowed);
+    const minPayment = Math.max(1, Math.round(owing * 0.1)); // 10% minimum
+    const suggested = Math.min(r.treasury, owing);
+
+    const amountStr = prompt(
+      `Repay loan\nOwing: £${owing}\nMax can pay: £${suggested}\nMin payment: £${minPayment}\n\nRepay amount (£):`,
+      String(minPayment),
+    );
+    if (!amountStr) return;
+
+    const amount = Number(amountStr);
+    if (isNaN(amount) || amount <= 0) {
+      alert('Invalid amount');
+      return;
+    }
+    if (amount > r.treasury) {
+      alert('Insufficient treasury funds');
+      return;
+    }
+    if (amount < minPayment) {
+      alert(`Minimum payment is £${minPayment}`);
+      return;
+    }
+
+    const result = r.repayLoan(loanId, amount);
+    if (result.ok) {
+      this.refreshPanel();
+    } else {
+      alert(`Repayment failed: ${result.reason}`);
+    }
   }
 }
