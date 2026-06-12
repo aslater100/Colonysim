@@ -180,7 +180,17 @@
       "cost": 180,
       "prereqs": ["universal_suffrage", "free_press"],
       "era": 1968,
-      "desc": "Society notices the smoke. Unlocks the Carbon Levy act."
+      "desc": "Society notices the smoke. Unlocks the Carbon Levy act and Climate Accord diplomacy."
+    },
+    {
+      "id": "geoengineering",
+      "name": "Stratospheric Aerosols",
+      "tree": "tech",
+      "cost": 360,
+      "prereqs": ["renewables", "computing"],
+      "era": 2050,
+      "requiresState": true,
+      "desc": "Reflective particles injected high above the clouds arrest warming within two years — but the unilateral act is a diplomacy bomb. Unlocks the one-time Deploy action."
     }
   ]
 }
