@@ -37,6 +37,7 @@ Version **v0.30.0**. Transportation arc, governance stack, audio, diplomacy, war
 | 0.29 | **Regional AI competitors — difficulty-tuned, government-driven goals.** `AI_DIFFICULTY` (easy/normal/hard) now drives rival update cadence, expansion chance + settlement cap, tech speed, scout frequency, raid aggression, goal ambition, and aggressiveness; `aiDifficulty` flows `TownDesign → Simulation → RegionSim` (serialized). Each `RegionalFaction` gains an era-plausible `regime`; `generateFactionGoal` filters templates to the government type (theocracy chases the faith, merchant republic chases trade), palette widened 8→~19. `techFocus` now mirrors the active goal; `FACTION_GOAL_CATEGORIES` feed conflict/alliance scoring; `factionTradeModifier` ties the regional economy to diplomacy (ally +8% / rival −12% embargo). Fix: `factionAlliances` now serialized. All AI randomness uses `aiRng` (colony seed untouched). 18 new tests; `verify-ai.ts` takes a difficulty arg |
 | 0.28 | **Region governor — Phase A: Route Network UI.** A region-wide **Route Network panel** (toggle from the state panel or the **R** key) lists every link sorted by freight, each row showing kind · condition% · effective capacity/mo · freight · travel days, the cargo badge, and one-click **upgrade** (to the best era-unlocked tier), **repair**, **tear up**, and **cargo-priority pins**. New sim primitives in `region.ts`: `deleteRoute(a,b)` (tears a built link back to a trail — keeps the graph connected, no stranded asset), `setRouteCargoPriority(a,b,sector\|null)` + new optional `Route.cargoPriority` that overrides the automatic dominant-cargo reading in `updateRouteCargo` (serialized with `?? null`). 5 new tests |
 | 0.30 | **Governor crisis tools + region HUD overhaul.** Bug fixes: starvation spiral (emergency auto-food-aid from treasury before deaths + halved death rate + caravan faction filter); AI zero-pop expansion (`factionPop >= 16` guard); AI start timing (rivals bootstrap on `completeIncorporation()` not pre-statehood — fixes 32 test regressions); event log stuck on old colony events (`resetLogLen()` on region entry, inherit only last 3 town events, year/season timestamp format). Governor controls: `CITY_MANAGEMENT_POP` 400→100 (all non-capital towns manageable); `sendFoodAid(townId)` sim primitive (£10 → 200+ food, dispatches grain convoy log entry); crisis actions panel in settlement view (grain, raise services, lower tax); `connectedToAll()` now filters to player-faction settlements (rival settlements on the map are excluded). New panels: **Settlement List** (**S** key, sorted by pop, food/wood/goods status indicators, food-aid button, → pan-to); **Economy panel** (**E** key, global treasury/GDP, faction mood bars, per-settlement GDP/tax/band controls). **Region bottom action bar** (fixed bottom, full width): alert chips for hungry towns/strikes/treasury decline, S/R/E/T shortcut buttons, pause/1×/2×/3× speed controls. State panel updated with S/R/E/T toggle buttons. All 370 tests pass. |
+| 0.31 | **Phase C: Conquest & Diplomacy — vassalage, land purchase, 50%-territory nation gate.** New `RegionalFaction` fields: `overlordId: number \| null`, `vassals: number[]`. New sim primitives: `offerVassalage(factionId)` (accepted when player has ≥2× military edge, or rival treasury &lt;100 + 1.2× edge; refused otherwise; logs both paths); `buyLand(factionId)` (cedes rival's least-developed non-capital settlement for £500 when their treasury &lt;150). `playerTerritoryControl()` now includes vassal territory in the total. `proclamationReady` latch (false→true once player controls ≥50% of region, including vassals) wired in monthly update with "REGIONAL HEGEMON" log event; `canCallConvention()` now gates on `proclamationReady`. Monthly vassal tribute: vassals pay 5% of treasury to player treasury. UI: clicking a rival settlement opens **Rival Detail panel** (name, regime, pop, treasury, territory %, goal, vassal badge) with "Propose Vassalization" and "Buy Land" action buttons; rival diamond markers enlarged (9px) with selection halo and vassal "V" badge; state panel shows territory progress bar toward 50% gate + "★ REGIONAL HEGEMON" badge once reached. Serialize/deserialize: all new fields with `?? null / []` backfill for old saves. 14 new tests. |
 
 ## Ship loop
 
@@ -63,17 +64,15 @@ PR #71 description and the team's expansion brief. **Phases 0–A shipped**. Rem
   - ⬜ Per-town trade-partner view (which settlements this town trades with and what)
   - ⬜ Cargo export-target sliders (push specific sector cargo to specific route)
 - **Phase C — Diplomacy, Conquest & the Nation gate** (the headline feature):
-  - Render **rival faction settlements + territories** on the map (already partly drawn
-    as diamonds; now they own `computeTerritoryGrid` zones in their `RegionalFaction.color`).
-  - Rival detail modal (strength, relations, treasury, territory %, treaties, vassal status)
-    with context actions: Declare War / Propose Vassalization / Buy Land.
-  - **New sim systems** in `region.ts`: vassalage (`vassals` map + tribute + territory counts
-    toward player), land purchase (gold→territory when a rival is desperate), and the
-    **50%-control nation-founding gate**: in `tick()`, set `proclamationReady` once
-    `playerTerritoryControl() >= 0.5` (one-time latch — do NOT clear if it later dips);
-    fire "Regional Hegemon" + "Proclaim Nation" → existing Constitutional Convention.
-  - `main.ts` `enterRegionMode`/transition must capture conquered/purchased/vassal territory
-    into the nation tier (provinces) and serialize all new state.
+  - ✅ Rival detail panel: click rival settlement → panel with stats + Vassalize/Buy Land buttons
+  - ✅ Vassalage system: `offerVassalage()`, tribute, `vassals`/`overlordId` on factions
+  - ✅ Land purchase: `buyLand()` — cedes settlement when rival is economically desperate
+  - ✅ `playerTerritoryControl()` counts vassal territory; `proclamationReady` gate wired
+  - ✅ `canCallConvention()` now gates on `proclamationReady` (50% territory)
+  - ⬜ **Declare War** action button in rival panel (war declaration verb against regional factions)
+  - ⬜ Rival detail modal expansion: show trade relations, threat level, historical conflict
+  - ⬜ `main.ts` `enterRegionMode`/transition must capture conquered/purchased/vassal territory
+    into the nation tier (provinces)
 - **Phase D — Polish & tier-transition stress-testing**: tooltips, panel caching, the
   full 1910→1940→nation playthrough; verify conquered settlements/cohorts/buildings survive
   the tier handoff. See the 20 stress-test cases + region→nation compatibility matrix in the

@@ -733,6 +733,11 @@ export interface RegionalFaction {
   updateFrequency: number; // days between updates (scaled by difficulty)
   currentGoal: FactionGoal | null; // procedurally generated goal, may be null
   lastGoalCheckDay: number; // when goal success/failure was last checked
+  // ---- Phase C: Vassalage (conquest tier) ----
+  /** Faction this faction is a vassal of; null if independent. */
+  overlordId: number | null;
+  /** Faction IDs that have submitted as vassals to this faction. */
+  vassals: number[];
 }
 
 // Rivals run richer regimes than the player's four (GDD §6.3: "the 1930s
@@ -1672,6 +1677,9 @@ export class RegionSim {
   // ---- Phase 0: Regional Gameplay Expansion ----
   /** 100×100 grid tracking tile visibility: fogged/explored/scouted */
   explorationMap: TileVisibility[][] = [];
+  /** One-time latch: player territory (own + vassal) has reached ≥50% of the region.
+   *  Set in monthlyUpdate; never cleared after set. Surface "Proclaim Nation" in UI. */
+  proclamationReady = false;
   /** Scout units exploring the map */
   scouts: Scout[] = [];
   /** Regional factions competing for dominance (includes player faction) */
@@ -1934,10 +1942,17 @@ export class RegionSim {
     return this.computeTerritoryGrid().control.get(factionId) ?? 0;
   }
 
-  /** The player's share of regional territory (0..1). Crossing 0.5 is the
-   *  nation-founding threshold (wired up in a later phase). */
+  /** The player's effective territory share (0..1), counting own settlements
+   *  plus any vassal factions' territory. Crossing 0.5 gates the Nation proclamation. */
   playerTerritoryControl(): number {
-    return this.territoryControlOf(this.playerFactionId);
+    const playerFaction = this.faction(this.playerFactionId);
+    let total = this.territoryControlOf(this.playerFactionId);
+    if (playerFaction) {
+      for (const vassalId of playerFaction.vassals) {
+        total += this.territoryControlOf(vassalId);
+      }
+    }
+    return Math.min(1, total);
   }
 
   /** Classify a settlement's three headline goods as surplus / balanced /
@@ -1983,6 +1998,8 @@ export class RegionSim {
       updateFrequency: 30, // update every month (for player, mostly unused)
       currentGoal: null, // player has no procedural goal
       lastGoalCheckDay: this.day,
+      overlordId: null,
+      vassals: [],
     };
 
     this.regionalFactions.push(playerFaction);
@@ -2037,6 +2054,8 @@ export class RegionSim {
         updateFrequency: knobs.updateFreq, // difficulty-scaled cadence (GDD §6.2)
         currentGoal: null, // will be generated on first AI update
         lastGoalCheckDay: this.day,
+        overlordId: null,
+        vassals: [],
       };
 
       this.regionalFactions.push(faction);
@@ -3058,6 +3077,38 @@ export class RegionSim {
     this.tickClimate(); // the ledger runs from the first decade (GDD §8.2)
     if (this.passedLaws.includes('central_bank_charter')) this.tickMonetary();
     this.updateLoans(); // process loan interest and check for defaults
+    if (this.stateProclaimed) this.collectVassalTribute();
+    this.checkProclamationGate();
+  }
+
+  /** Vassals pay 5% of their treasury each month as tribute to the player. */
+  private collectVassalTribute(): void {
+    const playerFaction = this.faction(this.playerFactionId);
+    if (!playerFaction) return;
+    for (const vassalId of playerFaction.vassals) {
+      const vassal = this.faction(vassalId);
+      if (!vassal) continue;
+      const tribute = Math.floor(vassal.treasury * 0.05);
+      if (tribute <= 0) continue;
+      vassal.treasury -= tribute;
+      this.treasury += tribute;
+      if (tribute >= 10) {
+        this.addLog(`TRIBUTE: ${vassal.name} pays ${formatCurrency(tribute)} to your treasury.`, 'good');
+      }
+    }
+  }
+
+  /** One-time latch: set proclamationReady once player territory ≥50%, log the milestone. */
+  private checkProclamationGate(): void {
+    if (this.proclamationReady || !this.stateProclaimed) return;
+    if (this.playerTerritoryControl() >= 0.5) {
+      this.proclamationReady = true;
+      this.addLog(
+        'REGIONAL HEGEMON: Your state controls more than half the known territory. ' +
+        'The path to nationhood lies before you — open the State panel to Proclaim the Nation.',
+        'good',
+      );
+    }
   }
 
   // ---- local markets & trade (GDD §5.2, first slice) ----
@@ -3697,6 +3748,95 @@ export class RegionSim {
     this.treasury -= cost;
     this.addLog(`Emergency grain convoy reaches ${t.name} (+${amount} food, −` + formatCurrency(cost) + `).`, 'good');
     this.townEvent(t, `Emergency grain convoy arrived.`, 'good');
+    return true;
+  }
+
+  // ---- Phase C: Conquest & Diplomacy ----
+
+  /** Player's military power relative to a rival faction (0 = even, >1 = player dominant). */
+  private militaryEdge(rivalFactionId: number): number {
+    const playerFaction = this.faction(this.playerFactionId);
+    const rival = this.faction(rivalFactionId);
+    if (!playerFaction || !rival) return 0;
+    const playerPower = playerFaction.militaryStrength + playerFaction.settlementIds.length * 2;
+    const rivalPower = Math.max(1, rival.militaryStrength + rival.settlementIds.length * 2);
+    return playerPower / rivalPower;
+  }
+
+  /**
+   * Player proposes vassalization to a rival regional faction.
+   * Accepted when the player has ≥2× military edge OR the rival is economically
+   * desperate (treasury < 100) with player at ≥1.2× military edge.
+   * Returns 'accepted' | 'refused' | 'invalid'.
+   */
+  offerVassalage(factionId: number): 'accepted' | 'refused' | 'invalid' {
+    const playerFaction = this.faction(this.playerFactionId);
+    const rival = this.faction(factionId);
+    if (!playerFaction || !rival || factionId === this.playerFactionId) return 'invalid';
+    if (rival.overlordId !== null) return 'invalid'; // already a vassal
+    if (rival.settlementIds.length === 0) return 'invalid'; // no territory to submit
+    if (!this.stateProclaimed) return 'invalid'; // need a state to receive vassals
+
+    const edge = this.militaryEdge(factionId);
+    const desperate = rival.treasury < 100;
+    const accepts = edge >= 2.0 || (desperate && edge >= 1.2);
+
+    if (accepts) {
+      rival.overlordId = this.playerFactionId;
+      playerFaction.vassals.push(factionId);
+      rival.aggressiveness = Math.max(0, rival.aggressiveness - 30);
+      this.addLog(
+        `VASSALAGE: ${rival.name} submits to your authority, pledging tribute and allegiance. ` +
+        `Their territory now counts toward your hegemony.`,
+        'good',
+      );
+      return 'accepted';
+    } else {
+      this.addLog(
+        `REFUSED: ${rival.name} rejects your offer of suzerainty. ` +
+        `Their ${rival.regime} government will not submit to a foreign power — yet.`,
+        'bad',
+      );
+      return 'refused';
+    }
+  }
+
+  /**
+   * Player purchases territory from a faction that is economically desperate
+   * (treasury < 150). The least-developed non-capital settlement is ceded; player
+   * pays £500. Returns true if the purchase completed.
+   */
+  buyLand(factionId: number): boolean {
+    const playerFaction = this.faction(this.playerFactionId);
+    const rival = this.faction(factionId);
+    if (!playerFaction || !rival || factionId === this.playerFactionId) return false;
+    if (rival.treasury >= 150) return false; // not desperate enough
+    const COST = 500;
+    if (this.treasury < COST) return false;
+
+    // Find the rival's least-populated non-capital settlement
+    const candidates = rival.settlementIds
+      .filter((id) => id !== rival.capital)
+      .map((id) => ({ id, pop: this.popOf(this.settlement(id)!) || 0 }))
+      .sort((a, b) => a.pop - b.pop);
+
+    if (candidates.length === 0) return false;
+    const ceded = candidates[0];
+    const s = this.settlement(ceded.id);
+    if (!s) return false;
+
+    // Transfer settlement to player
+    s.factionId = this.playerFactionId;
+    rival.settlementIds = rival.settlementIds.filter((id) => id !== ceded.id);
+    playerFaction.settlementIds.push(ceded.id);
+    this.treasury -= COST;
+    rival.treasury += COST;
+
+    this.addLog(
+      `LAND PURCHASE: ${rival.name} cedes ${s.name} in exchange for ${formatCurrency(COST)}. ` +
+      `Their depleted treasury accepted the offer.`,
+      'good',
+    );
     return true;
   }
 
@@ -4573,6 +4713,8 @@ export class RegionSim {
       !this.has('statecraft') ||
       this.totalPop() < 1500
     ) return false;
+    // Territory gate (Phase C): must control ≥50% of region (own + vassal territory)
+    if (!this.proclamationReady) return false;
     // Economic gate: £35k net (after loans) — ~15 months of state-level surplus
     if (this.getNetTreasury() < 35000) return false;
     // Military gate: must have 15+ combined garrison + militia
@@ -5806,6 +5948,7 @@ export class RegionSim {
       playerFactionId: this.playerFactionId,
       aiDifficulty: this.aiDifficulty,
       factionAlliances: this.factionAlliances,
+      proclamationReady: this.proclamationReady,
       exchangeRates: this.exchangeRates,
       globalTradeVolume: this.globalTradeVolume,
       nextScoutId: this.nextScoutId,
@@ -5941,6 +6084,7 @@ export class RegionSim {
     r.nextEventDay = d.nextEventDay;
     r.townNamePool = d.townNamePool;
     // Phase 0: factions, scouts, fog of war — older saves rebuild them in place
+    r.proclamationReady = d.proclamationReady ?? false;
     if (d.regionalFactions) {
       r.regionalFactions = d.regionalFactions;
       // Older saves predate per-faction regimes — backfill an era-plausible one
@@ -5949,6 +6093,9 @@ export class RegionSim {
         if (typeof f.regime !== 'string') {
           f.regime = f.id === r.playerFactionId ? 'parliamentary' : 'abs_monarchy';
         }
+        // Older saves predate vassalage — backfill as independent.
+        f.vassals = (f as unknown as { vassals?: number[] }).vassals ?? [];
+        f.overlordId = (f as unknown as { overlordId?: number | null }).overlordId ?? null;
       }
       r.playerFactionId = d.playerFactionId ?? 0;
       r.aiDifficulty = d.aiDifficulty ?? 'normal';

@@ -22,6 +22,8 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
 
 export class RegionView {
   selectedId: number | null = null;
+  /** Currently highlighted rival faction (null = none). */
+  selectedFactionId: number | null = null;
   /** set true by the view while the Incorporation ceremony is on screen */
   ceremonyOpen = false;
   conventionOpen = false;
@@ -48,6 +50,8 @@ export class RegionView {
   private policySlotIndex = -1;
   // the bargaining table (GDD §6.3): basket state lives here while composing
   private dealModal: HTMLElement;
+  private rivalPanel: HTMLElement;
+  private lastRivalPanelFactionId: number | null = null;
   private dealRivalId = -1;
   private dealTreaties = new Set<TreatyKind>();
   private dealGoldToThem = 0;
@@ -107,6 +111,9 @@ export class RegionView {
     this.centuryModal = document.createElement('div');
     this.centuryModal.className = 'ceremony hidden';
     root.appendChild(this.centuryModal);
+    this.rivalPanel = document.createElement('div');
+    this.rivalPanel.className = 'inspector region-panel hidden';
+    root.appendChild(this.rivalPanel);
   }
 
   destroyPanel(): void {
@@ -121,6 +128,7 @@ export class RegionView {
     this.policyModal.remove();
     this.dealModal.remove();
     this.centuryModal.remove();
+    this.rivalPanel.remove();
   }
 
   private toPx(x: number, y: number): { px: number; py: number } {
@@ -132,6 +140,7 @@ export class RegionView {
 
   click(px: number, py: number): void {
     this.selectedId = null;
+    this.selectedFactionId = null;
     // Convert the screen click into map-space (undo the camera) so hit-testing
     // matches the transformed sprites. The 26px pick radius scales with zoom.
     const mx = (px - this.camX) / this.camScale;
@@ -140,8 +149,13 @@ export class RegionView {
     for (const t of this.region.settlements) {
       const p = this.toPx(t.x, t.y);
       if (Math.hypot(p.px - mx, p.py - my) < radius) {
-        this.selectedId = t.id;
-        break;
+        if (t.factionId === this.region.playerFactionId) {
+          this.selectedId = t.id;
+        } else {
+          // Clicking a rival settlement opens the rival faction panel
+          this.selectedFactionId = t.factionId;
+        }
+        return;
       }
     }
   }
@@ -322,31 +336,46 @@ export class RegionView {
     // Phase 0: per-settlement food/wood/goods status icons.
     this.drawResourceIndicators();
 
-    // AI faction settlements: small colored diamond markers
+    // AI faction settlements: diamond markers with vassal badge and selection ring.
     for (const faction of region.regionalFactions) {
       if (faction.id === region.playerFactionId) continue;
       const color = faction.color ?? '#aaa';
+      const isVassal = faction.overlordId === region.playerFactionId;
       for (const settlementId of faction.settlementIds) {
         const s = region.settlement(settlementId);
         if (!s) continue;
         const { px, py } = this.toPx(s.x, s.y);
-        // Diamond marker for AI settlements
-        g.fillStyle = color;
+        const selected = this.selectedFactionId === faction.id;
+        // Selection halo
+        if (selected) {
+          g.strokeStyle = '#fff';
+          g.lineWidth = 2;
+          g.beginPath();
+          g.arc(px, py, 14, 0, Math.PI * 2);
+          g.stroke();
+        }
+        // Diamond marker (slightly larger: 9px for clickability)
+        g.fillStyle = isVassal ? '#8fc26a' : color;
         g.beginPath();
-        g.moveTo(px, py - 7);
-        g.lineTo(px + 5, py);
-        g.lineTo(px, py + 7);
-        g.lineTo(px - 5, py);
+        g.moveTo(px, py - 9);
+        g.lineTo(px + 7, py);
+        g.lineTo(px, py + 9);
+        g.lineTo(px - 7, py);
         g.closePath();
         g.fill();
-        // Thin dark outline
         g.strokeStyle = 'rgba(0,0,0,0.6)';
         g.lineWidth = 1;
         g.stroke();
-        g.fillStyle = '#fff';
+        if (isVassal) {
+          g.fillStyle = '#fff';
+          g.font = 'bold 8px monospace';
+          g.textAlign = 'center';
+          g.fillText('V', px, py + 3);
+        }
+        g.fillStyle = '#ddd';
         g.font = '9px monospace';
         g.textAlign = 'center';
-        g.fillText(faction.name.slice(0, 3), px, py + 18);
+        g.fillText(faction.name.slice(0, 3), px, py + 21);
       }
     }
 
@@ -437,6 +466,7 @@ export class RegionView {
     this.drawRivalBanners(W, H);
     this.drawWeather(W, H);
     this.drawPanel();
+    this.drawRivalPanel();
     this.drawStatePanel();
     this.drawResearchPanel();
     this.drawRouteNetworkPanel();
@@ -1125,6 +1155,12 @@ export class RegionView {
       `<button class="mini" id="settlements-toggle" title="Settlement list (S)">${this.settlementListOpen ? '▲' : '▼'} S:towns</button> ` +
       `<button class="mini" id="economy-toggle" title="Economy panel (E)">${this.economyOpen ? '▲' : '▼'} E:econ</button>` +
       `</p>` +
+      (!r.nationProclaimed && r.stateProclaimed && !r.proclamationReady
+        ? `<p style="color:#bfae86;font-size:10px">territory ${(r.playerTerritoryControl() * 100).toFixed(0)}% / 50% needed for nation gate</p>`
+        : '') +
+      (r.proclamationReady && !r.nationProclaimed && !r.canCallConvention()
+        ? `<p style="color:#8fc26a;font-size:10px">★ REGIONAL HEGEMON — nation gate unlocked (meet Convention requirements to proceed)</p>`
+        : '') +
       (r.canCallConvention() ? `<p><button id="convention-btn" style="font-size:10px;background:#8b5cf6;color:#fff;border:none;padding:4px 8px;cursor:pointer">★ CONVENE CONSTITUTIONAL CONVENTION</button></p>` : '') +
       this.politicsHtml() +
       this.diplomacyHtml() +
@@ -2002,6 +2038,73 @@ export class RegionView {
     if (svcBtn) svcBtn.onclick = () => { this.region.servicesLevel = Math.min(2, this.region.servicesLevel + 1); this.refreshPanel(); };
     const taxBtn = this.panel.querySelector<HTMLButtonElement>('.crisis-tax-btn');
     if (taxBtn) taxBtn.onclick = () => { this.region.taxRate = Math.max(0, this.region.taxRate - 0.02); this.refreshPanel(); };
+  }
+
+  /** Phase C: rival faction detail panel — shown when the player clicks a rival
+   *  settlement. Displays faction stats and conquest/diplomacy action buttons. */
+  private drawRivalPanel(): void {
+    const r = this.region;
+    if (this.selectedFactionId === null) {
+      this.rivalPanel.classList.add('hidden');
+      this.lastRivalPanelFactionId = null;
+      return;
+    }
+    this.rivalPanel.classList.remove('hidden');
+    const fid = this.selectedFactionId;
+    if (this.lastRivalPanelFactionId === fid && this.frame - this.lastPanelBuildFrame < 60) return;
+    this.lastRivalPanelFactionId = fid;
+
+    const faction = r.faction(fid);
+    if (!faction) { this.rivalPanel.classList.add('hidden'); return; }
+    const stats = r.getFactionStats(fid);
+    if (!stats) { this.rivalPanel.classList.add('hidden'); return; }
+
+    const playerFaction = r.faction(r.playerFactionId);
+    const isVassal = faction.overlordId === r.playerFactionId;
+    const territory = (r.territoryControlOf(fid) * 100).toFixed(1);
+    const regimeDef = RIVAL_REGIMES.find((x) => x.id === faction.regime);
+    const regimeName = regimeDef?.name ?? faction.regime;
+
+    const canVassalize = !isVassal && faction.settlementIds.length > 0 && r.stateProclaimed;
+    const canBuyLand = faction.treasury < 150 && faction.settlementIds.length > 1 && (playerFaction?.treasury ?? 0) >= 500;
+
+    this.rivalPanel.innerHTML =
+      `<h3><span style="color:${faction.color}">■</span> ${faction.name}</h3>` +
+      `<p class="insp-skills">${regimeName} · ${faction.regime}</p>` +
+      (isVassal ? `<p style="color:#8fc26a">★ Vassal of your state</p>` : '') +
+      `<p>settlements <b>${stats.settlements}</b> · pop <b>${stats.population}</b></p>` +
+      `<p>treasury <b>${formatCurrency(stats.treasury)}</b> · military <b>${stats.militaryStrength}</b></p>` +
+      `<p>territory <b>${territory}%</b> of region</p>` +
+      (stats.currentGoal ? `<p>goal <i>${stats.currentGoal}</i></p>` : '') +
+      `<hr>` +
+      (canVassalize
+        ? `<button id="rival-vassalize-btn">Propose Vassalization</button><br>`
+        : isVassal ? '' : `<button disabled title="Need 2× military edge or rival treasury &lt;100">Propose Vassalization</button><br>`) +
+      (canBuyLand
+        ? `<button id="rival-buy-land-btn">Buy Land (£500)</button><br>`
+        : `<button disabled title="Rival treasury must be &lt;£150 and you need £500">Buy Land</button><br>`) +
+      `<button id="rival-close-btn" class="mini" style="margin-top:6px">Close</button>`;
+
+    this.rivalPanel.querySelector<HTMLButtonElement>('#rival-close-btn')!.onclick = () => {
+      this.selectedFactionId = null;
+    };
+    const vassalBtn = this.rivalPanel.querySelector<HTMLButtonElement>('#rival-vassalize-btn');
+    if (vassalBtn) {
+      vassalBtn.onclick = () => {
+        const result = r.offerVassalage(fid);
+        if (result === 'accepted') {
+          this.selectedFactionId = null; // panel will rebuild next frame
+        }
+        this.lastRivalPanelFactionId = null; // force rebuild
+      };
+    }
+    const buyBtn = this.rivalPanel.querySelector<HTMLButtonElement>('#rival-buy-land-btn');
+    if (buyBtn) {
+      buyBtn.onclick = () => {
+        r.buyLand(fid);
+        this.lastRivalPanelFactionId = null; // force rebuild
+      };
+    }
   }
 
   /** Defence row: this town's garrison plus a button to drill more militia —
