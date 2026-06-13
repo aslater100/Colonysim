@@ -415,39 +415,44 @@ export class RegionView {
     // ✓/✗ chip so the player can see exactly what still blocks Incorporation.
     if (!region.stateProclaimed) {
       if (region.ceremonyPending || region.charterEligible()) {
-        g.fillStyle = 'rgba(16,14,10,0.85)';
-        g.fillRect(W / 2 - 230, H - 40, 460, 26);
-        g.fillStyle = '#8fc26a';
-        g.font = '12px monospace';
+        g.font = 'bold 13px monospace';
         const need = region.ceremonyPending
           ? 'The Charter is drafted — the towns await your proclamation.'
           : `Regional Charter being drafted… ${Math.floor(region.charterProgress)}%`;
+        const bw = Math.max(460, g.measureText(need).width + 28);
+        g.fillStyle = 'rgba(12,10,7,0.94)';
+        g.fillRect(W / 2 - bw / 2, H - 46, bw, 32);
+        g.strokeStyle = 'rgba(143,194,106,0.5)';
+        g.strokeRect(W / 2 - bw / 2 + 0.5, H - 46 + 0.5, bw - 1, 31);
+        g.fillStyle = '#a8e06a';
         g.textAlign = 'center';
-        g.fillText(need, W / 2, H - 23);
+        g.fillText(need, W / 2, H - 25);
         g.textAlign = 'left';
       } else {
         // Not yet eligible: draw the gate chips, color-coded, centered.
         const gates = region.charterGates();
-        g.font = '12px monospace';
+        g.font = 'bold 13px monospace';
         const head = 'Toward Statehood — ';
         const segs = gates.map((gt) => ({
           text: `${gt.met ? '✓' : '✗'} ${gt.label} ${gt.detail}`,
-          color: gt.met ? '#8fc26a' : '#e0995a',
+          color: gt.met ? '#a8e06a' : '#f0a868',
         }));
         const sep = '   ';
         const totalW = g.measureText(head).width +
           segs.reduce((w, s, i) => w + g.measureText(s.text).width + (i ? g.measureText(sep).width : 0), 0);
-        const bw = Math.max(460, totalW + 24);
-        g.fillStyle = 'rgba(16,14,10,0.85)';
-        g.fillRect(W / 2 - bw / 2, H - 40, bw, 26);
+        const bw = Math.max(460, totalW + 28);
+        g.fillStyle = 'rgba(12,10,7,0.94)';
+        g.fillRect(W / 2 - bw / 2, H - 46, bw, 32);
+        g.strokeStyle = 'rgba(143,194,106,0.45)';
+        g.strokeRect(W / 2 - bw / 2 + 0.5, H - 46 + 0.5, bw - 1, 31);
         let x = W / 2 - totalW / 2;
-        const y = H - 23;
+        const y = H - 25;
         g.textAlign = 'left';
-        g.fillStyle = '#bfae86';
+        g.fillStyle = '#f0e6cc';
         g.fillText(head, x, y);
         x += g.measureText(head).width;
         for (let i = 0; i < segs.length; i++) {
-          if (i) { g.fillStyle = '#5a5247'; g.fillText(sep, x, y); x += g.measureText(sep).width; }
+          if (i) { g.fillStyle = '#7a7060'; g.fillText(sep, x, y); x += g.measureText(sep).width; }
           g.fillStyle = segs[i].color;
           g.fillText(segs[i].text, x, y);
           x += g.measureText(segs[i].text).width;
