@@ -85,6 +85,9 @@ export interface Settlement {
   activeEvents: ActiveEvent[];
   /** Phase 5: local governance policies for managed cities. */
   policies: CityPolicies;
+  // ---- AI Competitors Phase 2d: settlement resource bias ----
+  /** Primary resource focus: wool, grain, iron, wood (tied to founding location/goal) */
+  resourceFocus?: 'wool' | 'grain' | 'iron' | 'wood' | 'diverse';
 }
 
 /** Local markets (GDD §5.2, first slice): each town prices the two goods
@@ -949,7 +952,14 @@ const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSi
         govTypes: ['junta', 'one_party', 'fascist', 'corporate'],
         generatedYear: region.year,
         targetYear: region.year + 10,
-        successCondition: (f) => f.militaryStrength > 50,
+        successCondition: (f, r) => {
+          // Success: high garrison strength across settlements (3+ settlements with 10+ garrison each)
+          const garrisonedSettlements = f.settlementIds.filter((id) => {
+            const s = r.settlement(id);
+            return s && s.garrisonStrength >= 10;
+          }).length;
+          return garrisonedSettlements >= 3 && f.militaryStrength >= 40;
+        },
         description: 'Build the strongest army — every neighbor must tremble.',
         sectorFocus: 'military',
         settlementBias: ['mountain', 'plains'],
@@ -965,7 +975,14 @@ const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSi
         govTypes: ['junta', 'one_party', 'fascist'],
         generatedYear: region.year,
         targetYear: region.year + 15,
-        successCondition: (f) => f.treasury >= 400,
+        successCondition: (f, r) => {
+          // Success: control 3+ iron-focused settlements AND have industrial treasury
+          const ironSettlements = f.settlementIds.filter((id) => {
+            const s = r.settlement(id);
+            return s?.resourceFocus === 'iron';
+          }).length;
+          return ironSettlements >= 3 && f.treasury >= 300;
+        },
         description: 'Monopolize strategic resources — lock rivals out of industrialization.',
         sectorFocus: 'industry',
         settlementBias: ['mountain'],
@@ -999,7 +1016,14 @@ const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSi
         govTypes: ['theocracy'],
         generatedYear: region.year,
         targetYear: region.year + 25,
-        successCondition: (f) => f.settlementIds.length >= 4,
+        successCondition: (f, r) => {
+          // Success: expansion to 5+ settlements with high collective satisfaction (cultural dominance)
+          const totalPop = f.settlementIds.reduce((sum, id) => {
+            const s = r.settlement(id);
+            return sum + (s ? r.popOf(s) : 0);
+          }, 0);
+          return f.settlementIds.length >= 5 && totalPop >= 300;
+        },
         description: 'Convert the godless — expand the church\'s reach.',
         sectorFocus: 'culture',
         settlementBias: ['river', 'plains', 'coastal'],
@@ -1016,7 +1040,14 @@ const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSi
         govTypes: ['merchant_republic', 'parliamentary'],
         generatedYear: region.year,
         targetYear: region.year + 12,
-        successCondition: (f) => f.treasury >= 500,
+        successCondition: (f, r) => {
+          // Success: control 3+ coastal settlements (wool producers)
+          const woolSettlements = f.settlementIds.filter((id) => {
+            const s = r.settlement(id);
+            return s?.resourceFocus === 'wool';
+          }).length;
+          return woolSettlements >= 3 && f.treasury >= 400;
+        },
         description: 'Become the merchant kings — the continent trades at your prices.',
         sectorFocus: 'commerce',
         settlementBias: ['river', 'coastal'],
@@ -1033,7 +1064,14 @@ const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSi
         govTypes: ['parliamentary', 'merchant_republic'],
         generatedYear: region.year,
         targetYear: region.year + 15,
-        successCondition: (f) => f.settlementIds.length >= 3,
+        successCondition: (f, r) => {
+          // Success: 3+ settlements with high average satisfaction (cultural health)
+          const culturedSettlements = f.settlementIds.filter((id) => {
+            const s = r.settlement(id);
+            return s && s.satisfaction >= 65;
+          }).length;
+          return culturedSettlements >= 3;
+        },
         description: 'Make us the intellectual heart of the continent.',
         sectorFocus: 'culture',
         supportingTechs: ['universities', 'printing_press'],
@@ -1050,7 +1088,14 @@ const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSi
         govTypes: ['abs_monarchy', 'junta', 'one_party', 'fascist', 'const_monarchy'],
         generatedYear: region.year,
         targetYear: region.year + 20,
-        successCondition: (f) => f.settlementIds.length >= 4,
+        successCondition: (f, r) => {
+          // Success: 4+ settlements with combined population 400+
+          const totalPop = f.settlementIds.reduce((sum, id) => {
+            const s = r.settlement(id);
+            return sum + (s ? r.popOf(s) : 0);
+          }, 0);
+          return f.settlementIds.length >= 4 && totalPop >= 400;
+        },
         description: 'Expand our borders — empty lands await settlement.',
         sectorFocus: 'agriculture',
         settlementBias: ['river', 'plains', 'forest'],
@@ -3674,6 +3719,92 @@ export class RegionSim {
         demand: merchantSupport < 40 ? 'open markets' : 'content',
       },
     ];
+
+    // Update regional faction economies: calculate production based on resource focus
+    this.updateRegionalTrade();
+  }
+
+  /** Calculate regional trade dynamics: factions compete for market dominance by resource type. */
+  private updateRegionalTrade(): void {
+    // Calculate resource production for each faction
+    const factionResources: Record<number, Record<string, number>> = {};
+
+    for (const faction of this.regionalFactions) {
+      factionResources[faction.id] = {
+        wool: 0,
+        grain: 0,
+        iron: 0,
+        wood: 0,
+      };
+
+      for (const settlementId of faction.settlementIds) {
+        const settlement = this.settlement(settlementId);
+        if (!settlement) continue;
+
+        const focus = settlement.resourceFocus ?? 'diverse';
+        const pop = this.popOf(settlement);
+
+        // Production scales with population and resource focus
+        const baseProduction = pop * 0.5;
+        if (focus === 'wool') {
+          factionResources[faction.id].wool += baseProduction * 1.5;
+        } else if (focus === 'grain') {
+          factionResources[faction.id].grain += baseProduction * 1.5;
+        } else if (focus === 'iron') {
+          factionResources[faction.id].iron += baseProduction * 1.5;
+        } else if (focus === 'wood') {
+          factionResources[faction.id].wood += baseProduction * 1.5;
+        } else {
+          // diverse: spread evenly
+          factionResources[faction.id].wool += baseProduction * 0.3;
+          factionResources[faction.id].grain += baseProduction * 0.3;
+          factionResources[faction.id].iron += baseProduction * 0.2;
+          factionResources[faction.id].wood += baseProduction * 0.2;
+        }
+      }
+    }
+
+    // Calculate total regional production for price dynamics
+    const totalProduction = {
+      wool: 0,
+      grain: 0,
+      iron: 0,
+      wood: 0,
+    };
+
+    for (const resources of Object.values(factionResources)) {
+      totalProduction.wool += resources.wool;
+      totalProduction.grain += resources.grain;
+      totalProduction.iron += resources.iron;
+      totalProduction.wood += resources.wood;
+    }
+
+    // Update faction treasuries based on trade dominance
+    for (const faction of this.regionalFactions) {
+      if (faction.id === this.playerFactionId) continue; // Player treasury handled elsewhere
+
+      const resources = factionResources[faction.id];
+      let tradeIncome = 0;
+
+      // Factions with dominant resource production earn more
+      if (totalProduction.wool > 0 && resources.wool > totalProduction.wool * 0.4) {
+        tradeIncome += resources.wool * 0.08;
+      }
+      if (totalProduction.grain > 0 && resources.grain > totalProduction.grain * 0.4) {
+        tradeIncome += resources.grain * 0.06;
+      }
+      if (totalProduction.iron > 0 && resources.iron > totalProduction.iron * 0.5) {
+        tradeIncome += resources.iron * 0.12;
+      }
+      if (totalProduction.wood > 0 && resources.wood > totalProduction.wood * 0.4) {
+        tradeIncome += resources.wood * 0.07;
+      }
+
+      // General trade income from all settlements
+      tradeIncome += faction.settlementIds.length * 5;
+
+      faction.treasury += tradeIncome;
+    }
   }
 
   // ---- Elections (GDD §5.3) ----
@@ -5676,18 +5807,37 @@ export class RegionSim {
     void oldX; // suppress unused warning
   }
 
-  /** Find best tile for scout to explore, biased by goal. Returns nearest unexplored tile. */
+  /** Find best tile for scout to explore, biased by goal. Returns tile matching goal bias. */
   private scoutDestinationTile(_scout: Scout, faction: RegionalFaction): { x: number; y: number } | null {
-    // Pick random unexplored region, search toward it
-    const targetX = this.rng.int(100), targetY = this.rng.int(100);
+    const bias = faction.currentGoal?.settlementBias ?? [];
 
-    // If goal has settlementBias, prefer tiles matching that type (Phase 2b)
-    if (faction.currentGoal?.settlementBias) {
-      // TODO Phase 2b: use bias to find matching site type
-      void faction.currentGoal.settlementBias;
+    // If no bias, return random target
+    if (bias.length === 0) {
+      return { x: this.rng.int(100), y: this.rng.int(100) };
     }
 
-    return { x: targetX, y: targetY };
+    // Sample 10 random tiles, pick best match for goal bias
+    let bestTile: { x: number; y: number } | null = null;
+    let bestMatches = 0;
+
+    for (let i = 0; i < 10; i++) {
+      const x = this.rng.int(100);
+      const y = this.rng.int(100);
+      const siteTypes = this.siteType(x, y);
+
+      // Count how many bias types match
+      let matches = 0;
+      for (const b of bias) {
+        if (siteTypes.includes(b)) matches++;
+      }
+
+      if (matches > bestMatches) {
+        bestMatches = matches;
+        bestTile = { x, y };
+      }
+    }
+
+    return bestTile ?? { x: this.rng.int(100), y: this.rng.int(100) };
   }
 
   // ---- Settlement Expansion (Phase 2b: Monte Carlo placement) ----
@@ -5761,6 +5911,14 @@ export class RegionSim {
     const site = this.map.siteAt(Math.round(x), Math.round(y));
     if (!site) return null;
 
+    // Determine resource focus from site characteristics
+    const siteTypes = this.siteType(Math.round(x), Math.round(y));
+    let resourceFocus: 'wool' | 'grain' | 'iron' | 'wood' | 'diverse' = 'diverse';
+    if (siteTypes.includes('coastal')) resourceFocus = 'wool'; // trade goods
+    else if (siteTypes.includes('plains')) resourceFocus = 'grain'; // agriculture
+    else if (siteTypes.includes('mountain')) resourceFocus = 'iron'; // mining
+    else if (siteTypes.includes('forest')) resourceFocus = 'wood'; // forestry
+
     const settlement: Settlement = {
       id: this.nextId++,
       name: `${faction.name}'s Outpost`, // TODO: better naming
@@ -5789,6 +5947,7 @@ export class RegionSim {
       activeEvents: [],
       policies: { ...DEFAULT_CITY_POLICIES },
       recentEvents: [],
+      resourceFocus,
     };
 
     this.settlements.push(settlement);
