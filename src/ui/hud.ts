@@ -724,23 +724,45 @@ export class Hud {
   private stockpileCard(): string {
     const s = this.sim;
     const tileCount = s.world.tiles.filter((t) => t.stockpileZone).length;
-    const mealCap = s.mealCap();
+    const cap      = s.stockpileCapacity();
+    const raw      = s.totalRawStock();
+    const mealCap  = s.mealCap();
     const granaryCount = s.builtOf('granary').length;
-    const rows = [
-      ['Wood', s.stock.wood, '∞'],
-      ['Stone', s.stock.stone, '∞'],
-      ['Grain', s.stock.grain, '∞'],
-      ['Meals', s.stock.meal, mealCap],
-      ['Clothes', s.stock.clothes, '∞'],
-      ['Weapons', s.stock.weapons, '∞'],
-    ].map(([label, val, cap]) =>
-      `<div class="bar-row"><span>${label}</span><div class="bar"><div class="bar-fill" style="width:${cap === '∞' ? 50 : Math.min(100, Math.round(Number(val) / Number(cap) * 100))}%"></div></div><span>${val}/${cap}</span></div>`
-    ).join('');
+
+    const usePct   = cap > 0 ? Math.min(100, Math.round(raw / cap * 100)) : 0;
+    const useColor = usePct >= 90 ? '#e07a5a' : usePct >= 70 ? '#c8a84a' : '#7a8c3a';
+    const mealPct  = Math.min(100, Math.round(s.stock.meal / mealCap * 100));
+
+    const GOODS: [string, number][] = [
+      ['Wood',    s.stock.wood],
+      ['Stone',   s.stock.stone],
+      ['Grain',   s.stock.grain],
+      ['Clothes', s.stock.clothes],
+      ['Weapons', s.stock.weapons],
+    ];
+    const goodRows = GOODS.map(([label, val]) => {
+      const pct = cap > 0 ? Math.min(100, Math.round(val / cap * 100)) : 0;
+      return `<div class="bar-row">` +
+        `<span class="sp-lbl">${label}</span>` +
+        `<div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>` +
+        `<span class="sp-val">${Math.round(val)}</span></div>`;
+    }).join('');
+
     return (
       `<h3>Stockpile</h3>` +
-      `<p class="insp-state">${tileCount} tile${tileCount !== 1 ? 's' : ''} designated</p>` +
-      rows +
-      (granaryCount > 0 ? `<p class="insp-skills">Meal cap: ${TUNING.mealCapBase} base + ${granaryCount} granary = ${mealCap}</p>` : `<p class="insp-skills">Build a Granary to extend meal storage.</p>`)
+      `<p class="insp-state">${tileCount} tile${tileCount !== 1 ? 's' : ''} · ${cap} cap</p>` +
+      `<div class="bar-row">` +
+        `<span class="sp-lbl">Total</span>` +
+        `<div class="bar"><div class="bar-fill" style="width:${usePct}%;background:${useColor}"></div></div>` +
+        `<span class="sp-val">${raw}/${cap}</span></div>` +
+      goodRows +
+      `<div class="bar-row">` +
+        `<span class="sp-lbl">Meals</span>` +
+        `<div class="bar"><div class="bar-fill" style="width:${mealPct}%"></div></div>` +
+        `<span class="sp-val">${Math.round(s.stock.meal)}/${mealCap}</span></div>` +
+      (granaryCount > 0
+        ? `<p class="insp-skills">Meal cap: ${TUNING.mealCapBase}+${granaryCount} granary=${mealCap}</p>`
+        : `<p class="insp-skills">Build a Granary to extend meal storage.</p>`)
     );
   }
 

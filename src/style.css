@@ -250,6 +250,7 @@ body {
   width: 250px;
   max-height: calc(100vh - 180px);
   overflow-y: auto;
+  overflow-x: hidden;
   background: rgba(16, 14, 10, 0.94);
   border: 2px solid #6e4a2f;
   padding: 8px;
@@ -344,6 +345,22 @@ body {
 .bar-row span:last-child {
   width: 24px;
   text-align: right;
+}
+
+/* Stockpile card label / value — wider to accommodate "185/450" */
+.sp-lbl {
+  width: 58px;
+  min-width: 58px;
+  flex-shrink: 0;
+  color: #998c6e;
+}
+
+.sp-val {
+  width: 54px;
+  min-width: 54px;
+  flex-shrink: 0;
+  text-align: right;
+  color: #c8b888;
 }
 
 .bar {
@@ -699,18 +716,23 @@ body {
   position: fixed;
   inset: 0;
   z-index: 50;
-  background-color: #050403;
-  background-image:
-    linear-gradient(rgba(110, 74, 47, 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(110, 74, 47, 0.055) 1px, transparent 1px);
-  background-size: 48px 48px;
+  background: #5aaa38; /* fallback while canvas initialises */
   display: flex;
   align-items: stretch;
+}
+
+.ts-bg-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
 }
 
 .ts-layout {
   display: flex;
   width: 100%;
+  position: relative;
+  z-index: 1;
 }
 
 .ts-left {
@@ -720,10 +742,10 @@ body {
   justify-content: center;
   padding: 80px 10% 60px;
   background: linear-gradient(
-    105deg,
-    rgba(5, 4, 3, 0.15) 0%,
-    rgba(5, 4, 3, 0.70) 55%,
-    rgba(5, 4, 3, 0.97) 100%
+    108deg,
+    rgba(255, 252, 235, 0.78) 0%,
+    rgba(255, 250, 228, 0.58) 52%,
+    rgba(255, 248, 220, 0.05) 100%
   );
 }
 
@@ -732,24 +754,24 @@ body {
 .ts-title {
   font-size: 56px;
   letter-spacing: 14px;
-  color: #e8d27a;
-  text-shadow: 0 0 80px rgba(232, 210, 122, 0.25), 3px 3px 0 rgba(0, 0, 0, 0.6);
+  color: #2a1a04;
+  text-shadow: 1px 1px 0 rgba(255,240,160,0.7), 0 2px 18px rgba(180,120,10,0.18);
   font-weight: normal;
   margin-bottom: 10px;
 }
 
 .ts-tagline {
-  color: #7a8a9a;
+  color: #3a5a18;
   font-size: 12px;
   letter-spacing: 3px;
   text-transform: uppercase;
 }
 
 .ts-quote {
-  color: #4a5a6a;
+  color: #4a3010;
   font-size: 12px;
   font-style: italic;
-  border-left: 2px solid #2a1a0a;
+  border-left: 2px solid #9a6828;
   padding-left: 18px;
   max-width: 420px;
   line-height: 1.8;
@@ -757,7 +779,7 @@ body {
 }
 
 .ts-version {
-  color: #2a3a4a;
+  color: #5a4218;
   font-size: 11px;
   margin-top: 48px;
 }
@@ -765,8 +787,8 @@ body {
 .ts-panel {
   width: 300px;
   flex-shrink: 0;
-  background: rgba(8, 6, 4, 0.97);
-  border-left: 1px solid #2a1a0a;
+  background: rgba(14, 9, 3, 0.88);
+  border-left: 1px solid #6a4820;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -784,7 +806,7 @@ body {
   padding: 12px 14px;
   margin: 2px 0;
   background: transparent;
-  color: #a8b0b8;
+  color: #b8b098;
   border: none;
   border-left: 3px solid transparent;
   font-family: 'Courier New', monospace;
@@ -795,27 +817,27 @@ body {
 }
 
 .ts-btn:hover:not(:disabled) {
-  background: rgba(110, 74, 47, 0.15);
-  border-left-color: #c8a84a;
-  color: #e8d27a;
+  background: rgba(130, 90, 30, 0.18);
+  border-left-color: #d4b050;
+  color: #f0dc80;
 }
 
-.ts-btn:disabled { color: #2a2a2a; cursor: not-allowed; }
+.ts-btn:disabled { color: #282018; cursor: not-allowed; }
 
 .ts-btn-primary {
-  color: #e8d27a !important;
-  border-left-color: #6e4a2f !important;
-  background: rgba(110, 74, 47, 0.1) !important;
+  color: #f0dc80 !important;
+  border-left-color: #7a5228 !important;
+  background: rgba(120, 80, 20, 0.14) !important;
   font-size: 15px !important;
 }
 
 .ts-btn-primary:hover:not(:disabled) {
-  background: rgba(110, 74, 47, 0.25) !important;
-  border-left-color: #e8d27a !important;
+  background: rgba(140, 96, 24, 0.28) !important;
+  border-left-color: #f0dc80 !important;
 }
 
-.ts-btn-back { color: #5a6a7a !important; font-size: 12px !important; }
-.ts-btn-back:hover:not(:disabled) { color: #8a9aaa !important; background: transparent !important; }
+.ts-btn-back { color: #607080 !important; font-size: 12px !important; }
+.ts-btn-back:hover:not(:disabled) { color: #90a0b0 !important; background: transparent !important; }
 
 .ts-btn-quit { color: #7a4a30 !important; }
 .ts-btn-quit:hover:not(:disabled) {
@@ -824,11 +846,11 @@ body {
   background: rgba(80, 25, 5, 0.15) !important;
 }
 
-.ts-arrow { color: #5a6a7a; }
+.ts-arrow { color: #607080; }
 
 .ts-sep {
   height: 1px;
-  background: #180f06;
+  background: #1c120a;
   margin: 6px 0;
 }
 

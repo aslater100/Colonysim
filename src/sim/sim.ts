@@ -1914,9 +1914,11 @@ export class Simulation {
       candidates.push({ task, prio, dist });
     };
 
-    // Haul ground items to the stockpile zone.
+    // Haul ground items to the stockpile zone (blocked when raw-goods capacity is full).
+    const rawCap = this.stockpileCapacity();
+    const rawFull = rawCap > 0 && this.totalRawStock() >= rawCap;
     for (const it of this.items) {
-      if (it.reservedBy === null) {
+      if (it.reservedBy === null && !rawFull) {
         push({ kind: 'haul', x: it.x, y: it.y, itemId: it.id, workLeft: 5, label: `haul ${it.kind}` }, 'haul');
       }
     }
