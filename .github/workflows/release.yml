@@ -24,13 +24,14 @@ jobs:
           else
             echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
           fi
-      - name: Create release with description
+      - name: Create draft release with description
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
           VERSION="${TAG#v}"
           gh release create "$TAG" \
+            --draft \
             --title "$VERSION" \
             --notes "## Download Centuria $VERSION
 
@@ -65,3 +66,23 @@ Already installed? The app checks for updates automatically each time it launche
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+  publish-release:
+    needs: release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.release.outputs.tag }}"
+          if [[ -z "$TAG" ]]; then
+            if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+              TAG="$GITHUB_REF_NAME"
+            else
+              TAG="v$(node -p "require('./package.json').version")"
+            fi
+          fi
+          gh release edit "$TAG" --draft=false
