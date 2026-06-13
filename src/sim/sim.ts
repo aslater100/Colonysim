@@ -221,6 +221,8 @@ export class Simulation {
   mayorNotableId: number | null = null;
 
   currencySymbol: CurrencySymbol = '$';
+  /** Chosen at town design; carried into region mode to tune the AI competitors. */
+  difficulty: 'easy' | 'normal' | 'hard' = 'normal';
   marketDisruptionEnd = 0;
   priceModifiers: Record<ResourceKind, number>;  // multiplier for each resource at town level
   lastPriceRecalcDay = -999;
@@ -259,6 +261,7 @@ export class Simulation {
    *  here once, penalty-free — later switches go through changeCurrency(). */
   private applyTownDesign(design: TownDesign): void {
     const preset = DIFFICULTY_PRESETS[design.difficulty];
+    this.difficulty = design.difficulty;
     this.stock.wood = Math.round(this.stock.wood * preset.stockMult);
     this.stock.grain = Math.round(this.stock.grain * preset.stockMult);
     this.stock.meal = Math.round(this.stock.meal * preset.stockMult);

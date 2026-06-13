@@ -112,6 +112,20 @@ export const DIFFICULTY_PRESETS = {
   hard: { stockMult: 0.6, startCash: 200 },
 } as const;
 
+/** Difficulty also drives the regional AI competitors (GDD §6.2): how often
+ *  rivals act, how hard they expand and fight, how fast they research, and how
+ *  ambitious (short-fused) their goals are. `easy` is the "story" pole — passive,
+ *  slow, generous deadlines; `hard` is "brutal" — frequent, aggressive, fast.
+ *  `goalYearsMult` stretches (>1) or compresses (<1) each goal's deadline, so a
+ *  hard AI sets itself tighter, more aggressive timelines. */
+export const AI_DIFFICULTY = {
+  easy:   { updateFreq: 150, expandChance: 0.06, settlementCap: 4, techMult: 0.7, raidMult: 0.4, goalYearsMult: 1.5, scoutChance: 0.06, aggressionBias: -20 },
+  normal: { updateFreq: 90,  expandChance: 0.10, settlementCap: 6, techMult: 1.0, raidMult: 1.0, goalYearsMult: 1.0, scoutChance: 0.10, aggressionBias: 0 },
+  hard:   { updateFreq: 45,  expandChance: 0.16, settlementCap: 8, techMult: 1.4, raidMult: 1.8, goalYearsMult: 0.7, scoutChance: 0.16, aggressionBias: 20 },
+} as const;
+
+export type AiDifficulty = keyof typeof AI_DIFFICULTY;
+
 // ---- Market automation ----
 export interface TradeOrder {
   id: number;
