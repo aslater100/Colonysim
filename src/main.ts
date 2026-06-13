@@ -265,6 +265,24 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     return;
   }
+  // Region-map zoom/reset from the keyboard (zoom centers on the screen).
+  if (mode === 'region' && !dioramaOpen && regionView) {
+    if (e.key === '+' || e.key === '=') {
+      regionView.zoomAt(canvas.width / 2, canvas.height / 2, 1);
+      e.preventDefault();
+      return;
+    }
+    if (e.key === '-' || e.key === '_') {
+      regionView.zoomAt(canvas.width / 2, canvas.height / 2, -1);
+      e.preventDefault();
+      return;
+    }
+    if (e.key === '0') {
+      regionView.resetView();
+      e.preventDefault();
+      return;
+    }
+  }
   // Palette hotkeys (the bracketed letters on the buttons)
   if (mode === 'town' && hud.handleKey(e.key)) {
     e.preventDefault();
@@ -274,6 +292,16 @@ window.addEventListener('keyup', (e) => keys.delete(e.key));
 
 canvas.addEventListener('mousemove', (e) => {
   cam.mouseTile = renderer.tileAt(e.clientX, e.clientY);
+  // Region map: left-drag pans the camera.
+  if (regionDrag.active && e.buttons === 1 && mode === 'region' && !dioramaOpen && regionView) {
+    const dx = e.clientX - regionDrag.lastX;
+    const dy = e.clientY - regionDrag.lastY;
+    regionDrag.lastX = e.clientX;
+    regionDrag.lastY = e.clientY;
+    regionDrag.moved += Math.abs(dx) + Math.abs(dy);
+    regionView.panBy(dx, dy);
+    return;
+  }
   // drag-paint zones/roads and chop/quarry marks
   if (e.buttons === 1 && mode === 'town') {
     const t = cam.mouseTile;
@@ -320,15 +348,26 @@ function bresenhamLine(x0: number, y0: number, x1: number, y1: number): { x: num
 
 const paintedTiles = new Set<string>();
 let prevDragTile: { x: number; y: number } | null = null;
+// Region-map drag-to-pan state. `moved` lets us tell a pan from a select-click.
+const regionDrag = { active: false, lastX: 0, lastY: 0, moved: 0 };
 
-canvas.addEventListener('mousedown', () => {
+canvas.addEventListener('mousedown', (e) => {
   paintedTiles.clear();
   prevDragTile = null;
+  if (mode === 'region' && !dioramaOpen && regionView) {
+    regionDrag.active = true;
+    regionDrag.lastX = e.clientX;
+    regionDrag.lastY = e.clientY;
+    regionDrag.moved = 0;
+  }
 });
+
+window.addEventListener('mouseup', () => { regionDrag.active = false; });
 
 canvas.addEventListener('click', (e) => {
   if (mode === 'region' && !dioramaOpen) {
-    regionView?.click(e.clientX, e.clientY);
+    // A drag pans the map; only treat a near-stationary release as a select.
+    if (regionDrag.moved < 5) regionView?.click(e.clientX, e.clientY);
     return;
   }
   if (mode === 'region') return; // diorama is look-only
@@ -393,6 +432,11 @@ minimapCanvas.addEventListener('click', () => {
 // Scroll wheel: zoom in/out around mouse cursor
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
+  // Region map has its own camera; zoom it toward the cursor.
+  if (mode === 'region' && !dioramaOpen && regionView) {
+    regionView.zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1 : -1);
+    return;
+  }
   const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
   const newZoom = Math.max(0.4, Math.min(4.0, cam.zoom * factor));
   // Zoom toward/away from mouse position
@@ -416,12 +460,22 @@ function loop(now: number): void {
   const dt = Math.min(0.25, (now - last) / 1000);
   last = now;
   const panSpeed = 420 * dt;
-  if (keys.has('ArrowLeft') || keys.has('a')) cam.x -= panSpeed;
-  if (keys.has('ArrowRight') || keys.has('d')) cam.x += panSpeed;
-  if (keys.has('ArrowUp') || keys.has('w')) cam.y -= panSpeed;
-  if (keys.has('ArrowDown') || keys.has('s')) cam.y += panSpeed;
-  cam.x = Math.max(-200, Math.min(MAP_W * TILE - canvas.width / cam.zoom + 200, cam.x));
-  cam.y = Math.max(-200, Math.min(MAP_H * TILE - canvas.height / cam.zoom + 200, cam.y));
+  if (mode === 'region' && !dioramaOpen && regionView) {
+    // Arrow/WASD scroll the region map (screen-space pan, so invert the sign).
+    let pdx = 0, pdy = 0;
+    if (keys.has('ArrowLeft') || keys.has('a')) pdx += panSpeed;
+    if (keys.has('ArrowRight') || keys.has('d')) pdx -= panSpeed;
+    if (keys.has('ArrowUp') || keys.has('w')) pdy += panSpeed;
+    if (keys.has('ArrowDown') || keys.has('s')) pdy -= panSpeed;
+    if (pdx || pdy) regionView.panBy(pdx, pdy);
+  } else {
+    if (keys.has('ArrowLeft') || keys.has('a')) cam.x -= panSpeed;
+    if (keys.has('ArrowRight') || keys.has('d')) cam.x += panSpeed;
+    if (keys.has('ArrowUp') || keys.has('w')) cam.y -= panSpeed;
+    if (keys.has('ArrowDown') || keys.has('s')) cam.y += panSpeed;
+    cam.x = Math.max(-200, Math.min(MAP_W * TILE - canvas.width / cam.zoom + 200, cam.x));
+    cam.y = Math.max(-200, Math.min(MAP_H * TILE - canvas.height / cam.zoom + 200, cam.y));
+  }
 
   if (!hud.paused) {
     acc += dt * TICKS_PER_SECOND * hud.speed;

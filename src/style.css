@@ -233,6 +233,19 @@ body {
   margin: 3px 0;
 }
 
+.rename-input {
+  background: #14110c;
+  color: #e8d27a;
+  border: 1px solid #6e4a2f;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: bold;
+  padding: 2px 4px;
+  width: 90%;
+  margin-bottom: 2px;
+  outline: none;
+}
+
 .insp-state  { color: #9ab0c4; }
 .insp-skills { color: #998c6e; font-size: 11px; }
 .insp-cond   { color: #e07a5a; font-weight: bold; }

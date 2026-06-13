@@ -53,6 +53,16 @@ export class RegionView {
   private frame = 0;
   private lastPanelBuildFrame = -999;
   private lastPanelBuildId: number | null = null;
+  /** True while the inline town-rename field is open — pauses panel rebuilds so
+   *  the once-per-second refresh doesn't destroy the input mid-edit. */
+  private editingName = false;
+  // ---- Map camera (zoom + pan). Base view (scale 1, no offset) fits the whole
+  //      region; zoom in to read crowded clusters, drag/keys to roam. ----
+  private camScale = 1;
+  private camX = 0; // screen-px offset applied after scaling
+  private camY = 0;
+  private static readonly MIN_SCALE = 1;
+  private static readonly MAX_SCALE = 6;
 
   constructor(private canvas: HTMLCanvasElement, private region: RegionSim, root: HTMLElement) {
     this.g = canvas.getContext('2d')!;
@@ -106,13 +116,57 @@ export class RegionView {
 
   click(px: number, py: number): void {
     this.selectedId = null;
+    // Convert the screen click into map-space (undo the camera) so hit-testing
+    // matches the transformed sprites. The 26px pick radius scales with zoom.
+    const mx = (px - this.camX) / this.camScale;
+    const my = (py - this.camY) / this.camScale;
+    const radius = 26;
     for (const t of this.region.settlements) {
       const p = this.toPx(t.x, t.y);
-      if (Math.hypot(p.px - px, p.py - py) < 26) {
+      if (Math.hypot(p.px - mx, p.py - my) < radius) {
         this.selectedId = t.id;
         break;
       }
     }
+  }
+
+  // ---- Camera controls (wired from main.ts) ----
+  /** Zoom toward a screen point (wheel or +/-). dir>0 zooms in. */
+  zoomAt(screenX: number, screenY: number, dir: number): void {
+    const factor = dir > 0 ? 1.15 : 1 / 1.15;
+    const next = Math.max(RegionView.MIN_SCALE, Math.min(RegionView.MAX_SCALE, this.camScale * factor));
+    if (next === this.camScale) return;
+    // Keep the map point under the cursor fixed: solve for the new offset.
+    const baseX = (screenX - this.camX) / this.camScale;
+    const baseY = (screenY - this.camY) / this.camScale;
+    this.camScale = next;
+    this.camX = screenX - baseX * next;
+    this.camY = screenY - baseY * next;
+    this.clampCamera();
+  }
+
+  /** Pan by a screen-space delta (drag or arrow/WASD keys). */
+  panBy(dx: number, dy: number): void {
+    this.camX += dx;
+    this.camY += dy;
+    this.clampCamera();
+  }
+
+  /** Snap back to the full-region view. */
+  resetView(): void {
+    this.camScale = 1;
+    this.camX = 0;
+    this.camY = 0;
+  }
+
+  /** Keep the scaled map from drifting off-screen; at scale 1 it stays pinned. */
+  private clampCamera(): void {
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+    const minX = W - W * this.camScale; // most-negative offset (right edge held)
+    const minY = H - H * this.camScale;
+    this.camX = Math.min(0, Math.max(minX, this.camX));
+    this.camY = Math.min(0, Math.max(minY, this.camY));
   }
 
   draw(): void {
@@ -123,6 +177,11 @@ export class RegionView {
 
     g.fillStyle = '#10141c';
     g.fillRect(0, 0, W, H);
+    // Everything from the terrain to the expedition wagons is map-space: apply
+    // the camera (zoom + pan) once here so individual draws stay in base coords.
+    g.save();
+    g.translate(this.camX, this.camY);
+    g.scale(this.camScale, this.camScale);
     this.drawTerrain(W, H);
     // Phase 0: contested ground — territory fills and frontier lines under all.
     this.drawTerritories(W, H);
@@ -305,20 +364,50 @@ export class RegionView {
       g.fillText(`→ ${e.name}`, px, py - 8);
     }
     g.textAlign = 'left';
+    g.restore(); // end map-space; HUD below draws in screen space
 
-    // Charter banner
+    // Charter banner — the path to the State. Each requirement reads as a
+    // ✓/✗ chip so the player can see exactly what still blocks Incorporation.
     if (!region.stateProclaimed) {
-      g.fillStyle = 'rgba(16,14,10,0.85)';
-      g.fillRect(W / 2 - 230, H - 40, 460, 26);
-      g.fillStyle = region.charterEligible() || region.ceremonyPending ? '#8fc26a' : '#998c6e';
-      g.font = '12px monospace';
-      const need = region.ceremonyPending
-        ? 'The Charter is drafted — the towns await your proclamation.'
-        : region.charterEligible()
-          ? `Regional Charter being drafted… ${Math.floor(region.charterProgress)}%`
-          : `Toward Statehood: ${region.settlements.length}/3 towns · ${region.totalPop()}/500 citizens` +
-            (region.connectedToAll() ? '' : ' · towns unconnected!');
-      g.fillText(need, W / 2 - 220, H - 23);
+      if (region.ceremonyPending || region.charterEligible()) {
+        g.fillStyle = 'rgba(16,14,10,0.85)';
+        g.fillRect(W / 2 - 230, H - 40, 460, 26);
+        g.fillStyle = '#8fc26a';
+        g.font = '12px monospace';
+        const need = region.ceremonyPending
+          ? 'The Charter is drafted — the towns await your proclamation.'
+          : `Regional Charter being drafted… ${Math.floor(region.charterProgress)}%`;
+        g.textAlign = 'center';
+        g.fillText(need, W / 2, H - 23);
+        g.textAlign = 'left';
+      } else {
+        // Not yet eligible: draw the gate chips, color-coded, centered.
+        const gates = region.charterGates();
+        g.font = '12px monospace';
+        const head = 'Toward Statehood — ';
+        const segs = gates.map((gt) => ({
+          text: `${gt.met ? '✓' : '✗'} ${gt.label} ${gt.detail}`,
+          color: gt.met ? '#8fc26a' : '#e0995a',
+        }));
+        const sep = '   ';
+        const totalW = g.measureText(head).width +
+          segs.reduce((w, s, i) => w + g.measureText(s.text).width + (i ? g.measureText(sep).width : 0), 0);
+        const bw = Math.max(460, totalW + 24);
+        g.fillStyle = 'rgba(16,14,10,0.85)';
+        g.fillRect(W / 2 - bw / 2, H - 40, bw, 26);
+        let x = W / 2 - totalW / 2;
+        const y = H - 23;
+        g.textAlign = 'left';
+        g.fillStyle = '#bfae86';
+        g.fillText(head, x, y);
+        x += g.measureText(head).width;
+        for (let i = 0; i < segs.length; i++) {
+          if (i) { g.fillStyle = '#5a5247'; g.fillText(sep, x, y); x += g.measureText(sep).width; }
+          g.fillStyle = segs[i].color;
+          g.fillText(segs[i].text, x, y);
+          x += g.measureText(segs[i].text).width;
+        }
+      }
     } else {
       g.fillStyle = 'rgba(110,74,47,0.92)';
       g.fillRect(W / 2 - 200, H - 44, 400, 30);
@@ -1755,6 +1844,7 @@ export class RegionView {
     // Only rebuild innerHTML when selection changes or once per second (~60 frames).
     // Rebuilding every frame destroys the button DOM node between mousedown and click,
     // so the click event fires on the panel div instead of the button.
+    if (this.editingName) return; // don't clobber the open rename field
     const needsRebuild = this.lastPanelBuildId !== t.id || this.frame - this.lastPanelBuildFrame >= 60;
     if (!needsRebuild) return;
 
@@ -1766,11 +1856,36 @@ export class RegionView {
     if (btn) {
       btn.onclick = () => { this.region.foundTown(t.id); this.refreshPanel(); };
     }
+    // Inline rename: Electron has no window.prompt(), so swap the heading for an
+    // editable field on click. Enter/blur commits, Escape cancels.
     const renameBtn = this.panel.querySelector<HTMLButtonElement>('#rename-btn');
     if (renameBtn) {
       renameBtn.onclick = () => {
-        const name = prompt('Rename town:', t.name);
-        if (name && name.trim()) { t.name = name.trim(); this.refreshPanel(); }
+        const heading = renameBtn.closest('h3');
+        if (!heading) return;
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.maxLength = 28;
+        input.value = t.name;
+        input.className = 'rename-input';
+        heading.replaceWith(input);
+        this.editingName = true;
+        input.focus();
+        input.select();
+        let done = false;
+        const commit = (save: boolean): void => {
+          if (done) return;
+          done = true;
+          this.editingName = false;
+          if (save && input.value.trim()) t.name = input.value.trim();
+          this.refreshPanel();
+        };
+        input.onkeydown = (ev) => {
+          if (ev.key === 'Enter') { ev.preventDefault(); commit(true); }
+          else if (ev.key === 'Escape') { ev.preventDefault(); commit(false); }
+          ev.stopPropagation(); // don't let the game eat the keystrokes
+        };
+        input.onblur = () => commit(true);
       };
     }
     for (const rb of this.panel.querySelectorAll<HTMLButtonElement>('.road-btn')) {

@@ -163,9 +163,6 @@ export class Hud {
   private showPriorities = false;
   private activeCat: string | null = null;
   private lastLogLen = 0;
-  /** Last region treasury reading, so the HUD can show a rising/falling arrow. */
-  private lastRegionTreasury: number | null = null;
-  private regionTreasuryTrend: '↑' | '↓' | '' = '';
   private foundBtn: HTMLButtonElement | null = null;
   private htmlCache = new Map<HTMLElement, string>();
   private techPanel!: TechPanel;
@@ -538,12 +535,15 @@ export class Hud {
     const wx = r.weather.forDay(r.day);
     const skyIcon = { clear: '☀', overcast: '☁', rain: '☔', storm: '⛈', snow: '❄' }[wx.sky];
     const drought = r.weather.isDrought(r.day) && r.seasonIndex < 3 ? ' <span class="tb-over">DROUGHT</span>' : '';
-    // Treasury with a rising/falling arrow (deadband to avoid frame flicker).
+    // Treasury with last month's net swing — a stable monthly figure beats a
+    // per-frame arrow that flickers as daily events nudge the books.
     const gold = r.treasury;
-    if (this.lastRegionTreasury !== null && Math.abs(gold - this.lastRegionTreasury) > 0.5) {
-      this.regionTreasuryTrend = gold > this.lastRegionTreasury ? '↑' : '↓';
-    }
-    this.lastRegionTreasury = gold;
+    const delta = Math.round(r.treasuryDeltaMonth);
+    const trendColor = delta > 0 ? '#7fc26a' : delta < 0 ? '#e0995a' : '#998c6e';
+    const trendStr = delta === 0
+      ? ''
+      : ` <span style="color:${trendColor}" title="net change in the treasury over the last month">` +
+        `${delta > 0 ? '▲' : '▼'}${formatCurrency(Math.abs(delta))}/mo</span>`;
     // Player's share of regional territory — the road to nationhood.
     const terr = Math.round(r.playerTerritoryControl() * 100);
     this.setHtml(this.topBar,
@@ -551,7 +551,7 @@ export class Hud {
       `<span>${skyIcon}${drought}</span>` +
       `<span>TOWNS ${r.settlements.length}${r.expeditions.length ? ` (+${r.expeditions.length} en route)` : ''}</span>` +
       `<span>POP ${r.totalPop()}</span>` +
-      `<span>💰${formatCurrency(Math.round(gold))} ${this.regionTreasuryTrend}</span>` +
+      `<span>💰${formatCurrency(Math.round(gold))}${trendStr}</span>` +
       `<span title="your share of regional territory">⬣ ${terr}%</span>` +
       `<span>NOTABLES ${r.notables.filter((n) => n.alive).length}</span>` +
       (r.stateProclaimed ? `<span class="tb-date">★ STATE</span>` : '') +

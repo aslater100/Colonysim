@@ -1320,6 +1320,11 @@ export class RegionSim {
   stateName = '';
   govLean: GovLean | null = null;
   treasury = 0;
+  /** Net change in the treasury over the last full month (+ income, − outgo).
+   *  Surfaced in the HUD so the trend is legible, not a flickering arrow. */
+  treasuryDeltaMonth = 0;
+  /** Snapshot of the treasury at the previous month boundary. */
+  private prevMonthTreasury = 0;
   taxRate = 0.1; // 0–0.3
   servicesLevel = 1; // 0–2: health & schools — satisfaction + mortality
   militiaLevel = 1; // 0–2: funded defense
@@ -2455,6 +2460,7 @@ export class RegionSim {
     region.log = [...sim.log];
     // Transfer town's cash to regional treasury
     region.treasury = Math.max(0, Math.round(sim.economy.cash));
+    region.prevMonthTreasury = region.treasury; // seed so the first delta reads ~0
     // Inherit the town's currency symbol
     region.currencySymbol = sim.currencySymbol;
 
@@ -2720,6 +2726,9 @@ export class RegionSim {
   }
 
   private monthlyUpdate(): void {
+    // Record the prior month's net treasury swing before this month's books move.
+    this.treasuryDeltaMonth = this.treasury - this.prevMonthTreasury;
+    this.prevMonthTreasury = this.treasury;
     for (const t of this.settlements) {
       const b = t.cohorts.bands;
       // Births from fertile bands
@@ -3812,6 +3821,20 @@ export class RegionSim {
   }
 
   // ---- the State gate (GDD §2.2) ----
+  /** Per-requirement breakdown of the Incorporation gate, so the UI can show
+   *  exactly which conditions are met and which still block the Charter. */
+  charterGates(): { label: string; met: boolean; detail: string }[] {
+    const garrison = this.settlements.reduce((sum, s) => sum + (s.garrisonStrength || 0), 0);
+    const net = this.getNetTreasury();
+    return [
+      { label: 'towns', met: this.settlements.length >= 3, detail: `${this.settlements.length}/3` },
+      { label: 'citizens', met: this.totalPop() >= 500, detail: `${this.totalPop()}/500` },
+      { label: 'all towns connected', met: this.connectedToAll(), detail: this.connectedToAll() ? 'yes' : 'no' },
+      { label: 'treasury', met: net >= 8000, detail: `${formatCurrency(Math.round(net))}/${formatCurrency(8000)}` },
+      { label: 'garrison', met: garrison >= 10, detail: `${Math.round(garrison)}/10` },
+    ];
+  }
+
   charterEligible(): boolean {
     // GDD §2.2: 3 towns, 500 citizens, all connected by routes, plus economic and military strength
     if (this.settlements.length < 3 || this.totalPop() < 500 || !this.connectedToAll()) return false;
@@ -5469,6 +5492,7 @@ export class RegionSim {
     r.stateName = d.stateName;
     r.govLean = d.govLean;
     r.treasury = d.treasury;
+    r.prevMonthTreasury = d.treasury; // re-seed; a stale delta isn't worth persisting
     r.taxRate = d.taxRate;
     r.servicesLevel = d.servicesLevel;
     r.militiaLevel = d.militiaLevel;
