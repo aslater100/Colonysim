@@ -1,8 +1,8 @@
-# Session Handoff — 2026-06-12 (v0.27.0)
+# Session Handoff — 2026-06-13 (v0.27.2)
 
 ## Current state
 
-Version **v0.27.0** (graphics polish). Previous: v0.26.0 FX & monetary regimes. Transportation arc, governance stack, audio, diplomacy, war, climate, and now the **central bank + credit cycle + FX** (GDD §5.1) are complete. The game now runs its full 1900–2100 arc with emergent business cycles.
+Version **v0.27.2**. Transportation arc, governance stack, audio, diplomacy, war, climate, central bank + credit cycle + FX (GDD §5.1) are complete; the game runs its full 1900–2100 arc with emergent business cycles. **Region mode is now mid-expansion into a fully-playable governor tier** — Phase 0 (territory/borders/resource visualization) landed (#71); the remaining governor phases (A–D below) are the active roadmap.
 
 ## Shipped
 
@@ -32,6 +32,8 @@ Version **v0.27.0** (graphics polish). Previous: v0.26.0 FX & monetary regimes. 
 | 0.22 | Climate accords + geoengineering (GDD §8.2): `climate_accord` 4th treaty type (gated behind `environmentalism` + 2010); monthly compliance drift per rival (commerce-driven stay honest; expansion-minded defect); defection detected → log + sanction action (tears accord, −20 relations, no treatiesBroken penalty); compliant signatories cut `worldEmissions()` by up to 28% weighted by pop+compliance; `geoengineering` tech node (renewables+computing, 2050, State-gated, 360 pts) → one-time `deployGeoengineering()` action: −0.4°C over 2 years, all rivals −15 relations + history beat + randomized side effect; aerosols active badge in state panel; accord compliance % and ⚠ badge in diplomacy row; all fields serialized |
 | 0.27 | Graphics polish: distinct sprites for all 32 buildings (windmill sails, forge glow, kiln mouth, mine portal, watchtower, well, animal pen with livestock, gardens, belfry schoolhouse, flagged town hall…), custom item art for 13 processed goods (was generic piles), ambient render pass — drifting daytime clouds, chimney smoke over working buildings, warm window/hearth light glow at night (additive, before fog of war) |
 | 0.26 | FX & monetary regimes (GDD §5.1): player-adjustable policy rate (1–15%) gates credit-cycle dynamics once `central_bank_charter` enacted; `privateLeverage` builds at low rates → debt-service > 18% GDP → confidence falls → deleveraging bust contracts GDP; `inflationRate` driven by credit expansion + money printing; `exchangeRate` (0.3–2.0) driven by trade balance, rate differential, and confidence — weak currency boosts export earnings; three monetary regimes: `float` (market-driven), `peg` (reserve-backed, breaks on depletion), `print` (money creation + inflation); sovereign bond issuance (`issueBonds`) at `policyRate + creditSpread`; credit rating AAA→D from debt/GDP, inflation, confidence; 1929-analog crash fires once when leverage is fragile in 1927–36 window; bank interest now uses policy rate not hardcoded 0.5%; GDP credit-cycle multiplier (boom +6%, bust −20%); inflation drag on GDP above 8%; inflation satisfaction drag above 5%; CENTRAL BANK dashboard in state panel; 16 new tests; all fields serialized with `??` defaults |
+| #71 | **Region governor — Phase 0** (territory/borders/resource visualization, no version bump): map now renders faction-coloured **territory control zones + frontier lines** (`drawTerritories`), per-settlement **food/wood/goods status icons** (`drawResourceIndicators`), cargo-coloured **trade-flow arrows** scaled by freight (`drawTradeFlows`), and a region HUD showing **treasury trend (↑/↓) + territorial-control %**. Sim primitives added: `territoryRadius(t)` (pop + garrison + dev, capped 18), `computeTerritoryGrid()` (REGION_N grid, strongest-influence per land cell, signature-cached), `territoryControlOf(fid)` / `playerTerritoryControl()` (0..1 land share), `getSettlementResourceStatus(t)` (surplus/balanced/deficit). 9 new tests |
+| #72 | **Town-sim RNG-drift fix** (main was red since #67): `market`/`guard`/`evacuate` had been appended to `WORK_KINDS`, so `spawnSettler` consumed 3 extra `rng.int(8)` draws per birth — shifting the entire seeded sequence (colonies starved on tuned seeds) — and could hand a settler a phantom primary job. Added `SKILLED_WORK_KINDS` (real professions only) for the birth skill roll, `best` pick, and `evtSkillBreakthrough`; support jobs keep a priority slot at skill 0 (no draw). 3 regression guards |
 
 ## Ship loop
 
@@ -45,8 +47,50 @@ User merges and play-tests; CI validates (test.yml — do not run the suite loca
 
 ## What's next
 
-GDD-aligned open items (roughly in order of pull):
-- Espionage + misinformation systems
+### Active initiative: Region Mode → fully-fledged governor tier
+
+The full plan (three-pillar governor gameplay + territorial conquest) is in the
+PR #71 description and the team's expansion brief. **Phase 0 shipped** (#71) and
+gives the data/visual substrate. Remaining phases, in pull order:
+
+- **Phase A — Infrastructure & Trade UI** (sim already has the data; this is UI):
+  - Route Network panel: list routes with condition %, capacity %, cargo type;
+    repair/upgrade/delete + cargo-priority controls. Build on existing `region.routes`
+    (a/b/kind/condition/freight/cargoType) and `routePath`/`buildLink`/`repairRoute`.
+  - Settlement connector UI ("available destinations" w/ cost + travel time via
+    `map.travelDays`), per-town trade-partner view, cargo export-target sliders.
+  - HUD quick-access sidebar (Settlements/Routes/Diplomacy/Economy/Research) + S/R/D/E/T keys.
+- **Phase B — Economic Policy & Growth UI** (mechanics exist; surface them):
+  - State-panel economy tab: per-settlement tax slider w/ projected revenue + compliance,
+    sector employment-target sliders (labor drifts via existing `sectors`/`focus`),
+    services/militia levels, local policy visibility (`CityPolicies`).
+  - Faction influence panel (workers/landowners/merchants `factions[]`): demands w/
+    accept/reject + consequences; strike/unrest UI off `strikeUntil`/`grievance`.
+- **Phase C — Diplomacy, Conquest & the Nation gate** (the headline feature):
+  - Render **rival faction settlements + territories** on the map (already partly drawn
+    as diamonds; now they own `computeTerritoryGrid` zones in their `RegionalFaction.color`).
+  - Rival detail modal (strength, relations, treasury, territory %, treaties, vassal status)
+    with context actions: Declare War / Propose Vassalization / Buy Land.
+  - **New sim systems** in `region.ts`: vassalage (`vassals` map + tribute + territory counts
+    toward player), land purchase (gold→territory when a rival is desperate), and the
+    **50%-control nation-founding gate**: in `tick()`, set `proclamationReady` once
+    `playerTerritoryControl() >= 0.5` (one-time latch — do NOT clear if it later dips);
+    fire "Regional Hegemon" + "Proclaim Nation" → existing Constitutional Convention.
+  - `main.ts` `enterRegionMode`/transition must capture conquered/purchased/vassal territory
+    into the nation tier (provinces) and serialize all new state.
+- **Phase D — Polish & tier-transition stress-testing**: tooltips, panel caching, the
+  full 1910→1940→nation playthrough; verify conquered settlements/cohorts/buildings survive
+  the tier handoff. See the 20 stress-test cases + region→nation compatibility matrix in the
+  expansion brief.
+
+**Primitives already in place for the above:** `playerTerritoryControl()`,
+`territoryControlOf(fid)`, `computeTerritoryGrid()` (returns `{grid, control, landCells}`,
+cached by settlement signature — invalidates on pop/garrison/dev/owner/position change),
+`territoryRadius(t)`, `getSettlementResourceStatus(t)`, plus the `drawTerritories` /
+`drawResourceIndicators` / `drawTradeFlows` render hooks in `regionview.ts`.
+
+### Older GDD-aligned open items (lower priority)
+- Espionage + misinformation systems (UI placeholder noted in expansion brief Phase 3)
 - Historical scenarios (GDD §9)
 - Branch-tinted music/backdrops for eras 7–8 (sim branch exists; music.ts still plays one speculative window)
 - Animal husbandry + ranged combat polish (may be partially shipped; check src/)
@@ -68,4 +112,6 @@ GDD-aligned open items (roughly in order of pull):
 - **The world's own politics:** `rivalPairs` (keyed `minId:maxId`) drift in `tickForeignRelations`; pairs > 45 + honor ally, > 25 + commerce open customs unions, < −20 trade ultimatums, < −50 → `startForeignWar` (240–720 days; refugee waves 20%/mo; peace bleeds the loser ~10–15% pop, sets the pair at −60, 50% defeat-topples its regime via era-gated `pickRegime`). Alliances block war within the pair and harden sides when wars start. Rival `history[]` accrues beats (capped 16, founding line kept).
 - **Negotiation engine (GDD §6.3):** `evaluateDeal(rv, basket)` is pure (UI live-previews); basket = `{treaties, goldToThem, goldToYou, borderSettlement}`. Value to the rival: `treatyAppetite` (trade = commerce×1.6−4; NAP = (10−risk)×0.8+honor×0.3−3; pact = honor×0.8−risk×0.5−5), `borderAppetite` = (4−expansion)×1.2+grudge×0.4, gold at `(0.6+commerce×0.08)/GOLD_PER_POINT(8)` per £. Accept when `get ≥ give×premium + tableCost`; premium = 1+breaches×0.3+grudge×0.03−relations/150 (floor 0.5); tableCost = max(0,−relations/8)+breaches×2+grudge×0.4. Within 30% → counter-offer (gold sweetener, stored in `counters`, 90-day expiry, signable via `acceptCounter`); else walk with reason. `borderSettled` on the rival kills border friction + border CB (both ways: AI declares with `fabricated` instead) and adds +6 relations drift. `proposeTreaty` (single-item, relations-threshold) still exists alongside.
 - **War depth (GDD §7.3–7.4):** `tickPlayerWar` skips the declaration day (`startedDay === day`) — the AI declares inside the same monthly tick, and resolving immediately made support assertions flaky (this was main's red CI). Blockade: `setBlockade` needs militia ≥ 2 or standing army; enemy power ×0.85 + pop ×0.997 + score +1.5/mo; costs `pop×0.02`/mo and exports ×0.6 (×0.7 in any war — contested lanes). Co-belligerence: `callAlly` on defensive-pact rivals — defensive war: honors if honor ≥ 4 (else honor/10 chance, refusal tears the pact publicly); offensive: needs relations ≥ 60 + honor-weighted chance. Called allies fight at `pop^0.6×0.5` (passive pacts 0.25), bleed at half lossRate, share peace (+8) and defeat (−10). Enemy alliance partners join at war start with `0.3+honor×0.05` chance, add `pop^0.6×0.3`. Occupation: score ≥ 35 → 30%/mo take a march (≤3, support +3); score < 0 → 25%/mo lose one; `OCCUPATION_DEFS` conciliatory (net £2/march, +2 resistance) vs brutal (net £7, +6, −5 legitimacy once, `brutality` flag → peace adds grudge +2, relations −15); resistance ×1.5 if blocs are hostile; > 50 → partisan attacks (casualties, score −2, support −1.5). Enemy raiders cut a random route −12 condition 30%/mo. Peace: `offerPeaceBasket(terms)` — ask = Σscores + grudge×2 − occupied×6; near miss (≥ ask−15, multi-term) → counter naming the signable subset; `border_province` requires occupied ≥ 1.
+- **Territory (region governor Phase 0):** `computeTerritoryGrid()` walks the REGION_N×REGION_N cell grid; each non-water cell goes to the settlement with the highest `radius − distance` influence (`-1` unclaimed land, `-2` water). `territoryRadius(t)` = `min(18, 4 + √pop×0.45 + √garrison×0.6 + buildings×0.4)`. Result is cached on `_territoryCache` keyed by a settlement signature (id/x/y/pop/garrison/factionId/buildings) — any of those changing recomputes; otherwise it's free per frame. `playerTerritoryControl()` is the hook for the future 50% nation gate. `getSettlementResourceStatus(t)` thresholds: food surplus >3/cap, deficit <1/cap; wood >2 / <0.5; goods (industry+services+information output per worker) >6 / <2. Render hooks live in `regionview.ts` (`drawTerritories` under routes; `drawResourceIndicators`, `drawTradeFlows` over them).
+- **`SKILLED_WORK_KINDS` invariant (defs.ts):** `spawnSettler` rolls one `rng.int(8)` per **`SKILLED_WORK_KINDS`** entry (the real professions) — NOT `WORK_KINDS`. Adding a new *contextual* job (only valid with a building or during a raid) must go in `WORK_KINDS` only, never `SKILLED_WORK_KINDS`: adding it to the birth roll consumes extra RNG draws, shifts the whole seeded sequence, and can hand settlers a phantom calling (this was #67–#72's red CI). Skilled jobs also drive `best`/`evtSkillBreakthrough`.
 - **Player war (GDD §7):** one front at a time (`playerWar`), nation-tier only. CBs earned by hostility (`availableCasusBelli`: raids < −40 w/o NAP, border < −20, fabricated always at −10 legitimacy + breach). `warPower` = `totalPop^0.6 × quality(militia/standing army/defence minister/military reform/junta) × mobilization(1/1.6/2.3)` + defensive-pact allies at `pop^0.6 × 0.25`; rival = `pop^0.6 × (0.5 + exp×0.04 + risk×0.015)`. Monthly in `tickPlayerWar`: score ±16×ratio+rng, attrition bleeds bands 1–2 (`casualties` accrues), support decays/rallies; floors 45/45/35/25 (dem/rep/mon/junta) — below: legitimacy −2 + grievance; floor−15 → forced `capitulate` (treasury ×0.6, pop −4%, legitimacy −15/−25 junta), same as score ≤ −60. `offerPeace` ask = term score (0/30/55/80) + grudge×2; victory pays legitimacy +10 (+15 defensive), treasury ×0.9 demobilization, enemy pop ×0.92; annexation = grudge+3, relations −80 (Versailles trap); regime change → `changeRegime('defeat')`, relations 15. War pins enemy relations ≤ −60 and blocks envoy/gift/treaty verbs. Hostile rivals (< −60, no NAP) declare on the player risk/expansion-weighted; democracies need 6 months at war for Total mobilization unless defensive. Mobilization economics live in `monthlyEconomy` (`gdpMult` stimulus, `upkeepPerPop` drain).
