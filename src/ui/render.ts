@@ -234,7 +234,21 @@ export class Renderer {
         const t = sim.world.at(x, y);
         const px = ox + x * TILE;
         const py = oy + y * TILE;
-        if (t.kind === 'rock') g.drawImage(t.marked ? sprites.rockMarked : sprites.rock, px, py);
+        if (t.kind === 'rock') {
+          g.drawImage(t.marked ? sprites.rockMarked : sprites.rock, px, py);
+          if (t.oreDeposit) {
+            // Ore vein flecks: small amber/orange dots scattered across the rock face.
+            g.fillStyle = 'rgba(210,140,40,0.72)';
+            g.fillRect(px + 4,  py + 5,  3, 2);
+            g.fillRect(px + 10, py + 3,  2, 2);
+            g.fillRect(px + 7,  py + 10, 2, 3);
+            g.fillRect(px + 2,  py + 12, 3, 2);
+            g.fillRect(px + 14, py + 9,  2, 2);
+            g.fillStyle = 'rgba(255,200,60,0.55)';
+            g.fillRect(px + 5,  py + 6,  2, 1);
+            g.fillRect(px + 11, py + 11, 2, 1);
+          }
+        }
         else if (t.wall) {
           const mask =
             (sim.world.inBounds(x, y - 1) && (sim.world.at(x, y - 1).wall || sim.world.at(x, y - 1).gate) ? 1 : 0) |

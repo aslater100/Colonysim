@@ -352,8 +352,8 @@ export const TUNING = {
   // Armed pawns: fighters grab a spear from the stores when the horn sounds
   spearWoodCost: 3,
   spearDamageBonus: 12,
-  // Armoury: forged weapons cost wood, deal more damage than improvised spears
-  forgeWoodCost: 4,        // wood per forged weapon
+  // Armoury: forged weapons consume timber (sawmill feeds the armoury), deal more damage than improvised spears
+  forgeTimberCost: 1,      // timber per forged weapon
   forgeWorkPerWeapon: 90,  // settler-minutes at skill 5
   forgedWeaponBonus: 22,   // damage bonus (vs spearDamageBonus 12)
   // Spike traps: painted tiles that damage raiders on contact, one-shot

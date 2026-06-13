@@ -486,6 +486,7 @@ export class Hud {
       this.refreshBuildBarState();
       return true;
     }
+    if (k === 'r') { this.showResources = !this.showResources; return true; }
     if (k === 'k') { this.techPanel.toggle(); return true; }
     if (k === 'o') { this.cam.overlay = this.cam.overlay === 'traffic' ? 'none' : 'traffic'; return true; }
     if (k === 'p') { this.togglePriorities(); return true; }

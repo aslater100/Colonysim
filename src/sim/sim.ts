@@ -760,7 +760,8 @@ export class Simulation {
       if (t.kind !== 'rock') return false;
       if (t.buildingId !== null) return false;
       t.mineZone = true;
-      t.mineCharges = TUNING.mineChargesInit;
+      // Ore deposit tiles are richer — double the starting charges.
+      t.mineCharges = t.oreDeposit ? TUNING.mineChargesInit * 2 : TUNING.mineChargesInit;
       return true;
     }
     return false;
@@ -2130,12 +2131,11 @@ export class Simulation {
         push({ kind: 'chop', x: cs.x, y: cs.y, workLeft: TUNING.treeChopWork, label: 'harvest timber' }, 'chop');
       }
     }
-    // Armoury: forge weapons when wood is available, but only up to a full
-    // armory for the colony (one spare per head). Without this cap the forge
-    // ran forever and buried the stores in surplus weapons.
+    // Armoury: forge weapons from timber (sawmill feeds the armoury), capped at one per settler.
+    // Without this cap the forge ran forever and buried the stores in surplus weapons.
     const weaponTarget = this.settlers.length;
     for (const a of this.builtOf('forge')) {
-      if (this.stock.wood >= TUNING.forgeWoodCost && this.stock.weapons < weaponTarget) {
+      if (this.stock.timber >= TUNING.forgeTimberCost && this.stock.weapons < weaponTarget) {
         push({ kind: 'forge', x: a.x, y: a.y, buildingId: a.id, workLeft: TUNING.forgeWorkPerWeapon, label: 'forge weapon' }, 'forge');
       }
     }
@@ -2701,11 +2701,11 @@ export class Simulation {
       }
       case 'forge': {
         const forge = this.building(task.buildingId);
-        if (!forge?.built || this.stock.wood < TUNING.forgeWoodCost) return this.finishTask(s);
+        if (!forge?.built || this.stock.timber < TUNING.forgeTimberCost) return this.finishTask(s);
         const speedMult = forge.level >= 2 ? 1.5 : 1;
         task.workLeft -= work * speedMult;
         if (task.workLeft <= 0) {
-          this.stock.wood -= TUNING.forgeWoodCost;
+          this.stock.timber -= TUNING.forgeTimberCost;
           this.stock.weapons++;
           this.finishTask(s);
         }
@@ -3304,6 +3304,7 @@ export class Simulation {
       orchardZone: t.orchardZone ?? false,
       mineZone: t.mineZone ?? false,
       mineCharges: t.mineCharges ?? 0,
+      oreDeposit: t.oreDeposit ?? false,
       flaxZone: t.flaxZone ?? false,
       districtId: t.districtId ?? null,
     }));
