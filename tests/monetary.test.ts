@@ -208,3 +208,100 @@ describe('Monetary system (GDD §5.1)', () => {
     expect(r2.exchangeRate).toBeCloseTo(0.75);
   });
 });
+
+describe('Central Bank features', () => {
+  it('central bank charter establishes CentralBank on the player faction after first tick', () => {
+    const r = nationState(42);
+    // nationState() pushes the law directly — CentralBank is established on first tick
+    runDays(r, 30);
+    const pf = r.faction(r.playerFactionId);
+    expect(pf?.centralBank).not.toBeNull();
+    expect(pf?.centralBank?.interestRate).toBeCloseTo(r.policyRate);
+  });
+
+  it('borrowFromCentralBank increases treasury and tracks outstanding balance', () => {
+    const r = nationState(42);
+    r.treasury = 1000;
+    r.centralBankLoan = 0;
+    const result = r.borrowFromCentralBank(200);
+    expect(result.ok).toBe(true);
+    expect(r.treasury).toBe(1200);
+    expect(r.centralBankLoan).toBe(200);
+  });
+
+  it('borrowFromCentralBank is rejected without the charter', () => {
+    const r = nationState(42);
+    r.passedLaws = r.passedLaws.filter((l) => l !== 'central_bank_charter');
+    const result = r.borrowFromCentralBank(100);
+    expect(result.ok).toBe(false);
+  });
+
+  it('borrowFromCentralBank is capped at 50% of treasury', () => {
+    const r = nationState(42);
+    r.treasury = 1000;
+    r.centralBankLoan = 0;
+    const result = r.borrowFromCentralBank(600); // > 50% of 1000
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('ceiling');
+  });
+
+  it('repayCentralBank reduces outstanding balance and treasury', () => {
+    const r = nationState(42);
+    r.treasury = 1000;
+    r.centralBankLoan = 400;
+    const result = r.repayCentralBank(100);
+    expect(result.ok).toBe(true);
+    expect(r.treasury).toBe(900);
+    expect(r.centralBankLoan).toBeCloseTo(300);
+  });
+
+  it('repayCentralBank fails when there is no outstanding balance', () => {
+    const r = nationState(42);
+    r.centralBankLoan = 0;
+    expect(r.repayCentralBank(100).ok).toBe(false);
+  });
+
+  it('CB loan accrues interest at the policy rate monthly', () => {
+    const r = nationState(42);
+    r.treasury = 2000;
+    r.centralBankLoan = 1000;
+    r.policyRate = 0.12; // 1% per month
+    runDays(r, 30);
+    // interest ≈ 1000 * 0.12/12 = 10; balance should have grown
+    expect(r.centralBankLoan).toBeGreaterThan(1000);
+  });
+
+  it('policy rate transmission: NPC lender rates track policyRate after a month', () => {
+    const r = nationState(42);
+    r.policyRate = 0.10; // raise rate to 10%
+    runDays(r, 30);
+    for (const lender of r.lenders) {
+      // All lenders should price above the policy rate
+      expect(lender.interestRate).toBeGreaterThan(r.policyRate);
+      // And within a reasonable spread (never above 20%)
+      expect(lender.interestRate).toBeLessThanOrEqual(0.20);
+    }
+  });
+
+  it('lender liquidity regenerates each month at low policy rate', () => {
+    const r = nationState(42);
+    r.policyRate = 0.02; // very low rate → generous recovery
+    // Drain all lenders
+    for (const lender of r.lenders) lender.liquidCash = 0;
+    runDays(r, 30);
+    for (const lender of r.lenders) {
+      expect(lender.liquidCash).toBeGreaterThan(0);
+    }
+  });
+
+  it('CB loan and faction centralBank round-trip through serialize/deserialize', () => {
+    const r = nationState(42);
+    r.treasury = 2000;
+    r.borrowFromCentralBank(300);
+    const sim = new Simulation(42);
+    grow(sim);
+    const json = r.serialize();
+    const r2 = RegionSim.deserialize(json, sim);
+    expect(r2.centralBankLoan).toBeCloseTo(300);
+  });
+});

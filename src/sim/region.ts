@@ -1174,6 +1174,8 @@ export class RegionSim {
   lenders: Lender[] = [];
   /** Player's active loans from lenders. */
   loans: Loan[] = [];
+  /** Outstanding loan balance borrowed from the Central Bank discount window. */
+  centralBankLoan = 0;
   currencySymbol: CurrencySymbol = '$';
   marketDisruptionEnd = 0;
   /** A telegraphed future switch; softens the shock if 6+ months old. */
@@ -2672,6 +2674,40 @@ export class RegionSim {
         t.satisfaction = Math.max(0, t.satisfaction - drag);
       }
     }
+
+    // 11. Transmit policy rate to private lenders — banks price above the base rate
+    for (const lender of this.lenders) {
+      const spread = 0.02 + lender.id * 0.005; // 2–3.5% spread; riskier lenders charge more
+      lender.interestRate = Math.max(0.01, Math.min(0.20, this.policyRate + spread));
+    }
+
+    // 12. Lender liquidity regeneration — low rates encourage banks to lend freely
+    for (const lender of this.lenders) {
+      const recoveryRate = Math.max(0.04, 0.12 - this.policyRate); // 4–12% of max loan recovered per month
+      lender.liquidCash = Math.min(lender.maxLoan * 4, lender.liquidCash + lender.maxLoan * recoveryRate);
+    }
+
+    // 13. Accrue interest on outstanding Central Bank discount window loan
+    if (this.centralBankLoan > 0) {
+      this.centralBankLoan += this.centralBankLoan * (this.policyRate / 12);
+    }
+
+    // 14. Keep player faction's CentralBank metadata in sync (create lazily if missing)
+    const pf = this.faction(this.playerFactionId);
+    if (pf) {
+      if (!pf.centralBank) {
+        pf.centralBank = {
+          factionId: this.playerFactionId,
+          foundedDay: this.day,
+          reserves: {},
+          interestRate: this.policyRate,
+          inflationRate: this.inflationRate,
+        };
+      } else {
+        pf.centralBank.interestRate = this.policyRate;
+        pf.centralBank.inflationRate = this.inflationRate;
+      }
+    }
   }
 
   // ---- Phase 1: the sectoral economy (GDD §5.2) ----
@@ -3575,6 +3611,19 @@ export class RegionSim {
       case 'conscription_act':
         this.militiaLevel = Math.min(2, this.militiaLevel + 1);
         break;
+      case 'central_bank_charter': {
+        const pf = this.faction(this.playerFactionId);
+        if (pf) {
+          pf.centralBank = {
+            factionId: this.playerFactionId,
+            foundedDay: this.day,
+            reserves: {},
+            interestRate: this.policyRate,
+            inflationRate: this.inflationRate,
+          };
+        }
+        break;
+      }
     }
 
     this.addLog(`LAW ENACTED: "${law.name}". ${law.desc.split('.')[0]}.`, 'good');
@@ -4826,6 +4875,7 @@ export class RegionSim {
       nextScoutId: this.nextScoutId,
       lenders: this.lenders,
       loans: this.loans,
+      centralBankLoan: this.centralBankLoan,
       currencySymbol: this.currencySymbol,
       marketDisruptionEnd: this.marketDisruptionEnd,
       currencyAnnouncement: this.currencyAnnouncement,
@@ -4940,6 +4990,7 @@ export class RegionSim {
     // Lender system: initialize lenders if not in save, or load existing ones
     r.lenders = d.lenders ?? createInitialLenders();
     r.loans = d.loans ?? [];
+    r.centralBankLoan = d.centralBankLoan ?? 0;
     r.currencySymbol = d.currencySymbol ?? '$';
     r.marketDisruptionEnd = d.marketDisruptionEnd ?? 0;
     r.currencyAnnouncement = d.currencyAnnouncement ?? null;
@@ -5080,6 +5131,41 @@ export class RegionSim {
     );
 
     return { ok: true, remaining: loan.borrowed };
+  }
+
+  /**
+   * Borrow from the Central Bank discount window at the current policy rate.
+   * Available once the central_bank_charter is enacted; limited to half of treasury.
+   */
+  borrowFromCentralBank(amount: number): { ok: boolean; reason?: string } {
+    if (!this.passedLaws.includes('central_bank_charter')) {
+      return { ok: false, reason: 'Central bank not established' };
+    }
+    if (amount <= 0) return { ok: false, reason: 'Amount must be positive' };
+    const maxBorrow = Math.max(0, this.treasury * 0.5 - this.centralBankLoan);
+    if (amount > maxBorrow) {
+      return { ok: false, reason: `CB ceiling: max ` + formatCurrency(Math.floor(maxBorrow)) };
+    }
+    this.centralBankLoan += amount;
+    this.treasury += amount;
+    this.addLog(
+      `Discount window: drew ` + formatCurrency(amount) + ` from the Central Bank at ${(this.policyRate * 100).toFixed(1)}% policy rate.`,
+      'info',
+    );
+    return { ok: true };
+  }
+
+  /**
+   * Repay an amount to the Central Bank discount window.
+   */
+  repayCentralBank(amount: number): { ok: boolean; reason?: string } {
+    if (this.centralBankLoan <= 0) return { ok: false, reason: 'No outstanding CB balance' };
+    if (this.treasury < amount) return { ok: false, reason: 'Insufficient treasury funds' };
+    const paid = Math.min(amount, this.centralBankLoan);
+    this.treasury -= paid;
+    this.centralBankLoan = Math.max(0, this.centralBankLoan - paid);
+    this.addLog(`Repaid ` + formatCurrency(Math.floor(paid)) + ` to the Central Bank.`, 'info');
+    return { ok: true };
   }
 
   /**

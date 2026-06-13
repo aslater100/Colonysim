@@ -858,6 +858,22 @@ export class RegionView {
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.loan-repay-btn')) {
       btn.onclick = () => this.showRepayDialog(Number(btn.dataset.loan));
     }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.cb-dw-draw')) {
+      btn.onclick = () => {
+        const amt = Number(btn.dataset.amount);
+        const result = r.borrowFromCentralBank(amt);
+        if (!result.ok) alert(result.reason);
+        else this.refreshPanel();
+      };
+    }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.cb-dw-repay')) {
+      btn.onclick = () => {
+        const amt = Number(btn.dataset.amount);
+        const result = r.repayCentralBank(amt);
+        if (!result.ok) alert(result.reason);
+        else this.refreshPanel();
+      };
+    }
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-break-btn')) {
       btn.onclick = () => r.breakTreaty(Number(btn.dataset.rival), btn.dataset.kind as TreatyKind);
     }
@@ -1380,6 +1396,7 @@ export class RegionView {
           `<button class="mini cb-bond-btn" data-amount="250" ${canBond(250) ? '' : 'disabled'}>+${formatCurrency(250)}</button>` +
           `</p>`
         : '') +
+      this.discountWindowHtml() +
       this.currencyHtml();
   }
 
@@ -1402,23 +1419,50 @@ export class RegionView {
       `<p class="insp-skills">switch: ${others.map((s) => `<button class="mini cb-cur-switch" data-sym="${s}">${s}</button>`).join(' ')}</p>`;
   }
 
+  /** Central Bank discount window: short-term borrowing at the policy rate. */
+  private discountWindowHtml(): string {
+    const r = this.region;
+    if (!r.passedLaws.includes('central_bank_charter')) return '';
+    const maxDraw = Math.max(0, r.treasury * 0.5 - r.centralBankLoan);
+    const cbCol = r.centralBankLoan > r.treasury * 0.3 ? '#e55' : '#4e9';
+    return `<p class="insp-skills" title="The discount window lets you borrow short-term from your own central bank at the policy rate. Interest compounds monthly. Outstanding balance is capped at 50% of current treasury.">` +
+      `DISCOUNT WINDOW</p>` +
+      (r.centralBankLoan > 0
+        ? `<p class="insp-skills">outstanding: <span style="color:${cbCol}">` + formatCurrency(Math.round(r.centralBankLoan)) + `</span> @ ${(r.policyRate * 100).toFixed(1)}%</p>` +
+          `<p><button class="mini cb-dw-repay" data-amount="${Math.ceil(r.centralBankLoan * 0.5)}">repay ½</button> ` +
+          `<button class="mini cb-dw-repay" data-amount="${Math.ceil(r.centralBankLoan)}">repay all</button></p>`
+        : `<p class="insp-skills">no outstanding balance</p>`) +
+      (maxDraw > 0
+        ? `<p><button class="mini cb-dw-draw" data-amount="${Math.floor(maxDraw * 0.25)}">draw ${formatCurrency(Math.floor(maxDraw * 0.25))}</button> ` +
+          `<button class="mini cb-dw-draw" data-amount="${Math.floor(maxDraw * 0.5)}">draw ${formatCurrency(Math.floor(maxDraw * 0.5))}</button> ` +
+          `<button class="mini cb-dw-draw" data-amount="${Math.floor(maxDraw)}">draw ${formatCurrency(Math.floor(maxDraw))}</button></p>`
+        : `<p class="insp-skills" style="color:#ca4">ceiling reached (50% of treasury)</p>`);
+  }
+
   private lendersHtml(): string {
     const r = this.region;
     // Lenders only available at region tier with Market building, or nation tier
     if (!r.stateProclaimed) return '';
     const hasMarket = r.settlements.some((s) => s.buildings.some((b) => b.includes('market')));
     const hasBank = r.settlements.some((s) => s.buildings.some((b) => b.includes('bank')));
-    if (!hasMarket && !hasBank) return '';
+    const hasCbCharter = r.passedLaws.includes('central_bank_charter');
+    if (!hasMarket && !hasBank && !hasCbCharter) return '';
 
     let html = `<p class="insp-skills">LENDERS</p>`;
 
     // Show available lenders
     if (r.lenders.length > 0) {
-      html += `<div style="font-size:11px;margin:4px 0">Available lenders:</div>`;
+      const rateNote = r.passedLaws.includes('central_bank_charter')
+        ? ` <span style="color:#888;font-size:9px">(policy ${(r.policyRate * 100).toFixed(0)}% + spread)</span>`
+        : '';
+      html += `<div style="font-size:11px;margin:4px 0">Available lenders:${rateNote}</div>`;
       for (const lender of r.lenders) {
         const canBorrow = r.treasury > 0 && lender.liquidCash > 0;
+        const avail = lender.liquidCash > 0
+          ? `avail ` + formatCurrency(Math.floor(lender.liquidCash))
+          : `<span style="color:#e55">no liquidity</span>`;
         html += `<p style="margin:2px 0;font-size:10px">` +
-          `${lender.name} — max ` + formatCurrency(lender.maxLoan) + ` @ ${(lender.interestRate * 100).toFixed(1)}% ` +
+          `${lender.name} — max ` + formatCurrency(lender.maxLoan) + ` @ ${(lender.interestRate * 100).toFixed(1)}% · ${avail} ` +
           (canBorrow ? `<button class="mini lender-btn" data-lender="${lender.id}">borrow</button>` : '') +
           `</p>`;
       }
