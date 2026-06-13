@@ -326,6 +326,14 @@ export const TUNING = {
   craftWorkPerClothes: 60,
   clothesWarmthC: 8,
   clothesWearDays: 30,
+  // Rope: flax fibre twisted at the tailor (textile_farming); feeds advanced upgrades
+  ropeFlaxCost: 2,
+  ropeWorkCost: 70,
+  ropeTarget: 12,        // tailor spins rope up to this stock when flax is plentiful
+  // Preserved food: surplus meals salted/smoked into shelf-stable rations (food_preservation tech)
+  preservedMealCost: 3,  // meals consumed per batch
+  preservedYield: 2,     // preserved produced per batch
+  preserveWorkCost: 60,
   // Raids & combat
   firstRaidDay: 11,
   raidIntervalDays: 8,
@@ -352,8 +360,8 @@ export const TUNING = {
   // Armed pawns: fighters grab a spear from the stores when the horn sounds
   spearWoodCost: 3,
   spearDamageBonus: 12,
-  // Armoury: forged weapons cost wood, deal more damage than improvised spears
-  forgeWoodCost: 4,        // wood per forged weapon
+  // Armoury: forged weapons consume timber (sawmill feeds the armoury), deal more damage than improvised spears
+  forgeTimberCost: 1,      // timber per forged weapon
   forgeWorkPerWeapon: 90,  // settler-minutes at skill 5
   forgedWeaponBonus: 22,   // damage bonus (vs spearDamageBonus 12)
   // Spike traps: painted tiles that damage raiders on contact, one-shot
@@ -415,10 +423,18 @@ export const TUNING = {
   wellInfectionReduction: 0.1,
   // Watchtower
   watchtowerWarningDays: 1,   // extra days of warning before raid arrives
-  // Market trading
+  // Market trading — dynamic supply/demand pricing
   marketPriceRecalcDays: 1,   // recalc price modifiers at most once per N game-days
   marketPriceFloor: 0.25,     // minimum price multiplier
   marketPriceCap: 4.0,        // maximum price multiplier
+  marketSellElasticity: 0.012,  // how far one sold unit pushes a resource's price down
+  marketBuyElasticity: 0.012,   // how far one bought unit pushes a resource's price up
+  marketRecoveryPerDay: 0.15,   // fraction of the gap back to 1.0 that prices heal each day
+  // Town-tier inflation (gated by the Banking tech → dynamicPricing mechanic)
+  inflationCashAnchor: 90,      // target cash per capita; above this, inflation builds
+  inflationDriftPerDay: 0.05,   // fraction of the gap to target inflation closed each day
+  inflationMin: -0.1,           // deflation floor (−10%)
+  inflationMax: 0.4,            // inflation ceiling (+40%)
   // Guard defense
   guardDetectionRange: 5,     // tiles; guards see enemies at this distance
   guardPostRange: 3,          // tiles; guard stays within this radius of post when garrisoned

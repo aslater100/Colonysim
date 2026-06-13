@@ -5,7 +5,7 @@
 import type { Simulation, Settler, Building } from '../sim/sim';
 import { buildingDef, traitDef, WORK_KINDS, TUNING, TOWN_TECH_DEFS, formatCurrency } from '../sim/defs';
 import type { ResourceKind, WorkKind } from '../sim/defs';
-import { getMarketPrice } from '../sim/economy';
+import { BASE_PRICES } from '../sim/economy';
 import type { Camera } from './render';
 import type { PaintKind } from '../sim/world';
 import type { Sfx } from './audio';
@@ -486,6 +486,7 @@ export class Hud {
       this.refreshBuildBarState();
       return true;
     }
+    if (k === 'r') { this.showResources = !this.showResources; return true; }
     if (k === 'k') { this.techPanel.toggle(); return true; }
     if (k === 'o') { this.cam.overlay = this.cam.overlay === 'traffic' ? 'none' : 'traffic'; return true; }
     if (k === 'p') { this.togglePriorities(); return true; }
@@ -774,19 +775,35 @@ export class Hud {
       { label: 'Refined', kinds: ['timber', 'brick', 'iron', 'tools', 'rope', 'flour', 'ale', 'medicine'] },
       { label: 'Food Variety', kinds: ['meal', 'bread', 'dairy', 'produce', 'game_meal', 'fish_meal', 'preserved'] },
     ];
-    // Resources that have consumers but no known producers ("no source" flag).
-    const NO_SOURCE = new Set<ResourceKind>(['rope', 'preserved']);
+    // A resource is "locked" only until the tech that produces it is researched.
+    const techFor: Partial<Record<ResourceKind, string>> = {
+      rope: 'textile_farming', preserved: 'food_preservation', ale: 'fermentation',
+      produce: 'horticulture', flax: 'textile_farming', timber: 'carpentry',
+      brick: 'brickwork', clay: 'prospecting', iron_ore: 'iron_mining',
+      coal: 'iron_mining', iron: 'iron_smelting', tools: 'blacksmithing',
+      flour: 'milling', medicine: 'germ_theory', herbs: 'herbalism',
+      dairy: 'animal_husbandry',
+    };
     let html = `<h3>Resources <button onclick="this.closest('.inspector').dispatchEvent(new CustomEvent('close-res'))" style="float:right;cursor:pointer">✕</button></h3>`;
     for (const g of GROUPS) {
       html += `<div class="insp-section"><b>${g.label}</b></div>`;
       for (const k of g.kinds) {
         const qty = s.stock[k] ?? 0;
         const flow = s.netFlow(k);
-        const flowStr = flow > 0.05 ? `<span style="color:#6f6">+${flow.toFixed(1)}/day</span>`
-          : flow < -0.05 ? `<span style="color:#f66">${flow.toFixed(1)}/day</span>`
-          : `<span style="color:#888">~0/day</span>`;
-        const noSource = NO_SOURCE.has(k) ? ` <span style="color:#f66" title="No known production source">⚠ No source</span>` : '';
-        html += `<div class="bar-row"><span style="min-width:80px">${k.replace('_', ' ')}</span><span style="min-width:32px;text-align:right">${qty}</span> ${flowStr}${noSource}</div>`;
+        const flowStr = flow > 0.05 ? `<span style="color:#6f6">+${flow.toFixed(1)}</span>`
+          : flow < -0.05 ? `<span style="color:#f66">${flow.toFixed(1)}</span>`
+          : `<span style="color:#888">~0</span>`;
+        const tech = techFor[k];
+        const locked = tech && !s.hasTech(tech);
+        const tag = locked ? ` <span style="color:#c80" title="Locked — research ${tech.replace('_', ' ')}">🔒</span>` : '';
+        // Live market price with supply/demand arrow.
+        const spot = s.marketPrice(k);
+        const base = BASE_PRICES[k] ?? 10;
+        const arrow = spot > base * 1.08 ? `<span style="color:#6f6">▲</span>`
+          : spot < base * 0.92 ? `<span style="color:#f66">▼</span>` : '';
+        html += `<div class="bar-row"><span style="min-width:74px">${k.replace('_', ' ')}</span>` +
+          `<span style="min-width:30px;text-align:right">${qty}</span> ${flowStr} ` +
+          `<span style="min-width:42px;text-align:right;color:#caa" title="market price/unit">${formatCurrency(spot)}${arrow}</span>${tag}</div>`;
       }
     }
     return html;
@@ -864,29 +881,44 @@ export class Hud {
         ${times > 10 ? `<button class="trade-bulk" data-give="${give}" data-get="${get}" data-qty="${times}" title="Max">×${times}</button>` : ''}
       </div>`;
     }).join('');
-    // Sell stock for coin: how the colony banks the cash that founding a town requires
-    const sellable: ResourceKind[] = ['wood', 'stone', 'grain', 'meal', 'clothes', 'weapons'];
-    const sells = sellable.map((kind) => {
-      const price = getMarketPrice(this.sim.economy, kind);
+    // Spot-price arrow: how the current market price compares to the resource's
+    // natural base — ▲ when scarce/bid-up, ▼ when the player has flooded it.
+    const priceTag = (kind: ResourceKind): string => {
+      const spot = this.sim.marketPrice(kind);
+      const base = BASE_PRICES[kind] ?? 10;
+      const ratio = spot / base;
+      const arrow = ratio > 1.08 ? `<span style="color:#6f6">▲</span>`
+        : ratio < 0.92 ? `<span style="color:#f66">▼</span>` : '';
+      return `${formatCurrency(spot)}${arrow}`;
+    };
+    // Sell stock for coin: any good the colony holds can be sold. Prices are
+    // marginal — dumping a big stock floods the market and clears below spot.
+    const sellable = (Object.keys(this.sim.stock) as ResourceKind[])
+      .filter((kind) => (this.sim.stock[kind] ?? 0) >= 5);
+    const sells = sellable.length === 0
+      ? `<p class="insp-skills" style="opacity:0.6">Nothing in surplus to sell.</p>`
+      : sellable.map((kind) => {
       const have = this.sim.stock[kind] ?? 0;
-      const can = have >= 5;
       return `<div class="trade-row">
-        <button class="sell-cash-btn" data-kind="${kind}" data-qty="5"${can ? '' : ' disabled'} title="Shift+click to sell all">5 ${kind} → ${formatCurrency(price * 5)}</button>
-        ${have > 5 ? `<button class="sell-bulk" data-kind="${kind}" data-qty="${have}" title="Sell all ${have}">×all → ${formatCurrency(price * have)}</button>` : ''}
+        <button class="sell-cash-btn" data-kind="${kind}" data-qty="5" title="Shift+click to sell all">5 ${kind} (${priceTag(kind)}/u)</button>
+        ${have > 5 ? `<button class="sell-bulk" data-kind="${kind}" data-qty="${have}" title="Sell all ${have} — marginal price falls as you dump">×all (${have})</button>` : ''}
       </div>`;
     }).join('');
     // Buy essentials with coin — keeps the larder stocked when farms fall short.
     const buyable: ResourceKind[] = ['meal', 'grain', 'wood'];
     const cash = this.sim.economy.cash;
     const buys = buyable.map((kind) => {
-      const price = getMarketPrice(this.sim.economy, kind);
+      const price = this.sim.marketPrice(kind);
       return `<div class="trade-row">
         <button class="buy-cash-btn" data-kind="${kind}" data-qty="5"${cash >= price * 5 ? '' : ' disabled'} title="Shift+click to buy 25">${formatCurrency(price * 5)} → 5 ${kind}</button>
         <button class="buy-cash-btn" data-kind="${kind}" data-qty="25"${cash >= price * 25 ? '' : ' disabled'}>×25 → ${formatCurrency(price * 25)}</button>
       </div>`;
     }).join('');
+    const inflation = this.sim.hasTech('banking')
+      ? ` · inflation ${(this.sim.economy.inflation * 100).toFixed(1)}%`
+      : '';
     return `<p class="insp-skills">BARTER:</p><div class="trade-panel">${offers}</div>` +
-      `<p class="insp-skills">SELL FOR COIN (` + formatCurrency(Math.round(cash)) + `):</p><div class="trade-panel">${sells}</div>` +
+      `<p class="insp-skills">SELL FOR COIN (` + formatCurrency(Math.round(cash)) + inflation + `):</p><div class="trade-panel">${sells}</div>` +
       `<p class="insp-skills">BUY WITH COIN:</p><div class="trade-panel">${buys}</div>`;
   }
 

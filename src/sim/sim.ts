@@ -13,7 +13,7 @@ import {
 } from './defs';
 import type { ResourceKind, WorkKind, TownFocus, TradeOrder, TradeRecord, PendingEvent, CurrencySymbol, TownDesign } from './defs';
 import type { EconomyData } from './economy';
-import { createTownEconomy, getMarketPrice } from './economy';
+import { createTownEconomy, BASE_PRICES } from './economy';
 
 export interface Needs {
   food: number;
@@ -760,7 +760,8 @@ export class Simulation {
       if (t.kind !== 'rock') return false;
       if (t.buildingId !== null) return false;
       t.mineZone = true;
-      t.mineCharges = TUNING.mineChargesInit;
+      // Ore deposit tiles are richer — double the starting charges.
+      t.mineCharges = t.oreDeposit ? TUNING.mineChargesInit * 2 : TUNING.mineChargesInit;
       return true;
     }
     return false;
@@ -859,9 +860,9 @@ export class Simulation {
     return tiles * CAPACITY_PER_TILE + warehouseCap;
   }
 
-  /** Total raw goods in stock (excludes food-variety items tracked by mealCap). */
+  /** Total raw goods in stock (excludes food/food-precursor items tracked separately by mealCap). */
   totalRawStock(): number {
-    const FOOD_KINDS = new Set<ResourceKind>(['meal', 'game_meal', 'fish_meal', 'bread', 'dairy', 'produce', 'preserved', 'ale']);
+    const FOOD_KINDS = new Set<ResourceKind>(['grain', 'flour', 'meal', 'game_meal', 'fish_meal', 'bread', 'dairy', 'produce', 'preserved', 'ale']);
     return (Object.keys(this.stock) as ResourceKind[])
       .filter((k) => !FOOD_KINDS.has(k))
       .reduce((sum, k) => sum + this.stock[k], 0);
@@ -977,6 +978,31 @@ export class Simulation {
     }
   }
 
+  /**
+   * Daily monetary update: prices that were pushed off-balance by trading
+   * heal back toward their natural level (mean reversion), and — once the
+   * Banking tech is in — money-per-capita drives inflation or deflation.
+   * Together these stop the player from farming a single good for endless
+   * cash: dumping floods supply (price falls), and hoarding the proceeds
+   * debases the currency (inflation lifts what everything costs).
+   */
+  private updateMarketPrices(): void {
+    const recovery = TUNING.marketRecoveryPerDay;
+    for (const k of Object.keys(this.priceModifiers) as ResourceKind[]) {
+      const m = this.priceModifiers[k];
+      this.priceModifiers[k] = m + (1.0 - m) * recovery;
+    }
+    if (!this.hasTech('banking')) return;
+    // Monetary layer: too much coin chasing the same goods raises prices.
+    const pop = Math.max(1, this.settlers.length);
+    const cashPerCapita = this.economy.cash / pop;
+    const target = Math.max(
+      TUNING.inflationMin,
+      Math.min(TUNING.inflationMax, (cashPerCapita / TUNING.inflationCashAnchor - 1) * 0.2),
+    );
+    this.economy.inflation += (target - this.economy.inflation) * TUNING.inflationDriftPerDay;
+  }
+
   private dailyUpdate(): void {
     for (let i = 0; i < this.traffic.length; i++) this.traffic[i] *= 0.9; // overlay shows recent flow
     // Snapshot each resource for 7-day rolling production/consumption display.
@@ -987,6 +1013,7 @@ export class Simulation {
       if (hist.length > 8) hist.length = 8; // keep 8 snapshots → 7 deltas
     }
     this.updatePopulationFlows();
+    this.updateMarketPrices();
     // Animal pens produce dairy from livestock
     for (const pen of this.builtOf('ranching').filter(b => b.defId === 'animal_pen' && b.built)) {
       const livestock = pen.livestock ?? 0;
@@ -1117,13 +1144,44 @@ export class Simulation {
   }
 
   /**
-   * Sell a resource to the market, converting it to cash.
-   * Returns amount of cash received.
+   * Current market price for one unit of a resource, reflecting its
+   * supply/demand modifier and town inflation. The modifier falls as the
+   * player floods the market (sells) and rises with scarcity (buys); it
+   * heals back toward 1.0 daily. Inflation (Banking tech) lifts every price.
+   */
+  marketPrice(resource: ResourceKind): number {
+    const base = BASE_PRICES[resource] ?? 10;
+    const mod = this.priceModifiers[resource] ?? 1.0;
+    const inflation = this.hasTech('banking') ? this.economy.inflation : 0;
+    return base * mod * (1 + inflation);
+  }
+
+  /** Clamp a price modifier into the configured [floor, cap] band. */
+  private clampModifier(m: number): number {
+    return Math.max(TUNING.marketPriceFloor, Math.min(TUNING.marketPriceCap, m));
+  }
+
+  /**
+   * Sell a resource to the market, converting it to cash. Pricing is
+   * marginal: each unit sold clears at a progressively lower price as the
+   * sale floods local supply, so dumping a large stock yields far less per
+   * unit than a small sale. The resource's price modifier is depressed by
+   * the whole quantity and recovers over the following days.
+   * Returns cash received.
    */
   sellToMarket(resource: ResourceKind, quantity: number): number {
-    if (this.stock[resource] < quantity) return 0;
-    const pricePerUnit = getMarketPrice(this.economy, resource);
-    const cash = pricePerUnit * quantity;
+    if (quantity <= 0 || this.stock[resource] < quantity) return 0;
+    const base = BASE_PRICES[resource] ?? 10;
+    const inflation = this.hasTech('banking') ? this.economy.inflation : 0;
+    const e = TUNING.marketSellElasticity;
+    let mod = this.priceModifiers[resource] ?? 1.0;
+    let cash = 0;
+    for (let i = 0; i < quantity; i++) {
+      cash += base * this.clampModifier(mod) * (1 + inflation);
+      mod -= e; // each unit sold depresses the next unit's price
+    }
+    this.priceModifiers[resource] = this.clampModifier(mod);
+    cash = Math.round(cash);
     this.stock[resource] -= quantity;
     this.economy.cash += cash;
     this.addLog(`Sold ${quantity} ${resource} for ${formatCurrency(cash)}.`, 'good');
@@ -1131,21 +1189,33 @@ export class Simulation {
   }
 
   /**
-   * Try to buy a resource from the market with cash.
+   * Buy a resource from the market with cash. Pricing is marginal in the
+   * other direction: each unit bought bids the price up. If the player can't
+   * afford the full order, as many units as cash allows are purchased.
    * Returns quantity purchased.
    */
   buyFromMarket(resource: ResourceKind, quantity: number): number {
-    const pricePerUnit = getMarketPrice(this.economy, resource);
-    const cost = pricePerUnit * quantity;
-    if (this.economy.cash < cost) {
-      const affordable = Math.floor(this.economy.cash / pricePerUnit);
-      if (affordable <= 0) return 0;
-      return this.buyFromMarket(resource, affordable); // recursive with affordable amount
+    if (quantity <= 0) return 0;
+    const base = BASE_PRICES[resource] ?? 10;
+    const inflation = this.hasTech('banking') ? this.economy.inflation : 0;
+    const e = TUNING.marketBuyElasticity;
+    let mod = this.priceModifiers[resource] ?? 1.0;
+    let spent = 0;
+    let bought = 0;
+    for (let i = 0; i < quantity; i++) {
+      const unit = base * this.clampModifier(mod) * (1 + inflation);
+      if (this.economy.cash - spent < unit) break; // out of cash
+      spent += unit;
+      mod += e; // each unit bought bids the price up
+      bought++;
     }
-    this.stock[resource] += quantity;
-    this.economy.cash -= cost;
-    this.addLog(`Bought ${quantity} ${resource} for ${formatCurrency(cost)}.`, 'info');
-    return quantity;
+    if (bought === 0) return 0;
+    this.priceModifiers[resource] = this.clampModifier(mod);
+    spent = Math.round(spent);
+    this.stock[resource] += bought;
+    this.economy.cash -= spent;
+    this.addLog(`Bought ${bought} ${resource} for ${formatCurrency(spent)}.`, 'info');
+    return bought;
   }
 
   /** Town-tier incident deck — 12 named events, ~45% bad / 55% good (GDD §3.3). */
@@ -1914,11 +1984,14 @@ export class Simulation {
       candidates.push({ task, prio, dist });
     };
 
-    // Haul ground items to the stockpile zone (blocked when raw-goods capacity is full).
+    // Haul ground items to the stockpile zone. When industrial capacity is full
+    // only food items (grain, cooked meals, etc.) are still allowed through so
+    // that a wood glut can never starve the colony.
     const rawCap = this.stockpileCapacity();
     const rawFull = rawCap > 0 && this.totalRawStock() >= rawCap;
+    const FOOD_HAUL = new Set<ResourceKind>(['grain', 'flour', 'meal', 'game_meal', 'fish_meal', 'bread', 'dairy', 'produce', 'preserved', 'ale']);
     for (const it of this.items) {
-      if (it.reservedBy === null && !rawFull) {
+      if (it.reservedBy === null && (!rawFull || FOOD_HAUL.has(it.kind))) {
         push({ kind: 'haul', x: it.x, y: it.y, itemId: it.id, workLeft: 5, label: `haul ${it.kind}` }, 'haul');
       }
     }
@@ -2130,12 +2203,11 @@ export class Simulation {
         push({ kind: 'chop', x: cs.x, y: cs.y, workLeft: TUNING.treeChopWork, label: 'harvest timber' }, 'chop');
       }
     }
-    // Armoury: forge weapons when wood is available, but only up to a full
-    // armory for the colony (one spare per head). Without this cap the forge
-    // ran forever and buried the stores in surplus weapons.
+    // Armoury: forge weapons from timber (sawmill feeds the armoury), capped at one per settler.
+    // Without this cap the forge ran forever and buried the stores in surplus weapons.
     const weaponTarget = this.settlers.length;
     for (const a of this.builtOf('forge')) {
-      if (this.stock.wood >= TUNING.forgeWoodCost && this.stock.weapons < weaponTarget) {
+      if (this.stock.timber >= TUNING.forgeTimberCost && this.stock.weapons < weaponTarget) {
         push({ kind: 'forge', x: a.x, y: a.y, buildingId: a.id, workLeft: TUNING.forgeWorkPerWeapon, label: 'forge weapon' }, 'forge');
       }
     }
@@ -2147,6 +2219,22 @@ export class Simulation {
     const canSpinGrain = this.stock.grain >= TUNING.clothesGrainCost + this.settlers.length;
     if (tailorShop && this.stock.clothes < threadbare && (canSpinFlax || canSpinGrain)) {
       push({ kind: 'craft', x: tailorShop.x, y: tailorShop.y, buildingId: tailorShop.id, workLeft: TUNING.craftWorkPerClothes, label: 'sew clothes' }, 'craft');
+    }
+    // Rope: once clothing demand is met, the tailor twists spare flax fibre into
+    // rope — the cordage advanced upgrades (nets, rigging, scaffolding) call for.
+    if (tailorShop && this.hasTech('textile_farming') &&
+        this.stock.clothes >= threadbare &&
+        this.stock.flax >= TUNING.ropeFlaxCost && this.stock.rope < TUNING.ropeTarget) {
+      push({ kind: 'craft', x: tailorShop.x, y: tailorShop.y, buildingId: tailorShop.id, workLeft: TUNING.ropeWorkCost, label: 'spin rope' }, 'craft');
+    }
+    // Preserved food: cooks salt/smoke surplus meals into shelf-stable rations
+    // that never spoil — the strategic winter reserve (food_preservation tech).
+    if (this.hasTech('food_preservation') && this.stock.meal >= this.mealCap() * 0.7 &&
+        this.stock.preserved < this.settlers.length * 3) {
+      const cookShop = this.builtOf('cook')[0];
+      if (cookShop) {
+        push({ kind: 'craft', x: cookShop.x, y: cookShop.y, buildingId: cookShop.id, workLeft: TUNING.preserveWorkCost, label: 'preserve food' }, 'craft');
+      }
     }
     // Lay the dead to rest — needs a burial ground with a free plot; until
     // then the bodies lie in camp and weigh on everyone.
@@ -2683,6 +2771,28 @@ export class Simulation {
           }
           return;
         }
+        // Rope: twist flax fibre into cordage (tailor, textile_farming).
+        if (task.label === 'spin rope') {
+          if (this.stock.flax < TUNING.ropeFlaxCost) return this.finishTask(s);
+          task.workLeft -= work;
+          if (task.workLeft <= 0) {
+            this.stock.flax -= TUNING.ropeFlaxCost;
+            this.stock.rope++;
+            this.finishTask(s);
+          }
+          return;
+        }
+        // Preserved food: salt/smoke surplus meals into shelf-stable rations.
+        if (task.label === 'preserve food') {
+          if (this.stock.meal < TUNING.preservedMealCost) return this.finishTask(s);
+          task.workLeft -= work;
+          if (task.workLeft <= 0) {
+            this.stock.meal -= TUNING.preservedMealCost;
+            this.stock.preserved += TUNING.preservedYield;
+            this.finishTask(s);
+          }
+          return;
+        }
         // Default: tailor makes clothes from flax (if available) or grain
         const useFlax = this.hasTech('textile_farming') && this.stock.flax >= 1;
         if (!useFlax && this.stock.grain < TUNING.clothesGrainCost) return this.finishTask(s);
@@ -2701,11 +2811,11 @@ export class Simulation {
       }
       case 'forge': {
         const forge = this.building(task.buildingId);
-        if (!forge?.built || this.stock.wood < TUNING.forgeWoodCost) return this.finishTask(s);
+        if (!forge?.built || this.stock.timber < TUNING.forgeTimberCost) return this.finishTask(s);
         const speedMult = forge.level >= 2 ? 1.5 : 1;
         task.workLeft -= work * speedMult;
         if (task.workLeft <= 0) {
-          this.stock.wood -= TUNING.forgeWoodCost;
+          this.stock.timber -= TUNING.forgeTimberCost;
           this.stock.weapons++;
           this.finishTask(s);
         }
@@ -3304,6 +3414,7 @@ export class Simulation {
       orchardZone: t.orchardZone ?? false,
       mineZone: t.mineZone ?? false,
       mineCharges: t.mineCharges ?? 0,
+      oreDeposit: t.oreDeposit ?? false,
       flaxZone: t.flaxZone ?? false,
       districtId: t.districtId ?? null,
     }));

@@ -57,6 +57,8 @@ export interface Tile {
   /** exhausts after several mine cycles; converts to grass when depleted */
   mineZone: boolean;
   mineCharges: number;
+  /** marked by worldgen as an ore-rich rock cluster — mine zones here yield double charges */
+  oreDeposit: boolean;
   flaxZone: boolean;
   /** district label id (null = no district) */
   districtId: number | null;
@@ -94,7 +96,7 @@ export class World {
         gate: false, gatePlan: false, sapling: false, trapZone: false, wallHp: 0,
         buildingId: null, explored: false,
         pastureZone: false, orchardZone: false, mineZone: false, mineCharges: 0,
-        flaxZone: false, districtId: null,
+        oreDeposit: false, flaxZone: false, districtId: null,
       });
     }
     this.generate(rng);
@@ -194,8 +196,22 @@ export class World {
       this.blob(cx, cy, 2 + rng.int(4), 'tree', rng);
     }
     const rockBlobs = Math.round((1 + s.roughness * 7) * blobMult);
+    const oreCentres: { x: number; y: number; r: number }[] = [];
     for (let i = 0; i < rockBlobs; i++) {
-      this.blob(rng.int(MAP_W), rng.int(MAP_H), 1 + rng.int(2), 'rock', rng);
+      const bx = rng.int(MAP_W), by = rng.int(MAP_H), br = 1 + rng.int(2);
+      this.blob(bx, by, br, 'rock', rng);
+      // Every 3rd rock blob is an ore deposit (at least 2, at most 4 per map).
+      if (i % 3 === 1 && oreCentres.length < 4) oreCentres.push({ x: bx, y: by, r: br + 1 });
+    }
+    // Mark ore deposit tiles — visible to the player as vein-flecked rock.
+    for (const oc of oreCentres) {
+      for (let dy = -oc.r; dy <= oc.r; dy++) {
+        for (let dx = -oc.r; dx <= oc.r; dx++) {
+          if (!this.inBounds(oc.x + dx, oc.y + dy)) continue;
+          const t = this.at(oc.x + dx, oc.y + dy);
+          if (t.kind === 'rock') t.oreDeposit = true;
+        }
+      }
     }
 
     // The wagon clearing: a guaranteed buildable heart so no start is unwinnable.

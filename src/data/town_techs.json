@@ -41,6 +41,16 @@
       "unlocks": ["building:brewery", "resource:ale"]
     },
     {
+      "id": "food_preservation",
+      "name": "Food Preservation",
+      "branch": "agriculture",
+      "prereqs": ["fermentation"],
+      "days": 12,
+      "cost": { "grain": 10 },
+      "desc": "Salting and smoking turn surplus meals into shelf-stable rations that never spoil — the strategic winter reserve. Cooks preserve food when the larder overflows.",
+      "unlocks": ["resource:preserved", "mechanic:foodPreservation"]
+    },
+    {
       "id": "horticulture",
       "name": "Horticulture",
       "branch": "agriculture",

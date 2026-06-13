@@ -12,8 +12,8 @@
       "capacity": 3,
       "desc": "Sleeping quarters for 3 settlers. Warm at night.",
       "upgrades": [
-        { "cost": { "wood": 15 }, "capacityBonus": 2, "desc": "Loft added: houses 5 settlers." },
-        { "cost": { "wood": 20, "stone": 8 }, "capacityBonus": 2, "desc": "Stone-reinforced walls: houses 7 settlers." }
+        { "cost": { "wood": 15, "timber": 2 }, "capacityBonus": 2, "desc": "Loft added: houses 5 settlers." },
+        { "cost": { "wood": 20, "stone": 8, "brick": 5 }, "capacityBonus": 2, "desc": "Stone-reinforced walls: houses 7 settlers." }
       ]
     },
     {
@@ -29,8 +29,8 @@
       "requiredTech": "militia_training",
       "desc": "Shared bunk room for 8 settlers. Cheap per head — communal and military types thrive here; loners chafe.",
       "upgrades": [
-        { "cost": { "wood": 20 }, "capacityBonus": 4, "desc": "Second bunk tier: houses 12 settlers." },
-        { "cost": { "wood": 25, "stone": 8 }, "capacityBonus": 4, "desc": "Extended wing: houses 16 settlers." }
+        { "cost": { "wood": 20, "timber": 3 }, "capacityBonus": 4, "desc": "Second bunk tier: houses 12 settlers." },
+        { "cost": { "wood": 25, "stone": 8, "brick": 6 }, "capacityBonus": 4, "desc": "Extended wing: houses 16 settlers." }
       ]
     },
     {
@@ -88,7 +88,7 @@
       "provides": "warmth",
       "desc": "An open stone fire. Warms everyone within a few tiles — winter's answer.",
       "upgrades": [
-        { "cost": { "wood": 8, "stone": 5 }, "capacityBonus": 0, "desc": "Stone chimney: warmth radius +2 tiles." },
+        { "cost": { "wood": 8, "stone": 5, "brick": 4 }, "capacityBonus": 0, "desc": "Stone chimney: warmth radius +2 tiles." },
         { "cost": { "stone": 15 }, "capacityBonus": 0, "desc": "Masonry furnace: warmth radius +4 tiles." }
       ]
     },
@@ -159,7 +159,7 @@
       "provides": "trade",
       "desc": "Passing traders barter at fixed rates. Select it to swap wood, stone and grain.",
       "upgrades": [
-        { "cost": { "wood": 40 }, "capacityBonus": 0, "desc": "Trade network: better exchange rates." },
+        { "cost": { "wood": 40, "timber": 4 }, "capacityBonus": 0, "desc": "Trade network: better exchange rates." },
         { "cost": { "wood": 50, "stone": 20 }, "capacityBonus": 0, "desc": "Commerce hub: enables selling buildings." }
       ]
     },
@@ -187,8 +187,8 @@
       "provides": "granary",
       "desc": "Cool dry storage: each granary lets 150 more meals keep without spoiling.",
       "upgrades": [
-        { "cost": { "wood": 25 }, "capacityBonus": 100, "desc": "Extended cellars: +100 meal capacity." },
-        { "cost": { "wood": 30, "stone": 12 }, "capacityBonus": 150, "desc": "Stone vault: +150 more meal capacity." }
+        { "cost": { "wood": 25, "timber": 4 }, "capacityBonus": 100, "desc": "Extended cellars: +100 meal capacity." },
+        { "cost": { "wood": 30, "stone": 12, "brick": 8 }, "capacityBonus": 150, "desc": "Stone vault: +150 more meal capacity." }
       ]
     },
     {
@@ -202,8 +202,8 @@
       "capacity": 2,
       "desc": "Two cots and clean bandages. The badly hurt heal twice as fast resting here.",
       "upgrades": [
-        { "cost": { "wood": 25 }, "capacityBonus": 1, "desc": "Extra ward: +1 patient cot." },
-        { "cost": { "wood": 30, "stone": 10 }, "capacityBonus": 2, "desc": "Field hospital: +2 more cots, heal rate +50%." }
+        { "cost": { "wood": 25, "timber": 3 }, "capacityBonus": 1, "desc": "Extra ward: +1 patient cot." },
+        { "cost": { "wood": 30, "stone": 10, "brick": 6 }, "capacityBonus": 2, "desc": "Field hospital: +2 more cots, heal rate +50%." }
       ]
     },
     {
@@ -217,7 +217,7 @@
       "desc": "Settlers fish from the dock; meals without grain. Must be built near water.",
       "upgrades": [
         { "cost": { "wood": 15 }, "capacityBonus": 0, "desc": "Extended pier: fishing yield +1 meal." },
-        { "cost": { "wood": 20 }, "capacityBonus": 0, "desc": "Net fishing: yield +2 meals per trip." }
+        { "cost": { "wood": 20, "rope": 4 }, "capacityBonus": 0, "desc": "Net fishing: yield +2 meals per trip." }
       ]
     },
     {
@@ -231,7 +231,7 @@
       "requiredTech": "milling",
       "desc": "Waterwheel-driven millstones grind grain into flour — a distinct food type for variety bonuses. Requires Milling tech.",
       "upgrades": [
-        { "cost": { "wood": 25 }, "capacityBonus": 0, "desc": "Better stones: milling 30% faster." },
+        { "cost": { "wood": 25, "timber": 3 }, "capacityBonus": 0, "desc": "Better stones: milling 30% faster." },
         { "cost": { "stone": 15 }, "capacityBonus": 0, "desc": "Second wheel: milling 60% faster." }
       ]
     },
@@ -273,8 +273,8 @@
       "provides": "civic",
       "desc": "The seat of local governance. Enables the town research tree — assign a researcher to unlock new buildings and mechanics. [K] to open.",
       "upgrades": [
-        { "cost": { "wood": 40, "stone": 20 }, "capacityBonus": 0, "desc": "Council chambers: research 25% faster." },
-        { "cost": { "stone": 40 }, "capacityBonus": 0, "desc": "Stone hall: research 50% faster, 2 researcher slots." }
+        { "cost": { "wood": 40, "stone": 20, "timber": 5 }, "capacityBonus": 0, "desc": "Council chambers: research 25% faster." },
+        { "cost": { "stone": 40, "brick": 12 }, "capacityBonus": 0, "desc": "Stone hall: research 50% faster, 2 researcher slots." }
       ]
     },
     {
@@ -287,7 +287,7 @@
       "provides": "forge",
       "desc": "Smiths forge proper weapons from timber. Fighters draw from the arsenal before a raid — no scrambling for sticks when the horn sounds.",
       "upgrades": [
-        { "cost": { "wood": 20, "stone": 8 }, "capacityBonus": 0, "desc": "Stone anvil: weapons forged faster (+50% output)." },
+        { "cost": { "wood": 20, "stone": 8, "timber": 3 }, "capacityBonus": 0, "desc": "Stone anvil: weapons forged faster (+50% output)." },
         { "cost": { "wood": 30, "stone": 15 }, "capacityBonus": 0, "desc": "Armourer's guild: forged weapons deal +10 more damage." }
       ]
     },
@@ -302,7 +302,7 @@
       "requiredTech": "first_aid",
       "desc": "Clean water source — reduces infection risk colony-wide. Requires First Aid tech.",
       "upgrades": [
-        { "cost": { "stone": 10 }, "capacityBonus": 0, "desc": "Stone casing: infection reduction doubled." },
+        { "cost": { "stone": 10, "brick": 4 }, "capacityBonus": 0, "desc": "Stone casing: infection reduction doubled." },
         { "cost": { "stone": 20 }, "capacityBonus": 0, "desc": "Pump well: healing speed slightly increased." }
       ]
     },
@@ -317,8 +317,8 @@
       "requiredTech": "fortification",
       "desc": "Scouts spot raiders early — logs a warning one day before arrival. Requires Fortification tech.",
       "upgrades": [
-        { "cost": { "wood": 15, "stone": 8 }, "capacityBonus": 0, "desc": "Stone base: warning two days in advance." },
-        { "cost": { "stone": 20 }, "capacityBonus": 0, "desc": "Signal tower: fire beacons speed militia response." }
+        { "cost": { "wood": 15, "stone": 8, "brick": 5 }, "capacityBonus": 0, "desc": "Stone base: warning two days in advance." },
+        { "cost": { "stone": 20, "rope": 5 }, "capacityBonus": 0, "desc": "Signal tower: fire beacons speed militia response." }
       ]
     },
     {
@@ -332,7 +332,7 @@
       "requiredTech": "commerce",
       "desc": "Bulk dry storage — each warehouse adds 500 capacity for raw goods. Requires Commerce tech.",
       "upgrades": [
-        { "cost": { "wood": 30 }, "capacityBonus": 0, "desc": "Organized shelving: +250 extra capacity." },
+        { "cost": { "wood": 30, "timber": 4, "rope": 4 }, "capacityBonus": 0, "desc": "Organized shelving: +250 extra capacity." },
         { "cost": { "stone": 20 }, "capacityBonus": 0, "desc": "Stone vault: fire-proof, +500 more capacity." }
       ]
     },

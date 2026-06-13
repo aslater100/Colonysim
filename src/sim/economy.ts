@@ -46,16 +46,41 @@ export interface Loan {
 }
 
 /**
- * Base prices for resources in town tier (in currency units).
- * Used as reference; actual prices vary by inflation and supply.
+ * Base prices for every resource in town tier (in currency units).
+ * Values follow the production chain: raw materials are cheap, each
+ * processing step adds labour value, so refining is profitable but the
+ * margin is finite. Actual market price = base × supply/demand modifier
+ * × (1 + inflation) — see Simulation.marketPrice().
  */
 export const BASE_PRICES: Record<string, number> = {
-  wood: 10,
-  stone: 15,
-  grain: 8,
-  meal: 12,
-  clothes: 20,
-  weapons: 50,
+  // Founding / raw
+  wood: 8,
+  grain: 6,
+  stone: 12,
+  clay: 7,
+  coal: 15,
+  iron_ore: 18,
+  flax: 9,
+  herbs: 12,
+  // Processed (input cost + labour margin)
+  meal: 14,
+  clothes: 30,
+  weapons: 70,
+  timber: 22,    // 2 wood (16) + labour
+  brick: 20,     // 2 clay (14) + labour
+  iron: 58,      // 2 ore + coal (51) + labour
+  tools: 140,    // 2 iron (116) + labour — top of the chain
+  rope: 26,      // 2 flax (18) + labour
+  flour: 16,     // grain + milling
+  ale: 24,       // 2 grain + fermentation
+  medicine: 78,  // 2 herbs (24) + skilled labour
+  // Food variety
+  bread: 24,     // flour + baking
+  dairy: 18,
+  produce: 15,
+  game_meal: 16,
+  fish_meal: 15,
+  preserved: 32, // shelf-stable premium
 };
 
 /**
