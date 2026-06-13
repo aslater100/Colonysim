@@ -5577,10 +5577,16 @@ export class RegionSim {
       this.spawnScout(faction);
     }
 
-    // Settlement expansion: cheap Monte Carlo approach (5 random sites, pick best)
-    if (this.rng.chance(0.1) && faction.settlementIds.length < 6) {
-      // 10% chance per update to expand if below 6 settlements
-      // TODO Phase 2b: call findBestExpansionSite() and foundSettlement()
+    // Settlement expansion: Monte Carlo approach (5 random sites, pick best)
+    if (this.rng.chance(0.1) && faction.settlementIds.length < 6 && faction.treasury >= 50) {
+      const site = this.findBestExpansionSite(faction, 5);
+      if (site && site.score > 0) {
+        const newSettlement = this.foundSettlement(faction, site.x, site.y);
+        if (newSettlement) {
+          this.addLog(`${faction.name} founds settlement ${newSettlement.name} at (${site.x}, ${site.y}).`, 'info');
+          faction.treasury -= 50; // founding cost
+        }
+      }
     }
 
     // Military scaling: garrison = pop * 0.01 * tech_mult
@@ -5682,6 +5688,113 @@ export class RegionSim {
     }
 
     return { x: targetX, y: targetY };
+  }
+
+  // ---- Settlement Expansion (Phase 2b: Monte Carlo placement) ----
+
+  /** Determine site characteristics: river, coastal, mountain, plains, forest. */
+  private siteType(x: number, y: number): string[] {
+    const site = this.map.siteAt(x, y);
+    if (!site) return [];
+    const types: string[] = [];
+    if (site.river || (x > 0 && y > 0 && this.map.siteAt(x - 1, y)?.river)) types.push('river');
+    if (site.coastal || x < 5 || x > 95 || y < 5 || y > 95) types.push('coastal');
+    if (site.roughness > 0.4) types.push('mountain');
+    if (site.fertility > 0.9 && site.roughness < 0.2) types.push('plains');
+    if (site.forest > 0.5) types.push('forest');
+    return types;
+  }
+
+  /** Find best settlement expansion site using Monte Carlo sampling (5 random sites). */
+  private findBestExpansionSite(faction: RegionalFaction, samples: number = 5): { x: number; y: number; score: number } | null {
+    let bestSite: { x: number; y: number; score: number } | null = null;
+    const bias = faction.currentGoal?.settlementBias ?? [];
+
+    for (let i = 0; i < samples; i++) {
+      const x = this.rng.int(100), y = this.rng.int(100);
+      const siteTypes = this.siteType(x, y);
+
+      // Score calculation
+      let score = 50;
+
+      // Penalty: too close to existing settlement
+      for (const settlementId of faction.settlementIds) {
+        const s = this.settlement(settlementId);
+        if (s && Math.abs(s.x - x) < 4 && Math.abs(s.y - y) < 4) {
+          score -= 100; // too close
+          break;
+        }
+      }
+
+      // Bias matching: +20 per matching type
+      for (const b of bias) {
+        if (siteTypes.includes(b)) score += 20;
+      }
+
+      // Terrain bonuses
+      if (siteTypes.includes('coastal')) score += 5;
+      if (siteTypes.includes('river')) score += 3;
+      if (siteTypes.includes('mountain')) score += 2;
+
+      // Noise for variety
+      score += this.rng.int(11) - 5;
+
+      if (score > 0 && (!bestSite || score > bestSite.score)) {
+        bestSite = { x: Math.round(x), y: Math.round(y), score };
+      }
+    }
+
+    return bestSite;
+  }
+
+  /** Found a new settlement for a faction at the given coordinates. */
+  private foundSettlement(faction: RegionalFaction, x: number, y: number): Settlement | null {
+    // Check if placement is valid
+    if (x < 0 || x > 100 || y < 0 || y > 100) return null;
+
+    // Don't found where another settlement exists
+    if (this.settlements.some((s) => Math.abs(s.x - x) < 4 && Math.abs(s.y - y) < 4)) {
+      return null;
+    }
+
+    // Create new settlement
+    const site = this.map.siteAt(Math.round(x), Math.round(y));
+    if (!site) return null;
+
+    const settlement: Settlement = {
+      id: this.nextId++,
+      name: `${faction.name}'s Outpost`, // TODO: better naming
+      x: Math.round(x),
+      y: Math.round(y),
+      foundedDay: this.day,
+      cohorts: { bands: [5, 10, 8, 4, 1] }, // starting population ~28
+      food: 50,
+      wood: 30,
+      satisfaction: 60,
+      housing: 15,
+      landQuality: site.fertility,
+      site,
+      lastRaidDay: -999,
+      lastFloodDay: -999,
+      strikeUntil: -1,
+      grievance: 20,
+      prices: { ...BASE_PRICE },
+      factionId: faction.id,
+      garrisonStrength: 2,
+      loyaltyToFaction: 85, // new settlements are loyal to their faction
+      sectors: defaultSectors(),
+      buildings: [],
+      construction: null,
+      focus: 'balanced' as TownFocus,
+      activeEvents: [],
+      policies: { ...DEFAULT_CITY_POLICIES },
+      recentEvents: [],
+    };
+
+    this.settlements.push(settlement);
+    faction.settlementIds.push(settlement.id);
+
+    return settlement;
   }
 
   /** Update all scouts: move, age, expire. Called during monthly update. */
