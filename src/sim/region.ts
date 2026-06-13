@@ -1528,6 +1528,67 @@ export class RegionSim {
     return settlement.garrisonStrength || 0;
   }
 
+  /** Get comprehensive statistics for a faction (Phase 4: UI foundation).
+   *  Useful for faction status panels and activity log context. */
+  getFactionStats(factionId: number): {
+    id: number;
+    name: string;
+    population: number;
+    settlements: number;
+    treasury: number;
+    militaryStrength: number;
+    techProgress: number;
+    currentGoal: string | null;
+    goalProgress: number;
+    allies: number[];
+    rivals: number[];
+  } | null {
+    const faction = this.faction(factionId);
+    if (!faction) return null;
+
+    const population = faction.settlementIds.reduce((sum, id) => {
+      const s = this.settlement(id);
+      return sum + (s ? this.popOf(s) : 0);
+    }, 0);
+
+    // Calculate goal progress as percentage toward target year
+    let goalProgress = 0;
+    if (faction.currentGoal) {
+      const elapsed = this.year - faction.currentGoal.generatedYear;
+      const total = faction.currentGoal.targetYear - faction.currentGoal.generatedYear;
+      goalProgress = total > 0 ? Math.round((elapsed / total) * 100) : 0;
+    }
+
+    // Find allies and rivals
+    const allies: number[] = [];
+    const rivals: number[] = [];
+    for (const other of this.regionalFactions) {
+      if (other.id === faction.id) continue;
+      if (this.areAllied(faction.id, other.id)) {
+        allies.push(other.id);
+      } else if (faction.currentGoal && other.currentGoal) {
+        const conflict = this.evaluateGoalConflict(faction.currentGoal, other.currentGoal);
+        if (conflict > 60) {
+          rivals.push(other.id);
+        }
+      }
+    }
+
+    return {
+      id: faction.id,
+      name: faction.name,
+      population,
+      settlements: faction.settlementIds.length,
+      treasury: Math.round(faction.treasury),
+      militaryStrength: faction.militaryStrength,
+      techProgress: Math.round(faction.techProgress),
+      currentGoal: faction.currentGoal?.objective ?? null,
+      goalProgress,
+      allies,
+      rivals,
+    };
+  }
+
   /** Initialize the regional faction system for the player. Called once when entering region mode. */
   regionalizeFactionSystem(homeSettlement: Settlement): void {
     // Create the player faction (faction 0)
