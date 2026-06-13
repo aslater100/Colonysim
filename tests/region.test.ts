@@ -1038,14 +1038,23 @@ describe('Regional Events (Phase 4)', () => {
     expect(bad.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('an injected drought halves agriculture output next update', () => {
+  it('an injected drought sharply cuts agriculture output vs an undroughted control', () => {
+    // Compare two identical colonies over the same 30 days: one struck by drought,
+    // one not. A pre/post baseline would be confounded by a month of organic growth
+    // (births, sector drift, immigration), so we measure the causal effect directly.
+    const control = stateCity(42);
+    runDays(control, 35);
+    runDays(control, 30);
+    const controlOut = control.settlements[0].sectors.agriculture.output;
+
     const r = stateCity(42);
     const t = r.settlements[0];
-    runDays(r, 35); // populate baseline outputs
-    const agri_before = t.sectors.agriculture.output;
+    runDays(r, 35);
     t.activeEvents.push({ kind: 'drought', untilDay: r.day + 60, severity: 1 });
     runDays(r, 30);
-    expect(t.sectors.agriculture.output).toBeLessThan(agri_before * 0.7);
+    // Drought is a 0.60 output multiplier; with immigration also drying up, the
+    // droughted colony ends well under 70% of the thriving control.
+    expect(t.sectors.agriculture.output).toBeLessThan(controlOut * 0.7);
   });
 
   it('a bumper harvest lifts agriculture output above baseline', () => {
@@ -1098,14 +1107,21 @@ describe('Local Policies (Phase 5)', () => {
     expect(r.setCityPolicy(hamlet.id, 'taxBand', 2)).toBe(false);
   });
 
-  it('heavy taxation reduces sector output', () => {
+  it('heavy taxation reduces sector output vs an untaxed control', () => {
+    // Two identical colonies over the same 30 days: one levies a heavy tax, one
+    // does not. Comparing against a control isolates the tax's drag from the
+    // colony's natural month-over-month growth.
+    const control = managedCity(42);
+    runDays(control, 35);
+    runDays(control, 30);
+    const controlOut = control.settlements[0].sectors.agriculture.output;
+
     const r = managedCity(42);
     const capital = r.settlements[0];
     runDays(r, 35);
-    const outBefore = capital.sectors.agriculture.output;
     r.setCityPolicy(capital.id, 'taxBand', 3); // 15% tax
     runDays(r, 30);
-    expect(capital.sectors.agriculture.output).toBeLessThan(outBefore);
+    expect(capital.sectors.agriculture.output).toBeLessThan(controlOut);
   });
 
   it('generous services boost sector productivity above the standard level', () => {

@@ -221,6 +221,46 @@ export class RegionView {
       }
     }
 
+    // AI faction settlements: small colored diamond markers
+    for (const faction of region.regionalFactions) {
+      if (faction.id === region.playerFactionId) continue;
+      const color = faction.color ?? '#aaa';
+      for (const settlementId of faction.settlementIds) {
+        const s = region.settlement(settlementId);
+        if (!s) continue;
+        const { px, py } = this.toPx(s.x, s.y);
+        // Diamond marker for AI settlements
+        g.fillStyle = color;
+        g.beginPath();
+        g.moveTo(px, py - 7);
+        g.lineTo(px + 5, py);
+        g.lineTo(px, py + 7);
+        g.lineTo(px - 5, py);
+        g.closePath();
+        g.fill();
+        // Thin dark outline
+        g.strokeStyle = 'rgba(0,0,0,0.6)';
+        g.lineWidth = 1;
+        g.stroke();
+        g.fillStyle = '#fff';
+        g.font = '9px monospace';
+        g.textAlign = 'center';
+        g.fillText(faction.name.slice(0, 3), px, py + 18);
+      }
+    }
+
+    // AI scouts: tiny moving dots (faction-colored)
+    for (const scout of region.scouts) {
+      const faction = region.faction(scout.factionId);
+      if (!faction || faction.id === region.playerFactionId) continue;
+      const { px, py } = this.toPx(scout.x, scout.y);
+      const bob = Math.floor(this.frame / 20) % 2;
+      g.fillStyle = faction.color ?? '#aaa';
+      g.globalAlpha = 0.75;
+      g.fillRect(px - 2, py - 2 - bob, 4, 4);
+      g.globalAlpha = 1;
+    }
+
     // Expeditions: a wagon dot crawling to its site
     for (const e of region.expeditions) {
       const { px, py } = this.toPx(e.x, e.y);
@@ -781,6 +821,7 @@ export class RegionView {
       (r.canCallConvention() ? `<p><button id="convention-btn" style="font-size:10px;background:#8b5cf6;color:#fff;border:none;padding:4px 8px;cursor:pointer">★ CONVENE CONSTITUTIONAL CONVENTION</button></p>` : '') +
       this.politicsHtml() +
       this.diplomacyHtml() +
+      this.factionIntelHtml() +
       this.freightHtml();
     this.statePanel.querySelector<HTMLInputElement>('#tax-slider')!.oninput = (e) => {
       r.taxRate = Number((e.target as HTMLInputElement).value) / 100;
@@ -1343,6 +1384,63 @@ export class RegionView {
       this.closeDealModal(); // accepted, countered, or refused — the log has the answer
     };
     this.dealModal.querySelector<HTMLButtonElement>('#deal-cancel-btn')!.onclick = () => this.closeDealModal();
+  }
+
+  /** Regional faction intelligence panel (Phase 4): shows AI rival goals, alliances, and status. */
+  private factionIntelHtml(): string {
+    const r = this.region;
+    const aiFactions = r.regionalFactions.filter((f) => f.id !== r.playerFactionId);
+    if (aiFactions.length === 0) return '';
+
+    const rows = aiFactions.map((faction) => {
+      const stats = r.getFactionStats(faction.id);
+      if (!stats) return '';
+
+      const goalColor = faction.currentGoal ? '#c2a14d' : '#888';
+      const goalText = faction.currentGoal
+        ? `<span style="color:${goalColor}" title="${faction.currentGoal.description ?? ''}">${faction.currentGoal.objective}</span>` +
+          (stats.goalProgress > 0 ? ` <span class="insp-skills">(${stats.goalProgress}%)</span>` : '')
+        : `<span class="insp-skills">no active goal</span>`;
+
+      const allyNames = stats.allies
+        .map((id) => r.faction(id)?.name ?? '?')
+        .join(', ');
+      const rivalNames = stats.rivals
+        .map((id) => r.faction(id)?.name ?? '?')
+        .join(', ');
+
+      const relRow = (allyNames || rivalNames)
+        ? `<p class="insp-skills" style="margin-left:8px">` +
+          (allyNames ? `<span style="color:#4e9">allies: ${allyNames}</span>` : '') +
+          (allyNames && rivalNames ? ' · ' : '') +
+          (rivalNames ? `<span style="color:#e55">rivals: ${rivalNames}</span>` : '') +
+          `</p>`
+        : '';
+
+      return `<p style="margin:2px 0">` +
+        `<b style="color:${faction.color ?? '#aaa'}">${faction.name}</b>` +
+        ` <span class="insp-skills">pop ${stats.population} · ${formatCurrency(Math.round(stats.treasury))}</span>` +
+        `</p>` +
+        `<p style="margin:2px 0 2px 8px">${goalText}</p>` +
+        relRow;
+    }).join('');
+
+    // Recent AI activity from the global log (last 6 entries with TENSION, RAID, ALLIANCE, FACTION keywords)
+    const factionLogEntries = r.log
+      .filter((e) => /TENSION|RAID|RETALIATION|FACTION ALLIANCE|FACTION|proclaims new goal|achieves ambition|abandons goal/i.test(e.text))
+      .slice(-6)
+      .reverse();
+
+    const logHtml = factionLogEntries.length > 0
+      ? `<p class="insp-skills">RECENT FACTION ACTIVITY</p>` +
+        `<ul class="thoughts">${factionLogEntries.map((e) =>
+          `<li class="log-${e.kind}">${e.text}</li>`
+        ).join('')}</ul>`
+      : '';
+
+    return `<p class="insp-skills">REGIONAL FACTIONS</p>` +
+      rows +
+      logHtml;
   }
 
   /** Freight overlay (M6b): what the caravans actually moved, per route. */
