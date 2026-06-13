@@ -530,6 +530,7 @@ describe('Constitutional Convention & Nation Proclamation (v0.15.0)', () => {
     const r = RegionSim.fromTown(sim, 8, 80, 80);
     runDays(r, 5);
     r.stateProclaimed = true;
+    r.proclamationReady = true; // Phase C: territory gate — set directly since we're not running the full sim
     r.stateName = 'Testonia';
     r.govLean = 'council';
     r.treasury = 40000; // Nation requires £35k net
