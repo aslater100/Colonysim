@@ -14,7 +14,19 @@ era-evolving backdrops.
   [05 roads, bridges & the art pass](docs/specs/05-roads-and-art.md)
 - **Design docs:** [transportation](docs/design/transportation.md)
 
-## Run it
+## Download
+
+Grab the latest installer from the **[Releases page](https://github.com/aslater100/Centuria/releases/latest)**:
+
+| Platform | File |
+|----------|------|
+| Windows | `Centuria-Setup-x.x.x.exe` |
+| macOS (Apple Silicon) | `Centuria-x.x.x-arm64.dmg` |
+| Linux | `Centuria-x.x.x.AppImage` |
+
+Once installed the app checks for updates automatically on each launch.
+
+## Run it (development)
 
 ```bash
 npm install

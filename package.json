@@ -41,7 +41,7 @@
     "publish": {
       "provider": "github",
       "owner": "aslater100",
-      "repo": "Colonysim",
+      "repo": "Centuria",
       "releaseType": "release"
     },
     "win": {

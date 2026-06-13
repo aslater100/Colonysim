@@ -9,7 +9,43 @@ permissions:
   contents: write
 
 jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Determine tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create release with description
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          VERSION="${TAG#v}"
+          gh release create "$TAG" \
+            --title "$VERSION" \
+            --notes "## Download Centuria $VERSION
+
+Pick the installer for your platform from the **Assets** section below.
+
+| Platform | File |
+|----------|------|
+| **Windows** | \`Centuria-Setup-$VERSION.exe\` |
+| **macOS** (Apple Silicon) | \`Centuria-$VERSION-arm64.dmg\` |
+| **Linux** | \`Centuria-$VERSION.AppImage\` |
+
+Already installed? The app checks for updates automatically each time it launches." \
+            2>/dev/null || echo "Release already exists, skipping creation"
+
   release:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
