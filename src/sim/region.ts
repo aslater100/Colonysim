@@ -2591,8 +2591,12 @@ export class RegionSim {
       // Immigration: the frontier draws people to fed, content towns
       const reeve = 1 + 0.1 * this.roleMult(t, 'Reeve');
       const openBorders = this.policyActive('open_borders') ? 1.3 : 1;
+      // Drought suppresses immigration: news of failed harvests travels fast
+      const agriEventMult = this.eventOutputMult(t, 'agriculture');
+      // High taxes deter settlers: each tax band reduces immigration appeal by 10%
+      const taxImmigrantMult = 1 - TAX_BAND_RATES[Math.min(3, Math.max(0, t.policies.taxBand))] * 2;
       if (t.satisfaction > 55 && t.food > this.popOf(t) * 2) {
-        const arrivals = (this.popOf(t) * 0.02 + 2) * reeve * openBorders;
+        const arrivals = (this.popOf(t) * 0.02 + 2) * reeve * openBorders * agriEventMult * taxImmigrantMult;
         b[1] += arrivals * 0.6;
         b[2] += arrivals * 0.3;
         b[0] += arrivals * 0.1;
