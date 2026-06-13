@@ -511,7 +511,7 @@ export class Hud {
         `<button id="menu-options">  Options  <span class="menu-key">›</span></button>` +
         `</div>` +
         `<div class="menu-section menu-section-last">` +
-        `<button id="menu-quit-menu" class="menu-btn-danger">  Quit to Menu</button>` +
+        `<button id="menu-quit-menu" class="menu-btn-danger">  Quit to Home</button>` +
         `<button id="menu-quit-desktop" class="menu-btn-danger">  Quit to Desktop</button>` +
         `</div>`;
     this.setHtml(this.menuBox,
