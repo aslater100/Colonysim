@@ -201,14 +201,33 @@ export class Hud {
 
     // Delegate clicks on inspector
     this.inspector.addEventListener('mousedown', (e) => {
-      const trade = (e.target as HTMLElement).closest<HTMLElement>('.trade-btn');
+      const shift = (e as MouseEvent).shiftKey;
+      // Barter: base button trades 1 (Shift = all we can afford); ×N buttons carry their own qty.
+      const trade = (e.target as HTMLElement).closest<HTMLElement>('.trade-btn, .trade-bulk');
       if (trade) {
-        this.sim.trade(trade.dataset.give as ResourceKind, trade.dataset.get as ResourceKind);
+        const give = trade.dataset.give as ResourceKind;
+        const get = trade.dataset.get as ResourceKind;
+        const rate = TUNING.tradeRates[`${give}->${get}`];
+        const max = rate ? Math.floor((this.sim.stock[give] ?? 0) / rate.give) : 1;
+        const qty = shift ? max : Number(trade.dataset.qty ?? 1);
+        this.sim.trade(give, get, Math.max(1, qty));
         return;
       }
-      const sell = (e.target as HTMLElement).closest<HTMLElement>('.sell-cash-btn');
+      // Sell for coin: Shift+click (or the ×all button) sells the whole stock.
+      const sell = (e.target as HTMLElement).closest<HTMLElement>('.sell-cash-btn, .sell-bulk');
       if (sell) {
-        this.sim.sellToMarket(sell.dataset.kind as ResourceKind, 5);
+        const kind = sell.dataset.kind as ResourceKind;
+        const have = this.sim.stock[kind] ?? 0;
+        const qty = shift ? have : Math.min(Number(sell.dataset.qty ?? 5), have);
+        if (qty > 0) this.sim.sellToMarket(kind, qty);
+        return;
+      }
+      // Buy with coin: Shift+click on the base button buys 25.
+      const buy = (e.target as HTMLElement).closest<HTMLElement>('.buy-cash-btn');
+      if (buy) {
+        const kind = buy.dataset.kind as ResourceKind;
+        const qty = shift ? 25 : Number(buy.dataset.qty ?? 5);
+        this.sim.buyFromMarket(kind, Math.max(1, qty));
         return;
       }
       const btn = (e.target as HTMLElement).closest<HTMLElement>('button[data-action]');
@@ -720,19 +739,29 @@ export class Hud {
       </div>`;
     }).join('');
     // Sell stock for coin: how the colony banks the cash that founding a town requires
-    const sellable: ResourceKind[] = ['wood', 'stone', 'grain', 'meal', 'clothes'];
+    const sellable: ResourceKind[] = ['wood', 'stone', 'grain', 'meal', 'clothes', 'weapons'];
     const sells = sellable.map((kind) => {
       const price = getMarketPrice(this.sim.economy, kind);
       const have = this.sim.stock[kind] ?? 0;
       const can = have >= 5;
-      const times = Math.floor(have / 5);
       return `<div class="trade-row">
-        <button class="sell-cash-btn" data-kind="${kind}" data-qty="1"${can ? '' : ' disabled'}>5 ${kind} → ${formatCurrency(price * 5)}</button>
-        ${times > 1 ? `<button class="trade-bulk" data-kind="${kind}" data-qty="${Math.min(times, 10)}" title="Shift+click">×${Math.min(times, 10)}</button>` : ''}
+        <button class="sell-cash-btn" data-kind="${kind}" data-qty="5"${can ? '' : ' disabled'} title="Shift+click to sell all">5 ${kind} → ${formatCurrency(price * 5)}</button>
+        ${have > 5 ? `<button class="sell-bulk" data-kind="${kind}" data-qty="${have}" title="Sell all ${have}">×all → ${formatCurrency(price * have)}</button>` : ''}
+      </div>`;
+    }).join('');
+    // Buy essentials with coin — keeps the larder stocked when farms fall short.
+    const buyable: ResourceKind[] = ['meal', 'grain', 'wood'];
+    const cash = this.sim.economy.cash;
+    const buys = buyable.map((kind) => {
+      const price = getMarketPrice(this.sim.economy, kind);
+      return `<div class="trade-row">
+        <button class="buy-cash-btn" data-kind="${kind}" data-qty="5"${cash >= price * 5 ? '' : ' disabled'} title="Shift+click to buy 25">${formatCurrency(price * 5)} → 5 ${kind}</button>
+        <button class="buy-cash-btn" data-kind="${kind}" data-qty="25"${cash >= price * 25 ? '' : ' disabled'}>×25 → ${formatCurrency(price * 25)}</button>
       </div>`;
     }).join('');
     return `<p class="insp-skills">BARTER:</p><div class="trade-panel">${offers}</div>` +
-      `<p class="insp-skills">SELL FOR COIN (` + formatCurrency(Math.round(this.sim.economy.cash)) + `):</p><div class="trade-panel">${sells}</div>`;
+      `<p class="insp-skills">SELL FOR COIN (` + formatCurrency(Math.round(cash)) + `):</p><div class="trade-panel">${sells}</div>` +
+      `<p class="insp-skills">BUY WITH COIN:</p><div class="trade-panel">${buys}</div>`;
   }
 
   private civicPanel(bid: number): string {

@@ -190,18 +190,23 @@ export class Renderer {
         const t = sim.world.at(x, y);
         const px = ox + x * TILE;
         const py = oy + y * TILE;
+        // Bleed each ground tile 1px into its right/bottom neighbour. At a
+        // fractional zoom the scaled context lands tile edges on sub-pixels and
+        // the backdrop shows through the gaps as a thin grid; the overlap from
+        // one side closes every interior seam.
+        const bw = TILE + 1;
         if (t.kind === 'water') {
-          g.drawImage(sprites.water[anim], px, py);
+          g.drawImage(sprites.water[anim], px, py, bw, bw);
         } else if (t.kind === 'soil') {
           const img = t.growth >= 100 ? sprites.soilRipe : t.growth > 40 ? sprites.soilGrown : t.sown ? sprites.soilSown : sprites.soil;
-          g.drawImage(img, px, py);
+          g.drawImage(img, px, py, bw, bw);
         } else {
           // patchy grass: coarse 3×3 cluster hash picks the variant; rare worn dirt
           const cl = (Math.floor(x / 3) * 73 + Math.floor(y / 3) * 31) % 5;
           const worn = (x * 53 + y * 97) % 89 === 0;
-          g.drawImage(worn ? sprites.dirtPatch : sprites.grass[cl % 4], px, py);
+          g.drawImage(worn ? sprites.dirtPatch : sprites.grass[cl % 4], px, py, bw, bw);
         }
-        if (t.road) g.drawImage(sprites.roads[t.road], px, py);
+        if (t.road) g.drawImage(sprites.roads[t.road], px, py, bw, bw);
         else if (t.roadPlan) g.drawImage(sprites.roadPlans[t.roadPlan], px, py);
         if (t.stockpileZone && !t.road) g.drawImage(sprites.stockpileZone, px, py);
         if (t.trapZone) g.drawImage(sprites.trapZone, px, py);
@@ -420,7 +425,7 @@ export class Renderer {
     for (let y = ty0; y < ty1; y++) {
       for (let x = tx0; x < tx1; x++) {
         if (sim.world.at(x, y).explored) continue;
-        g.fillRect(ox + x * TILE, oy + y * TILE, TILE, TILE);
+        g.fillRect(ox + x * TILE, oy + y * TILE, TILE + 1, TILE + 1);
       }
     }
   }

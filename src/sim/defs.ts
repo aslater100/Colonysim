@@ -231,6 +231,11 @@ export const TUNING = {
   sleepRestPerHour: { bed: 9, ground: 5 },
   recreationPerHour: 12,
   socialPerHour: 10,
+  // Below these floors, a settler drops their work to unwind/socialize even on
+  // shift — above them, work wins. Without a hard floor, settlers in a busy
+  // colony grind recreation/social to zero and break down (worked to death).
+  recreationCritical: 25,
+  socialCritical: 20,
   moodWeights: { food: 0.35, rest: 0.25, warmth: 0.15, recreation: 0.15, social: 0.1 },
   mentalBreakMoodThreshold: 20,
   mentalBreakChancePerPointPerDay: 0.015,

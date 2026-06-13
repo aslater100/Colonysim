@@ -1791,6 +1791,7 @@ export class Simulation {
   }
 
   private decide(s: Settler): void {
+    const t = TUNING;
     const night = this.hour >= 22 || this.hour < 6;
     // Hunger comes before everything — bed rest and sleep used to outrank it,
     // and settlers starved in bed beside a stocked larder (0.1 death-spiral fix).
@@ -1813,6 +1814,14 @@ export class Simulation {
         return;
       }
     }
+    // Morale needs at the breaking point preempt work. Without this a settler
+    // in a work-rich colony grinds every daylight hour and never tops up
+    // recreation/social until they collapse into a mental break (the
+    // "worked to death" spiral). Above these floors work still wins, so the
+    // colony stays productive.
+    if (s.needs.recreation < t.recreationCritical || s.needs.social < t.socialCritical) {
+      if (this.goRecreate(s)) return;
+    }
     if (!night) {
       const task = this.findTask(s);
       if (task) {
@@ -1822,18 +1831,23 @@ export class Simulation {
         return;
       }
     }
+    // Idle or off-shift: top up recreation and company before drifting.
     if (s.needs.recreation < 60 || s.needs.social < 50) {
-      const hall = this.builtOf('recreation')[0];
-      const spTile = this.nearestStockpileTile(s.pos);
-      const dest = hall ? this.buildingCenter(hall) : spTile;
-      if (dest) {
-        s.state = 'recreating';
-        s.stateUntil = this.minute + 180;
-        this.setDestination(s, dest);
-        return;
-      }
+      if (this.goRecreate(s)) return;
     }
     this.wander(s);
+  }
+
+  /** Send a settler to unwind at the meeting hall (or, lacking one, the
+   *  stockpile commons). Returns false only when there's nowhere to go. */
+  private goRecreate(s: Settler): boolean {
+    const hall = this.builtOf('recreation')[0];
+    const dest = hall ? this.buildingCenter(hall) : this.nearestStockpileTile(s.pos);
+    if (!dest) return false;
+    s.state = 'recreating';
+    s.stateUntil = this.minute + 180;
+    this.setDestination(s, dest);
+    return true;
   }
 
   // ---- task generation & execution ----
@@ -2067,9 +2081,12 @@ export class Simulation {
         push({ kind: 'chop', x: cs.x, y: cs.y, workLeft: TUNING.treeChopWork, label: 'harvest timber' }, 'chop');
       }
     }
-    // Armoury: forge weapons when wood is available (one job per armoury).
+    // Armoury: forge weapons when wood is available, but only up to a full
+    // armory for the colony (one spare per head). Without this cap the forge
+    // ran forever and buried the stores in surplus weapons.
+    const weaponTarget = this.settlers.length;
     for (const a of this.builtOf('forge')) {
-      if (this.stock.wood >= TUNING.forgeWoodCost) {
+      if (this.stock.wood >= TUNING.forgeWoodCost && this.stock.weapons < weaponTarget) {
         push({ kind: 'forge', x: a.x, y: a.y, buildingId: a.id, workLeft: TUNING.forgeWorkPerWeapon, label: 'forge weapon' }, 'forge');
       }
     }
