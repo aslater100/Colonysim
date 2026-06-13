@@ -235,21 +235,15 @@ export class Hud {
         case 'upgrade':
           this.sim.upgradeBuilding(bid);
           break;
-        case 'worker-dec': {
-          const b = this.sim.buildings.find((x) => x.id === bid);
-          if (b) b.workerLimit = b.workerLimit === null ? 4 : Math.max(0, b.workerLimit - 1);
+        case 'worker-dec':
+          this.sim.unassignWorker(bid);
           break;
-        }
-        case 'worker-inc': {
-          const b = this.sim.buildings.find((x) => x.id === bid);
-          if (b) b.workerLimit = b.workerLimit === null ? 4 : b.workerLimit + 1;
+        case 'worker-inc':
+          this.sim.assignWorker(bid);
           break;
-        }
-        case 'worker-auto': {
-          const b = this.sim.buildings.find((x) => x.id === bid);
-          if (b) b.workerLimit = null;
+        case 'worker-auto':
+          this.sim.clearBuildingAssignments(bid);
           break;
-        }
         case 'open-tech':
           this.techPanel.show();
           break;
@@ -611,12 +605,11 @@ export class Hud {
       ? Object.entries(nextUpgrade.cost).map(([r, a]) => `${a}${r[0]}`).join(' ')
       : '';
 
-    const workerCount = s.settlers.filter((p) => {
-      const task = p.task;
-      return task?.buildingId === b.id || (p.bedId === b.id && p.state === 'sleeping');
-    }).length;
+    const workerCount = s.settlers.filter((p) => p.assignedBuildingId === b.id).length;
+    const activeCount = s.settlers.filter(
+      (p) => p.task?.buildingId === b.id || (p.bedId === b.id && p.state === 'sleeping'),
+    ).length;
     const wl = b.workerLimit;
-    const wlStr = wl === null ? 'Auto' : String(wl);
 
     let details = '';
     if (b.built) {
@@ -642,7 +635,7 @@ export class Hud {
       `<p>${def.desc}</p>` +
       (b.built ? details : `<p class="insp-state">wood ${b.delivered}/${def.cost.wood ?? 0} · work ${Math.max(0, Math.round(b.buildLeft))} min left</p>`) +
       (b.built
-        ? `<p class="insp-workers">Workers: ${workerCount} active · Limit: ${wlStr}</p>` +
+        ? `<p class="insp-workers">${wl === null ? `Workers: ${activeCount} · Auto` : `Workers: ${activeCount}/${workerCount} assigned`}</p>` +
           `<button data-action="worker-dec" data-bid="${b.id}">−</button>` +
           `<button data-action="worker-auto" data-bid="${b.id}">Auto</button>` +
           `<button data-action="worker-inc" data-bid="${b.id}">+</button><br>`

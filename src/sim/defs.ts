@@ -303,6 +303,9 @@ export const TUNING = {
   gateCost: { wood: 5 },
   gateWork: 45,
   gateMaxHp: 100,
+  // Repair: settlers restore damaged walls/gates automatically
+  wallRepairWork: 15,   // settler-minutes to fully repair one section
+  wallRepairCost: { wood: 1 }, // materials consumed per repair job
   // Armed pawns: fighters grab a spear from the stores when the horn sounds
   spearWoodCost: 3,
   spearDamageBonus: 12,
