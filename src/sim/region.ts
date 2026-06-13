@@ -1278,6 +1278,10 @@ export const MAX_SETTLEMENTS = 9;
 
 export class RegionSim {
   rng: Rng;
+  /** Separate deterministic stream for rival faction AI decisions. Kept apart
+   *  from the main `rng` so AI choices never perturb the colony's own stochastic
+   *  outcomes (events, washouts, raids) — preserving cross-feature determinism. */
+  aiRng: Rng;
   minute: number;
   map: RegionMap;
   weather: Weather;
@@ -1434,6 +1438,9 @@ export class RegionSim {
 
   constructor(rng: Rng, minute: number, map: RegionMap, weather: Weather) {
     this.rng = rng;
+    // Derive the AI stream deterministically from the main seed so it stays
+    // reproducible without sharing draws with the colony simulation.
+    this.aiRng = new Rng((rng.getState() ^ 0x9e3779b9) >>> 0);
     this.minute = minute;
     this.map = map;
     this.weather = weather;
@@ -3446,7 +3453,17 @@ export class RegionSim {
   }
 
   private eventWagonTrain(t: Settlement): void {
-    const wave = 3 + this.rng.int(6);
+    // Settlers chase good land, not hardship. A drought (failed harvests, word
+    // travels fast) and heavy taxes both thin the wagon trains — and a town that
+    // is starving or miserable draws no one at all. This keeps immigration from
+    // papering over local economic conditions.
+    const droughtMult = this.eventOutputMult(t, 'agriculture');
+    const taxMult = 1 - TAX_BAND_RATES[Math.min(3, Math.max(0, t.policies.taxBand))] * 2;
+    const fed = t.food > this.popOf(t); // hungry towns repel settlers
+    const content = t.satisfaction > 45;
+    if (!fed || !content) return; // the wagon train rolls on past
+    const wave = Math.round((3 + this.rng.int(6)) * droughtMult * Math.max(0, taxMult));
+    if (wave < 1) return; // conditions too poor to draw anyone
     t.cohorts.bands[1] += wave * 0.7;
     t.cohorts.bands[2] += wave * 0.3;
     this.addLog(`A wagon train of ${wave} arrives at ${t.name}, drawn by word of the frontier.`, 'good');
@@ -5179,6 +5196,7 @@ export class RegionSim {
     return JSON.stringify({
       v: 1,
       rng: this.rng.getState(),
+      aiRng: this.aiRng.getState(),
       minute: this.minute,
       settlements: this.settlements,
       notables: this.notables,
@@ -5410,6 +5428,8 @@ export class RegionSim {
     }
     // last: the constructor consumed a draw scheduling its event day
     r.rng.setState(d.rng);
+    // restore the AI stream too (older saves predate it — derive from main seed)
+    if (typeof d.aiRng === 'number') r.aiRng.setState(d.aiRng);
     return r;
   }
 
@@ -5730,7 +5750,7 @@ export class RegionSim {
     }
     if (candidates.length === 0) return null;
     // Weight by difficulty: easier goals for lower difficulties
-    const selected = candidates[this.rng.int(candidates.length)];
+    const selected = candidates[this.aiRng.int(candidates.length)];
     return selected;
   }
 
@@ -5775,16 +5795,24 @@ export class RegionSim {
     faction.techProgress += techSpeed * (faction.currentGoal?.sectorFocus === 'technology' ? 1.5 : 1);
 
     // Scout spawning: 10% chance per update to spawn if under limit
-    if (this.rng.chance(0.1) && faction.settlementIds.length > 0) {
+    if (this.aiRng.chance(0.1) && faction.settlementIds.length > 0) {
       this.spawnScout(faction);
     }
 
-    // Settlement expansion: Monte Carlo approach (5 random sites, pick best)
-    if (this.rng.chance(0.1) && faction.settlementIds.length < 6 && faction.treasury >= 50) {
-      const site = this.findBestExpansionSite(faction, 5);
+    // Settlement expansion: Monte Carlo approach (5 random sites, pick best).
+    // A faction with no foothold always tries to plant its first settlement
+    // (bootstrap — otherwise rivals would never appear on the map); established
+    // factions expand only occasionally so the region doesn't fill instantly.
+    const canAfford = faction.treasury >= 50;
+    const wantsToExpand = faction.settlementIds.length === 0
+      ? canAfford
+      : (this.aiRng.chance(0.1) && faction.settlementIds.length < 6 && canAfford);
+    if (wantsToExpand) {
+      const site = this.findBestExpansionSite(faction, faction.settlementIds.length === 0 ? 8 : 5);
       if (site && site.score > 0) {
         const newSettlement = this.foundSettlement(faction, site.x, site.y);
         if (newSettlement) {
+          if (faction.capital < 0) faction.capital = newSettlement.id;
           this.addLog(`${faction.name} founds settlement ${newSettlement.name} at (${site.x}, ${site.y}).`, 'info');
           faction.treasury -= 50; // founding cost
         }
@@ -5829,7 +5857,7 @@ export class RegionSim {
       if (settlementDist > 40) continue;
 
       const escalationChance = conflict / 100 * 0.05; // 0–5% per month
-      if (this.rng.chance(escalationChance)) {
+      if (this.aiRng.chance(escalationChance)) {
         // Log the conflict
         const conflictReason =
           faction.currentGoal.id === other.currentGoal.id
@@ -5841,14 +5869,14 @@ export class RegionSim {
         );
 
         // Occasional raids if conflict is severe
-        if (conflict > 70 && this.rng.chance(0.1)) {
+        if (conflict > 70 && this.aiRng.chance(0.1)) {
           const targetSettlements = faction.settlementIds
             .map(id => this.settlement(id))
             .filter(s => s && settlementDist < 50); // only nearby settlements
           if (targetSettlements.length > 0) {
-            const target = targetSettlements[this.rng.int(targetSettlements.length)];
+            const target = targetSettlements[this.aiRng.int(targetSettlements.length)];
             if (target) {
-              const losses = 2 + this.rng.int(4);
+              const losses = 2 + this.aiRng.int(4);
               target.cohorts.bands[1] -= losses;
               target.grievance = Math.min(100, target.grievance + 15);
               this.addLog(
@@ -5873,7 +5901,7 @@ export class RegionSim {
       if (ally.id === raiderId || ally.id === victimId) continue;
 
       // Allied faction retaliates: raid the raider's settlements
-      if (this.rng.chance(0.3)) {
+      if (this.aiRng.chance(0.3)) {
         const raiderFaction = this.faction(raiderId);
         const allyFaction = this.faction(ally.id);
         if (!raiderFaction || !allyFaction) continue;
@@ -5884,8 +5912,8 @@ export class RegionSim {
 
         if (raiderSettlements.length === 0) continue;
 
-        const target = raiderSettlements[this.rng.int(raiderSettlements.length)];
-        const losses = 1 + this.rng.int(3);
+        const target = raiderSettlements[this.aiRng.int(raiderSettlements.length)];
+        const losses = 1 + this.aiRng.int(3);
         target.cohorts.bands[1] = Math.max(0, target.cohorts.bands[1] - losses);
         target.grievance = Math.min(100, target.grievance + 10);
 
@@ -6063,10 +6091,10 @@ export class RegionSim {
         const allied = this.areAllied(a.id, b.id);
         const compatibility = this.evaluateAllianceCompatibility(a.id, b.id);
 
-        if (!allied && compatibility > 60 && this.rng.chance(0.02)) {
+        if (!allied && compatibility > 60 && this.aiRng.chance(0.02)) {
           // Form alliance: compatible goals + random chance
           this.formAlliance(a.id, b.id);
-        } else if (allied && compatibility < 30 && this.rng.chance(0.03)) {
+        } else if (allied && compatibility < 30 && this.aiRng.chance(0.03)) {
           // Break alliance: incompatible goals emerged
           this.breakAlliance(a.id, b.id);
         }
@@ -6077,12 +6105,27 @@ export class RegionSim {
   /** Monthly update hook for faction AI: check if any faction is due for update.
    *  Staggered scheduling keeps this O(factions) but amortized O(1) per month. */
   private updateRivalAI(): void {
-    if (this.rivals.length === 0) return;
+    // Nation-level rivals: staggered diplomatic cadence (peace, war, treaties).
     for (const rival of this.rivals) {
-      // Update once per year or on staggered schedule
       if (this.day - rival.lastEnvoyDay >= 365) {
         // Placeholder: could drive AI decisions here (peace, war, treaties)
         rival.lastEnvoyDay = this.day;
+      }
+    }
+
+    // Regional factions: staggered AI so not every faction acts each month
+    // (keeps the per-tick cost O(1) on average). Each faction generates goals,
+    // founds settlements, spawns scouts, advances tech, and reacts to conflicts.
+    // Rivals are a post-statehood regional-competition feature — before the State
+    // is proclaimed the player is still a lone town finding its feet, and rival
+    // settlements would pollute the pre-statehood settlement list and gates.
+    if (this.stateProclaimed) {
+      for (const faction of this.regionalFactions) {
+        if (faction.id === this.playerFactionId) continue;
+        if (this.day - faction.lastUpdateDay >= faction.updateFrequency) {
+          this.updateFactionAI(faction);
+          faction.lastUpdateDay = this.day;
+        }
       }
     }
   }
@@ -6097,14 +6140,14 @@ export class RegionSim {
     if (faction.treasury < 5) return null; // costs 5 gold
 
     // Spawn near random friendly settlement
-    const settlement = this.settlement(faction.settlementIds[this.rng.int(faction.settlementIds.length)]);
+    const settlement = this.settlement(faction.settlementIds[this.aiRng.int(faction.settlementIds.length)]);
     if (!settlement) return null;
 
     const scout: Scout = {
       id: this.nextScoutId++,
       factionId: faction.id,
-      x: settlement.x + (this.rng.int(5) - 2),
-      y: settlement.y + (this.rng.int(5) - 2),
+      x: settlement.x + (this.aiRng.int(5) - 2),
+      y: settlement.y + (this.aiRng.int(5) - 2),
       health: 100,
       maintenanceCost: 5,
       createdDay: this.day,
@@ -6127,8 +6170,8 @@ export class RegionSim {
     const faction = this.faction(scout.factionId);
     if (!faction || !faction.currentGoal) {
       // Random walk
-      scout.x += this.rng.int(3) - 1;
-      scout.y += this.rng.int(3) - 1;
+      scout.x += this.aiRng.int(3) - 1;
+      scout.y += this.aiRng.int(3) - 1;
     } else {
       // Move toward unexplored tiles biased by goal
       const target = this.scoutDestinationTile(scout, faction);
@@ -6141,8 +6184,8 @@ export class RegionSim {
         }
       } else {
         // Fallback: random walk
-        scout.x += this.rng.int(3) - 1;
-        scout.y += this.rng.int(3) - 1;
+        scout.x += this.aiRng.int(3) - 1;
+        scout.y += this.aiRng.int(3) - 1;
       }
     }
 
@@ -6163,7 +6206,7 @@ export class RegionSim {
 
     // If no bias, return random target
     if (bias.length === 0) {
-      return { x: this.rng.int(100), y: this.rng.int(100) };
+      return { x: this.aiRng.int(100), y: this.aiRng.int(100) };
     }
 
     // Sample 10 random tiles, pick best match for goal bias
@@ -6171,8 +6214,8 @@ export class RegionSim {
     let bestMatches = 0;
 
     for (let i = 0; i < 10; i++) {
-      const x = this.rng.int(100);
-      const y = this.rng.int(100);
+      const x = this.aiRng.int(100);
+      const y = this.aiRng.int(100);
       const siteTypes = this.siteType(x, y);
 
       // Count how many bias types match
@@ -6187,7 +6230,7 @@ export class RegionSim {
       }
     }
 
-    return bestTile ?? { x: this.rng.int(100), y: this.rng.int(100) };
+    return bestTile ?? { x: this.aiRng.int(100), y: this.aiRng.int(100) };
   }
 
   // ---- Settlement Expansion (Phase 2b: Monte Carlo placement) ----
@@ -6211,7 +6254,7 @@ export class RegionSim {
     const bias = faction.currentGoal?.settlementBias ?? [];
 
     for (let i = 0; i < samples; i++) {
-      const x = this.rng.int(100), y = this.rng.int(100);
+      const x = this.aiRng.int(100), y = this.aiRng.int(100);
       const siteTypes = this.siteType(x, y);
 
       // Score calculation
@@ -6237,7 +6280,7 @@ export class RegionSim {
       if (siteTypes.includes('mountain')) score += 2;
 
       // Noise for variety
-      score += this.rng.int(11) - 5;
+      score += this.aiRng.int(11) - 5;
 
       if (score > 0 && (!bestSite || score > bestSite.score)) {
         bestSite = { x: Math.round(x), y: Math.round(y), score };
