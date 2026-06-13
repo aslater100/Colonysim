@@ -1915,15 +1915,18 @@ export class Simulation {
     }
     // Cook while there is grain and meals are short. A bakery outclasses the
     // cookhouse (faster, bigger batches), so it takes over when built.
+    // Only check stock.meal, not totalFood() — other food sources (dairy, fish,
+    // produce from the mill) must not suppress the primary cooking loop.
     const cookShops = this.builtOf('cook');
     const kitchen = cookShops.find((b) => b.defId === 'bakery') ?? cookShops[0];
-    if (kitchen && this.stock.grain > 0 && this.totalFood() < this.settlers.length * 3) {
+    if (kitchen && this.stock.grain > 0 && this.stock.meal < this.settlers.length * 3) {
       const { workPerMeal, batch } = this.cookParams(kitchen);
       push({ kind: 'cook', x: kitchen.x, y: kitchen.y, buildingId: kitchen.id, workLeft: workPerMeal * batch, label: 'cook meals' }, 'cook');
     }
     // Mill: convert grain to flour (2:2, counts as distinct food variety).
+    // Cap produce so the mill doesn't crowd out cooking by inflating food totals.
     for (const mill of this.builtOf('milling')) {
-      if (this.stock.grain >= 2) {
+      if (this.stock.grain >= 2 && this.stock.produce < this.settlers.length * 2) {
         push({ kind: 'mill', x: mill.x, y: mill.y, buildingId: mill.id, workLeft: 60, label: 'mill flour' }, 'mill');
       }
     }
