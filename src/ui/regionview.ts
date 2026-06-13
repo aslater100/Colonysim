@@ -8,7 +8,17 @@ import { AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_
 import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS } from '../sim/defs';
 import type { CurrencySymbol } from '../sim/defs';
 import { ANNOUNCE_LEAD_DAYS } from '../sim/currency';
+import { REGION_N } from '../sim/worldgen';
 import { DesignScreen } from './designscreen';
+
+/** Parse a #rrggbb (or #rgb) hex string to {r,g,b}; falls back to grey. */
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  let h = hex.replace('#', '');
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  const n = parseInt(h, 16);
+  if (!Number.isFinite(n) || h.length !== 6) return { r: 136, g: 136, b: 136 };
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
 
 export class RegionView {
   selectedId: number | null = null;
@@ -106,6 +116,8 @@ export class RegionView {
     g.fillStyle = '#10141c';
     g.fillRect(0, 0, W, H);
     this.drawTerrain(W, H);
+    // Phase 0: contested ground — territory fills and frontier lines under all.
+    this.drawTerritories(W, H);
 
     // Routes along their actual corridors (M6b/6c): dotted trails, solid
     // roads, cross-tied rail; line brightness is the route's condition.
@@ -190,6 +202,9 @@ export class RegionView {
       g.fillRect(Math.round(mp.px) - 1, Math.round(mp.py) - 1, 2, 2);
     }
 
+    // Phase 0: trade-flow direction arrows along busy corridors.
+    this.drawTradeFlows();
+
     // Settlements — tiered sprites: shack → cottage → house → town → manor → castle
     for (const t of ss) {
       const { px, py } = this.toPx(t.x, t.y);
@@ -220,6 +235,9 @@ export class RegionView {
         g.fillText('⚔', px + 22, py - 6);
       }
     }
+
+    // Phase 0: per-settlement food/wood/goods status icons.
+    this.drawResourceIndicators();
 
     // AI faction settlements: small colored diamond markers
     for (const faction of region.regionalFactions) {
@@ -311,6 +329,129 @@ export class RegionView {
     this.drawCeremony();
     this.drawConvention();
     this.drawCenturyReport();
+  }
+
+  /** Phase 0: territory borders — translucent control zones plus thick frontier
+   *  lines, so the map reads as contested ground at a glance. Drawn under routes
+   *  and settlements; faction-coloured (player blue, rivals their own hues). */
+  private drawTerritories(W: number, H: number): void {
+    const { g, region } = this;
+    const N = REGION_N;
+    const { grid } = region.computeTerritoryGrid();
+    const m = 60;
+    const cw = (W - 2 * m) / N; // cell footprint in px
+    const ch = (H - 2 * m) / N;
+    const colorCache = new Map<number, { r: number; g: number; b: number } | null>();
+    const rgbOf = (fid: number): { r: number; g: number; b: number } | null => {
+      if (fid < 0) return null;
+      if (colorCache.has(fid)) return colorCache.get(fid)!;
+      const col = region.faction(fid)?.color ?? '#888888';
+      const rgb = hexToRgb(col);
+      colorCache.set(fid, rgb);
+      return rgb;
+    };
+    // 1) translucent interior fills
+    for (let x = 0; x < N; x++) {
+      for (let y = 0; y < N; y++) {
+        const rgb = rgbOf(grid[x * N + y]);
+        if (!rgb) continue;
+        const p = this.toPx((x / N) * 100, (y / N) * 100);
+        g.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},0.12)`;
+        g.fillRect(p.px, p.py, Math.ceil(cw) + 1, Math.ceil(ch) + 1);
+      }
+    }
+    // 2) frontier lines: any edge where a claimed cell meets a different owner
+    g.lineWidth = 2;
+    for (let x = 0; x < N; x++) {
+      for (let y = 0; y < N; y++) {
+        const fid = grid[x * N + y];
+        const rgb = rgbOf(fid);
+        if (!rgb) continue;
+        const p = this.toPx((x / N) * 100, (y / N) * 100);
+        g.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},0.85)`;
+        const edge = (nx: number, ny: number, x0: number, y0: number, x1: number, y1: number): void => {
+          const nb = nx >= 0 && nx < N && ny >= 0 && ny < N ? grid[nx * N + ny] : -9;
+          if (nb === fid) return;
+          g.beginPath();
+          g.moveTo(p.px + x0, p.py + y0);
+          g.lineTo(p.px + x1, p.py + y1);
+          g.stroke();
+        };
+        edge(x + 1, y, cw, 0, cw, ch); // right
+        edge(x - 1, y, 0, 0, 0, ch); // left
+        edge(x, y + 1, 0, ch, cw, ch); // bottom
+        edge(x, y - 1, 0, 0, cw, 0); // top
+      }
+    }
+  }
+
+  /** Phase 0: at-a-glance resource health under each settlement — three small
+   *  squares (Food, Wood, Goods) coloured green/yellow/red. */
+  private drawResourceIndicators(): void {
+    const { g, region } = this;
+    const statusColor: Record<string, string> = {
+      surplus: '#4caf50', balanced: '#c2a14d', deficit: '#e04444',
+    };
+    for (const t of region.settlements) {
+      const { px, py } = this.toPx(t.x, t.y);
+      const rs = region.getSettlementResourceStatus(t);
+      const cells: [string, string][] = [['F', rs.food], ['W', rs.wood], ['G', rs.goods]];
+      const bw = 7;
+      const gap = 3;
+      const total = cells.length * bw + (cells.length - 1) * gap;
+      let bx = Math.round(px - total / 2);
+      const by = Math.round(py + 46);
+      for (const [label, st] of cells) {
+        g.fillStyle = 'rgba(10,12,18,0.75)';
+        g.fillRect(bx - 1, by - 1, bw + 2, bw + 2);
+        g.fillStyle = statusColor[st] ?? '#888';
+        g.fillRect(bx, by, bw, bw);
+        g.fillStyle = '#0a0c12';
+        g.font = '7px monospace';
+        g.textAlign = 'center';
+        g.fillText(label, bx + bw / 2, by + bw - 1);
+        bx += bw + gap;
+      }
+    }
+    g.textAlign = 'left';
+  }
+
+  /** Phase 0: direction arrows on busy trade corridors, coloured by cargo and
+   *  scaled by freight, so flow and its bearing read from the map. */
+  private drawTradeFlows(): void {
+    const { region } = this;
+    const cargoRgb: Record<string, string> = {
+      agriculture: '194,161,77', industry: '140,104,72', services: '74,127,164', information: '122,90,154',
+    };
+    for (const r of region.routes) {
+      if (r.path.length < 3 || r.freight <= 0) continue;
+      const rgb = (r.cargoType && cargoRgb[r.cargoType]) || '200,200,200';
+      const size = 4 + Math.min(4, Math.log10(1 + r.freight));
+      for (const f of [0.4, 0.7]) {
+        const i = Math.max(1, Math.min(r.path.length - 1, Math.floor(r.path.length * f)));
+        const c0 = region.map.cellToCoord(r.path[i - 1].x, r.path[i - 1].y);
+        const c1 = region.map.cellToCoord(r.path[i].x, r.path[i].y);
+        const p0 = this.toPx(c0.rx, c0.ry);
+        const p1 = this.toPx(c1.rx, c1.ry);
+        const ang = Math.atan2(p1.py - p0.py, p1.px - p0.px);
+        this.drawArrowHead(p1.px, p1.py, ang, size, `rgba(${rgb},0.9)`);
+      }
+    }
+  }
+
+  private drawArrowHead(x: number, y: number, ang: number, size: number, color: string): void {
+    const { g } = this;
+    g.save();
+    g.translate(x, y);
+    g.rotate(ang);
+    g.fillStyle = color;
+    g.beginPath();
+    g.moveTo(size, 0);
+    g.lineTo(-size, -size * 0.7);
+    g.lineTo(-size, size * 0.7);
+    g.closePath();
+    g.fill();
+    g.restore();
   }
 
   /** Rival nations loom at the map's edge (GDD §6.4): a flag, a name, and

@@ -12,7 +12,7 @@ import type { CurrencySymbol, RegionDesign, NationDesign } from './defs';
 import { computePenalty, transitionEfficiency, ANNOUNCE_LEAD_DAYS } from './currency';
 import type { CurrencyChangeCause, CurrencyAnnouncement, CurrencyTransition } from './currency';
 import type { Simulation, Settler, LogEntry } from './sim';
-import { RegionMap } from './worldgen';
+import { RegionMap, REGION_N } from './worldgen';
 import type { TownSite } from './worldgen';
 import { Weather } from './weather';
 import type { Lender, Loan } from './economy';
@@ -88,6 +88,27 @@ export interface Settlement {
   // ---- AI Competitors Phase 2d: settlement resource bias ----
   /** Primary resource focus: wool, grain, iron, wood (tied to founding location/goal) */
   resourceFocus?: 'wool' | 'grain' | 'iron' | 'wood' | 'diverse';
+}
+
+// ---- Phase 0: Territory & resource visualization ----
+
+/** At-a-glance health of a settlement's three headline goods. */
+export type ResourceStatus = 'surplus' | 'balanced' | 'deficit';
+export interface SettlementResourceStatus {
+  food: ResourceStatus;
+  wood: ResourceStatus;
+  goods: ResourceStatus;
+}
+
+/** Territory control summary: who holds what share of the claimable region. */
+export interface TerritoryControl {
+  /** Land cell ownership over the REGION_N×REGION_N grid, row-major (x*N+y).
+   *  Values: faction id (≥0), -1 unclaimed land, -2 water/uninhabitable. */
+  grid: Int8Array;
+  /** factionId → fraction of claimable land (0..1). */
+  control: Map<number, number>;
+  /** Count of claimable (non-water) cells — the denominator for control. */
+  landCells: number;
 }
 
 /** Local markets (GDD §5.2, first slice): each town prices the two goods
@@ -1594,6 +1615,103 @@ export class RegionSim {
       allies,
       rivals,
     };
+  }
+
+  // ---- Phase 0: Territory, borders & resource visualization ----
+
+  /** Territory radius (in 0..100 region coords) a settlement projects onto the
+   *  map. Population is the main driver; a garrison pushes the frontier further
+   *  (with diminishing returns, so military reach grows slower than the town);
+   *  civic works thicken the hold. Deterministic, so the border map is stable. */
+  territoryRadius(t: Settlement): number {
+    const pop = Math.max(0, this.popOf(t));
+    const popReach = 4 + Math.sqrt(pop) * 0.45; // hamlet ~5 units, city ~14
+    const garrisonReach = Math.sqrt(Math.max(0, t.garrisonStrength)) * 0.6;
+    const devReach = (t.buildings?.length ?? 0) * 0.4;
+    return Math.min(18, popReach + garrisonReach + devReach);
+  }
+
+  /** Everything that can move a border, flattened to a string for cheap cache
+   *  invalidation: positions, population, garrison, development and ownership. */
+  private territorySignature(): string {
+    let s = `${this.settlements.length}`;
+    for (const t of this.settlements) {
+      s += `|${t.id}:${t.x.toFixed(1)},${t.y.toFixed(1)},${Math.round(this.popOf(t))},` +
+        `${Math.round(t.garrisonStrength)},${t.factionId},${t.buildings?.length ?? 0}`;
+    }
+    return s;
+  }
+
+  private _territoryCache: { sig: string; result: TerritoryControl } | null = null;
+
+  /** Compute the territory control grid over the REGION_N×REGION_N map: each
+   *  land cell is claimed by the faction projecting the strongest influence
+   *  (radius − distance) onto it, or left unclaimed if no settlement reaches.
+   *  Cached by signature so it's cheap to call every render frame. */
+  computeTerritoryGrid(): TerritoryControl {
+    const sig = this.territorySignature();
+    if (this._territoryCache && this._territoryCache.sig === sig) {
+      return this._territoryCache.result;
+    }
+    const N = REGION_N;
+    const grid = new Int8Array(N * N);
+    const prep = this.settlements.map((t) => {
+      const cell = this.map.coordToCell(t.x, t.y);
+      return { cx: cell.x, cy: cell.y, r: (this.territoryRadius(t) / 100) * N, fid: t.factionId };
+    });
+    let landCells = 0;
+    const area = new Map<number, number>();
+    for (let x = 0; x < N; x++) {
+      for (let y = 0; y < N; y++) {
+        const idx = x * N + y;
+        if (this.map.isWater(x, y)) { grid[idx] = -2; continue; }
+        landCells++;
+        let bestFid = -1;
+        let bestInf = 0;
+        for (const p of prep) {
+          const d = Math.hypot(x - p.cx, y - p.cy);
+          if (d > p.r) continue;
+          const inf = p.r - d;
+          if (inf > bestInf) { bestInf = inf; bestFid = p.fid; }
+        }
+        grid[idx] = bestFid;
+        if (bestFid >= 0) area.set(bestFid, (area.get(bestFid) ?? 0) + 1);
+      }
+    }
+    const control = new Map<number, number>();
+    if (landCells > 0) for (const [fid, cells] of area) control.set(fid, cells / landCells);
+    const result: TerritoryControl = { grid, control, landCells };
+    this._territoryCache = { sig, result };
+    return result;
+  }
+
+  /** Fraction (0..1) of claimable regional land a faction controls. */
+  territoryControlOf(factionId: number): number {
+    return this.computeTerritoryGrid().control.get(factionId) ?? 0;
+  }
+
+  /** The player's share of regional territory (0..1). Crossing 0.5 is the
+   *  nation-founding threshold (wired up in a later phase). */
+  playerTerritoryControl(): number {
+    return this.territoryControlOf(this.playerFactionId);
+  }
+
+  /** Classify a settlement's three headline goods as surplus / balanced /
+   *  deficit, for the at-a-glance resource icons on the map. */
+  getSettlementResourceStatus(t: Settlement): SettlementResourceStatus {
+    const pop = Math.max(1, this.popOf(t));
+    // Food: stored grain per head — a frontier town wants a few days' buffer.
+    const foodPer = t.food / pop;
+    const food: ResourceStatus = foodPer > 3 ? 'surplus' : foodPer < 1 ? 'deficit' : 'balanced';
+    // Wood: timber stock against the housing the population needs.
+    const woodPer = t.wood / pop;
+    const wood: ResourceStatus = woodPer > 2 ? 'surplus' : woodPer < 0.5 ? 'deficit' : 'balanced';
+    // Goods: non-farm output per worker — does the town make more than it eats?
+    const workers = Math.max(1, this.workersOf(t));
+    const industrial = t.sectors.industry.output + t.sectors.services.output + t.sectors.information.output;
+    const goodsPer = industrial / workers;
+    const goods: ResourceStatus = goodsPer > 6 ? 'surplus' : goodsPer < 2 ? 'deficit' : 'balanced';
+    return { food, wood, goods };
   }
 
   /** Initialize the regional faction system for the player. Called once when entering region mode. */

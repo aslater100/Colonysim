@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Simulation } from '../src/sim/sim';
 import { RegionSim, REGION_MINUTES_PER_TICK, REGION_LAWS, GOV_TYPES, POLICY_CARDS, POLICY_SWAP_COST, REGION_BUILDINGS, REGION_EVENT_DEFS } from '../src/sim/region';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
+import { REGION_N } from '../src/sim/worldgen';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
 
@@ -1172,5 +1173,87 @@ describe('Route Cargo Visualization (Phase 6)', () => {
     if (r.routes.length > 0) r.routes[0].cargoType = 'agriculture';
     const r2 = RegionSim.deserialize(r.serialize(), sim);
     expect(r2.routes[0]?.cargoType).toBe('agriculture');
+  });
+});
+
+describe('Phase 0: Territory & resource visualization', () => {
+  function flipped(seed: number): RegionSim {
+    const sim = new Simulation(seed);
+    while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
+    sim.stock.wood = 200;
+    sim.stock.meal = 200;
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    runDays(r, 5); // let the expedition found town #2
+    return r;
+  }
+
+  it('territory radius grows with population, garrison, and development', () => {
+    const r = flipped(42);
+    const t = r.settlements[0];
+    const base = r.territoryRadius(t);
+    // more people → larger reach
+    t.cohorts.bands = t.cohorts.bands.map((b) => b + 50);
+    const withPop = r.territoryRadius(t);
+    expect(withPop).toBeGreaterThan(base);
+    // a garrison pushes the frontier further still
+    t.garrisonStrength = 40;
+    expect(r.territoryRadius(t)).toBeGreaterThan(withPop);
+    // capped so one town can't swallow the map
+    t.cohorts.bands = t.cohorts.bands.map(() => 100000);
+    t.garrisonStrength = 100000;
+    expect(r.territoryRadius(t)).toBeLessThanOrEqual(18);
+  });
+
+  it('computes a control grid and per-faction shares that sum within bounds', () => {
+    const r = flipped(7);
+    const { grid, control, landCells } = r.computeTerritoryGrid();
+    expect(grid.length).toBe(REGION_N * REGION_N);
+    expect(landCells).toBeGreaterThan(0);
+    let claimed = 0;
+    for (const [, frac] of control) {
+      expect(frac).toBeGreaterThanOrEqual(0);
+      expect(frac).toBeLessThanOrEqual(1);
+      claimed += frac;
+    }
+    expect(claimed).toBeLessThanOrEqual(1.0001); // claimed land never exceeds all land
+  });
+
+  it('player territory share rises as the home settlement grows', () => {
+    const r = flipped(7);
+    const before = r.playerTerritoryControl();
+    for (const t of r.settlements) {
+      if (t.factionId === r.playerFactionId) t.cohorts.bands = t.cohorts.bands.map((b) => b + 200);
+    }
+    const after = r.playerTerritoryControl();
+    expect(after).toBeGreaterThanOrEqual(before);
+    expect(r.playerTerritoryControl()).toBeGreaterThan(0);
+  });
+
+  it('the grid cache invalidates when a settlement changes', () => {
+    const r = flipped(11);
+    const g1 = r.computeTerritoryGrid();
+    expect(r.computeTerritoryGrid()).toBe(g1); // same object while nothing moved
+    r.settlements[0].garrisonStrength += 50;
+    expect(r.computeTerritoryGrid()).not.toBe(g1); // signature changed → recomputed
+  });
+
+  it('classifies a well-fed town as food surplus and a starving one as deficit', () => {
+    const r = flipped(42);
+    const t = r.settlements[0];
+    const pop = r.popOf(t);
+    t.food = pop * 10; // ten days' grain banked
+    expect(r.getSettlementResourceStatus(t).food).toBe('surplus');
+    t.food = 0;
+    expect(r.getSettlementResourceStatus(t).food).toBe('deficit');
+  });
+
+  it('classifies wood the same way against population need', () => {
+    const r = flipped(42);
+    const t = r.settlements[0];
+    const pop = r.popOf(t);
+    t.wood = pop * 5;
+    expect(r.getSettlementResourceStatus(t).wood).toBe('surplus');
+    t.wood = 0;
+    expect(r.getSettlementResourceStatus(t).wood).toBe('deficit');
   });
 });
