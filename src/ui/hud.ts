@@ -149,6 +149,7 @@ export class Hud {
   onQuit: ((save: boolean) => void) | null = null;
   hasSave: (() => boolean) | null = null;
   menuOpen = false;
+  private menuView: 'main' | 'options' = 'main';
   private pausedBeforeMenu = false;
   private topBar: HTMLElement;
   private buildBar: HTMLElement;
@@ -270,18 +271,30 @@ export class Hud {
           else this.renderMenu('Save failed.');
           break;
         case 'menu-load': this.onLoad?.(); break;
-        case 'menu-mute': this.sfx?.toggleMuted(); this.renderMenu(); break;
-        case 'menu-music': this.music?.toggle(); this.music?.unlock(); this.renderMenu(); break;
-        case 'menu-soundscape': this.soundscape?.toggle(); this.soundscape?.unlock(); this.renderMenu(); break;
-        case 'menu-save-quit':
-          if (this.onSave?.()) this.onQuit?.(true);
-          else this.renderMenu('Save failed — check storage.');
+        case 'menu-options':
+          this.menuView = 'options';
+          this.renderMenu();
           break;
-        case 'menu-quit':
-          if (confirm('Quit without saving? Unsaved progress will be lost.')) this.onQuit?.(false);
+        case 'menu-opt-back':
+          this.menuView = 'main';
+          this.renderMenu();
           break;
-        case 'menu-restart':
-          if (confirm('Abandon this colony and start over?')) this.onRestart?.();
+        case 'menu-opt-sound': this.sfx?.toggleMuted(); this.renderMenu(); break;
+        case 'menu-opt-music': this.music?.toggle(); this.music?.unlock(); this.renderMenu(); break;
+        case 'menu-opt-ambience': this.soundscape?.toggle(); this.soundscape?.unlock(); this.renderMenu(); break;
+        case 'menu-opt-fullscreen':
+          if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
+          else document.exitFullscreen?.().catch(() => {});
+          this.renderMenu();
+          break;
+        case 'menu-quit-menu':
+          if (confirm('Save and return to main menu?')) {
+            this.onSave?.();
+            this.onRestart?.();
+          }
+          break;
+        case 'menu-quit-desktop':
+          if (confirm('Quit to desktop? Unsaved progress will be lost.')) this.onQuit?.(false);
           break;
       }
     });
@@ -445,6 +458,7 @@ export class Hud {
 
   openMenu(): void {
     this.menuOpen = true;
+    this.menuView = 'main';
     this.pausedBeforeMenu = this.paused;
     this.paused = true;
     this.renderMenu();
@@ -465,27 +479,48 @@ export class Hud {
   private renderMenu(note = ''): void {
     const canSave = this.onSave !== null;
     const canLoad = (this.hasSave?.() ?? false) && this.onLoad !== null;
+    const isFullscreen = !!document.fullscreenElement;
+    const body = this.menuView === 'options'
+      ? `<div class="menu-section">` +
+        `<button id="menu-opt-back" class="menu-btn-back">‹  Back</button>` +
+        `</div>` +
+        `<div class="menu-section">` +
+        `<button id="menu-opt-sound" class="menu-toggle">` +
+        `<span class="menu-toggle-label">Sound Effects</span>` +
+        `<span class="menu-toggle-val ${this.sfx?.muted ? 'menu-off' : 'menu-on'}">${this.sfx?.muted ? 'OFF' : 'ON'}</span>` +
+        `</button>` +
+        `<button id="menu-opt-music" class="menu-toggle">` +
+        `<span class="menu-toggle-label">Music</span>` +
+        `<span class="menu-toggle-val ${this.music?.enabled ? 'menu-on' : 'menu-off'}">${this.music?.enabled ? 'ON' : 'OFF'}</span>` +
+        `</button>` +
+        `<button id="menu-opt-ambience" class="menu-toggle">` +
+        `<span class="menu-toggle-label">Ambience</span>` +
+        `<span class="menu-toggle-val ${this.soundscape?.enabled ? 'menu-on' : 'menu-off'}">${this.soundscape?.enabled ? 'ON' : 'OFF'}</span>` +
+        `</button>` +
+        `</div>` +
+        `<div class="menu-section menu-section-last">` +
+        `<button id="menu-opt-fullscreen" class="menu-toggle">` +
+        `<span class="menu-toggle-label">Display Mode</span>` +
+        `<span class="menu-toggle-val">${isFullscreen ? 'Fullscreen' : 'Windowed'}</span>` +
+        `</button>` +
+        `</div>`
+      : `<div class="menu-section">` +
+        `<button id="menu-resume" class="menu-btn-primary">▶  Resume  <span class="menu-key">[M]</span></button>` +
+        `<button id="menu-save"${canSave ? '' : ' disabled'}>  Save</button>` +
+        `<button id="menu-load"${canLoad ? '' : ' disabled'}>  Load</button>` +
+        `<button id="menu-options">  Options  <span class="menu-key">›</span></button>` +
+        `</div>` +
+        `<div class="menu-section menu-section-last">` +
+        `<button id="menu-quit-menu" class="menu-btn-danger">  Quit to Menu</button>` +
+        `<button id="menu-quit-desktop" class="menu-btn-danger">  Quit to Desktop</button>` +
+        `</div>`;
     this.setHtml(this.menuBox,
       `<div class="menu-box">` +
       `<div class="menu-header">` +
       `<h2>C E N T U R I A</h2>` +
       `<p class="menu-note">${note || 'The colony waits.'}</p>` +
       `</div>` +
-      `<div class="menu-section">` +
-      `<button id="menu-resume" class="menu-btn-primary">▶  Resume  <span class="menu-key">[M]</span></button>` +
-      `<button id="menu-save"${canSave ? '' : ' disabled'}>⬛  Save Game</button>` +
-      `<button id="menu-load"${canLoad ? '' : ' disabled'}>⬛  Load Game</button>` +
-      `</div>` +
-      `<div class="menu-section menu-section-settings">` +
-      `<button id="menu-mute">♪  Sound: ${this.sfx?.muted ? '<span class="menu-off">OFF</span>' : 'ON'}</button>` +
-      `<button id="menu-music">♫  Music: ${this.music?.enabled ? 'ON' : '<span class="menu-off">OFF</span>'}</button>` +
-      `<button id="menu-soundscape">⌁  Ambience: ${this.soundscape?.enabled ? 'ON' : '<span class="menu-off">OFF</span>'}</button>` +
-      `</div>` +
-      `<div class="menu-section menu-section-danger">` +
-      `<button id="menu-save-quit" class="menu-btn-danger"${canSave ? '' : ' disabled'}>⬛  Save &amp; Quit</button>` +
-      `<button id="menu-quit" class="menu-btn-danger">✕  Quit without Saving</button>` +
-      `<button id="menu-restart" class="menu-btn-danger">↺  Restart Colony</button>` +
-      `</div>` +
+      body +
       `</div>`);
   }
 

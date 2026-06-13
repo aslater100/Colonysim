@@ -511,9 +511,7 @@ body {
   border-bottom: 1px solid #1c1408;
 }
 
-.menu-section-settings { background: rgba(0, 0, 0, 0.15); }
-
-.menu-section-danger { border-bottom: none; }
+.menu-section-last { border-bottom: none; }
 
 .menu-box button {
   display: block;
@@ -550,6 +548,10 @@ body {
   border-left-color: #e8d27a !important;
 }
 
+.menu-btn-back { color: #8a9aaa !important; font-size: 12px !important; }
+
+.menu-btn-back:hover:not(:disabled) { color: #c0d0e0 !important; }
+
 .menu-key { color: #6a7a8a; font-size: 11px; }
 
 .menu-btn-danger { color: #a06848 !important; }
@@ -560,6 +562,25 @@ body {
   color: #e07a5a !important;
 }
 
+/* Options toggle rows */
+.menu-toggle {
+  display: flex !important;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.menu-toggle-label { flex: 1; }
+
+.menu-toggle-val {
+  font-size: 11px;
+  padding: 1px 8px;
+  border: 1px solid #3a2a18;
+  background: #1a1408;
+  min-width: 52px;
+  text-align: center;
+}
+
+.menu-on  { color: #8fc26a; border-color: #4a6a2a !important; }
 .menu-off { color: #5a6a7a; }
 
 /* ---- Game over ---- */
