@@ -860,9 +860,9 @@ export class Simulation {
     return tiles * CAPACITY_PER_TILE + warehouseCap;
   }
 
-  /** Total raw goods in stock (excludes food-variety items tracked by mealCap). */
+  /** Total raw goods in stock (excludes food/food-precursor items tracked separately by mealCap). */
   totalRawStock(): number {
-    const FOOD_KINDS = new Set<ResourceKind>(['meal', 'game_meal', 'fish_meal', 'bread', 'dairy', 'produce', 'preserved', 'ale']);
+    const FOOD_KINDS = new Set<ResourceKind>(['grain', 'flour', 'meal', 'game_meal', 'fish_meal', 'bread', 'dairy', 'produce', 'preserved', 'ale']);
     return (Object.keys(this.stock) as ResourceKind[])
       .filter((k) => !FOOD_KINDS.has(k))
       .reduce((sum, k) => sum + this.stock[k], 0);
@@ -1984,11 +1984,14 @@ export class Simulation {
       candidates.push({ task, prio, dist });
     };
 
-    // Haul ground items to the stockpile zone (blocked when raw-goods capacity is full).
+    // Haul ground items to the stockpile zone. When industrial capacity is full
+    // only food items (grain, cooked meals, etc.) are still allowed through so
+    // that a wood glut can never starve the colony.
     const rawCap = this.stockpileCapacity();
     const rawFull = rawCap > 0 && this.totalRawStock() >= rawCap;
+    const FOOD_HAUL = new Set<ResourceKind>(['grain', 'flour', 'meal', 'game_meal', 'fish_meal', 'bread', 'dairy', 'produce', 'preserved', 'ale']);
     for (const it of this.items) {
-      if (it.reservedBy === null && !rawFull) {
+      if (it.reservedBy === null && (!rawFull || FOOD_HAUL.has(it.kind))) {
         push({ kind: 'haul', x: it.x, y: it.y, itemId: it.id, workLeft: 5, label: `haul ${it.kind}` }, 'haul');
       }
     }
