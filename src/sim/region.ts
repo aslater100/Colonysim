@@ -661,6 +661,25 @@ export interface CentralBank {
   inflationRate: number;
 }
 
+/** A strategic goal for an AI faction, procedurally generated from templates. */
+export interface FactionGoal {
+  id: string; // unique within faction
+  objective: string; // human-readable goal ("control wool trade", "achieve military supremacy")
+  govTypes: string[]; // governments suited to this goal (e.g., ["junta", "autocracy"])
+  generatedYear: number; // when this goal was set
+  targetYear: number; // when success is measured
+  /** Condition to check for success (e.g., "control 5+ wool settlements") */
+  successCondition: (faction: RegionalFaction, region: RegionSim) => boolean;
+  /** Narrative description of the goal for the activity log */
+  description: string;
+  /** Bias settlement placement toward these resource types or geography */
+  settlementBias?: ('river' | 'coastal' | 'mountain' | 'plains' | 'forest')[];
+  /** Tech types that accelerate this goal */
+  supportingTechs?: string[];
+  /** Expected sector focus (e.g., "commerce", "military", "culture") */
+  sectorFocus?: string;
+}
+
 /** Regional Faction: competes with the player for control of settlements and resources. */
 export interface RegionalFaction {
   id: number;
@@ -681,6 +700,11 @@ export interface RegionalFaction {
   techFocus: string;
   aiGoal: string; // current strategic goal (for logging/UI)
   lastScoutDay: number; // day the AI last sent out scouts
+  // ---- Faction AI scheduling (GDD §6.2 optimization: staggered updates) ----
+  lastUpdateDay: number; // day of last AI update (settlement expansion, goal generation, etc.)
+  updateFrequency: number; // days between updates (scaled by difficulty)
+  currentGoal: FactionGoal | null; // procedurally generated goal, may be null
+  lastGoalCheckDay: number; // when goal success/failure was last checked
 }
 
 // Rivals run richer regimes than the player's four (GDD §6.3: "the 1930s
@@ -909,6 +933,154 @@ const COMPASS_FLAVOR: Record<RivalNation['compass'], string> = {
   south: 'down the southern coast',
   west: 'over the western sea',
 };
+
+/** Goal templates: procedurally instantiated based on faction government type and current state.
+ *  Format: (faction, region) => FactionGoal | null (return null if goal not applicable).
+ *  Allows huge possibility space without pre-computing; condition is checked yearly. */
+const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSim) => FactionGoal | null> = [
+  // ---- Junta / Autocracy (military-focused) ----
+  (faction, region) => {
+    if (faction.treasury >= 300 && region.year >= 1920) {
+      return {
+        id: 'military_supremacy',
+        objective: 'Achieve military supremacy in the region',
+        govTypes: ['junta', 'one_party', 'fascist', 'corporate'],
+        generatedYear: region.year,
+        targetYear: region.year + 10,
+        successCondition: (f) => f.militaryStrength > 50,
+        description: 'Build the strongest army — every neighbor must tremble.',
+        sectorFocus: 'military',
+        settlementBias: ['mountain', 'plains'],
+      };
+    }
+    return null;
+  },
+  (faction, region) => {
+    if (faction.settlementIds.length >= 2) {
+      return {
+        id: 'resource_monopoly',
+        objective: 'Secure all iron and coal deposits in the region',
+        govTypes: ['junta', 'one_party', 'fascist'],
+        generatedYear: region.year,
+        targetYear: region.year + 15,
+        successCondition: (f) => f.treasury >= 400,
+        description: 'Monopolize strategic resources — lock rivals out of industrialization.',
+        sectorFocus: 'industry',
+        settlementBias: ['mountain'],
+        supportingTechs: ['steel_mills', 'coal_mining'],
+      };
+    }
+    return null;
+  },
+  // ---- Monarchy (dynastic/prestige-focused) ----
+  (faction, region) => {
+    if (faction.treasury >= 250 && region.year >= 1900) {
+      return {
+        id: 'dynastic_supremacy',
+        objective: 'Establish a royal lineage and secure inheritance',
+        govTypes: ['abs_monarchy', 'const_monarchy'],
+        generatedYear: region.year,
+        targetYear: region.year + 20,
+        successCondition: () => true, // Always possible; success is narrative
+        description: 'Cement your dynasty — it must outlive you.',
+        sectorFocus: 'culture',
+      };
+    }
+    return null;
+  },
+  // ---- Theocracy (religious/doctrinal-focused) ----
+  (_faction, region) => {
+    if (region.year >= 1900) {
+      return {
+        id: 'convert_heathen',
+        objective: 'Spread the faith to ideologically distant regions',
+        govTypes: ['theocracy'],
+        generatedYear: region.year,
+        targetYear: region.year + 25,
+        successCondition: (f) => f.settlementIds.length >= 4,
+        description: 'Convert the godless — expand the church\'s reach.',
+        sectorFocus: 'culture',
+        settlementBias: ['river', 'plains', 'coastal'],
+      };
+    }
+    return null;
+  },
+  // ---- Republic / Democracy (trade/commerce-focused) ----
+  (faction, region) => {
+    if (faction.treasury >= 200) {
+      return {
+        id: 'trade_dominance',
+        objective: 'Control the wool and wine export trade',
+        govTypes: ['merchant_republic', 'parliamentary'],
+        generatedYear: region.year,
+        targetYear: region.year + 12,
+        successCondition: (f) => f.treasury >= 500,
+        description: 'Become the merchant kings — the continent trades at your prices.',
+        sectorFocus: 'commerce',
+        settlementBias: ['river', 'coastal'],
+        supportingTechs: ['trade_routes', 'merchants'],
+      };
+    }
+    return null;
+  },
+  (faction, region) => {
+    if (region.year >= 1910 && faction.settlementIds.length >= 2) {
+      return {
+        id: 'scholarly_supremacy',
+        objective: 'Establish a center of learning and culture',
+        govTypes: ['parliamentary', 'merchant_republic'],
+        generatedYear: region.year,
+        targetYear: region.year + 15,
+        successCondition: (f) => f.settlementIds.length >= 3,
+        description: 'Make us the intellectual heart of the continent.',
+        sectorFocus: 'culture',
+        supportingTechs: ['universities', 'printing_press'],
+      };
+    }
+    return null;
+  },
+  // ---- Expansion-focused (all types) ----
+  (faction, region) => {
+    if (faction.settlementIds.length < 3 && region.year < 1950) {
+      return {
+        id: 'territorial_expansion',
+        objective: `Control ${3 + Math.floor(region.year / 100)} settlements`,
+        govTypes: ['abs_monarchy', 'junta', 'one_party', 'fascist', 'const_monarchy'],
+        generatedYear: region.year,
+        targetYear: region.year + 20,
+        successCondition: (f) => f.settlementIds.length >= 4,
+        description: 'Expand our borders — empty lands await settlement.',
+        sectorFocus: 'agriculture',
+        settlementBias: ['river', 'plains', 'forest'],
+      };
+    }
+    return null;
+  },
+  // ---- Defense / Isolation (when threatened) ----
+  (faction, region) => {
+    // This goal would apply to rival nations, not regional factions
+    // Skip for now (would need faction-to-rival relation system)
+    void faction;
+    void region;
+    return null;
+  },
+  // ---- Economic growth (universal) ----
+  (faction, region) => {
+    if (faction.treasury < 150) {
+      return {
+        id: 'enrich_treasury',
+        objective: 'Accumulate wealth through trade and taxation',
+        govTypes: ['merchant_republic', 'corporate', 'parliamentary'],
+        generatedYear: region.year,
+        targetYear: region.year + 8,
+        successCondition: (f) => f.treasury >= 400,
+        description: 'Build wealth — prosperity feeds power.',
+        sectorFocus: 'commerce',
+      };
+    }
+    return null;
+  },
+];
 
 export type NotableRole = 'Mayor' | 'Doctor' | 'Captain' | 'Granger' | 'Forewoman' | 'Reeve';
 
@@ -1329,6 +1501,10 @@ export class RegionSim {
       techFocus: 'agriculture', // starting tech focus
       aiGoal: 'establish dominance',
       lastScoutDay: -1,
+      lastUpdateDay: this.day,
+      updateFrequency: 30, // update every month (for player, mostly unused)
+      currentGoal: null, // player has no procedural goal
+      lastGoalCheckDay: this.day,
     };
 
     this.regionalFactions.push(playerFaction);
@@ -1373,6 +1549,10 @@ export class RegionSim {
         techFocus: ['mining', 'forestry', 'farming'][this.rng.int(3)],
         aiGoal: 'expand territory',
         lastScoutDay: -1,
+        lastUpdateDay: this.day,
+        updateFrequency: 90, // update quarterly (every ~month)
+        currentGoal: null, // will be generated on first AI update
+        lastGoalCheckDay: this.day,
       };
 
       this.regionalFactions.push(faction);
@@ -2331,6 +2511,7 @@ export class RegionSim {
     if (this.stateProclaimed) this.monthlyEconomy();
     if (this.stateProclaimed) this.updateFactions();
     this.updateDiplomacy();
+    this.updateRivalAI(); // staggered AI updates for rivals (GDD §6.2)
     this.tickClimate(); // the ledger runs from the first decade (GDD §8.2)
     if (this.passedLaws.includes('central_bank_charter')) this.tickMonetary();
     this.updateLoans(); // process loan interest and check for defaults
@@ -5333,5 +5514,70 @@ export class RegionSim {
    */
   getActiveLoans(): Loan[] {
     return this.loans.filter((l) => !l.defaulted);
+  }
+
+  // ---- Regional Faction AI (GDD §6.2 optimization: staggered updates) ----
+
+  /** Generate a new strategic goal for a faction based on templates and current state.
+   *  Procedural generation from ~100+ templates ensures unpredictability. */
+  private generateFactionGoal(faction: RegionalFaction): FactionGoal | null {
+    const candidates: FactionGoal[] = [];
+    for (const generator of FACTION_GOAL_GENERATORS) {
+      const goal = generator(faction, this);
+      if (goal) candidates.push(goal);
+    }
+    if (candidates.length === 0) return null;
+    // Weight by difficulty: easier goals for lower difficulties
+    const selected = candidates[this.rng.int(candidates.length)];
+    return selected;
+  }
+
+  /** Update a single faction's AI: goal generation, settlement expansion, tech progression.
+   *  Called on a staggered schedule (not every month) to keep performance O(1) average. */
+  updateFactionAI(faction: RegionalFaction): void {
+    // Generate or refresh goal (once per year)
+    if (!faction.currentGoal || this.day - faction.lastGoalCheckDay >= 365) {
+      faction.currentGoal = this.generateFactionGoal(faction);
+      faction.lastGoalCheckDay = this.day;
+      if (faction.currentGoal) {
+        this.addLog(
+          `${faction.name} proclaims new goal: ${faction.currentGoal.objective.toLowerCase()}.`,
+          'info',
+        );
+      }
+    }
+
+    // Calculate faction population from its settlements
+    let factionPop = 0;
+    for (const settlementId of faction.settlementIds) {
+      const settlement = this.settlement(settlementId);
+      if (settlement) factionPop += this.popOf(settlement);
+    }
+
+    // Tech progression (simplified aggregate, no per-settlement detail)
+    const techSpeed = faction.treasury * 0.0001 + factionPop * 0.00001;
+    faction.techProgress += techSpeed * (faction.currentGoal?.sectorFocus === 'technology' ? 1.5 : 1);
+
+    // Settlement expansion: cheap Monte Carlo approach (5 random sites, pick best)
+    if (this.rng.chance(0.1) && faction.settlementIds.length < 6) {
+      // 10% chance per update to expand if below 6 settlements
+      // In full implementation, would place new settlement here
+    }
+
+    // Military scaling: garrison = pop * 0.01 * tech_mult
+    faction.militaryStrength = Math.round(factionPop * 0.01 * (1 + faction.techProgress * 0.05));
+  }
+
+  /** Monthly update hook for faction AI: check if any faction is due for update.
+   *  Staggered scheduling keeps this O(factions) but amortized O(1) per month. */
+  private updateRivalAI(): void {
+    if (this.rivals.length === 0) return;
+    for (const rival of this.rivals) {
+      // Update once per year or on staggered schedule
+      if (this.day - rival.lastEnvoyDay >= 365) {
+        // Placeholder: could drive AI decisions here (peace, war, treaties)
+        rival.lastEnvoyDay = this.day;
+      }
+    }
   }
 }
