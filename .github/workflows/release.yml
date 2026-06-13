@@ -11,6 +11,7 @@ permissions:
 jobs:
   create-release:
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
@@ -46,6 +47,7 @@ Already installed? The app checks for updates automatically each time it launche
 
   release:
     needs: create-release
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     strategy:
       fail-fast: false
       matrix:
