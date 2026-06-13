@@ -467,17 +467,25 @@ export class Hud {
     const canLoad = (this.hasSave?.() ?? false) && this.onLoad !== null;
     this.setHtml(this.menuBox,
       `<div class="menu-box">` +
-      `<h2>CENTURIA</h2>` +
+      `<div class="menu-header">` +
+      `<h2>C E N T U R I A</h2>` +
       `<p class="menu-note">${note || 'The colony waits.'}</p>` +
-      `<button id="menu-resume">Resume [M]</button>` +
-      `<button id="menu-save"${canSave ? '' : ' disabled'}>Save Game</button>` +
-      `<button id="menu-load"${canLoad ? '' : ' disabled'}>Load Game</button>` +
-      `<button id="menu-mute">${this.sfx?.muted ? 'Sound: OFF' : 'Sound: ON'}</button>` +
-      `<button id="menu-music">${this.music?.enabled ? 'Music: ON' : 'Music: OFF'}</button>` +
-      `<button id="menu-soundscape">${this.soundscape?.enabled ? 'Ambience: ON' : 'Ambience: OFF'}</button>` +
-      `<button id="menu-save-quit"${canSave ? '' : ' disabled'}>Save &amp; Quit</button>` +
-      `<button id="menu-quit">Quit without Saving</button>` +
-      `<button id="menu-restart">Restart Colony</button>` +
+      `</div>` +
+      `<div class="menu-section">` +
+      `<button id="menu-resume" class="menu-btn-primary">▶  Resume  <span class="menu-key">[M]</span></button>` +
+      `<button id="menu-save"${canSave ? '' : ' disabled'}>⬛  Save Game</button>` +
+      `<button id="menu-load"${canLoad ? '' : ' disabled'}>⬛  Load Game</button>` +
+      `</div>` +
+      `<div class="menu-section menu-section-settings">` +
+      `<button id="menu-mute">♪  Sound: ${this.sfx?.muted ? '<span class="menu-off">OFF</span>' : 'ON'}</button>` +
+      `<button id="menu-music">♫  Music: ${this.music?.enabled ? 'ON' : '<span class="menu-off">OFF</span>'}</button>` +
+      `<button id="menu-soundscape">⌁  Ambience: ${this.soundscape?.enabled ? 'ON' : '<span class="menu-off">OFF</span>'}</button>` +
+      `</div>` +
+      `<div class="menu-section menu-section-danger">` +
+      `<button id="menu-save-quit" class="menu-btn-danger"${canSave ? '' : ' disabled'}>⬛  Save &amp; Quit</button>` +
+      `<button id="menu-quit" class="menu-btn-danger">✕  Quit without Saving</button>` +
+      `<button id="menu-restart" class="menu-btn-danger">↺  Restart Colony</button>` +
+      `</div>` +
       `</div>`);
   }
 
@@ -541,10 +549,10 @@ export class Hud {
     const drought = s.weather.isDrought(s.day) && s.growingSeason ? ' <span class="tb-over">DROUGHT</span>' : '';
     this.setHtml(this.topBar,
       `<span class="tb-date">${s.dateLabel} ${hh}:${mm}</span>` +
-      `<span>${skyIcon} ${Math.round(s.temperature())}°C${drought}</span>` +
+      `<span>${skyIcon} ${Math.round(s.temperature() * 9 / 5 + 32)}°F${drought}</span>` +
       `<span>${popDisplay}${capWarn}</span>` +
       `<span>💰` + formatCurrency(Math.round(s.economy.cash)) + `</span>` +
-      `<span>🪵${s.stock.wood} ⛏${s.stock.stone} 🌾${s.stock.grain} 🍖${s.stock.meal} 👕${s.stock.clothes}${s.stock.weapons ? ` ⚔${s.stock.weapons}` : ''}</span>` +
+      `<span><span class="res-wood">≡</span>${s.stock.wood} ⛏${s.stock.stone} 🌾${s.stock.grain} 🍖${s.stock.meal} 👕${s.stock.clothes}${s.stock.weapons ? ` ⚔${s.stock.weapons}` : ''}</span>` +
       `<span title="average mood">♥${Math.round(s.avgMood())}</span>` +
       (s.raidActive ? `<span class="tb-over">⚔ RAID ${s.raiders.length}!</span>` : '') +
       `<span class="tb-speed">${this.paused ? '⏸' : '▶'.repeat(this.speed)} <i>(space 1-3)</i></span>`);
@@ -750,7 +758,7 @@ export class Hud {
   private drawLog(): void {
     if (this.sim.log.length === this.lastLogLen) return;
     this.lastLogLen = this.sim.log.length;
-    this.setHtml(this.logBox, this.sim.log.slice(-6).map((l) => `<div class="log-${l.kind}">d${l.day} · ${l.text}</div>`).reverse().join(''));
+    this.setHtml(this.logBox, this.sim.log.slice(-8).map((l) => `<div class="log-entry log-${l.kind}">d${l.day} · ${l.text}</div>`).join(''));
   }
 
   private drawPriorities(): void {
