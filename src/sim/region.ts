@@ -7,8 +7,8 @@
  * performance answer that lets the game scale to a State and beyond.
  */
 import { Rng } from './rng';
-import { MINUTES_PER_DAY, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, formatCurrency, setCurrencySymbol } from './defs';
-import type { CurrencySymbol, RegionDesign, NationDesign } from './defs';
+import { MINUTES_PER_DAY, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, formatCurrency, setCurrencySymbol, AI_DIFFICULTY } from './defs';
+import type { CurrencySymbol, RegionDesign, NationDesign, AiDifficulty } from './defs';
 import { computePenalty, transitionEfficiency, ANNOUNCE_LEAD_DAYS } from './currency';
 import type { CurrencyChangeCause, CurrencyAnnouncement, CurrencyTransition } from './currency';
 import type { Simulation, Settler, LogEntry } from './sim';
@@ -722,6 +722,8 @@ export interface RegionalFaction {
   currencyName: string; // e.g., "Dollars", "Francs"
   /** AI personality: -100 (passive) to +100 (aggressive) */
   aggressiveness: number;
+  /** Government type (RivalRegimeDef id) — drives which goals this faction pursues. */
+  regime: string;
   /** AI tech focus: what the AI prioritizes researching */
   techFocus: string;
   aiGoal: string; // current strategic goal (for logging/UI)
@@ -1124,12 +1126,28 @@ const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSi
     }
     return null;
   },
-  // ---- Defense / Isolation (when threatened) ----
+  // ---- Defense / Fortress (traditional & autocratic regimes hunker down) ----
   (faction, region) => {
-    // This goal would apply to rival nations, not regional factions
-    // Skip for now (would need faction-to-rival relation system)
-    void faction;
-    void region;
+    if (faction.settlementIds.length >= 1) {
+      return {
+        id: 'fortress_realm',
+        objective: 'Fortify the realm into an impregnable fastness',
+        govTypes: ['abs_monarchy', 'const_monarchy', 'junta', 'theocracy', 'one_party'],
+        generatedYear: region.year,
+        targetYear: region.year + 12,
+        successCondition: (f, r) => {
+          // Success: most settlements heavily garrisoned (a hard shell, not a wide empire)
+          const fortified = f.settlementIds.filter((id) => {
+            const s = r.settlement(id);
+            return s && s.garrisonStrength >= 15;
+          }).length;
+          return fortified >= 2 && f.militaryStrength >= 25;
+        },
+        description: 'No invader shall pass — every town a citadel.',
+        sectorFocus: 'military',
+        settlementBias: ['mountain'],
+      };
+    }
     return null;
   },
   // ---- Economic growth (universal) ----
@@ -1148,7 +1166,220 @@ const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSi
     }
     return null;
   },
+  // ---- Naval / coastal trade empire (maritime republics) ----
+  (faction, region) => {
+    if (faction.settlementIds.length >= 1) {
+      return {
+        id: 'naval_trade_empire',
+        objective: 'Build a coastal trade empire commanding the seaways',
+        govTypes: ['merchant_republic', 'parliamentary', 'const_monarchy'],
+        generatedYear: region.year,
+        targetYear: region.year + 14,
+        successCondition: (f, r) => {
+          const coastal = f.settlementIds.filter((id) => r.settlement(id)?.resourceFocus === 'wool').length;
+          return coastal >= 2 && f.treasury >= 500;
+        },
+        description: 'Every port a counting-house; every tide a profit.',
+        sectorFocus: 'commerce',
+        settlementBias: ['coastal'],
+        supportingTechs: ['trade_routes', 'merchants'],
+      };
+    }
+    return null;
+  },
+  // ---- Industrial powerhouse (modern & collectivist states) ----
+  (_faction, region) => {
+    if (region.year >= 1900) {
+      return {
+        id: 'industrial_powerhouse',
+        objective: 'Forge an industrial powerhouse of mills and mines',
+        govTypes: ['corporate', 'one_party', 'peoples_republic', 'parliamentary', 'fascist'],
+        generatedYear: region.year,
+        targetYear: region.year + 16,
+        successCondition: (f, r) => {
+          const industrial = f.settlementIds.filter((id) => r.settlement(id)?.resourceFocus === 'iron').length;
+          return industrial >= 2 && f.techProgress >= 8;
+        },
+        description: 'Smoke and steel — the future belongs to the makers.',
+        sectorFocus: 'industry',
+        settlementBias: ['mountain'],
+        supportingTechs: ['steel_mills', 'coal_mining'],
+      };
+    }
+    return null;
+  },
+  // ---- Agrarian heartland (populist & agrarian regimes) ----
+  (faction, region) => {
+    if (faction.settlementIds.length >= 1) {
+      return {
+        id: 'agrarian_heartland',
+        objective: 'Cultivate a fertile agrarian heartland',
+        govTypes: ['peoples_republic', 'const_monarchy', 'parliamentary', 'theocracy'],
+        generatedYear: region.year,
+        targetYear: region.year + 14,
+        successCondition: (f, r) => {
+          const totalPop = f.settlementIds.reduce((sum, id) => {
+            const s = r.settlement(id);
+            return sum + (s ? r.popOf(s) : 0);
+          }, 0);
+          const farms = f.settlementIds.filter((id) => r.settlement(id)?.resourceFocus === 'grain').length;
+          return farms >= 2 && totalPop >= 350;
+        },
+        description: 'Bread for the people — fields without end.',
+        sectorFocus: 'agriculture',
+        settlementBias: ['plains', 'river'],
+      };
+    }
+    return null;
+  },
+  // ---- Colonial reach (expansionist crowns & empires) ----
+  (faction, region) => {
+    if (faction.settlementIds.length >= 2 && region.year < 1960) {
+      return {
+        id: 'colonial_reach',
+        objective: 'Plant colonies across every frontier',
+        govTypes: ['fascist', 'abs_monarchy', 'merchant_republic', 'corporate'],
+        generatedYear: region.year,
+        targetYear: region.year + 18,
+        successCondition: (f) => f.settlementIds.length >= 6,
+        description: 'The map shall be painted in our colour.',
+        sectorFocus: 'agriculture',
+        settlementBias: ['river', 'coastal', 'plains', 'forest'],
+      };
+    }
+    return null;
+  },
+  // ---- Cultural golden age (liberal & refined regimes) ----
+  (faction, region) => {
+    if (faction.settlementIds.length >= 2 && region.year >= 1905) {
+      return {
+        id: 'cultural_golden_age',
+        objective: 'Usher in a golden age of arts and contentment',
+        govTypes: ['parliamentary', 'const_monarchy', 'merchant_republic'],
+        generatedYear: region.year,
+        targetYear: region.year + 15,
+        successCondition: (f, r) => {
+          const happy = f.settlementIds.filter((id) => (r.settlement(id)?.satisfaction ?? 0) >= 70).length;
+          return happy >= 3;
+        },
+        description: 'Let history remember us for beauty, not blood.',
+        sectorFocus: 'culture',
+        supportingTechs: ['universities', 'printing_press'],
+      };
+    }
+    return null;
+  },
+  // ---- The one true faith (theocratic consolidation) ----
+  (_faction, region) => {
+    if (region.year >= 1900) {
+      return {
+        id: 'one_true_faith',
+        objective: 'Bind the faithful under one sacred banner',
+        govTypes: ['theocracy'],
+        generatedYear: region.year,
+        targetYear: region.year + 20,
+        successCondition: (f, r) => {
+          const devout = f.settlementIds.filter((id) => (r.settlement(id)?.loyaltyToFaction ?? 0) >= 80).length;
+          return f.settlementIds.length >= 4 && devout >= 3;
+        },
+        description: 'One creed, one flock, one will.',
+        sectorFocus: 'culture',
+        settlementBias: ['river', 'coastal'],
+      };
+    }
+    return null;
+  },
+  // ---- Iron-fisted rule (totalitarian consolidation) ----
+  (_faction, region) => {
+    if (region.year >= 1920) {
+      return {
+        id: 'iron_fisted_rule',
+        objective: 'Rule with an iron fist — total obedience',
+        govTypes: ['fascist', 'one_party', 'junta', 'corporate'],
+        generatedYear: region.year,
+        targetYear: region.year + 12,
+        successCondition: (f, r) => {
+          const obedient = f.settlementIds.filter((id) => (r.settlement(id)?.loyaltyToFaction ?? 0) >= 85).length;
+          return f.militaryStrength >= 30 && obedient >= 2;
+        },
+        description: 'Loyalty is not asked for — it is enforced.',
+        sectorFocus: 'military',
+        settlementBias: ['plains', 'mountain'],
+      };
+    }
+    return null;
+  },
+  // ---- Forest dominion (timber economies) ----
+  (faction, region) => {
+    if (faction.settlementIds.length >= 1) {
+      return {
+        id: 'forest_dominion',
+        objective: 'Master the great forests and their timber wealth',
+        govTypes: ['peoples_republic', 'const_monarchy', 'merchant_republic', 'parliamentary'],
+        generatedYear: region.year,
+        targetYear: region.year + 13,
+        successCondition: (f, r) => {
+          const timber = f.settlementIds.filter((id) => r.settlement(id)?.resourceFocus === 'wood').length;
+          return timber >= 3;
+        },
+        description: 'From the deep woods, an empire of timber.',
+        sectorFocus: 'industry',
+        settlementBias: ['forest'],
+      };
+    }
+    return null;
+  },
+  // ---- Mercantile hegemony (the richest of all) ----
+  (faction, region) => {
+    if (faction.treasury >= 300) {
+      return {
+        id: 'mercantile_hegemony',
+        objective: 'Amass a fortune unrivalled in the region',
+        govTypes: ['merchant_republic', 'corporate', 'parliamentary'],
+        generatedYear: region.year,
+        targetYear: region.year + 14,
+        successCondition: (f) => f.treasury >= 700,
+        description: 'Gold is the truest crown.',
+        sectorFocus: 'commerce',
+        settlementBias: ['river', 'coastal'],
+      };
+    }
+    return null;
+  },
+  // ---- Revolutionary vanguard (the people's cause) ----
+  (_faction, region) => {
+    if (region.year >= 1917) {
+      return {
+        id: 'revolutionary_vanguard',
+        objective: 'Lead the revolutionary vanguard to the masses',
+        govTypes: ['peoples_republic', 'one_party'],
+        generatedYear: region.year,
+        targetYear: region.year + 16,
+        successCondition: (f, r) => {
+          const totalPop = f.settlementIds.reduce((sum, id) => {
+            const s = r.settlement(id);
+            return sum + (s ? r.popOf(s) : 0);
+          }, 0);
+          return f.settlementIds.length >= 5 && totalPop >= 400;
+        },
+        description: 'The future is a tide; we are its vanguard.',
+        sectorFocus: 'industry',
+        settlementBias: ['plains', 'river', 'mountain'],
+      };
+    }
+    return null;
+  },
 ];
+
+/** Strategic families goals fall into — drives inter-faction conflict & alliance
+ *  scoring. Conquering families (military/expansion) clash over scarce ground;
+ *  building families (economic/cultural) coexist far more readily. */
+const FACTION_GOAL_CATEGORIES: Record<'military' | 'expansion' | 'economic' | 'cultural', string[]> = {
+  military: ['military_supremacy', 'resource_monopoly', 'fortress_realm', 'iron_fisted_rule'],
+  expansion: ['territorial_expansion', 'convert_heathen', 'colonial_reach', 'one_true_faith', 'revolutionary_vanguard'],
+  economic: ['enrich_treasury', 'trade_dominance', 'naval_trade_empire', 'mercantile_hegemony', 'industrial_powerhouse', 'forest_dominion', 'agrarian_heartland'],
+  cultural: ['dynastic_supremacy', 'scholarly_supremacy', 'cultural_golden_age'],
+};
 
 export type NotableRole = 'Mayor' | 'Doctor' | 'Captain' | 'Granger' | 'Forewoman' | 'Reeve';
 
@@ -1447,6 +1678,8 @@ export class RegionSim {
   regionalFactions: RegionalFaction[] = [];
   /** Player faction id (always 0 or first in list) */
   playerFactionId = 0;
+  /** Difficulty chosen at town design — tunes the regional AI competitors. */
+  aiDifficulty: AiDifficulty = 'normal';
   /** Currency exchange rates: { from:factionId:to:factionId => rate } */
   exchangeRates: Record<string, number> = {};
   /** Global trade volume: used to calculate currency dominance */
@@ -1555,6 +1788,11 @@ export class RegionSim {
   /** Get the faction object by id. */
   faction(id: number): RegionalFaction | undefined {
     return this.regionalFactions.find((f) => f.id === id);
+  }
+
+  /** Difficulty knobs for the regional AI competitors (GDD §6.2). */
+  aiKnobs(): typeof AI_DIFFICULTY[AiDifficulty] {
+    return AI_DIFFICULTY[this.aiDifficulty] ?? AI_DIFFICULTY.normal;
   }
 
   /** Get garrison strength of a settlement. */
@@ -1737,6 +1975,7 @@ export class RegionSim {
       currencyId: 0,
       currencyName: 'Pounds', // starting currency name
       aggressiveness: 50, // neutral
+      regime: 'parliamentary', // player runs a representative government by default
       techFocus: 'agriculture', // starting tech focus
       aiGoal: 'establish dominance',
       lastScoutDay: -1,
@@ -1768,9 +2007,14 @@ export class RegionSim {
     const rivalNames = ['Northern Alliance', 'Eastern Confederacy', 'Southern League'];
     const rivalColors = ['#FF0000', '#00AA00', '#FFAA00']; // red, green, orange
     const numRivals = 2 + this.rng.int(2); // 2-3 rivals
+    const knobs = this.aiKnobs();
+    // Regimes that already exist this early in the century — drives each rival's
+    // goal palette. Drawn from the AI stream so the colony seed is untouched.
+    const eraRegimes = RIVAL_REGIMES.filter((g) => g.eraFrom <= this.year).map((g) => g.id);
 
     for (let i = 0; i < numRivals; i++) {
       const rivalId = i + 1; // ids 1, 2, 3, etc.
+      const regime = eraRegimes[this.aiRng.int(eraRegimes.length)] ?? 'abs_monarchy';
       const faction: RegionalFaction = {
         id: rivalId,
         name: rivalNames[i] || `Rival Faction ${i}`,
@@ -1784,12 +2028,13 @@ export class RegionSim {
         centralBank: null,
         currencyId: rivalId,
         currencyName: ['Francs', 'Guilders', 'Crowns', 'Marks'][i] || 'Marks',
-        aggressiveness: 30 + this.rng.int(70), // 30-100 aggressiveness
+        aggressiveness: Math.max(0, Math.min(100, 30 + this.rng.int(70) + knobs.aggressionBias)),
+        regime,
         techFocus: ['mining', 'forestry', 'farming'][this.rng.int(3)],
         aiGoal: 'expand territory',
         lastScoutDay: -1,
         lastUpdateDay: this.day,
-        updateFrequency: 90, // update quarterly (every ~month)
+        updateFrequency: knobs.updateFreq, // difficulty-scaled cadence (GDD §6.2)
         currentGoal: null, // will be generated on first AI update
         lastGoalCheckDay: this.day,
       };
@@ -2463,6 +2708,8 @@ export class RegionSim {
     region.prevMonthTreasury = region.treasury; // seed so the first delta reads ~0
     // Inherit the town's currency symbol
     region.currencySymbol = sim.currencySymbol;
+    // Carry the chosen difficulty across so it can tune the AI competitors.
+    region.aiDifficulty = sim.difficulty;
 
     // Town #1 cohortifies: real settler ages, minus those leaving on the expedition.
     const stayers = sim.settlers.length - expeditionPop;
@@ -4102,8 +4349,30 @@ export class RegionSim {
       // General trade income from all settlements
       tradeIncome += faction.settlementIds.length * 5;
 
+      // Diplomacy bends the ledger: allies open their markets to one another, while
+      // factions locked in goal-conflict raise barriers (an implicit embargo). This
+      // ties the regional economy to the alliance/rivalry web rather than running blind.
+      tradeIncome *= this.factionTradeModifier(faction);
+
       faction.treasury += tradeIncome;
     }
+  }
+
+  /** Trade multiplier from a faction's standing: each ally opens a market (+8%),
+   *  each goal-conflicting rival closes one (−12%, an embargo). Clamped so trade
+   *  never fully collapses or runs away. */
+  private factionTradeModifier(faction: RegionalFaction): number {
+    let mod = 1.0;
+    for (const other of this.regionalFactions) {
+      if (other.id === faction.id) continue;
+      if (this.areAllied(faction.id, other.id)) {
+        mod += 0.08;
+      } else if (faction.currentGoal && other.currentGoal
+        && this.evaluateGoalConflict(faction.currentGoal, other.currentGoal) >= 60) {
+        mod -= 0.12;
+      }
+    }
+    return Math.max(0.5, Math.min(1.5, mod));
   }
 
   // ---- Elections (GDD §5.3) ----
@@ -5485,6 +5754,8 @@ export class RegionSim {
       scouts: this.scouts,
       regionalFactions: this.regionalFactions,
       playerFactionId: this.playerFactionId,
+      aiDifficulty: this.aiDifficulty,
+      factionAlliances: this.factionAlliances,
       exchangeRates: this.exchangeRates,
       globalTradeVolume: this.globalTradeVolume,
       nextScoutId: this.nextScoutId,
@@ -5622,7 +5893,16 @@ export class RegionSim {
     // Phase 0: factions, scouts, fog of war — older saves rebuild them in place
     if (d.regionalFactions) {
       r.regionalFactions = d.regionalFactions;
+      // Older saves predate per-faction regimes — backfill an era-plausible one
+      // so goal generation has a government type to key off of.
+      for (const f of r.regionalFactions) {
+        if (typeof f.regime !== 'string') {
+          f.regime = f.id === r.playerFactionId ? 'parliamentary' : 'abs_monarchy';
+        }
+      }
       r.playerFactionId = d.playerFactionId ?? 0;
+      r.aiDifficulty = d.aiDifficulty ?? 'normal';
+      r.factionAlliances = d.factionAlliances ?? [];
       r.scouts = d.scouts ?? [];
       r.exchangeRates = d.exchangeRates ?? { '0:0': 1.0 };
       r.globalTradeVolume = d.globalTradeVolume ?? 0;
@@ -5958,14 +6238,31 @@ export class RegionSim {
   /** Generate a new strategic goal for a faction based on templates and current state.
    *  Procedural generation from ~100+ templates ensures unpredictability. */
   private generateFactionGoal(faction: RegionalFaction): FactionGoal | null {
-    const candidates: FactionGoal[] = [];
+    const all: FactionGoal[] = [];
     for (const generator of FACTION_GOAL_GENERATORS) {
       const goal = generator(faction, this);
-      if (goal) candidates.push(goal);
+      if (goal) all.push(goal);
     }
-    if (candidates.length === 0) return null;
-    // Weight by difficulty: easier goals for lower difficulties
-    const selected = candidates[this.aiRng.int(candidates.length)];
+    if (all.length === 0) return null;
+
+    // Gov-type filter: a faction pursues goals that suit its regime. Goals with an
+    // empty govTypes list are universal. If nothing matches the regime, fall back
+    // to the universal/whole pool so a faction is never left without ambition.
+    const onRegime = all.filter(
+      (g) => g.govTypes.length === 0 || g.govTypes.includes(faction.regime),
+    );
+    const pool = onRegime.length > 0 ? onRegime : all;
+    const selected = pool[this.aiRng.int(pool.length)];
+
+    // Difficulty ambition: a harder AI sets itself tighter deadlines, an easier one
+    // gives itself room. Compress/stretch the gap between now and the target year.
+    const mult = this.aiKnobs().goalYearsMult;
+    const gap = selected.targetYear - selected.generatedYear;
+    selected.targetYear = selected.generatedYear + Math.max(3, Math.round(gap * mult));
+
+    // techFocus mirrors the goal so the rival's research bends toward its ambition
+    // (otherwise techFocus was dead data).
+    if (selected.sectorFocus) faction.techFocus = selected.sectorFocus;
     return selected;
   }
 
@@ -6005,12 +6302,15 @@ export class RegionSim {
       if (settlement) factionPop += this.popOf(settlement);
     }
 
-    // Tech progression (simplified aggregate, no per-settlement detail)
-    const techSpeed = faction.treasury * 0.0001 + factionPop * 0.00001;
+    const knobs = this.aiKnobs();
+
+    // Tech progression (simplified aggregate, no per-settlement detail). The
+    // difficulty multiplier and a goal that focuses on technology both speed it up.
+    const techSpeed = (faction.treasury * 0.0001 + factionPop * 0.00001) * knobs.techMult;
     faction.techProgress += techSpeed * (faction.currentGoal?.sectorFocus === 'technology' ? 1.5 : 1);
 
-    // Scout spawning: 10% chance per update to spawn if under limit
-    if (this.aiRng.chance(0.1) && faction.settlementIds.length > 0) {
+    // Scout spawning: difficulty-scaled chance per update, if under the slot limit.
+    if (this.aiRng.chance(knobs.scoutChance) && faction.settlementIds.length > 0) {
       this.spawnScout(faction);
     }
 
@@ -6018,10 +6318,11 @@ export class RegionSim {
     // A faction with no foothold always tries to plant its first settlement
     // (bootstrap — otherwise rivals would never appear on the map); established
     // factions expand only occasionally so the region doesn't fill instantly.
+    // Difficulty sets both the per-update chance and the ceiling on territory.
     const canAfford = faction.treasury >= 50;
     const wantsToExpand = faction.settlementIds.length === 0
       ? canAfford
-      : (this.aiRng.chance(0.1) && faction.settlementIds.length < 6 && canAfford);
+      : (this.aiRng.chance(knobs.expandChance) && faction.settlementIds.length < knobs.settlementCap && canAfford);
     if (wantsToExpand) {
       const site = this.findBestExpansionSite(faction, faction.settlementIds.length === 0 ? 8 : 5);
       if (site && site.score > 0) {
@@ -6071,7 +6372,8 @@ export class RegionSim {
       // Only escalate if factions are neighbors (within 40 map units)
       if (settlementDist > 40) continue;
 
-      const escalationChance = conflict / 100 * 0.05; // 0–5% per month
+      // 0–5% per month at normal; difficulty scales rival belligerence.
+      const escalationChance = conflict / 100 * 0.05 * this.aiKnobs().raidMult;
       if (this.aiRng.chance(escalationChance)) {
         // Log the conflict
         const conflictReason =
@@ -6141,26 +6443,32 @@ export class RegionSim {
     }
   }
 
+  /** Coarse strategic family a goal belongs to — drives conflict & alliance logic.
+   *  Military/expansion goals clash; economic/cultural goals coexist more easily. */
+  private goalCategory(goalId: string): 'military' | 'expansion' | 'economic' | 'cultural' | 'other' {
+    if (FACTION_GOAL_CATEGORIES.military.includes(goalId)) return 'military';
+    if (FACTION_GOAL_CATEGORIES.expansion.includes(goalId)) return 'expansion';
+    if (FACTION_GOAL_CATEGORIES.economic.includes(goalId)) return 'economic';
+    if (FACTION_GOAL_CATEGORIES.cultural.includes(goalId)) return 'cultural';
+    return 'other';
+  }
+
   /** Calculate goal conflict severity between two faction goals (0–100).
    *  Higher values indicate more direct conflict. */
   private evaluateGoalConflict(goal1: FactionGoal, goal2: FactionGoal): number {
     // Same goal = maximum conflict
     if (goal1.id === goal2.id) return 100;
 
-    // Related goal pairs (military goals, expansion goals, economic goals conflict)
-    const militaryGoals = ['military_supremacy', 'resource_monopoly'];
-    const expansionGoals = ['territorial_expansion', 'convert_heathen'];
-    const economicGoals = ['enrich_treasury', 'trade_dominance'];
+    const goal1Type = this.goalCategory(goal1.id);
+    const goal2Type = this.goalCategory(goal2.id);
 
-    const goal1Type = militaryGoals.includes(goal1.id) ? 'military' :
-                      expansionGoals.includes(goal1.id) ? 'expansion' :
-                      economicGoals.includes(goal1.id) ? 'economic' : 'other';
-    const goal2Type = militaryGoals.includes(goal2.id) ? 'military' :
-                      expansionGoals.includes(goal2.id) ? 'expansion' :
-                      economicGoals.includes(goal2.id) ? 'economic' : 'other';
-
-    if (goal1Type === goal2Type && goal1Type !== 'other') return 60; // Same type = high conflict
-    if (goal1Type !== 'other' && goal2Type !== 'other') return 30; // Different economic types = some conflict
+    // Land-grab families fight hardest over the same ground.
+    const contested = (t: string) => t === 'military' || t === 'expansion';
+    if (goal1Type === goal2Type && goal1Type !== 'other') {
+      return contested(goal1Type) ? 70 : 50; // same family — territory worse than markets
+    }
+    if (contested(goal1Type) && contested(goal2Type)) return 50; // expansion vs military
+    if (goal1Type !== 'other' && goal2Type !== 'other') return 30; // different non-trivial families
     return 20; // Minor conflict by default
   }
 
@@ -6270,29 +6578,24 @@ export class RegionSim {
     const b = this.faction(factionIdB);
     if (!a || !b || !a.currentGoal || !b.currentGoal) return 20; // baseline
 
-    // Compatible: expansion goals (both want to grow)
-    const expansionGoals = ['territorial_expansion', 'convert_heathen'];
-    const aIsExpanding = expansionGoals.includes(a.currentGoal.id);
-    const bIsExpanding = expansionGoals.includes(b.currentGoal.id);
-
-    // Compatible: economic goals (both want trade)
-    const economicGoals = ['enrich_treasury', 'trade_dominance'];
-    const aIsEconomic = economicGoals.includes(a.currentGoal.id);
-    const bIsEconomic = economicGoals.includes(b.currentGoal.id);
-
-    // Compatible: military goals (both want power)
-    const militaryGoals = ['military_supremacy', 'resource_monopoly'];
-    const aIsMilitary = militaryGoals.includes(a.currentGoal.id);
-    const bIsMilitary = militaryGoals.includes(b.currentGoal.id);
+    const aCat = this.goalCategory(a.currentGoal.id);
+    const bCat = this.goalCategory(b.currentGoal.id);
+    const aPeaceful = aCat === 'economic' || aCat === 'cultural';
+    const bPeaceful = bCat === 'economic' || bCat === 'cultural';
 
     let compatibility = 30; // baseline
-    if (aIsExpanding && bIsExpanding) compatibility += 35;
-    else if (aIsEconomic && bIsEconomic) compatibility += 30;
-    else if (aIsMilitary && bIsMilitary) compatibility += 35;
-    else if ((aIsExpanding || bIsExpanding) && (aIsEconomic || bIsEconomic)) compatibility += 15;
+    // Two builders (trade/culture) get along; two conquerors can carve up the map together.
+    if (aPeaceful && bPeaceful) compatibility += 35;
+    else if (aCat === bCat && aCat !== 'other') compatibility += 30;
+    else if (aPeaceful !== bPeaceful) compatibility += 10; // mixed temperaments, lukewarm
 
-    // Incompatible: same specific goal = natural rivalry
+    // Incompatible: same specific goal = natural rivalry; shared ambition over the
+    // same scarce resource (territory/military) breeds the bitterest enmity.
     if (a.currentGoal.id === b.currentGoal.id) compatibility -= 40;
+    else if (aCat === bCat && (aCat === 'military' || aCat === 'expansion')) compatibility -= 20;
+
+    // Allies of difficulty: a brutal world is more suspicious, a gentle one more trusting.
+    compatibility += -this.aiKnobs().aggressionBias * 0.5;
 
     return Math.max(0, Math.min(100, compatibility));
   }

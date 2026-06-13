@@ -17,7 +17,10 @@ function runDays(r: RegionSim, days: number): void {
 }
 
 const seed = Number(process.argv[2] ?? 42);
-const sim = new Simulation(seed);
+const difficulty = (process.argv[3] ?? 'normal') as 'easy' | 'normal' | 'hard';
+const sim = new Simulation(seed, {
+  currencySymbol: '$', difficulty, location: 'river-valley', startingPop: 12,
+});
 grow(sim);
 const r = RegionSim.fromTown(sim, 8, 80, 80);
 runDays(r, 5);
@@ -27,7 +30,8 @@ r.govLean = 'council';
 r.treasury = 500;
 
 const rivals = r.regionalFactions.filter((f) => f.id !== r.playerFactionId);
-console.log(`seed=${seed}  rivals=${rivals.length}  starting day=${r.day}`);
+console.log(`seed=${seed}  difficulty=${r.aiDifficulty}  rivals=${rivals.length}  starting day=${r.day}`);
+console.log(`rival regimes: ${rivals.map((f) => `${f.name}=${f.regime}`).join(', ')}`);
 
 const YEARS = 5;
 for (let y = 1; y <= YEARS; y++) {
@@ -36,9 +40,9 @@ for (let y = 1; y <= YEARS; y++) {
   for (const f of rivals) {
     const goal = f.currentGoal ? f.currentGoal.objective : '(none)';
     console.log(
-      `  ${f.name}: settlements=${f.settlementIds.length} ` +
+      `  ${f.name} (${f.regime}): settlements=${f.settlementIds.length} ` +
       `treasury=${Math.round(f.treasury)} mil=${f.militaryStrength} ` +
-      `tech=${f.techProgress.toFixed(2)} goal="${goal}"`,
+      `tech=${f.techProgress.toFixed(2)} focus=${f.techFocus} goal="${goal}"`,
     );
   }
   console.log(`  scouts on map: ${r.scouts.length}`);
