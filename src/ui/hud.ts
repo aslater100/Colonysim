@@ -217,6 +217,14 @@ export class Hud {
   private htmlCache = new Map<HTMLElement, string>();
   private techPanel!: TechPanel;
 
+  /** Draggable panels for the WindowManager (town mode). */
+  get draggablePanels(): { id: string; element: HTMLElement; baseZ: number }[] {
+    return [
+      { id: 'town-inspector', element: this.inspector, baseZ: 20 },
+      { id: 'town-priorities', element: this.prioBox, baseZ: 19 },
+    ];
+  }
+
   constructor(
     root: HTMLElement,
     private sim: Simulation,

@@ -346,6 +346,18 @@ body {
   padding: 8px;
   font-size: 12px;
   z-index: 20;
+  cursor: grab;
+  user-select: none;
+}
+
+/* Draggable panels: text reads grab; controls keep their own pointer. */
+.inspector button,
+.inspector input,
+.priorities .prio,
+.palette button,
+.palette input,
+.palette select {
+  cursor: pointer;
 }
 
 .inspector h3 {
@@ -484,6 +496,8 @@ body {
   padding: 6px;
   font-size: 11px;
   z-index: 19;
+  cursor: grab;
+  user-select: none;
 }
 
 .priorities table { border-collapse: collapse; }
@@ -547,8 +561,8 @@ body {
   top: 36px;
   z-index: 12;
   background: rgba(16, 14, 10, 0.94);
-  transition: z-index 0.1s;
   cursor: grab;
+  user-select: none;
   border: 2px solid #6e4a2f;
   padding: 8px;
   font-size: 12px;

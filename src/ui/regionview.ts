@@ -118,6 +118,19 @@ export class RegionView {
     root.appendChild(this.rivalPanel);
   }
 
+  /** Draggable panels for the WindowManager (region mode). */
+  get draggablePanels(): { id: string; element: HTMLElement; baseZ: number }[] {
+    return [
+      { id: 'region-selection', element: this.panel, baseZ: 20 },
+      { id: 'region-state', element: this.statePanel, baseZ: 12 },
+      { id: 'region-research', element: this.researchPanel, baseZ: 12 },
+      { id: 'region-routes', element: this.routeNetworkPanel, baseZ: 12 },
+      { id: 'region-settlements', element: this.settlementListPanel, baseZ: 12 },
+      { id: 'region-economy', element: this.economyPanel, baseZ: 12 },
+      { id: 'region-rival', element: this.rivalPanel, baseZ: 20 },
+    ];
+  }
+
   destroyPanel(): void {
     this.panel.remove();
     this.statePanel.remove();
