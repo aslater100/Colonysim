@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Simulation } from '../src/sim/sim';
 import { ParcelManager } from '../src/sim/parcel';
-import { PARCEL_TUNING } from '../src/sim/defs';
+import { PARCEL_TUNING, EXPANSION_TECHS } from '../src/sim/defs';
 import { REGION_N } from '../src/sim/worldgen';
 
 const SEED = 12345;
@@ -18,6 +18,22 @@ function adjacentLandCell(mgr: ParcelManager): { x: number; y: number } | null {
     const y = mgr.homeCellY + dy;
     if (x < 0 || y < 0 || x >= REGION_N || y >= REGION_N) continue;
     if (!mgr.regionMap.isWater(x, y)) return { x, y };
+  }
+  return null;
+}
+
+/** A land cell at Chebyshev distance ≥ 2 from home (never orthogonally adjacent). */
+function distantLandCell(mgr: ParcelManager): { x: number; y: number } | null {
+  for (let r = 2; r <= 6; r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dy = -r; dy <= r; dy++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const x = mgr.homeCellX + dx;
+        const y = mgr.homeCellY + dy;
+        if (x < 0 || y < 0 || x >= REGION_N || y >= REGION_N) continue;
+        if (!mgr.regionMap.isWater(x, y)) return { x, y };
+      }
+    }
   }
   return null;
 }
@@ -101,6 +117,63 @@ describe('ParcelManager — purchase', () => {
     // Out of region.
     expect(mgr.purchase(-1, mgr.homeCellY)).toBeNull();
     expect(mgr.canPurchase(REGION_N, mgr.homeCellY)).toBe(false);
+  });
+});
+
+describe('ParcelManager — expansion techs (Phase 3)', () => {
+  it('road_building discounts every acquisition', () => {
+    const { mgr } = newManager();
+    const cell = adjacentLandCell(mgr)!;
+    const full = mgr.cost(cell.x, cell.y);
+    mgr.hasTech = (id) => id === EXPANSION_TECHS.roadBuilding;
+    const discounted = mgr.cost(cell.x, cell.y);
+    expect(discounted).toBeLessThan(full);
+    // Within rounding of the configured multiplier.
+    expect(Math.abs(discounted - full * PARCEL_TUNING.roadDiscount)).toBeLessThanOrEqual(1);
+  });
+
+  it('land_survey unlocks non-adjacent explored parcels', () => {
+    const { mgr } = newManager();
+    const far = distantLandCell(mgr)!;
+    mgr.gold = 1_000_000;
+    mgr.markExplored(far.x, far.y);
+
+    // Explored but not adjacent to any holding → unreachable without the tech.
+    expect(mgr.canPurchase(far.x, far.y)).toBe(false);
+
+    mgr.hasTech = (id) => id === EXPANSION_TECHS.landSurvey;
+    expect(mgr.canPurchase(far.x, far.y)).toBe(true);
+    expect(mgr.purchase(far.x, far.y)).not.toBeNull();
+    expect(mgr.isOwned(far.x, far.y)).toBe(true);
+  });
+
+  it('land_survey still requires the cell to have been explored', () => {
+    const { mgr } = newManager();
+    const far = distantLandCell(mgr)!;
+    mgr.gold = 1_000_000;
+    mgr.hasTech = (id) => id === EXPANSION_TECHS.landSurvey;
+    // Never revealed → off-frontier, even with the survey tech and ample gold.
+    expect(mgr.canPurchase(far.x, far.y)).toBe(false);
+  });
+
+  it('cartography surveys a wider frontier on purchase', () => {
+    const { mgr } = newManager();
+    const cell = adjacentLandCell(mgr)!;
+    mgr.gold = 1_000_000;
+    mgr.hasTech = (id) => id === EXPANSION_TECHS.cartography;
+    mgr.purchase(cell.x, cell.y);
+
+    // A cell exactly two rings out from the new holding is now explored —
+    // something the plain orthogonal reveal (radius 1) would never reach.
+    const r = PARCEL_TUNING.cartographyRevealRadius;
+    let revealedFar = false;
+    for (let dx = -r; dx <= r && !revealedFar; dx++) {
+      for (let dy = -r; dy <= r; dy++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        if (mgr.isExplored(cell.x + dx, cell.y + dy)) { revealedFar = true; break; }
+      }
+    }
+    expect(revealedFar).toBe(true);
   });
 });
 

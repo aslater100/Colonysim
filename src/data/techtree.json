@@ -91,6 +91,33 @@
       "desc": "Superconducting guideways float freight at airline speed. Maglev lines can be laid five years early."
     },
     {
+      "id": "land_survey",
+      "name": "Land Survey",
+      "tree": "tech",
+      "cost": 50,
+      "prereqs": ["steam_power"],
+      "era": 1900,
+      "desc": "Theodolite teams chart the hinterland, letting the realm purchase explored parcels that don't yet touch its borders."
+    },
+    {
+      "id": "road_building",
+      "name": "Road Building",
+      "tree": "tech",
+      "cost": 70,
+      "prereqs": ["land_survey"],
+      "era": 1906,
+      "desc": "Graded trunk roads reach new ground cheaply — every parcel acquisition costs 20% less."
+    },
+    {
+      "id": "cartography",
+      "name": "Cartography",
+      "tree": "tech",
+      "cost": 60,
+      "prereqs": ["land_survey"],
+      "era": 1910,
+      "desc": "Precise mapping surveys the wider frontier, revealing the biomes of cells two rings out from each new holding."
+    },
+    {
       "id": "common_law",
       "name": "Common Law",
       "tree": "civics",

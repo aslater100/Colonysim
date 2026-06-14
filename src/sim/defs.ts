@@ -519,4 +519,25 @@ export const PARCEL_TUNING = {
     lake: 3.0,
     sea: 3.0,
   } as Record<string, number>,
+  // ── Phase 3 expansion techs ────────────────────────────────────────────────
+  // The cost formula and frontier rules above are gated/boosted by three
+  // region-tier techs. Effects live here so the sim and the (future) purchase
+  // UI quote identical numbers.
+  /** `road_building`: trunk roads cut the price of every acquisition. */
+  roadDiscount: 0.8,
+  /** Frontier cells a purchase reveals (von Neumann ring) without `cartography`. */
+  revealRadius: 1,
+  /** With `cartography`, a purchase surveys a wider Chebyshev block of frontier. */
+  cartographyRevealRadius: 2,
+} as const;
+
+/** Region-tier tech ids that drive parcel expansion (kept in one place so the
+ *  sim, the tech tree data, and the purchase UI never drift apart). */
+export const EXPANSION_TECHS = {
+  /** Survey distant land so non-adjacent (but explored) parcels can be bought. */
+  landSurvey: 'land_survey',
+  /** Trunk roads discount every acquisition (`PARCEL_TUNING.roadDiscount`). */
+  roadBuilding: 'road_building',
+  /** Charting reveals a wider frontier ring around each new holding. */
+  cartography: 'cartography',
 } as const;

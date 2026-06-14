@@ -18,7 +18,7 @@
 import { Rng } from './rng';
 import { World } from './world';
 import { RegionMap, REGION_N } from './worldgen';
-import { PARCEL_TUNING } from './defs';
+import { PARCEL_TUNING, EXPANSION_TECHS } from './defs';
 import type { ResourceKind } from './defs';
 import type { Simulation } from './sim';
 
@@ -54,6 +54,15 @@ export class ParcelManager {
   readonly seed: number;
   readonly homeCellX: number;
   readonly homeCellY: number;
+
+  /**
+   * Whether a region-tier expansion tech is researched. Defaults to "nothing
+   * researched" so the data model stays standalone (and its tests stay pure);
+   * once the ParcelManager is wired into the live game this is pointed at
+   * `RegionSim.has`, so `land_survey` / `road_building` / `cartography` take
+   * effect without the sim layer ever importing the region module.
+   */
+  hasTech: (id: string) => boolean = () => false;
 
   private parcels = new Map<string, Parcel>();
 
@@ -167,17 +176,20 @@ export class ParcelManager {
 
   // ── Expansion ───────────────────────────────────────────────────────────────
 
-  /** Price to acquire a cell: base × distance × terrain × holdings premium. */
+  /** Price to acquire a cell: base × distance × terrain × holdings premium,
+   *  discounted once `road_building` is researched. */
   cost(cellX: number, cellY: number): number {
     const d = Math.hypot(cellX - this.homeCellX, cellY - this.homeCellY);
     const biome = this.regionMap.at(cellX, cellY).biome;
     const terrain = PARCEL_TUNING.terrainMult[biome] ?? 1;
     const owned = this.ownedCount();
+    const discount = this.hasTech(EXPANSION_TECHS.roadBuilding) ? PARCEL_TUNING.roadDiscount : 1;
     const raw =
       PARCEL_TUNING.baseCost *
       (1 + d * PARCEL_TUNING.distanceScale) *
       terrain *
-      (1 + owned * PARCEL_TUNING.expansionPremium);
+      (1 + owned * PARCEL_TUNING.expansionPremium) *
+      discount;
     return Math.round(raw);
   }
 
@@ -189,13 +201,23 @@ export class ParcelManager {
     p.purchaseCost = this.cost(cellX, cellY); // refresh against current holdings
   }
 
-  /** Can this cell be bought right now? In-region, land, unowned, adjacent, affordable. */
+  /**
+   * Can this cell be bought right now? In-region, land, unowned, reachable,
+   * and affordable. "Reachable" normally means orthogonally adjacent to a
+   * holding; `land_survey` relaxes that to any already-explored frontier cell.
+   */
   canPurchase(cellX: number, cellY: number): boolean {
     if (!inRegion(cellX, cellY)) return false;
     if (this.isOwned(cellX, cellY)) return false;
     if (this.regionMap.isWater(cellX, cellY)) return false;
-    if (!this.adjacentToOwned(cellX, cellY)) return false;
+    if (!this.isReachable(cellX, cellY)) return false;
     return this.gold >= this.cost(cellX, cellY);
+  }
+
+  /** Adjacent to a holding, or — with `land_survey` — any explored frontier cell. */
+  private isReachable(cellX: number, cellY: number): boolean {
+    if (this.adjacentToOwned(cellX, cellY)) return true;
+    return this.hasTech(EXPANSION_TECHS.landSurvey) && this.isExplored(cellX, cellY);
   }
 
   /** Is the cell orthogonally next to a parcel the player already owns? */
@@ -221,12 +243,29 @@ export class ParcelManager {
     p.explored = true;
     p.purchaseCost = price;
     this.worldFor(cellX, cellY); // lazily realise terrain now that it's ours
+    this.revealFrontier(cellX, cellY);
+    return p;
+  }
 
-    // A newly held cell opens its neighbours to the frontier.
+  /**
+   * Open the cells around a fresh holding to the frontier. Normally just the
+   * four orthogonal neighbours; `cartography` surveys a wider Chebyshev block,
+   * exposing the biomes of cells two rings out.
+   */
+  private revealFrontier(cellX: number, cellY: number): void {
+    if (this.hasTech(EXPANSION_TECHS.cartography)) {
+      const r = PARCEL_TUNING.cartographyRevealRadius;
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dy = -r; dy <= r; dy++) {
+          if (dx === 0 && dy === 0) continue;
+          this.markExplored(cellX + dx, cellY + dy);
+        }
+      }
+      return;
+    }
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
       this.markExplored(cellX + dx, cellY + dy);
     }
-    return p;
   }
 
   // ── Serialization ─────────────────────────────────────────────────────────
