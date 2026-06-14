@@ -30,6 +30,14 @@ import type { ResourceKind, CapacityKind } from './defs';
 import {
   ROOM_TYPE_ID, STATION_TYPE_ID, STATION_DEF_BY_NUM, ROOM_DEF_BY_NUM,
 } from './defs';
+import type { Stockpile } from './stockpile';
+
+/** Narrow slice of AgentStore used by tickProduction — avoids a circular import. */
+interface WorkerSource {
+  count: number;
+  stationId: Int32Array;
+  state: Uint8Array;
+}
 
 /** A placed workstation instance. Few and rarely mutated, so plain objects are fine. */
 export interface Station {
@@ -93,6 +101,8 @@ export class BuildGrid {
 
   private nextStationId = 1;
   private _visited: Uint8Array; // scratch for flood fills
+  /** Accumulated settler-minutes toward the current recipe cycle, keyed by station id. */
+  private readonly _progress: Map<number, number> = new Map();
 
   constructor(width = MAP_W, height = MAP_H) {
     this.width = width;
@@ -201,6 +211,7 @@ export class BuildGrid {
     for (let dy = 0; dy < def.h; dy++) {
       for (let dx = 0; dx < def.w; dx++) this.station[this.index(x + dx, y + dy)] = s.id;
     }
+    this._progress.set(s.id, 0);
     return s;
   }
 
@@ -215,6 +226,7 @@ export class BuildGrid {
       }
     }
     this.stations.splice(idx, 1);
+    this._progress.delete(id);
     return true;
   }
 
@@ -287,6 +299,61 @@ export class BuildGrid {
       }
     }
     return this.rooms;
+  }
+
+  /**
+   * Drive craft-station production for one simulation tick.
+   *
+   * For each craft station with at least one assigned worker, this advances the
+   * recipe progress by `minutesPerTick × workerCount` settler-minutes. When
+   * progress reaches the recipe's `work` threshold:
+   *   - `stockpile.removeAll(inputs)` is called atomically; if any input is
+   *     missing the station stalls (progress clamped at threshold, no output).
+   *   - On success: outputs are added to the stockpile and excess progress
+   *     carries forward into the next cycle.
+   *
+   * Capacity stations (beds, desks, …) are skipped entirely — their effect is
+   * a static bonus on the room, not a per-tick flow.
+   *
+   * The `agents` parameter is a duck-typed slice of `AgentStore` (count +
+   * stationId + state columns) so `build.ts` stays free of a direct import
+   * of `agents.ts`, preventing a future circular dependency when B-3 wires the
+   * job board back into both.
+   *
+   * `AState.Working = 3`; agents in any other state are not counted as workers.
+   */
+  tickProduction(agents: WorkerSource, stockpile: Stockpile, minutesPerTick: number): void {
+    // Count workers per station in one O(agents) pass.
+    const workerCount = new Map<number, number>();
+    for (let i = 0; i < agents.count; i++) {
+      if (agents.state[i] !== 3 /* AState.Working */) continue;
+      const sid = agents.stationId[i];
+      if (sid > 0) workerCount.set(sid, (workerCount.get(sid) ?? 0) + 1);
+    }
+
+    for (const s of this.stations) {
+      const def = STATION_DEF_BY_NUM[s.typeId];
+      if (!def || def.kind !== 'craft' || !def.recipe) continue;
+
+      const workers = workerCount.get(s.id) ?? 0;
+      if (workers === 0) continue;
+
+      const recipe = def.recipe;
+      let progress = (this._progress.get(s.id) ?? 0) + minutesPerTick * workers;
+
+      if (progress >= recipe.work) {
+        if (stockpile.removeAll(recipe.inputs)) {
+          for (const [res, qty] of Object.entries(recipe.outputs)) {
+            stockpile.add(res as ResourceKind, qty as number);
+          }
+          progress -= recipe.work; // carry excess into next cycle
+        } else {
+          progress = recipe.work; // stall: clamp so workers don't over-credit
+        }
+      }
+
+      this._progress.set(s.id, progress);
+    }
   }
 
   /** Aggregate everything a room delivers, summed over its valid stations. */

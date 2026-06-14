@@ -85,12 +85,35 @@ Stages (extend Track C; the live game is untouched until B-6):
   capacity slots), loaded via `ROOM_DEFS`/`STATION_DEFS` in `defs.ts` with 1-based
   numeric layer ids and load-time cross-ref validation. Tests: `tests/build.test.ts`
   (13 cases). Additive — not wired into the live sim.
-- **B-2 — Production.** Station recipes consume/produce against the stockpile on the
-  SoA core; replaces `provides`-based building output.
-- **B-3 — Job board (= Stage 3).** Open jobs = unmanned craft stations + haul jobs;
-  agents pull the nearest by flow-field cost.
-- **B-4 — Needs from rooms (= part of Stage 4).** Beds→rest, enclosed+heated→warmth,
-  recreation/education/medical stations→the matching needs.
+- **B-2 — Production. ✅ LANDED.** `src/sim/stockpile.ts` (`Stockpile`): a
+  `Float32Array` resource store indexed by the stable `RESOURCE_KINDS` order
+  (new `defs.ts` export) — allocation-free reads, atomic `removeAll()`, sparse
+  `snapshot()`. `AgentStore` gains a `stationId` SoA column +
+  `assignStation()`/`unassignStation()`. `BuildGrid.tickProduction(agents,
+  stockpile, minutesPerTick)` does an O(agents) worker-count pass, then advances
+  each craft station's recipe by `minutesPerTick × workers`, firing at
+  `recipe.work` (atomic `removeAll` of inputs → add outputs, excess progress
+  carries forward), stalling clamped when inputs are short; capacity stations
+  are skipped. Duck-typed `WorkerSource` keeps `build.ts` import-free of
+  `agents.ts`. Tests: `tests/production.test.ts` (16). Additive.
+- **B-3 — Job board (= Stage 3). ✅ LANDED.** `src/sim/jobs.ts` (`JobBoard`):
+  `rebuild()` derives the open-job list = craft stations in a valid room, unmanned,
+  inputs in stock (optional `Stockpile`); `assignIdle()` greedily matches idle
+  agents to the nearest open job (injectable `JobCostFn`, default Manhattan;
+  flow-field cost honours walls), `O(idle × jobs)` — replaces `findTask`'s
+  per-settler `O(agents × map)` scan; `buildField()` collapses open jobs into one
+  multi-source `FlowField` for "walk to nearest job" movement. Haul jobs wait on a
+  spatial stockpile (current `Stockpile` is town-global). Tests: `tests/jobs.test.ts`
+  (13). Additive.
+- **B-4 — Needs from rooms (= part of Stage 4). ✅ LANDED.** `src/sim/needs.ts`:
+  `aggregateCapacities(grid)` sums every usable room's sleep/recreation/education/
+  medical/storage (enclosure-required types contribute nothing until walled);
+  `roomAt(grid,x,y)` resolves an agent's room in O(1); `serveNeeds(grid, agents,
+  minutesPerTick)` applies room-driven recovery to the SoA need columns — enclosure
+  → warmth (toward 100, exposed cools to an ambient floor), Sleeping in a free bed
+  slot → rest, a free recreation slot → recreation (both bed/table capacity-gated).
+  Kept out of `AgentStore.tick` so the bench still reads the movement floor. Tests:
+  `tests/needs.test.ts` (13). Additive.
 - **B-5 — Render + paint UI.** Wall/floor/room/station tools + room overlay; lands
   with the Phase-4 chunk renderer.
 - **B-6 — Swap + retire `buildings.json`.** Once at parity, the room-based scale-engine
@@ -108,7 +131,7 @@ Stages (extend Track C; the live game is untouched until B-6):
 
 ### Current state (updated 2026-06-14)
 
-**Test baseline: 465 passing** (441 base + 11 flow-field + 13 rooms). `tsc` + `vite build` clean. **All landed work below is already merged into `main`.**
+**Test baseline: 507 passing** (441 base + 11 flow-field + 13 rooms + 16 production + 13 jobs + 13 needs). `tsc` + `vite build` clean. **All landed work below is already merged into `main` except B-2→B-4, which are on `claude/build-system-b2-b6-mkfsqk` / PR #103 awaiting review.**
 
 **Scale engine (Track C):**
 - **Stage 1 ✅** — `src/sim/agents.ts` (`AgentStore`, SoA agent core).
@@ -118,7 +141,20 @@ Stages (extend Track C; the live game is untouched until B-6):
 **Build-system rewrite (replaces pre-built buildings with painted walls/floors/rooms/workstations):**
 - **B-1 ✅** (PR #101, merged) — `src/sim/build.ts` (`BuildGrid`) + `src/data/rooms.json` (14 room types) + `src/data/stations.json` (19 workstations) + `ROOM_DEFS`/`STATION_DEFS` loaders in `defs.ts` + `tests/build.test.ts`.
 
-**▶ Pick up next: Build-system B-2 — Production.** Wire `BuildGrid` craft-station recipes to consume/produce against a stockpile on the SoA core (`AgentStore`), replacing `provides`-based building output. Then B-3 (job board = unmanned craft stations + haul jobs, agents pull nearest by flow-field cost — also Track C Stage 3) → B-4 (needs from rooms) → B-5 (paint UI + render) → B-6 (swap in, retire `buildings.json`). Full breakdown in the **Build-system rewrite** subsection under Track C above. Branch off current `main` (it already has `flowfield.ts` + `build.ts`).
+**▶ Pick up next: Build-system B-5 — Render + paint UI.** B-2 (production), B-3
+(job board) and B-4 (needs from rooms) have landed on `claude/build-system-b2-b6-mkfsqk`
+(PR #103) — all pure/additive scale-engine modules (`stockpile.ts`, `jobs.ts`,
+`needs.ts`) with self-checks and dedicated tests, none wired into the live `Simulation`.
+Remaining: **B-5** (wall/floor/room/station paint tools + room overlay; lands with the
+Phase-4 chunk renderer) → **B-6** (swap the room-based core in for the discrete-building
+`Simulation`, save-format v-bump, retire `buildings.json`). B-5/B-6 are the first stages
+that touch `render.ts`/the live sim, so they need design review before starting. Full
+breakdown in the **Build-system rewrite** subsection under Track C above.
+
+**Key data-flow once B-5/B-6 wire it together:** `JobBoard.rebuild` → `assignIdle`
+(idle agents claim nearest unmanned craft station) → `BuildGrid.tickProduction`
+(recipes consume/produce against the shared `Stockpile`) → `serveNeeds` (rooms top up
+warmth/rest/recreation). `aggregateCapacities` feeds the housing/services caps.
 
 **Key invariant for the scale-engine modules** (`agents.ts`, `flowfield.ts`, `build.ts`, `fogmap.ts`, `parcel.ts`): pure, DOM-free, typed-array/SoA, each with a `npx tsx <file>` self-check and a dedicated test file, and **additive** — none is wired into the live `Simulation` yet. The current 33-building game stays playable until the final swap (B-6).
 
