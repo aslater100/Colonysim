@@ -207,6 +207,7 @@ export class Hud {
   private gameOverBox: HTMLElement;
   private regionBottomBar: HTMLElement;
   private menuBox: HTMLElement;
+  private fpsBox: HTMLElement;
   private showPriorities = false;
   private showResources = false;
   private activeCat: string | null = null;
@@ -234,6 +235,13 @@ export class Hud {
     this.gameOverBox = el('div', 'gameover hidden', root);
     this.menuBox = el('div', 'menu hidden', root);
     this.regionBottomBar = el('div', 'region-bottombar hidden', root);
+    // Framerate readout, anchored under the map (bottom-left, clear of the
+    // build bar and minimap). Self-styled so it needs no external CSS.
+    this.fpsBox = el('div', 'fps-counter', root);
+    this.fpsBox.style.cssText =
+      'position:fixed;left:8px;bottom:8px;z-index:50;font:11px/1.3 monospace;' +
+      'color:#9fb0c4;background:rgba(8,10,14,0.55);padding:2px 6px;border-radius:3px;' +
+      'pointer-events:none;letter-spacing:0.5px;';
 
     this.buildBuildBar();
     this.techPanel = new TechPanel(root, sim);
@@ -797,6 +805,14 @@ export class Hud {
       else if (idleFrac > TUNING.warnUnemployYellow) w.push({ level: 'yellow', text: `${Math.round(idleFrac * 100)}% settlers idle` });
     }
     return w;
+  }
+
+  /** Update the under-map framerate readout. Amber under 50 fps, red under 30. */
+  setFps(fps: number, frameMs: number): void {
+    const f = Math.round(fps);
+    const color = f < 30 ? '#e06a5a' : f < 50 ? '#d8b25a' : '#9fb0c4';
+    this.fpsBox.style.color = color;
+    this.fpsBox.textContent = `${f} fps · ${frameMs.toFixed(1)} ms · ${this.sim.settlers.length} pop`;
   }
 
   private drawTopBar(): void {

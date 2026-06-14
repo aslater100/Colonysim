@@ -521,9 +521,13 @@ canvas.addEventListener('contextmenu', (e) => {
 // ---- main loop: fixed-timestep sim, rAF render ----
 let acc = 0;
 let last = performance.now();
+let frameMsEma = 16.7; // smoothed frame time for the FPS readout
 function loop(now: number): void {
-  const dt = Math.min(0.25, (now - last) / 1000);
+  const rawMs = now - last;
+  const dt = Math.min(0.25, rawMs / 1000);
   last = now;
+  // Exponential moving average so the counter is readable, not jittery.
+  if (rawMs > 0 && rawMs < 1000) frameMsEma += (rawMs - frameMsEma) * 0.1;
   const panSpeed = 420 * dt;
   if (mode === 'region' && !dioramaOpen && regionView) {
     // Arrow/WASD scroll the region map (screen-space pan, so invert the sign).
@@ -599,6 +603,8 @@ function loop(now: number): void {
       : 0,
     tension,
   });
+
+  hud.setFps(1000 / frameMsEma, frameMsEma);
 
   requestAnimationFrame(loop);
 }

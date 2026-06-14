@@ -1155,7 +1155,7 @@ export class Simulation {
         if (t.growth >= 100) { this.stock.grain += grainYield; t.growth = 0; }
       } else if (t.flaxZone) {
         t.growth += flaxPerDay; // flax is perennial — grows year-round
-        if (t.growth >= 100) { this.addStock('flax', TUNING.flaxYieldPerTile, t.x, t.y); t.growth = 0; }
+        if (t.growth >= 100) { this.addStock('flax', TUNING.flaxYieldPerTile, Math.floor(MAP_W / 2), Math.floor(MAP_H / 2)); t.growth = 0; }
       }
     }
   }
