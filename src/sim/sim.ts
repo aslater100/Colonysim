@@ -182,7 +182,7 @@ export class Simulation {
   graves: Grave[] = [];
   stock: Record<ResourceKind, number> = {
     // Founding resources (GDD §3.1 starting inventory)
-    wood: 80, grain: 60, meal: 160, stone: 5, clothes: 0, weapons: 0,
+    wood: 80, grain: 60, meal: 160, stone: 5, clothes: 12, weapons: 0,
     // Raw — iron_ore starts at 10 per GDD critical fix ("don't start with 0!")
     clay: 0, coal: 0, iron_ore: 10, flax: 0, herbs: 0,
     // Processed — Era 1

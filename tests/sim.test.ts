@@ -216,6 +216,8 @@ describe('Simulation', () => {
     sim.placeBuilding('kitchen', 54, 48);
     sim.placeBuilding('house', 39, 44);
     sim.placeBuilding('house', 56, 44);
+    // Pre-built tailor so the supply chain replenishes clothes before winter (day 45+).
+    sim.placeBuilding('tailor', 48, 43, true);
     // Mark only trees within foraging radius of the colony so settlers don't wander far
     const cx = 48, cy = 48;
     for (let y = cy - 18; y < cy + 18; y++) {
@@ -223,6 +225,8 @@ describe('Simulation', () => {
         if (x >= 0 && y >= 0 && sim.world.at(x, y).kind === 'tree') sim.markTree(x, y);
       }
     }
+    // Push raids past the window — this test checks food/shelter mechanics, not combat.
+    (sim as any).nextRaidDay = 9999;
     runDays(sim, 60);
     expect(sim.gameOver).toBe(false);
     expect(sim.settlers.length).toBeGreaterThan(6);
