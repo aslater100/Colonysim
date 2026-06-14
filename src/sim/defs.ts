@@ -21,6 +21,15 @@ export type ResourceKind =
   // Food variety — unlocked by respective techs; distinct types for the mood system
   | 'bread' | 'dairy' | 'produce' | 'game_meal' | 'fish_meal' | 'preserved';
 
+/** Stable-ordered list of every ResourceKind. Index i matches Stockpile's Float32Array slot i. */
+export const RESOURCE_KINDS: ResourceKind[] = [
+  'wood', 'grain', 'meal', 'stone', 'clothes', 'weapons',
+  'clay', 'coal', 'iron_ore', 'flax', 'herbs',
+  'timber', 'brick', 'iron', 'tools', 'rope', 'flour', 'ale', 'medicine',
+  'coke', 'petroleum',
+  'bread', 'dairy', 'produce', 'game_meal', 'fish_meal', 'preserved',
+];
+
 export type Provides =
   // Existing
   | 'storage' | 'sleep' | 'cook' | 'recreation' | 'warmth' | 'craft' | 'burial'

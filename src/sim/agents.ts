@@ -60,6 +60,8 @@ export class AgentStore {
   readonly state: Uint8Array;
   readonly nextThink: Int32Array; // tick index at which an idle agent re-decides
   readonly field: Int8Array;      // index into `fields` the agent is navigating, -1 = straight-line
+  /** Station id the agent is currently working at (0 = none; ids are 1+). Set by assignStation(). */
+  readonly stationId: Int32Array;
 
   /** Registered flow fields (one per hot destination). Empty = Stage-1 wander. */
   fields: FlowField[] = [];
@@ -85,6 +87,7 @@ export class AgentStore {
     this.state = new Uint8Array(capacity);
     this.nextThink = new Int32Array(capacity);
     this.field = new Int8Array(capacity);
+    this.stationId = new Int32Array(capacity);
   }
 
   /** Add an agent; returns its index, or -1 if full. */
@@ -101,6 +104,7 @@ export class AgentStore {
     this.food[i] = this.rest[i] = this.warmth[i] = this.recreation[i] = this.social[i] = 80;
     this.state[i] = AState.Idle;
     this.field[i] = -1;
+    this.stationId[i] = 0;
     // Stagger first decision so a cohort spawned together doesn't think in lockstep.
     this.nextThink[i] = i % THINK_INTERVAL;
     return i;
@@ -119,6 +123,7 @@ export class AgentStore {
       this.social[i] = this.social[last]; this.state[i] = this.state[last];
       this.nextThink[i] = this.nextThink[last];
       this.field[i] = this.field[last];
+      this.stationId[i] = this.stationId[last];
     }
   }
 
@@ -131,6 +136,23 @@ export class AgentStore {
     if (fieldIdx < 0 || fieldIdx >= this.fields.length) return;
     this.field[i] = fieldIdx;
     this.state[i] = AState.Moving;
+  }
+
+  /**
+   * Assign agent `i` to work at a station (by id). Sets state to Working and
+   * stops any flow-field navigation. The station's `tickProduction` will advance
+   * the recipe while the agent is assigned.
+   */
+  assignStation(i: number, stationId: number): void {
+    this.stationId[i] = stationId;
+    this.state[i] = AState.Working;
+    this.field[i] = -1;
+  }
+
+  /** Release agent `i` from its station and return it to Idle. */
+  unassignStation(i: number): void {
+    this.stationId[i] = 0;
+    this.state[i] = AState.Idle;
   }
 
   /**
