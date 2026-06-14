@@ -459,6 +459,21 @@ body {
 .state-panel p { margin: 4px 0; font-size: 12px; }
 .state-panel input[type='range'] { width: 100%; }
 
+/* Shared base for floating region/nation panels. Without this the research and
+ * state panels had no position and rendered invisibly behind the canvas.
+ * ponytail: one base rule; panels that need a different spot just override left/top. */
+.palette {
+  position: fixed;
+  left: 16px;
+  top: 36px;
+  z-index: 12;
+  background: rgba(16, 14, 10, 0.94);
+  border: 2px solid #6e4a2f;
+  padding: 8px;
+  font-size: 12px;
+  color: #dfe6ee;
+}
+
 .research-panel {
   left: 216px;
   top: 36px;
