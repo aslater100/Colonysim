@@ -66,6 +66,25 @@ const GLOW_BUILDINGS = new Set([
   'tailor', 'forester', 'blacksmith',
 ]);
 
+// Below this zoom each tile is < ~19px on screen and sprite detail is unreadable,
+// so we swap the 4–5 scaled-drawImage tile passes for one flat fillRect per tile.
+// ponytail: single-town LOD; the full multi-parcel chunk cache is Phase 4 and only
+// pays off once the seamless world ships.
+const LOD_ZOOM = 0.6;
+
+/** Dominant flat colour for a tile at low zoom (matches the sprite's overall tone). */
+function tileColor(t: import('../sim/world').Tile): string {
+  if (!t.explored) return '#000';
+  if (t.road) return '#9a7b4f';
+  if (t.wall) return '#7a5a3a';
+  if (t.gate) return '#9c7544';
+  if (t.kind === 'water') return '#3c6e96';
+  if (t.kind === 'rock') return t.oreDeposit ? '#8a7340' : '#6e6e73';
+  if (t.kind === 'tree') return '#2d502d';
+  if (t.kind === 'soil') return t.growth >= 100 ? '#c9a13a' : t.growth > 40 ? '#7a8a3a' : '#785a37';
+  return '#466e37'; // grass / sapling
+}
+
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
@@ -208,15 +227,30 @@ export class Renderer {
     const tx1 = Math.min(MAP_W, Math.ceil((vw - ox + TILE * 2) / TILE));
     const ty1 = Math.min(MAP_H, Math.ceil((vh - oy + TILE * 2) / TILE));
 
+    // Below LOD_ZOOM tiles are unreadable, so collapse the 4–5 scaled-drawImage
+    // tile passes (and per-tile fog) into one flat fillRect per tile — the win that
+    // keeps the zoomed-out overview smooth. Buildings/settlers still draw as sprites
+    // (culled, only dozens), and decorative passes (smoke/glow/HP bars) are skipped.
+    const lod = this.cam.zoom < LOD_ZOOM;
+    if (lod) {
+      const bw = TILE + 1;
+      for (let y = ty0; y < ty1; y++) {
+        for (let x = tx0; x < tx1; x++) {
+          g.fillStyle = tileColor(sim.world.at(x, y));
+          g.fillRect(ox + x * TILE, oy + y * TILE, bw, bw);
+        }
+      }
+    }
+
     // Stockpile fill metrics — computed once per frame, shared across all zone tiles.
-    const stockCap = sim.stockpileCapacity();
+    const stockCap = lod ? 0 : sim.stockpileCapacity();
     const stockFill = stockCap > 0 ? Math.min(1, sim.totalRawStock() / stockCap) : 0;
     const stockDom = sim.stock.grain >= sim.stock.wood && sim.stock.grain >= sim.stock.stone ? '#e8b84b'
       : sim.stock.wood >= sim.stock.stone ? '#8b5e3c' : '#9e9e9e';
 
     // Pass 1: ground (grass clusters via coarse hash so tones form patches),
     // water, soil, roads. Trees draw in pass 2 so canopies overlap properly.
-    for (let y = ty0; y < ty1; y++) {
+    if (!lod) for (let y = ty0; y < ty1; y++) {
       for (let x = tx0; x < tx1; x++) {
         const t = sim.world.at(x, y);
         const px = ox + x * TILE;
@@ -254,7 +288,7 @@ export class Renderer {
       }
     }
     // Pass 2: standing terrain (rocks, palisades, then trees with overhanging canopies)
-    for (let y = ty0; y < ty1; y++) {
+    if (!lod) for (let y = ty0; y < ty1; y++) {
       for (let x = tx0; x < tx1; x++) {
         const t = sim.world.at(x, y);
         const px = ox + x * TILE;
@@ -294,7 +328,7 @@ export class Renderer {
       }
     }
     // Wall & gate HP bars
-    for (let y = ty0; y < ty1; y++) {
+    if (!lod) for (let y = ty0; y < ty1; y++) {
       for (let x = tx0; x < tx1; x++) {
         const t = sim.world.at(x, y);
         const maxHp = t.wall ? TUNING.wallMaxHp : t.gate ? TUNING.gateMaxHp : 0;
@@ -305,7 +339,7 @@ export class Renderer {
     }
 
     // Traffic overlay: warm heatmap of recent transits
-    if (this.cam.overlay === 'traffic') {
+    if (!lod && this.cam.overlay === 'traffic') {
       for (let y = ty0; y < ty1; y++) {
         for (let x = tx0; x < tx1; x++) {
           const v = sim.traffic[y * MAP_W + x];
@@ -317,7 +351,7 @@ export class Renderer {
     }
 
     // BuildGrid overlay: floor tint, room colour, walls, station labels (B-5)
-    if (this.cam.buildGrid) {
+    if (!lod && this.cam.buildGrid) {
       const grid = this.cam.buildGrid;
       for (let y = ty0; y < ty1; y++) {
         for (let x = tx0; x < tx1; x++) {
@@ -383,7 +417,7 @@ export class Renderer {
     }
 
     // Chimney smoke drifting up from working buildings
-    for (const b of sim.buildings) {
+    if (!lod) for (const b of sim.buildings) {
       if (!b.built || !SMOKE_BUILDINGS.has(b.defId)) continue;
       const def = buildingDef(b.defId);
       const rot = b.rotation ?? 0;
@@ -490,7 +524,7 @@ export class Renderer {
     }
 
     // Warm light spills from windows and the hearth after dark
-    if (d < 0.4) {
+    if (!lod && d < 0.4) {
       const na = Math.min(1, (0.4 - d) * 3);
       g.save();
       g.globalCompositeOperation = 'lighter';
@@ -515,12 +549,14 @@ export class Renderer {
       g.restore();
     }
 
-    // Fog of war: hard black over unexplored tiles
-    g.fillStyle = '#000';
-    for (let y = ty0; y < ty1; y++) {
-      for (let x = tx0; x < tx1; x++) {
-        if (sim.world.at(x, y).explored) continue;
-        g.fillRect(ox + x * TILE, oy + y * TILE, TILE + 1, TILE + 1);
+    // Fog of war: hard black over unexplored tiles (folded into the flat pass at LOD)
+    if (!lod) {
+      g.fillStyle = '#000';
+      for (let y = ty0; y < ty1; y++) {
+        for (let x = tx0; x < tx1; x++) {
+          if (sim.world.at(x, y).explored) continue;
+          g.fillRect(ox + x * TILE, oy + y * TILE, TILE + 1, TILE + 1);
+        }
       }
     }
   }
