@@ -35,6 +35,7 @@ import { serveNeeds, serveMedical, aggregateCapacities, type RoomServices } from
 import { Relations, socialize } from './social';
 import { Weather } from './weather';
 import { Rng } from './rng';
+import { BASE_PRICES } from './economy';
 import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, TUNING } from './defs';
 
 const TICKS_PER_DAY = MINUTES_PER_DAY / MINUTES_PER_TICK;
@@ -62,6 +63,7 @@ export interface TownCoreSave {
   day: number;
   rngState: number;
   weatherSeed: number;
+  gold: number;
   homeX: number;
   homeY: number;
   deaths: number;
@@ -70,6 +72,7 @@ export interface TownCoreSave {
   agents: AgentStoreSave;
   stock: Partial<Record<string, number>>;
   relations: [number, number][];
+  priceModifiers?: Record<string, number>;
 }
 
 export interface TownCoreOpts {
@@ -97,6 +100,9 @@ export class TownCore {
   day = 0;
   deaths = 0;
   births = 0;
+  gold = 0;
+  /** Market price modifiers: track supply/demand shifts (recover daily toward 1.0). */
+  priceModifiers = new Map<string, number>();
   /** Colony anchor — where newcomers appear and the camera first looks. */
   homeX: number;
   homeY: number;
@@ -278,6 +284,60 @@ export class TownCore {
     return sum / a.count;
   }
 
+  // ── market: buy/sell resources at dynamic prices ─────────────────────────
+
+  /**
+   * Market price for one unit of a resource, adjusted for local supply/demand.
+   * Low stock → higher price (scarce), high stock → lower price (surplus).
+   */
+  marketPrice(kind: string): number {
+    const base = BASE_PRICES[kind] ?? 10;
+    const mod = this.priceModifiers.get(kind) ?? 1.0;
+    return base * Math.max(0.5, Math.min(2.0, mod)); // clamp 0.5×..2.0×
+  }
+
+  /**
+   * Sell `qty` units of a resource to the market. Each unit clears at a
+   * progressively lower price as supply increases, so dumping large amounts
+   * yields less per unit. Returns gold received (0 if insufficient stock).
+   */
+  sellToMarket(kind: string, qty: number): number {
+    if (qty <= 0 || !this.stock.remove(kind, qty)) return 0;
+    const base = BASE_PRICES[kind] ?? 10;
+    const e = TUNING.marketSellElasticity ?? 0.02; // default elasticity
+    let mod = this.priceModifiers.get(kind) ?? 1.0;
+    let revenue = 0;
+    for (let i = 0; i < qty; i++) {
+      revenue += base * Math.max(0.5, Math.min(2.0, mod));
+      mod -= e; // each unit sold depresses the next
+    }
+    this.priceModifiers.set(kind, mod);
+    this.gold += Math.round(revenue);
+    return Math.round(revenue);
+  }
+
+  /**
+   * Buy `qty` units of a resource from the market with gold. Each unit bought
+   * bids the price up. Returns true if successful, false if insufficient gold.
+   */
+  buyFromMarket(kind: string, qty: number): boolean {
+    if (qty <= 0) return false;
+    const base = BASE_PRICES[kind] ?? 10;
+    const e = TUNING.marketBuyElasticity ?? 0.02;
+    let mod = this.priceModifiers.get(kind) ?? 1.0;
+    let cost = 0;
+    for (let i = 0; i < qty; i++) {
+      cost += base * Math.max(0.5, Math.min(2.0, mod));
+      mod += e; // each unit bought bids the price up
+    }
+    cost = Math.round(cost);
+    if (cost > this.gold) return false;
+    this.gold -= cost;
+    this.stock.add(kind, qty);
+    this.priceModifiers.set(kind, mod);
+    return true;
+  }
+
   // ── serialization ────────────────────────────────────────────────────────────
 
   serialize(): TownCoreSave {
@@ -288,6 +348,7 @@ export class TownCore {
       day: this.day,
       rngState: this.rng.getState(),
       weatherSeed: this.weatherSeed,
+      gold: this.gold,
       homeX: this.homeX,
       homeY: this.homeY,
       deaths: this.deaths,
@@ -296,6 +357,7 @@ export class TownCore {
       agents: this.agents.serialize(),
       stock: this.stock.serialize(),
       relations: this.relations.serialize(),
+      priceModifiers: this.priceModifiers.size > 0 ? Object.fromEntries(this.priceModifiers) : undefined,
     };
   }
 
@@ -312,10 +374,14 @@ export class TownCore {
     core.tickNo = data.tickNo;
     core.minute = data.minute;
     core.day = data.day;
+    core.gold = data.gold ?? 0;
     core.homeX = data.homeX;
     core.homeY = data.homeY;
     core.deaths = data.deaths ?? 0;
     core.births = data.births ?? 0;
+    if (data.priceModifiers) {
+      core.priceModifiers = new Map(Object.entries(data.priceModifiers));
+    }
     return core;
   }
 }
