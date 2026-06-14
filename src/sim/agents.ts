@@ -7,16 +7,20 @@
  * cache-friendly, zero per-tick allocation, and trivially portable to a Web
  * Worker via transferable buffers later.
  *
- * Scope of THIS file (Stage 1 of the rewrite): the SoA layout, an allocation-free
- * per-tick update of the costly parts (needs decay, health, mood, time-sliced
- * decisions, movement), and swap-remove for deaths. It deliberately does NOT do
- * job assignment or pathfinding yet:
- *   ponytail: movement is straight-line here; flow-field pathing is Stage 2.
- * Straight-line movement lets the bench show the cost FLOOR of everything except
- * pathing — i.e. how much headroom we get back once flow fields replace per-agent A*.
+ * Scope (Stages 1–2 of the rewrite): the SoA layout, an allocation-free per-tick
+ * update of the costly parts (needs decay, health, mood, time-sliced decisions,
+ * movement), and swap-remove for deaths.
+ *
+ * Stage 2 adds flow-field pathing. If the store is given one or more `FlowField`s
+ * (one per hot destination — stockpile, hearth, job cluster), a moving agent reads
+ * its current tile's precomputed step direction instead of running its own A*:
+ * O(1) per agent, with the search paid once per field over the whole map. With no
+ * fields registered the store falls back to the Stage-1 straight-line wander, so
+ * the bench can still read the pure cost FLOOR (everything except pathing).
  *
  * Run the self-check:  npx tsx src/sim/agents.ts
  */
+import { FlowField } from './flowfield';
 
 export const enum AState {
   Idle = 0,
@@ -55,6 +59,12 @@ export class AgentStore {
   readonly social: Float32Array;
   readonly state: Uint8Array;
   readonly nextThink: Int32Array; // tick index at which an idle agent re-decides
+  readonly field: Int8Array;      // index into `fields` the agent is navigating, -1 = straight-line
+
+  /** Registered flow fields (one per hot destination). Empty = Stage-1 wander. */
+  fields: FlowField[] = [];
+  // Scratch reused by movement so the tick stays allocation-free.
+  private readonly _dir = { x: 0, y: 0 };
 
   private nextId = 1;
 
@@ -74,6 +84,7 @@ export class AgentStore {
     this.social = new Float32Array(capacity);
     this.state = new Uint8Array(capacity);
     this.nextThink = new Int32Array(capacity);
+    this.field = new Int8Array(capacity);
   }
 
   /** Add an agent; returns its index, or -1 if full. */
@@ -89,6 +100,7 @@ export class AgentStore {
     this.mood[i] = 60;
     this.food[i] = this.rest[i] = this.warmth[i] = this.recreation[i] = this.social[i] = 80;
     this.state[i] = AState.Idle;
+    this.field[i] = -1;
     // Stagger first decision so a cohort spawned together doesn't think in lockstep.
     this.nextThink[i] = i % THINK_INTERVAL;
     return i;
@@ -106,7 +118,19 @@ export class AgentStore {
       this.warmth[i] = this.warmth[last]; this.recreation[i] = this.recreation[last];
       this.social[i] = this.social[last]; this.state[i] = this.state[last];
       this.nextThink[i] = this.nextThink[last];
+      this.field[i] = this.field[last];
     }
+  }
+
+  /**
+   * Send agent `i` toward flow field `fieldIdx` (an index into `fields`). The agent
+   * follows the field until it reaches the goal (or hits an unreachable tile), then
+   * goes Idle. Out-of-range ids are ignored.
+   */
+  assignField(i: number, fieldIdx: number): void {
+    if (fieldIdx < 0 || fieldIdx >= this.fields.length) return;
+    this.field[i] = fieldIdx;
+    this.state[i] = AState.Moving;
   }
 
   /**
@@ -145,26 +169,50 @@ export class AgentStore {
 
       // --- time-sliced decision: only idle agents that are due re-pick a goal ---
       if (this.state[i] === AState.Idle && tickNo >= this.nextThink[i]) {
-        // Wander a short hop (placeholder for "pick a job and head to it").
-        this.destX[i] = this.posX[i] + (rand() * 8 - 4);
-        this.destY[i] = this.posY[i] + (rand() * 8 - 4);
-        this.state[i] = AState.Moving;
+        if (this.fields.length > 0) {
+          // Pick a hot destination and follow its flow field there (Stage 2).
+          // Spread agents across fields by id so traffic isn't all one route.
+          this.assignField(i, this.id[i] % this.fields.length);
+        } else {
+          // Stage-1 fallback: wander a short hop (no field registered).
+          this.destX[i] = this.posX[i] + (rand() * 8 - 4);
+          this.destY[i] = this.posY[i] + (rand() * 8 - 4);
+          this.state[i] = AState.Moving;
+        }
         this.nextThink[i] = tickNo + THINK_INTERVAL;
       }
 
-      // --- movement: step toward dest (straight line; flow fields come Stage 2) ---
+      // --- movement ---
       if (this.state[i] === AState.Moving) {
-        const dx = this.destX[i] - this.posX[i];
-        const dy = this.destY[i] - this.posY[i];
-        const dist = Math.sqrt(dx * dx + dy * dy);
         const step = SPEED * MINUTES_PER_TICK;
-        if (dist <= step || dist === 0) {
-          this.posX[i] = this.destX[i];
-          this.posY[i] = this.destY[i];
-          this.state[i] = AState.Idle;
+        const fi = this.field[i];
+        if (fi >= 0) {
+          // Flow-field follow: read this tile's precomputed step direction (O(1)).
+          const field = this.fields[fi];
+          const tx = Math.floor(this.posX[i]);
+          const ty = Math.floor(this.posY[i]);
+          if (field.dirAt(tx, ty, this._dir)) {
+            const len = Math.sqrt(this._dir.x * this._dir.x + this._dir.y * this._dir.y) || 1;
+            this.posX[i] += (this._dir.x / len) * step;
+            this.posY[i] += (this._dir.y / len) * step;
+          } else {
+            // No onward step: arrived at the goal (or stuck on an unreachable tile).
+            this.state[i] = AState.Idle;
+            this.field[i] = -1;
+          }
         } else {
-          this.posX[i] += (dx / dist) * step;
-          this.posY[i] += (dy / dist) * step;
+          // Stage-1 straight-line move toward dest.
+          const dx = this.destX[i] - this.posX[i];
+          const dy = this.destY[i] - this.posY[i];
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist <= step || dist === 0) {
+            this.posX[i] = this.destX[i];
+            this.posY[i] = this.destY[i];
+            this.state[i] = AState.Idle;
+          } else {
+            this.posX[i] += (dx / dist) * step;
+            this.posY[i] += (dy / dist) * step;
+          }
         }
       }
     }
@@ -184,5 +232,19 @@ if (process.argv[1]?.endsWith('/agents.ts')) {
   for (let t = 0; t < 100; t++) s.tick(t, rand);
   console.assert(s.food[0] < 80, 'food decayed');
   console.assert(s.posX[0] !== 10, 'agent moved');
-  console.log('agents.ts self-check OK — count', s.count, 'food', s.food[0].toFixed(1));
+
+  // Stage 2: with a flow field registered, a moving agent walks to the goal tile.
+  const W = 32;
+  const field = new FlowField(W, W);
+  field.build([field.index(16, 16)], () => true, () => 1);
+  const s2 = new AgentStore(4);
+  const a = s2.spawn(2, 2);
+  s2.fields = [field];
+  s2.assignField(a, 0);
+  for (let t = 0; t < 400 && s2.state[a] === AState.Moving; t++) s2.tick(t, rand);
+  console.assert(Math.abs(s2.posX[a] - 16) <= 1.5 && Math.abs(s2.posY[a] - 16) <= 1.5,
+    'agent followed the flow field to the goal');
+
+  console.log('agents.ts self-check OK — count', s.count, 'food', s.food[0].toFixed(1),
+    '— flow-field arrival', `(${s2.posX[a].toFixed(1)},${s2.posY[a].toFixed(1)})`);
 }

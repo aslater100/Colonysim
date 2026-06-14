@@ -26,9 +26,27 @@ time-sliced decisions. `scripts/bench-agents.ts` proves the floor:
 
 Caveat: cost FLOOR only — straight-line movement, no jobs/pathing yet.
 
-**Stage 2 — Flow-field pathing.** One flow field per hot destination (stockpile,
-hearth, job clusters), computed O(map) once, all agents read it. Replaces
-per-agent A* — the measured superlinear term. Reuse `world.ts` passability.
+**Stage 2 — Flow-field pathing. ✅ LANDED.** `src/sim/flowfield.ts` (`FlowField`):
+one Dijkstra sweep from a hot destination (stockpile, hearth, job cluster) over the
+whole map — O(map), paid once — yields an integration field (cost-to-goal) plus a
+per-tile step direction; every agent heading there reads its tile's direction in
+O(1). The cost model matches `world.findPath` (entering a tile costs `1/speedMult`,
+so roads pull the field exactly as A* would); diagonals never cut a wall corner.
+Standalone + DOM-free (typed arrays, preallocated heap, allocation-free `build()`),
+so it runs headless, in the bench, against `world.ts`, or in a future worker.
+`AgentStore` follows registered `fields` instead of straight-lining; with none
+registered it keeps the Stage-1 wander so the bench still reads the cost floor.
+
+| pass | 1000 | 5000 | 10000 | per-field build |
+|---|---|---|---|---|
+| floor (no pathing) | 0.018 ms | 0.087 ms | 0.173 ms | — |
+| flow-field pathing | 0.027 ms | 0.146 ms | 0.273 ms | ~2.5 ms / 96² (once) |
+
+Pathing adds ~0.03 µs/agent over the floor vs the fat-object sim's per-idle-agent
+A* (1663 ms at 5k). Tests: `tests/flowfield.test.ts` (11 cases, incl. `world.findPath`
+reachability parity on a real generated map). Bench: `scripts/bench-agents.ts` (two
+passes — floor vs flow-field). Next: Stage 3 wires the job board so a field's goals
+come from open jobs rather than a fixed destination.
 
 **Stage 3 — Job board.** Central open-job list; agents pull nearest matching job
 (O(agents+jobs)) instead of each scanning the map (O(agents×map)). Replaces
