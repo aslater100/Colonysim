@@ -319,8 +319,17 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('keyup', (e) => keys.delete(e.key));
 
+// Pointer position relative to the canvas, not the viewport. Using clientX/Y
+// directly drifts the zoom/placement anchor whenever the canvas isn't pinned to
+// (0,0) (HUD insets, future layouts, Electron frame), so always subtract the rect.
+function canvasXY(e: MouseEvent | WheelEvent): { x: number; y: number } {
+  const r = canvas.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
 canvas.addEventListener('mousemove', (e) => {
-  cam.mouseTile = renderer.tileAt(e.clientX, e.clientY);
+  const p = canvasXY(e);
+  cam.mouseTile = renderer.tileAt(p.x, p.y);
   // Region map: left-drag pans the camera.
   if (regionDrag.active && e.buttons === 1 && mode === 'region' && !dioramaOpen && regionView) {
     const dx = e.clientX - regionDrag.lastX;
@@ -411,7 +420,8 @@ canvas.addEventListener('click', (e) => {
     return;
   }
   if (mode === 'region') return; // diorama is look-only
-  const t = renderer.tileAt(e.clientX, e.clientY);
+  const tp = canvasXY(e);
+  const t = renderer.tileAt(tp.x, tp.y);
   if (cam.stampBlueprint) {
     const bp = BLUEPRINT_DEFS.find((b) => b.id === cam.stampBlueprint);
     if (bp) buildGrid.stampBlueprint(bp, t.x - Math.floor(bp.w / 2), t.y - Math.floor(bp.h / 2));
@@ -497,16 +507,17 @@ minimapCanvas.addEventListener('click', () => {
 // Scroll wheel: zoom in/out around mouse cursor
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
+  const p = canvasXY(e);
   // Region map has its own camera; zoom it toward the cursor.
   if (mode === 'region' && !dioramaOpen && regionView) {
-    regionView.zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1 : -1);
+    regionView.zoomAt(p.x, p.y, e.deltaY < 0 ? 1 : -1);
     return;
   }
   const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
   const newZoom = Math.max(0.4, Math.min(4.0, cam.zoom * factor));
-  // Zoom toward/away from mouse position
-  cam.x = e.clientX / cam.zoom + cam.x - e.clientX / newZoom;
-  cam.y = e.clientY / cam.zoom + cam.y - e.clientY / newZoom;
+  // Keep the world point under the cursor fixed across the zoom (canvas-local px).
+  cam.x = p.x / cam.zoom + cam.x - p.x / newZoom;
+  cam.y = p.y / cam.zoom + cam.y - p.y / newZoom;
   cam.zoom = newZoom;
 }, { passive: false });
 
@@ -514,7 +525,8 @@ canvas.addEventListener('wheel', (e) => {
 canvas.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   if (mode !== 'town') return;
-  const t = renderer.tileAt(e.clientX, e.clientY);
+  const t2 = canvasXY(e);
+  const t = renderer.tileAt(t2.x, t2.y);
   sim.bulldozeTile(t.x, t.y);
 });
 
