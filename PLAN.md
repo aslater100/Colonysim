@@ -102,9 +102,25 @@ Stages (extend Track C; the live game is untouched until B-6):
 ## Session Handoff (Read This First in a New Session)
 
 **Repo:** `/home/user/Centuria` — TypeScript + Canvas 2D + Vite + Electron city-builder.  
-**Branch:** `claude/plan-sim-optimization-4mlwny` — push all work here; never push to main without user approval.  
-**Git remote:** `aslater100/centuria`  
-**Plan file:** `PLAN.md` (this file, committed to repo)
+**Git remote:** `aslater100/centuria` — never push to `main` without user approval; one feature branch + draft PR per stage.  
+**Plan file:** `PLAN.md` (this file, committed to repo)  
+**Toolchain:** `npm ci` once per fresh container, then `npx vitest run` (full suite ~90s), `npx tsc --noEmit`, `npm run build`. CI (`.github/workflows/test.yml`) runs `npm install → npm run build → npm test` on Node 24. Note: `tsconfig` `include` is `["src"]`, so `tsc` checks `src/` only — `tests/` and `scripts/` are verified by `vitest`/`tsx` at run time, not by `tsc`.
+
+### Current state (updated 2026-06-14)
+
+**Test baseline: 465 passing** (441 base + 11 flow-field + 13 rooms). `tsc` + `vite build` clean. **All landed work below is already merged into `main`.**
+
+**Scale engine (Track C):**
+- **Stage 1 ✅** — `src/sim/agents.ts` (`AgentStore`, SoA agent core).
+- **Stage 2 ✅** (PR #100, merged) — `src/sim/flowfield.ts` (`FlowField`) + `AgentStore` flow-field following + two-pass `scripts/bench-agents.ts` + `tests/flowfield.test.ts`.
+- Stages 3–5 are now subsumed by the build-system rewrite below (job board = open stations, etc.).
+
+**Build-system rewrite (replaces pre-built buildings with painted walls/floors/rooms/workstations):**
+- **B-1 ✅** (PR #101, merged) — `src/sim/build.ts` (`BuildGrid`) + `src/data/rooms.json` (14 room types) + `src/data/stations.json` (19 workstations) + `ROOM_DEFS`/`STATION_DEFS` loaders in `defs.ts` + `tests/build.test.ts`.
+
+**▶ Pick up next: Build-system B-2 — Production.** Wire `BuildGrid` craft-station recipes to consume/produce against a stockpile on the SoA core (`AgentStore`), replacing `provides`-based building output. Then B-3 (job board = unmanned craft stations + haul jobs, agents pull nearest by flow-field cost — also Track C Stage 3) → B-4 (needs from rooms) → B-5 (paint UI + render) → B-6 (swap in, retire `buildings.json`). Full breakdown in the **Build-system rewrite** subsection under Track C above. Branch off current `main` (it already has `flowfield.ts` + `build.ts`).
+
+**Key invariant for the scale-engine modules** (`agents.ts`, `flowfield.ts`, `build.ts`, `fogmap.ts`, `parcel.ts`): pure, DOM-free, typed-array/SoA, each with a `npx tsx <file>` self-check and a dedicated test file, and **additive** — none is wired into the live `Simulation` yet. The current 33-building game stays playable until the final swap (B-6).
 
 ### Sim + World Optimization (landed 2026-06-14)
 
