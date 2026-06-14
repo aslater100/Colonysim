@@ -31,7 +31,7 @@ import { AgentStore, AState, type AgentStoreSave } from './agents';
 import { Stockpile } from './stockpile';
 import { JobBoard } from './jobs';
 import { FlowField } from './flowfield';
-import { serveNeeds, aggregateCapacities, type RoomServices } from './needs';
+import { serveNeeds, serveMedical, aggregateCapacities, type RoomServices } from './needs';
 import { Rng } from './rng';
 import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID } from './defs';
 
@@ -161,8 +161,10 @@ export class TownCore {
     // 3. Production: manned craft stations consume/produce against the stockpile.
     this.grid.tickProduction(a, this.stock, MINUTES_PER_TICK);
 
-    // 4. Needs from rooms: warmth (enclosure), rest (beds), recreation (tables).
+    // 4. Needs from rooms: warmth (enclosure), rest (beds), recreation (tables),
+    //    and medical recovery (infirmary sickbeds + apothecary medicine).
     serveNeeds(this.grid, a, MINUTES_PER_TICK);
+    serveMedical(this.grid, a, this.stock);
 
     // 5. Agent tick: needs decay, mood ease, health, movement.
     a.tick(t, this._rand);

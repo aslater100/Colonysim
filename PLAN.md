@@ -72,10 +72,27 @@ behavior. Add headless parity tests.
   Serialization persists `skill`/`trait0`/`trait1` and re-derives the mults on load
   (pre-Stage-4 saves backfill to competent+untraited). Tests: `tests/persona.test.ts`
   (14 cases). `agents.ts` stays pure/SoA — only new import is `TRAIT_DEFS` from defs.
-- ⬜ **Remaining Stage-4 slices** (each its own PR): wounds/infection/sickness +
-  medical recovery; relationships/thoughts/mood events; combat power + raids;
-  weather (temperature → warmth model); trading/economy. Each needs headless
-  parity tests vs the fat sim's behavior before B-6 PART 2 (the live swap).
+- ✅ **Wounds + infection + fever + medical recovery (v0.34.0).** `AgentStore` gains
+  the fat sim's wound→infection→scar chain as SoA columns (`woundUntreated`/`woundAt`/
+  `infectionRolled`/`infection`/`sickUntilTick`) + transient `sick`/`healMult`. The
+  health tick now charges wound bleed (`woundBleedPerHour`), one-shot infection roll
+  past the `infectionWindowHours` (`infectionChance`), infection + fever bleeds, and a
+  `food>30`-gated regen scaled by `healMult` — all constants pulled from `TUNING` so
+  the two cores can't drift. `inflictWound()`/`makeSick()`/`treat()` are the hooks
+  combat/raids/events will call. Feverish workers produce at `sickWorkMult` (wired
+  through `tickProduction`'s effort sum). New `serveMedical(grid, agents, stock)`
+  (needs.ts): a patient Sleeping in an infirmary sickbed heals at `clinicRegenMult×`,
+  and an apothecary's medicine cures the wound+infection (consumes 1 medicine,
+  `apothecaryHealMult×` on top); capacity-gated by sickbeds, `healMult` reset each
+  tick. `TownCore` runs it after `serveNeeds`. Persistent medical state serialized;
+  `sick`/`healMult` recomputed each tick; old saves backfill healthy. Tests:
+  `tests/medical.test.ts` (14). **Note:** injured-agents-path-to-a-sickbed AI is a
+  later slice — recovery currently triggers when a casualty happens to rest in an
+  infirmary. Warmth→freezing death still pending the weather slice.
+- ⬜ **Remaining Stage-4 slices** (each its own PR): relationships/thoughts/mood
+  events; combat power + raids (will use `inflictWound`); weather (temperature →
+  warmth/freezing); trading/economy. Each needs headless parity tests vs the fat
+  sim's behavior before B-6 PART 2 (the live swap).
 
 **Stage 5 — Render + bigger maps.** 96×96 holds only ~9k tiles; SoS cities need
 larger worlds. Wire to the chunk-LOD renderer (Phase 4 foundation already landed).
@@ -175,7 +192,7 @@ Stages (extend Track C; the live game is untouched until B-6):
 
 ### Current state (updated 2026-06-14)
 
-**Test baseline: 540 passing** (526 prior + 14 persona). `tsc` + `vite build` clean. B-2→B-6 PART 1 merged. **Stage 4 behavior port has begun: traits + skills landed (v0.33.0, `tests/persona.test.ts`).**
+**Test baseline: 556 passing** (526 prior + 14 persona + 2 economy/storage + 14 medical). `tsc` + `vite build` clean. B-2→B-6 PART 1 merged. **Stage 4 behavior port underway: traits + skills (v0.33.0, `tests/persona.test.ts`) and wounds/medical (v0.34.0, `tests/medical.test.ts`) landed.**
 
 **Scale engine (Track C):**
 - **Stage 1 ✅** — `src/sim/agents.ts` (`AgentStore`, SoA agent core).
