@@ -2974,6 +2974,7 @@ export class RegionSim {
         }
       }
     }
+    this.abandonGhostTowns();
     // Drought is regional news: announce on onset, during growing seasons
     if (drought && !this.droughtAnnounced && this.seasonIndex < 3) {
       this.droughtAnnounced = true;
@@ -5875,6 +5876,32 @@ export class RegionSim {
     if (pop <= 0) return;
     const frac = Math.min(1, count / pop);
     for (let i = 0; i < t.cohorts.bands.length; i++) t.cohorts.bands[i] *= 1 - frac;
+  }
+
+  /** An AI settlement whose population decays below one person is a ghost town:
+   *  removePop is multiplicative, so without this a starved rival town would
+   *  linger forever displaying a fractional "pop 0.004" (the collapsed outposts
+   *  players kept seeing on the map). Remove it from the map and its faction,
+   *  hand the capital to a survivor, and let a faction with no towns left die.
+   *  RNG-free so determinism holds. The player's own towns are left alone —
+   *  those are visible and managed, and colony death is the town tier's call. */
+  private abandonGhostTowns(): void {
+    const doomed = this.settlements.filter(
+      (t) => t.factionId !== this.playerFactionId && this.popOf(t) < 1,
+    );
+    for (const t of doomed) {
+      const faction = this.faction(t.factionId);
+      this.settlements = this.settlements.filter((s) => s !== t);
+      this.routes = this.routes.filter((r) => r.a !== t.id && r.b !== t.id);
+      this.notables = this.notables.filter((n) => n.settlementId !== t.id);
+      if (faction) {
+        faction.settlementIds = faction.settlementIds.filter((id) => id !== t.id);
+        if (faction.capital === t.id) {
+          faction.capital = faction.settlementIds[0] ?? -1;
+        }
+      }
+      this.addLog(`${t.name} is abandoned — the last of its people have drifted away. A ghost town now.`, 'bad');
+    }
   }
 
   // ---- save & load (region tier) ----
