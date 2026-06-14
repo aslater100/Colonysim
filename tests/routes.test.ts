@@ -74,6 +74,40 @@ describe('Region corridors (M6b)', () => {
     expect(r.routes[0].path.length).toBeGreaterThanOrEqual(2);
     expect(r.connectedToAll()).toBe(true);
   });
+
+  it('a newcomer grafts onto the nearest town already on the backbone, not the root (no star)', () => {
+    const r = flipped(42);
+    const internals = r as unknown as {
+      settlements: Array<{ id: number; x: number; y: number; factionId: number }>;
+      networkAnchor: (t: { id: number; x: number; y: number; factionId: number }) => number;
+    };
+    const [home, town2] = internals.settlements;
+    // a newcomer hard by town2 but far from the root: it should anchor to town2
+    const newcomer = { ...town2, id: 9001, x: town2.x + 1, y: town2.y };
+    expect(internals.networkAnchor(newcomer)).toBe(town2.id);
+    expect(internals.networkAnchor(newcomer)).not.toBe(home.id);
+  });
+
+  it('founding many towns keeps the whole faction connected as a single tree', () => {
+    const r = flipped(42);
+    for (let i = 0; i < 6; i++) {
+      // top a town up so the expansion economy lets it send settlers, then wait for arrival
+      const src = r.settlements.find((t) => t.factionId === r.playerFactionId)!;
+      src.food = 2000;
+      src.wood = 2000;
+      src.cohorts.bands = [20, 60, 40, 10, 5];
+      if (!r.canFoundTown(src.id).ok) break;
+      r.foundTown(src.id);
+      runDays(r, 60);
+    }
+    const playerTowns = r.settlements.filter((t) => t.factionId === r.playerFactionId);
+    expect(playerTowns.length).toBeGreaterThan(2);
+    expect(r.connectedToAll()).toBe(true);
+    // a backbone is a tree: one trail per newcomer, never a parallel branch
+    const playerIds = new Set(playerTowns.map((t) => t.id));
+    const playerRoutes = r.routes.filter((rt) => playerIds.has(rt.a) && playerIds.has(rt.b));
+    expect(playerRoutes).toHaveLength(playerTowns.length - 1);
+  });
 });
 
 describe('Caravan capacity (M6b)', () => {

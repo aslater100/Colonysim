@@ -2097,6 +2097,49 @@ export class RegionSim {
     });
   }
 
+  /** Settlement ids reachable from `start` through the route graph (one BFS).
+   *  Shared by connectedToAll() and networkAnchor() so the traversal lives once. */
+  private reachableFrom(start: number): Set<number> {
+    const seen = new Set([start]);
+    const queue = [start];
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      for (const r of this.routes) {
+        const other = r.a === cur ? r.b : r.b === cur ? r.a : -1;
+        if (other < 0 || seen.has(other)) continue;
+        seen.add(other);
+        queue.push(other);
+      }
+    }
+    return seen;
+  }
+
+  /** The town a faction's network grows from: its capital, else its first town. */
+  private factionRoot(factionId: number): number {
+    const f = this.faction(factionId);
+    if (f && f.capital >= 0) return f.capital;
+    const first = this.settlements.find((s) => s.factionId === factionId);
+    return first ? first.id : -1;
+  }
+
+  /** Pick the existing same-faction town a newcomer should graft onto: the
+   *  nearest one already wired into the faction backbone, so the network grows
+   *  from one spine instead of each town sprouting its own roads. Falls back to
+   *  the root when nothing is connected yet. */
+  private networkAnchor(town: Settlement): number {
+    const root = this.factionRoot(town.factionId);
+    if (root < 0 || root === town.id) return root;
+    const onBackbone = this.reachableFrom(root); // single BFS, not per-peer
+    let best = root, bestD = Infinity;
+    for (const s of this.settlements) {
+      if (s.id === town.id || s.factionId !== town.factionId || !onBackbone.has(s.id)) continue;
+      const dx = s.x - town.x, dy = s.y - town.y;
+      const d = dx * dx + dy * dy; // squared distance: ordering only, skip sqrt
+      if (d < bestD) { bestD = d; best = s.id; }
+    }
+    return best;
+  }
+
   /** Corridors between fixed towns never change — cache them (the UI
    *  prices roads every frame). */
   private corridorCache = new Map<string, { path: { x: number; y: number }[]; cost: number } | null>();
@@ -2642,18 +2685,7 @@ export class RegionSim {
   connectedToAll(): boolean {
     const playerTowns = this.settlements.filter((t) => t.factionId === this.playerFactionId);
     if (playerTowns.length < 2) return true;
-    const start = playerTowns[0].id;
-    const seen = new Set([start]);
-    const queue = [start];
-    while (queue.length > 0) {
-      const cur = queue.shift()!;
-      for (const r of this.routes) {
-        const other = r.a === cur ? r.b : r.b === cur ? r.a : -1;
-        if (other < 0 || seen.has(other)) continue;
-        seen.add(other);
-        queue.push(other);
-      }
-    }
+    const seen = this.reachableFrom(playerTowns[0].id);
     return playerTowns.every((t) => seen.has(t.id));
   }
 
@@ -4293,8 +4325,9 @@ export class RegionSim {
         this.expeditions = this.expeditions.filter((o) => o !== e);
         const flavor = e.site.river ? 'on the riverbank' : e.site.coastal ? 'by the sea' : e.site.fertility > 1 ? 'in good black soil' : 'on thin ground';
         this.addLog(`${town.name} is founded ${flavor} — the ${this.ordinal(this.settlements.length)} town of the colony.`, 'good');
-        // the expedition's tracks become the new town's trail home
-        this.blazeTrail(e.fromId, town.id);
+        // graft the new town onto the central network: blaze its trail to the
+        // nearest town already on the faction backbone, not whoever sent the expedition
+        this.blazeTrail(this.networkAnchor(town), town.id);
         // A founder steps up
         this.mintNotable('Reeve', town.id);
       }
@@ -7104,6 +7137,10 @@ export class RegionSim {
 
     this.settlements.push(settlement);
     faction.settlementIds.push(settlement.id);
+
+    // graft onto the faction's central backbone (the root town self-anchors → no trail)
+    const anchor = this.networkAnchor(settlement);
+    if (anchor >= 0 && anchor !== settlement.id) this.blazeTrail(anchor, settlement.id);
 
     return settlement;
   }
