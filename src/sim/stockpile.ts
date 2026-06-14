@@ -60,6 +60,20 @@ export class Stockpile {
     }
     return out;
   }
+
+  /** JSON-friendly round-trip: the snapshot is already a stable, sparse map. */
+  serialize(): Partial<Record<ResourceKind, number>> {
+    return this.snapshot();
+  }
+
+  static deserialize(data: Partial<Record<ResourceKind, number>>): Stockpile {
+    const s = new Stockpile();
+    for (const [k, q] of Object.entries(data ?? {})) {
+      const i = _idx[k as ResourceKind];
+      if (i !== undefined) s.buf[i] = q as number;
+    }
+    return s;
+  }
 }
 
 // --- self-check: npx tsx src/sim/stockpile.ts ---

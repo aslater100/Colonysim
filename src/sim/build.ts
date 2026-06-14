@@ -75,8 +75,54 @@ export interface RoomOutput {
   flow: Partial<Record<ResourceKind, number>>;
 }
 
+/** JSON round-trip shape for a BuildGrid (painted layers + station list). */
+export interface BuildGridSave {
+  width: number;
+  height: number;
+  /** base64 of the wall / floor / roomType Uint8 layers. */
+  wall: string;
+  floor: string;
+  roomType: string;
+  stations: Array<{ id: number; typeId: number; x: number; y: number; w: number; h: number }>;
+  nextStationId: number;
+  progress: Array<[number, number]>;
+}
+
 const NX4 = [1, -1, 0, 0];
 const NY4 = [0, 0, 1, -1];
+
+// Portable base64 for the byte layers (no Buffer/btoa — runs in Node, browser, worker).
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+function bytesToB64(bytes: Uint8Array): string {
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i];
+    const b1 = i + 1 < bytes.length ? bytes[i + 1] : 0;
+    const b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+    out += B64[b0 >> 2];
+    out += B64[((b0 & 3) << 4) | (b1 >> 4)];
+    out += i + 1 < bytes.length ? B64[((b1 & 15) << 2) | (b2 >> 6)] : '=';
+    out += i + 2 < bytes.length ? B64[b2 & 63] : '=';
+  }
+  return out;
+}
+
+function b64ToBytes(b64: string, size: number): Uint8Array {
+  const clean = b64.replace(/[^A-Za-z0-9+/]/g, '');
+  const out = new Uint8Array(size);
+  let p = 0;
+  for (let i = 0; i < clean.length && p < size; i += 4) {
+    const c0 = B64.indexOf(clean[i]);
+    const c1 = B64.indexOf(clean[i + 1]);
+    const c2 = i + 2 < clean.length ? B64.indexOf(clean[i + 2]) : -1;
+    const c3 = i + 3 < clean.length ? B64.indexOf(clean[i + 3]) : -1;
+    if (p < size) out[p++] = (c0 << 2) | (c1 >> 4);
+    if (c2 >= 0 && p < size) out[p++] = ((c1 & 15) << 4) | (c2 >> 2);
+    if (c3 >= 0 && p < size) out[p++] = ((c2 & 3) << 6) | c3;
+  }
+  return out;
+}
 
 export class BuildGrid {
   readonly width: number;
@@ -381,6 +427,43 @@ export class BuildGrid {
       this.placeStation(st.type, ox + st.x, oy + st.y);
     this.rebuildRooms();
     return true;
+  }
+
+  // --- serialization ---
+  // Only the three painted layers (wall/floor/roomType) plus the station list,
+  // next-id and per-station progress are authoritative; the `station`/`roomId`
+  // layers and `rooms` are re-derived on load (footprint re-stamp + rebuildRooms).
+
+  serialize(): BuildGridSave {
+    return {
+      width: this.width,
+      height: this.height,
+      wall: bytesToB64(this.wall),
+      floor: bytesToB64(this.floor),
+      roomType: bytesToB64(this.roomType),
+      stations: this.stations.map((s) => ({ id: s.id, typeId: s.typeId, x: s.x, y: s.y, w: s.w, h: s.h })),
+      nextStationId: this.nextStationId,
+      progress: [...this._progress.entries()],
+    };
+  }
+
+  static deserialize(data: BuildGridSave): BuildGrid {
+    const g = new BuildGrid(data.width, data.height);
+    g.wall.set(b64ToBytes(data.wall, g.size));
+    g.floor.set(b64ToBytes(data.floor, g.size));
+    g.roomType.set(b64ToBytes(data.roomType, g.size));
+    for (const s of data.stations) {
+      g.stations.push({ ...s, roomId: -1 });
+      for (let dy = 0; dy < s.h; dy++) {
+        for (let dx = 0; dx < s.w; dx++) {
+          if (g.inBounds(s.x + dx, s.y + dy)) g.station[g.index(s.x + dx, s.y + dy)] = s.id;
+        }
+      }
+    }
+    g.nextStationId = data.nextStationId;
+    for (const [id, p] of data.progress) g._progress.set(id, p);
+    g.rebuildRooms();
+    return g;
   }
 
   /** Aggregate everything a room delivers, summed over its valid stations. */

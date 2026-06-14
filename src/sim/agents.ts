@@ -29,6 +29,21 @@ export const enum AState {
   Working = 3,
 }
 
+/** JSON round-trip shape for an AgentStore (every SoA column sliced to `count`). */
+export interface AgentStoreSave {
+  capacity: number;
+  count: number;
+  nextId: number;
+  id: number[];
+  posX: number[]; posY: number[];
+  destX: (number | null)[]; destY: (number | null)[];
+  health: number[]; mood: number[];
+  food: number[]; rest: number[]; warmth: number[];
+  recreation: number[]; social: number[];
+  state: number[]; nextThink: number[];
+  field: number[]; stationId: number[];
+}
+
 const SPEED = 0.45;              // tiles per game-minute (matches SETTLER_SPEED)
 const MINUTES_PER_TICK = 4;      // matches defs.ts
 const HOURS_PER_TICK = MINUTES_PER_TICK / 60;
@@ -153,6 +168,49 @@ export class AgentStore {
   unassignStation(i: number): void {
     this.stationId[i] = 0;
     this.state[i] = AState.Idle;
+  }
+
+  // --- serialization (round-trips the SoA columns; flow fields are re-registered
+  //     by the caller, never persisted) ---
+
+  serialize(): AgentStoreSave {
+    const n = this.count;
+    const slice = (a: ArrayLike<number>) => Array.from({ length: n }, (_, i) => a[i]);
+    // destX/destY use NaN as the "no destination" sentinel; NaN is not JSON-safe
+    // (it stringifies to null and reloads as 0), so persist it explicitly as null.
+    const sliceDest = (a: ArrayLike<number>) =>
+      Array.from({ length: n }, (_, i) => (Number.isNaN(a[i]) ? null : a[i]));
+    return {
+      capacity: this.capacity,
+      count: n,
+      nextId: this.nextId,
+      id: slice(this.id),
+      posX: slice(this.posX), posY: slice(this.posY),
+      destX: sliceDest(this.destX), destY: sliceDest(this.destY),
+      health: slice(this.health), mood: slice(this.mood),
+      food: slice(this.food), rest: slice(this.rest), warmth: slice(this.warmth),
+      recreation: slice(this.recreation), social: slice(this.social),
+      state: slice(this.state), nextThink: slice(this.nextThink),
+      field: slice(this.field), stationId: slice(this.stationId),
+    };
+  }
+
+  static deserialize(data: AgentStoreSave): AgentStore {
+    const store = new AgentStore(data.capacity);
+    const n = data.count;
+    store.count = n;
+    store.nextId = data.nextId;
+    for (let i = 0; i < n; i++) {
+      store.id[i] = data.id[i];
+      store.posX[i] = data.posX[i]; store.posY[i] = data.posY[i];
+      store.destX[i] = data.destX[i] ?? NaN; store.destY[i] = data.destY[i] ?? NaN;
+      store.health[i] = data.health[i]; store.mood[i] = data.mood[i];
+      store.food[i] = data.food[i]; store.rest[i] = data.rest[i]; store.warmth[i] = data.warmth[i];
+      store.recreation[i] = data.recreation[i]; store.social[i] = data.social[i];
+      store.state[i] = data.state[i]; store.nextThink[i] = data.nextThink[i];
+      store.field[i] = data.field[i]; store.stationId[i] = data.stationId[i];
+    }
+    return store;
   }
 
   /**

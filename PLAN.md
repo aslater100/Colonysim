@@ -120,8 +120,27 @@ Stages (extend Track C; the live game is untouched until B-6):
   overlay + station labels + blueprint/paint-cursor ghosts; `hud.ts` ROOMS category with Wall/Floor/Erase
   tools, 14 room-type buttons, 10 station buttons, 7 blueprint stamps ([V] hotkey for wall); `main.ts`
   wires drag-paint + single-click stamp against a standalone `BuildGrid`. Tests: `tests/blueprints.test.ts` (7). Additive.
-- **B-6 — Swap + retire `buildings.json`.** Once at parity, the room-based scale-engine
-  town tier replaces the discrete-building `Simulation`; save-format v-bump.
+- **B-6 — Integrated town core (swap candidate). 🔶 PART 1 LANDED.** `src/sim/towncore.ts`
+  (`TownCore`) is the first half of B-6: it **composes every scale-engine module into one
+  deterministic, serializable simulation** — the thing the final swap installs in place of the
+  fat-object `Simulation`. Per-tick it runs the plan's data-flow end to end: sleep/wake + need-
+  interrupt state transitions → `JobBoard.rebuild`/`assignIdle` (idle agents claim the nearest
+  open craft station, routed by a job `FlowField`) → `BuildGrid.tickProduction` (recipes consume/
+  produce against the shared `Stockpile`) → `serveNeeds` (room warmth/rest/recreation) →
+  `AgentStore.tick` (needs decay, mood, movement) → swap-remove deaths → day rollover that feeds
+  agents from produced meals and grows/loses population. Round-trip serialization added to the three
+  stateful modules — `Stockpile.serialize/deserialize`, `AgentStore.serialize/deserialize`
+  (`AgentStoreSave`; NaN dest sentinel persisted as null), `BuildGrid.serialize/deserialize`
+  (`BuildGridSave`; painted layers base64, stations + recipe progress preserved, `station`/`roomId`
+  layers + `rooms` re-derived on load) — and `TownCore.serialize/deserialize` (`TownCoreSave`, v1).
+  Pure/DOM-free with a `npx tsx src/sim/towncore.ts` self-check (determinism + round-trip) and
+  `tests/towncore.test.ts` (12 cases). **Still additive — the live game is untouched.**
+  **PART 2 (the actual swap) is deliberately deferred and gated:** wiring `TownCore` into `main.ts`/
+  `render.ts` in place of `Simulation`, the save-format v-bump on the live save, and retiring
+  `buildings.json` must wait on (a) **behavior parity** with the fat-object sim's 526-test surface
+  (combat/raids/weather/trading/economy/traits/skills are not yet ported onto the SoA columns) and
+  (b) a **GUI play-test** — neither is safe to do blind from headless CI. Land PART 2 once the
+  parity port (the rest of Stage 4) is done and the user has play-verified the new core.
 
 ---
 
@@ -135,7 +154,7 @@ Stages (extend Track C; the live game is untouched until B-6):
 
 ### Current state (updated 2026-06-14)
 
-**Test baseline: 514 passing** (441 base + 11 flow-field + 13 rooms + 16 production + 13 jobs + 13 needs + 7 blueprints). `tsc` + `vite build` clean. **All landed work below is already merged into `main` except B-2→B-5, which are on `claude/build-system-b2-b6-mkfsqk` / PR #103 awaiting review.**
+**Test baseline: 526 passing** (441 base + 11 flow-field + 13 rooms + 16 production + 13 jobs + 13 needs + 7 blueprints + 12 towncore). `tsc` + `vite build` clean. B-2→B-5 merged (PR #103/#104). **B-6 PART 1 (`TownCore` integrated swap candidate) is on `claude/focused-maxwell-ofuwv5`.**
 
 **Scale engine (Track C):**
 - **Stage 1 ✅** — `src/sim/agents.ts` (`AgentStore`, SoA agent core).
@@ -145,15 +164,17 @@ Stages (extend Track C; the live game is untouched until B-6):
 **Build-system rewrite (replaces pre-built buildings with painted walls/floors/rooms/workstations):**
 - **B-1 ✅** (PR #101, merged) — `src/sim/build.ts` (`BuildGrid`) + `src/data/rooms.json` (14 room types) + `src/data/stations.json` (19 workstations) + `ROOM_DEFS`/`STATION_DEFS` loaders in `defs.ts` + `tests/build.test.ts`.
 
-**▶ Pick up next: Build-system B-5 — Render + paint UI.** B-2 (production), B-3
-(job board) and B-4 (needs from rooms) have landed on `claude/build-system-b2-b6-mkfsqk`
-(PR #103) — all pure/additive scale-engine modules (`stockpile.ts`, `jobs.ts`,
-`needs.ts`) with self-checks and dedicated tests, none wired into the live `Simulation`.
-Remaining: **B-5** (wall/floor/room/station paint tools + room overlay; lands with the
-Phase-4 chunk renderer) → **B-6** (swap the room-based core in for the discrete-building
-`Simulation`, save-format v-bump, retire `buildings.json`). B-5/B-6 are the first stages
-that touch `render.ts`/the live sim, so they need design review before starting. Full
-breakdown in the **Build-system rewrite** subsection under Track C above.
+**▶ Pick up next: Build-system B-6 PART 2 — the live swap (gated).** B-1→B-5 and **B-6 PART 1**
+(the integrated `TownCore` swap candidate) have landed. `TownCore` already composes all the
+scale-engine modules into one deterministic, serializable town sim with tests. Before PART 2
+(wire `TownCore` into `main.ts`/`render.ts`, retire `buildings.json`, v-bump the live save) is
+safe, two things must happen first: **(1) finish the Stage-4 behavior port** — combat, raids,
+weather, trading, economy, traits and skills still live only on the fat-object `Simulation`,
+not on the SoA columns, so a swap today would lose them; add headless parity tests asserting the
+new core matches the old sim's behavior. **(2) GUI play-test** the new core (paint a town, watch
+it run) — the destructive swap can't be validated from headless CI alone. PART 2 touches
+`render.ts`/the live sim and is destructive, so it needs design review + the user's play-verify
+before starting. Full breakdown in the **Build-system rewrite** subsection under Track C above.
 
 **Key data-flow once B-5/B-6 wire it together:** `JobBoard.rebuild` → `assignIdle`
 (idle agents claim nearest unmanned craft station) → `BuildGrid.tickProduction`
