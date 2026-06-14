@@ -88,6 +88,8 @@ export interface Settlement {
   // ---- AI Competitors Phase 2d: settlement resource bias ----
   /** Primary resource focus: wool, grain, iron, wood (tied to founding location/goal) */
   resourceFocus?: 'wool' | 'grain' | 'iron' | 'wood' | 'diverse';
+  /** Last day emergency grain was purchased — prevents buying every single day. */
+  lastEmergencyGrainDay?: number;
 }
 
 // ---- Phase 0: Territory & resource visualization ----
@@ -2932,23 +2934,35 @@ export class RegionSim {
         t.grievance = Math.max(0, Math.min(100, t.grievance + pressure));
       }
       this.updateMarket(t);
-      // Starvation — halved death rate vs original; player-owned towns get one
-      // emergency grain purchase from treasury before deaths begin (500 food
-      // costs £10; at least one tick of relief per starvation event).
+      // Starvation: player-owned towns get a seasonal emergency grain purchase
+      // (once per 30 days), scaled to the town's population so it actually lasts.
       if (t.food < 0) {
         if (t.factionId === this.playerFactionId && this.treasury >= 10) {
-          const relief = Math.min(500, this.popOf(t) * 2);
-          t.food += relief;
-          this.treasury -= 10;
-          if (t.food < 0) { // still hungry after relief
-            const starved = Math.min(pop * 0.01, -t.food / 20);
-            this.removePop(t, starved);
-            t.food = 0;
-            this.addLog(`Famine in ${t.name} — emergency grain bought, but not enough.`, 'bad');
-            this.townEvent(t, 'Famine — emergency rations exhausted.', 'bad');
-          } else {
-            this.addLog(`Emergency grain purchased for ${t.name} (£10 from treasury).`, 'info');
+          const daysSinceLast = this.day - (t.lastEmergencyGrainDay ?? -9999);
+          if (daysSinceLast >= 30) {
+            // 30 days of full consumption — enough to last a season change
+            const relief = Math.max(500, Math.round(this.popOf(t) * 0.75 * 30));
+            const cost = Math.max(10, Math.ceil(relief / 50));
+            if (this.treasury >= cost) {
+              t.food += relief;
+              t.lastEmergencyGrainDay = this.day;
+              this.treasury -= cost;
+              if (t.food < 0) {
+                const starved = Math.min(pop * 0.01, -t.food / 20);
+                this.removePop(t, starved);
+                t.food = 0;
+                this.addLog(`Famine in ${t.name} — emergency grain bought, but not enough.`, 'bad');
+                this.townEvent(t, 'Famine — emergency rations exhausted.', 'bad');
+              } else {
+                this.addLog(`Emergency grain purchased for ${t.name} (${formatCurrency(cost)} from treasury).`, 'info');
+              }
+            } else {
+              const starved = Math.min(pop * 0.01, -t.food / 20);
+              this.removePop(t, starved);
+              t.food = 0;
+            }
           }
+          // cooldown active: no purchase, but starvation is also suppressed this tick
         } else {
           const starved = Math.min(pop * 0.01, -t.food / 20);
           this.removePop(t, starved);
@@ -3918,10 +3932,13 @@ export class RegionSim {
     const ranked = [...this.settlements].sort((a, b) => score(b) - score(a));
     const best = ranked[0];
     const worst = ranked[ranked.length - 1];
-    if (score(best) - score(worst) > 15 && this.popOf(worst) > 10) {
+    // Don't feed an already-overcrowded destination; cap the capital magnet effect.
+    const destFull = this.popOf(best) >= best.housing;
+    if (score(best) - score(worst) > 15 && this.popOf(worst) > 10 && !destFull) {
       // movers ride the network too: without a route, only a trickle walks out
       const connected = this.routePath(worst.id, best.id) !== null;
-      const movers = this.popOf(worst) * 0.02 * (connected ? 1 : 0.3);
+      // 1% per month (was 2%): urbanization is gradual, not a mass exodus
+      const movers = this.popOf(worst) * 0.01 * (connected ? 1 : 0.3);
       this.removePop(worst, movers);
       best.cohorts.bands[1] += movers * 0.7;
       best.cohorts.bands[2] += movers * 0.3;
@@ -7034,7 +7051,7 @@ export class RegionSim {
       y: Math.round(y),
       foundedDay: this.day,
       cohorts: { bands: [5, 10, 8, 4, 1] }, // starting population ~28
-      food: 50,
+      food: Math.round(28 * 0.75 * 90), // 90-day buffer so new settlements don't starve immediately
       wood: 30,
       satisfaction: 60,
       housing: 15,

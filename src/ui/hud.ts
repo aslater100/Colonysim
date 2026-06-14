@@ -599,17 +599,17 @@ export class Hud {
       `<button class="rbb-speed-btn${this.speed === 8 ? ' active' : ''}" id="rbb-s3" title="3">3×</button>` +
       `</div>`,
     );
-    this.regionBottomBar.querySelector('#rbb-pause')!.addEventListener('click', () => { this.paused = !this.paused; });
-    this.regionBottomBar.querySelector('#rbb-s1')!.addEventListener('click', () => { this.speed = 1; this.paused = false; });
-    this.regionBottomBar.querySelector('#rbb-s2')!.addEventListener('click', () => { this.speed = 3; this.paused = false; });
-    this.regionBottomBar.querySelector('#rbb-s3')!.addEventListener('click', () => { this.speed = 8; this.paused = false; });
-    // S/R/E/T shortcuts — dispatch synthetic key events so the main keydown
-    // handler handles them (single source of truth for panel toggles).
+    // Use onclick= (not addEventListener) so re-running this every frame doesn't
+    // stack duplicate listeners when setHtml returns early from its cache.
+    (this.regionBottomBar.querySelector('#rbb-pause') as HTMLElement).onclick = () => { this.paused = !this.paused; };
+    (this.regionBottomBar.querySelector('#rbb-s1') as HTMLElement).onclick = () => { this.speed = 1; this.paused = false; };
+    (this.regionBottomBar.querySelector('#rbb-s2') as HTMLElement).onclick = () => { this.speed = 3; this.paused = false; };
+    (this.regionBottomBar.querySelector('#rbb-s3') as HTMLElement).onclick = () => { this.speed = 8; this.paused = false; };
     const dispatch = (key: string) => window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
-    this.regionBottomBar.querySelector('#rbb-towns')!.addEventListener('click', () => dispatch('s'));
-    this.regionBottomBar.querySelector('#rbb-routes')!.addEventListener('click', () => dispatch('r'));
-    this.regionBottomBar.querySelector('#rbb-econ')!.addEventListener('click', () => dispatch('e'));
-    this.regionBottomBar.querySelector('#rbb-tech')!.addEventListener('click', () => dispatch('t'));
+    (this.regionBottomBar.querySelector('#rbb-towns') as HTMLElement).onclick = () => dispatch('s');
+    (this.regionBottomBar.querySelector('#rbb-routes') as HTMLElement).onclick = () => dispatch('r');
+    (this.regionBottomBar.querySelector('#rbb-econ') as HTMLElement).onclick = () => dispatch('e');
+    (this.regionBottomBar.querySelector('#rbb-tech') as HTMLElement).onclick = () => dispatch('t');
   }
 
   drawRegionTopBar(r: import('../sim/region').RegionSim, dioramaOpen: boolean): void {

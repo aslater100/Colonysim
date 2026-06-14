@@ -313,7 +313,8 @@ export class Simulation {
 
   /** Outdoor temperature in °C: season base + diurnal swing + weather + cold snaps. */
   temperature(): number {
-    const diurnal = -6 * Math.cos(((this.hour - 14) / 24) * Math.PI * 2) - 2;
+    // Peak at 14:00 (2pm), trough at 2am — positive coefficient so days are warmer than nights.
+    const diurnal = 6 * Math.cos(((this.hour - 14) / 24) * Math.PI * 2) - 2;
     const snap = this.minute < this.coldSnapUntil ? -10 : 0;
     return SEASON_BASE_C[this.seasonIndex] + diurnal + snap + this.weatherToday().tempAnomalyC;
   }
@@ -1861,7 +1862,9 @@ export class Simulation {
       }
       case 'breakdown': {
         if (this.minute >= s.stateUntil) s.state = 'idle';
-        else {
+        else if (s.needs.warmth < NEED_INTERRUPT_THRESHOLD) {
+          s.state = 'idle'; // survival instinct cuts through the break
+        } else {
           if (s.needs.food < 20) this.consumeFood(s); // even the broken still eat
           this.wander(s);
         }
@@ -1918,8 +1921,8 @@ export class Simulation {
       }
       case 'moving':
       case 'working': {
-        // Critical food/sleep preempts any task so settlers don't starve at their post.
-        if (s.needs.food < NEED_INTERRUPT_THRESHOLD || s.needs.rest < NEED_INTERRUPT_THRESHOLD) {
+        // Critical food/sleep/warmth preempts any task so settlers don't freeze at their post.
+        if (s.needs.food < NEED_INTERRUPT_THRESHOLD || s.needs.rest < NEED_INTERRUPT_THRESHOLD || s.needs.warmth < NEED_INTERRUPT_THRESHOLD) {
           this.finishTask(s);
           return;
         }
