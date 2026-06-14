@@ -34,14 +34,19 @@ import type { Stockpile } from './stockpile';
 
 /** Narrow slice of AgentStore used by tickProduction — avoids a circular import.
  *  `skill`/`workSpeedMult` are optional: when present, a worker contributes its
- *  skill+trait effort (0.5 + skill×0.1) × workSpeedMult instead of a flat 1.0. */
+ *  skill+trait effort (0.5 + skill×0.1) × workSpeedMult instead of a flat 1.0.
+ *  `sick` (optional) applies the fever work penalty. */
 interface WorkerSource {
   count: number;
   stationId: Int32Array;
   state: Uint8Array;
   skill?: Float32Array;
   workSpeedMult?: Float32Array;
+  sick?: Uint8Array;
 }
+
+/** Fever work-speed factor (mirrors TUNING.sickWorkMult); kept local to avoid a defs import here. */
+const SICK_WORK_MULT = 0.6;
 
 /** A placed workstation instance. Few and rarely mutated, so plain objects are fine. */
 export interface Station {
@@ -377,13 +382,14 @@ export class BuildGrid {
     // columns each worker is 1.0 effort (so progress = minutes × headcount, exactly
     // as before); with them, a skilled or industrious settler advances the recipe
     // faster (0.5 + skill×0.1) × workSpeedMult — skill 5 + neutral traits = 1.0.
-    const { skill, workSpeedMult } = agents;
+    const { skill, workSpeedMult, sick } = agents;
     const workerEffort = new Map<number, number>();
     for (let i = 0; i < agents.count; i++) {
       if (agents.state[i] !== 3 /* AState.Working */) continue;
       const sid = agents.stationId[i];
       if (sid <= 0) continue;
-      const effort = skill && workSpeedMult ? (0.5 + skill[i] * 0.1) * workSpeedMult[i] : 1;
+      let effort = skill && workSpeedMult ? (0.5 + skill[i] * 0.1) * workSpeedMult[i] : 1;
+      if (sick && sick[i] === 1) effort *= SICK_WORK_MULT;
       workerEffort.set(sid, (workerEffort.get(sid) ?? 0) + effort);
     }
 

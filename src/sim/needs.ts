@@ -28,8 +28,9 @@
  */
 import type { BuildGrid, Room, RoomOutput } from './build';
 import type { AgentStore } from './agents';
+import type { Stockpile } from './stockpile';
 import { AState } from './agents';
-import { ROOM_DEF_BY_NUM } from './defs';
+import { ROOM_DEF_BY_NUM, TUNING } from './defs';
 // Runtime imports used only by the self-check (guarded self-checks won't fire on import).
 import { BuildGrid as BuildGridImpl } from './build';
 import { AgentStore as AgentStoreImpl } from './agents';
@@ -51,6 +52,12 @@ export const WARMTH_DECAY_EXPOSED = 3;
 export const WARMTH_AMBIENT_FLOOR = 50;
 export const REST_REGEN_BED = 9;
 export const RECREATION_REGEN = 12;
+
+// Medical recovery (paired with the wound/infection model on AgentStore): an
+// infirmary sickbed speeds healing; an apothecary's medicine cures the wound.
+const CLINIC_REGEN_MULT = TUNING.clinicRegenMult;       // ×regen resting in an infirmary
+const APOTHECARY_HEAL_MULT = TUNING.apothecaryHealMult; // extra ×regen when medicine is applied
+const MEDICINE_PER_TREAT = 1;                           // medicine consumed to cure one casualty
 
 const EMPTY_OUTPUT: RoomOutput = { sleep: 0, recreation: 0, education: 0, medical: 0, storage: 0, flow: {} };
 
@@ -133,6 +140,51 @@ export function serveNeeds(grid: BuildGrid, agents: AgentStore, minutesPerTick: 
         agents.recreation[i] = rc < 100 ? rc : 100;
         recUsed.set(rid, used + 1);
       }
+    }
+  }
+}
+
+/**
+ * Apply one tick of infirmary-driven medical recovery. Sets each agent's
+ * `healMult` (read by `AgentStore.tick`'s regen) and applies medicine cures.
+ *
+ * An agent Sleeping in a usable infirmary room with a free medical slot (a
+ * sickbed) recovers at `CLINIC_REGEN_MULT×`. If that agent has an open wound or
+ * infection and the stockpile holds medicine, the apothecary cures it — the wound
+ * and infection clear, `MEDICINE_PER_TREAT` is consumed, and healing gets the
+ * additional `APOTHECARY_HEAL_MULT`. Everyone else's `healMult` resets to 1.
+ *
+ * Like `serveNeeds`: one small Map per call (room count), O(1) per agent. Runs
+ * before `AgentStore.tick` so a cure lands before that tick's bleed is charged.
+ */
+export function serveMedical(grid: BuildGrid, agents: AgentStore, stock: Stockpile): void {
+  for (let i = 0; i < agents.count; i++) agents.healMult[i] = 1;
+
+  // Cache each room's medical capacity once (rooms ≪ agents).
+  const medical = new Map<number, number>();
+  for (const room of grid.rooms) {
+    if (roomUsable(room)) medical.set(room.id, grid.roomOutput(room).medical);
+  }
+  const bedsUsed = new Map<number, number>();
+
+  for (let i = 0; i < agents.count; i++) {
+    if (agents.state[i] !== AState.Sleeping) continue;
+    const x = Math.floor(agents.posX[i]);
+    const y = Math.floor(agents.posY[i]);
+    const rid = grid.inBounds(x, y) ? grid.roomId[grid.index(x, y)] : -1;
+    if (rid < 0) continue;
+    const cap = medical.get(rid) ?? 0;
+    if (cap <= 0) continue;
+    const used = bedsUsed.get(rid) ?? 0;
+    if (used >= cap) continue; // every sickbed taken
+    bedsUsed.set(rid, used + 1);
+
+    agents.healMult[i] = CLINIC_REGEN_MULT;
+    const injured = agents.woundUntreated[i] === 1 || agents.infection[i] === 1;
+    if (injured && stock.count('medicine') >= MEDICINE_PER_TREAT) {
+      stock.remove('medicine', MEDICINE_PER_TREAT);
+      agents.treat(i); // apothecary clears the wound + infection
+      agents.healMult[i] *= APOTHECARY_HEAL_MULT;
     }
   }
 }

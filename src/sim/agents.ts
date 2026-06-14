@@ -31,7 +31,7 @@
  * Run the self-check:  npx tsx src/sim/agents.ts
  */
 import { FlowField } from './flowfield';
-import { TRAIT_DEFS } from './defs';
+import { TRAIT_DEFS, TUNING } from './defs';
 
 export const enum AState {
   Idle = 0,
@@ -54,6 +54,8 @@ export interface AgentStoreSave {
   state: number[]; nextThink: number[];
   field: number[]; stationId: number[];
   skill: number[]; trait0: number[]; trait1: number[];
+  woundUntreated: number[]; woundAt: number[]; infectionRolled: number[];
+  infection: number[]; sickUntilTick: number[];
 }
 
 const SPEED = 0.45;              // tiles per game-minute (matches SETTLER_SPEED)
@@ -77,6 +79,18 @@ const SKILL_CAP = 10;
 /** Trait housing preference → compact enum (0 = none). */
 const HOUSING_PREF: Readonly<Record<string, number>> = { private: 1, communal: 2, military: 3 };
 export const enum Housing { None = 0, Private = 1, Communal = 2, Military = 3 }
+
+// Medical model (Stage 4 behavior port) — mirrors the fat sim's wound→infection→
+// scar chain (GDD §2.2). Values are pulled from TUNING so the two cores can't drift.
+const WOUND_BLEED = TUNING.woundBleedPerHour;            // health/hr from an open wound
+const WOUND_SELF_HEAL_HR = TUNING.woundSelfHealHours;    // an untended wound scars over after this
+const INFECTION_WINDOW_HR = TUNING.infectionWindowHours; // when a wound may fester
+const INFECTION_CHANCE = TUNING.infectionChance;         // probability it does
+const INFECTION_BLEED = TUNING.infectionHealthPerHour;   // health/hr while infected
+const SICK_BLEED = TUNING.sickHealthPerHour;             // health/hr while feverish
+export const SICK_WORK_MULT = TUNING.sickWorkMult;       // work-speed factor while feverish
+const HEALTH_REGEN = TUNING.healthRegenPerHour;          // baseline recovery
+const STARVE_BLEED = 1.5;                                 // health/hr at 0 food (SoA baseline)
 
 export class AgentStore {
   readonly capacity: number;
@@ -115,6 +129,22 @@ export class AgentStore {
   readonly foodDecayMult: Float32Array;   // ∏ trait.foodDecay    (hunger rate)
   readonly housingPref: Int8Array;        // Housing enum (first trait pref wins)
 
+  // --- medical (Stage 4 behavior port): wound → infection → scar + fever ---
+  /** 1 = an open (bleeding) wound; cleared by treatment or by scarring over. */
+  readonly woundUntreated: Uint8Array;
+  /** tick the current wound was inflicted (drives self-heal + infection timing). */
+  readonly woundAt: Float32Array;
+  /** 1 once the wound's one-shot infection roll has happened (so it rolls once). */
+  readonly infectionRolled: Uint8Array;
+  /** 1 = a festering infection bleeding health until treated. */
+  readonly infection: Uint8Array;
+  /** tick until which the agent is feverish (sick); ≤ current tick = well. */
+  readonly sickUntilTick: Float32Array;
+  /** 1 while feverish — derived each tick, read by tickProduction for the work penalty. */
+  readonly sick: Uint8Array;
+  /** Health-regen multiplier for this tick — set by serveMedical (infirmary/medicine), else 1. */
+  readonly healMult: Float32Array;
+
   /** Registered flow fields (one per hot destination). Empty = Stage-1 wander. */
   fields: FlowField[] = [];
   // Scratch reused by movement so the tick stays allocation-free.
@@ -148,6 +178,31 @@ export class AgentStore {
     this.warmthDecayMult = new Float32Array(capacity);
     this.foodDecayMult = new Float32Array(capacity);
     this.housingPref = new Int8Array(capacity);
+    this.woundUntreated = new Uint8Array(capacity);
+    this.woundAt = new Float32Array(capacity);
+    this.infectionRolled = new Uint8Array(capacity);
+    this.infection = new Uint8Array(capacity);
+    this.sickUntilTick = new Float32Array(capacity);
+    this.sick = new Uint8Array(capacity);
+    this.healMult = new Float32Array(capacity).fill(1);
+  }
+
+  /** Inflict an open wound on agent `i` as of `tickNo` (combat/raids/wildlife/events). */
+  inflictWound(i: number, tickNo: number): void {
+    this.woundUntreated[i] = 1;
+    this.woundAt[i] = tickNo;
+    this.infectionRolled[i] = 0;
+  }
+
+  /** Make agent `i` feverish until `untilTick` (plague/sickness events). */
+  makeSick(i: number, untilTick: number): void {
+    if (untilTick > this.sickUntilTick[i]) this.sickUntilTick[i] = untilTick;
+  }
+
+  /** Clear an agent's wound + infection (what a medic / apothecary treatment delivers). */
+  treat(i: number): void {
+    this.woundUntreated[i] = 0;
+    this.infection[i] = 0;
   }
 
   /** Recompute the collapsed trait-effect columns for agent `i` from trait0/trait1. */
@@ -213,6 +268,14 @@ export class AgentStore {
     this.warmthDecayMult[i] = 1;
     this.foodDecayMult[i] = 1;
     this.housingPref[i] = 0;
+    // Healthy and unhurt on arrival.
+    this.woundUntreated[i] = 0;
+    this.woundAt[i] = 0;
+    this.infectionRolled[i] = 0;
+    this.infection[i] = 0;
+    this.sickUntilTick[i] = 0;
+    this.sick[i] = 0;
+    this.healMult[i] = 1;
     // Stagger first decision so a cohort spawned together doesn't think in lockstep.
     this.nextThink[i] = i % THINK_INTERVAL;
     return i;
@@ -239,6 +302,13 @@ export class AgentStore {
       this.warmthDecayMult[i] = this.warmthDecayMult[last];
       this.foodDecayMult[i] = this.foodDecayMult[last];
       this.housingPref[i] = this.housingPref[last];
+      this.woundUntreated[i] = this.woundUntreated[last];
+      this.woundAt[i] = this.woundAt[last];
+      this.infectionRolled[i] = this.infectionRolled[last];
+      this.infection[i] = this.infection[last];
+      this.sickUntilTick[i] = this.sickUntilTick[last];
+      this.sick[i] = this.sick[last];
+      this.healMult[i] = this.healMult[last];
     }
   }
 
@@ -296,6 +366,10 @@ export class AgentStore {
       // a pure function of the traits, so they're re-derived on load (smaller save,
       // and no chance of mults drifting out of sync with the traits).
       skill: slice(this.skill), trait0: slice(this.trait0), trait1: slice(this.trait1),
+      // Medical state (sick/healMult are transient — recomputed every tick).
+      woundUntreated: slice(this.woundUntreated), woundAt: slice(this.woundAt),
+      infectionRolled: slice(this.infectionRolled), infection: slice(this.infection),
+      sickUntilTick: slice(this.sickUntilTick),
     };
   }
 
@@ -318,6 +392,14 @@ export class AgentStore {
       store.trait0[i] = data.trait0?.[i] ?? -1;
       store.trait1[i] = data.trait1?.[i] ?? -1;
       store.applyTraits(i); // re-derive the collapsed multiplier columns
+      // Medical state — pre-medical saves backfill to healthy/unhurt.
+      store.woundUntreated[i] = data.woundUntreated?.[i] ?? 0;
+      store.woundAt[i] = data.woundAt?.[i] ?? 0;
+      store.infectionRolled[i] = data.infectionRolled?.[i] ?? 0;
+      store.infection[i] = data.infection?.[i] ?? 0;
+      store.sickUntilTick[i] = data.sickUntilTick?.[i] ?? 0;
+      store.sick[i] = 0;
+      store.healMult[i] = 1;
     }
     return store;
   }
@@ -343,11 +425,29 @@ export class AgentStore {
       const so = this.social[i] - DECAY_SOCIAL * HOURS_PER_TICK;
       this.social[i] = so > 0 ? so : 0;
 
-      // --- health: starvation bleeds, otherwise slow regen ---
-      if (this.food[i] <= 0) {
-        this.health[i] -= 1.5 * HOURS_PER_TICK;
-      } else if (this.health[i] < 100) {
-        const h = this.health[i] + 0.5 * HOURS_PER_TICK;
+      // --- health: wounds → infection → scar, fever, starvation, then gated regen ---
+      let bleed = 0;
+      if (this.woundUntreated[i] === 1) {
+        bleed += WOUND_BLEED;
+        const elapsedHr = (tickNo - this.woundAt[i]) * HOURS_PER_TICK;
+        if (elapsedHr > WOUND_SELF_HEAL_HR) {
+          this.woundUntreated[i] = 0; // scarred over on its own
+        } else if (this.infectionRolled[i] === 0 && elapsedHr > INFECTION_WINDOW_HR) {
+          this.infectionRolled[i] = 1; // one-shot fester roll
+          if (rand() < INFECTION_CHANCE) this.infection[i] = 1;
+        }
+      }
+      if (this.infection[i] === 1) bleed += INFECTION_BLEED;
+      const feverish = this.sickUntilTick[i] > tickNo;
+      this.sick[i] = feverish ? 1 : 0; // tickProduction reads this for the work penalty
+      if (feverish) bleed += SICK_BLEED;
+      if (this.food[i] <= 0) bleed += STARVE_BLEED;
+
+      if (bleed > 0) {
+        this.health[i] -= bleed * HOURS_PER_TICK;
+      } else if (this.food[i] > 30 && this.health[i] < 100) {
+        // Recover — faster in an infirmary / with medicine (healMult set by serveMedical).
+        const h = this.health[i] + HEALTH_REGEN * this.healMult[i] * HOURS_PER_TICK;
         this.health[i] = h < 100 ? h : 100;
       }
 
@@ -453,6 +553,16 @@ if (typeof process !== 'undefined' && process.argv[1]?.endsWith('/agents.ts')) {
   const skill0 = s3.skill[p];
   for (let t = 0; t < 50; t++) s3.tick(t, rand);
   console.assert(s3.skill[p] > skill0, 'skill grew while working');
+
+  // Stage 4 medical: an open wound bleeds health and may fester past the window.
+  const s4 = new AgentStore(4);
+  const w = s4.spawn(0, 0);
+  s4.inflictWound(w, 0);
+  const h0 = s4.health[w];
+  for (let t = 0; t < 250; t++) s4.tick(t, rand); // ~16h of game time
+  console.assert(s4.health[w] < h0, 'an untreated wound bled health');
+  s4.treat(w);
+  console.assert(s4.woundUntreated[w] === 0 && s4.infection[w] === 0, 'treatment cleared wound + infection');
   // Persona survives a serialize round-trip (mults re-derived from trait indices).
   const s3r = AgentStore.deserialize(s3.serialize());
   console.assert(s3r.trait0[0] === s3.trait0[p] && s3r.workSpeedMult[0] === s3.workSpeedMult[p],
