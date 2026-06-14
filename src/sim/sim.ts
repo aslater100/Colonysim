@@ -986,6 +986,63 @@ export class Simulation {
     }
   }
 
+  // ---- LOD: dormant parcels (Track B Phase 5) ----
+  /**
+   * Level-of-detail flag. The parcel the player is looking at runs the full
+   * per-tick `tick()`; every other owned parcel runs only `tickDormant()`.
+   */
+  isActive = true;
+
+  /**
+   * A whole day advanced in one cheap step, for parcels that aren't on screen.
+   * It accrues the *slow* flows — crop growth + harvest, immigration and
+   * births — and skips everything that needs agents on the map: pathfinding,
+   * needs/deaths, raids, weather drama and trading. A dormant parcel therefore
+   * stays self-consistent and keeps feeding the realm at a fraction of the cost
+   * of a real tick. Call it once per in-game day from the main loop.
+   */
+  tickDormant(): void {
+    if (this.gameOver) return;
+    this.minute += MINUTES_PER_DAY;
+    this.dailyUpdateDormant();
+  }
+
+  private dailyUpdateDormant(): void {
+    // Same rolling 7-day stock history the HUD reads when the parcel wakes.
+    for (const k of Object.keys(this.stock) as ResourceKind[]) {
+      if (!this.stockHistory[k]) this.stockHistory[k] = [];
+      const hist = this.stockHistory[k]!;
+      hist.unshift(this.stock[k]);
+      if (hist.length > 8) hist.length = 8; // keep 8 snapshots → 7 deltas
+    }
+    this.accrueDormantFarms();
+    this.updatePopulationFlows();
+  }
+
+  /**
+   * One day of crop growth with automatic sow/harvest — the abstract stand-in
+   * for the farmhands a dormant parcel can't path around the field. Ripe tiles
+   * yield straight into the stockpile and reset to keep producing.
+   */
+  private accrueDormantFarms(): void {
+    const grainYield = Math.round(TUNING.farmYieldPerTile * this.farmYieldMult());
+    const grainPerDay = (100 / TUNING.farmGrowDays) * this.weather.growthMult(this.day);
+    const flaxPerDay = 100 / TUNING.flaxGrowDays;
+    const inSeason = this.growingSeason;
+    for (const t of this.world.tiles) {
+      if (t.kind !== 'soil') continue;
+      if (t.farmZone) {
+        if (!inSeason) continue; // grain is seasonal; winter is fallow
+        if (!t.sown) t.sown = true; // auto-sow what no settler is here to plant
+        t.growth += grainPerDay * t.fertility;
+        if (t.growth >= 100) { this.stock.grain += grainYield; t.growth = 0; }
+      } else if (t.flaxZone) {
+        t.growth += flaxPerDay; // flax is perennial — grows year-round
+        if (t.growth >= 100) { this.stock.flax += TUNING.flaxYieldPerTile; t.growth = 0; }
+      }
+    }
+  }
+
   /**
    * Daily monetary update: prices that were pushed off-balance by trading
    * heal back toward their natural level (mean reversion), and — once the
