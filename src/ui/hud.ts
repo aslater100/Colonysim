@@ -237,11 +237,13 @@ export class Hud {
     this.menuBox = el('div', 'menu hidden', root);
     this.regionBottomBar = el('div', 'region-bottombar hidden', root);
     this.eventModal = el('div', 'event-modal hidden', root);
-    // Framerate readout, anchored under the map (bottom-left, clear of the
-    // build bar and minimap). Self-styled so it needs no external CSS.
+    // Framerate readout, anchored bottom-right just above the region bottombar.
+    // The old bottom-left spot overlapped the region state panel (left column);
+    // bottom-right clears the state panel, sits above the 44px bottombar, and in
+    // town mode falls below the minimap. Self-styled so it needs no external CSS.
     this.fpsBox = el('div', 'fps-counter', root);
     this.fpsBox.style.cssText =
-      'position:fixed;left:8px;bottom:8px;z-index:50;font:11px/1.3 monospace;' +
+      'position:fixed;right:8px;bottom:50px;z-index:50;font:11px/1.3 monospace;' +
       'color:#9fb0c4;background:rgba(8,10,14,0.55);padding:2px 6px;border-radius:3px;' +
       'pointer-events:none;letter-spacing:0.5px;';
 
@@ -769,7 +771,7 @@ export class Hud {
       const s = SEASONS[Math.floor((day % DAYS_PER_YEAR) / (DAYS_PER_YEAR / 4)) % 4];
       return `${s} ${y}`;
     };
-    this.setHtml(this.logBox, r.log.slice(-8).map((l) => `<div class="log-${l.kind}">${label(l.day)} · ${l.text}</div>`).reverse().join(''));
+    this.setHtml(this.logBox, r.log.slice(-2).map((l) => `<div class="log-${l.kind}">${label(l.day)} · ${l.text}</div>`).reverse().join(''));
   }
 
   update(): void {

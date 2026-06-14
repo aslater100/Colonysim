@@ -30,8 +30,10 @@ export class RegionView {
   private g: CanvasRenderingContext2D;
   private panel: HTMLElement;
   private statePanel: HTMLElement;
+  private lastStatePanelBuildFrame = -999;
   private researchPanel: HTMLElement;
   researchOpen = false;
+  private lastResearchBuildFrame = -999;
   /** Phase A: the region-wide Route Network panel (toggle with the R key). */
   private routeNetworkPanel: HTMLElement;
   routeNetworkOpen = false;
@@ -1115,6 +1117,13 @@ export class RegionView {
       return;
     }
     this.statePanel.classList.remove('hidden');
+    // Same DOM-stability guard as the other panels: rebuild on a ~1s timer, not
+    // every frame, so a button node survives between mousedown and click.
+    // Without this the panel's buttons (borrow, services, diplomacy, …) never
+    // fire because the element is replaced mid-click.
+    if (this.frame - this.lastStatePanelBuildFrame < 60) return;
+    this.lastStatePanelBuildFrame = this.frame;
+    const forceRebuild = () => { this.lastStatePanelBuildFrame = -999; };
     const lvl = (v: number) => ['none', 'basic', 'funded'][v];
     this.statePanel.innerHTML =
       `<div class="pal-title">${r.nationProclaimed ? r.nationName.toUpperCase() : r.stateName.toUpperCase()}</div>` +
@@ -1173,6 +1182,8 @@ export class RegionView {
       this.freightHtml();
     this.statePanel.querySelector<HTMLInputElement>('#tax-slider')!.oninput = (e) => {
       r.taxRate = Number((e.target as HTMLInputElement).value) / 100;
+      const taxVal = this.statePanel.querySelector<HTMLElement>('#tax-val');
+      if (taxVal) taxVal.textContent = `${Math.round(r.taxRate * 100)}%`;
     };
     const rateSlider = this.statePanel.querySelector<HTMLInputElement>('#rate-slider');
     if (rateSlider) {
@@ -1206,28 +1217,28 @@ export class RegionView {
       };
     }
     this.statePanel.querySelector<HTMLButtonElement>('#svc-up')!.onclick = () => {
-      r.servicesLevel = Math.min(2, r.servicesLevel + 1);
+      r.servicesLevel = Math.min(2, r.servicesLevel + 1); forceRebuild();
     };
     this.statePanel.querySelector<HTMLButtonElement>('#svc-dn')!.onclick = () => {
-      r.servicesLevel = Math.max(0, r.servicesLevel - 1);
+      r.servicesLevel = Math.max(0, r.servicesLevel - 1); forceRebuild();
     };
     this.statePanel.querySelector<HTMLButtonElement>('#mil-up')!.onclick = () => {
-      r.militiaLevel = Math.min(2, r.militiaLevel + 1);
+      r.militiaLevel = Math.min(2, r.militiaLevel + 1); forceRebuild();
     };
     this.statePanel.querySelector<HTMLButtonElement>('#mil-dn')!.onclick = () => {
-      r.militiaLevel = Math.max(0, r.militiaLevel - 1);
+      r.militiaLevel = Math.max(0, r.militiaLevel - 1); forceRebuild();
     };
     this.statePanel.querySelector<HTMLButtonElement>('#research-toggle')!.onclick = () => {
-      this.researchOpen = !this.researchOpen;
+      this.researchOpen = !this.researchOpen; forceRebuild();
     };
     this.statePanel.querySelector<HTMLButtonElement>('#routenet-toggle')!.onclick = () => {
-      this.routeNetworkOpen = !this.routeNetworkOpen;
+      this.routeNetworkOpen = !this.routeNetworkOpen; forceRebuild();
     };
     this.statePanel.querySelector<HTMLButtonElement>('#settlements-toggle')!.onclick = () => {
-      this.settlementListOpen = !this.settlementListOpen;
+      this.settlementListOpen = !this.settlementListOpen; forceRebuild();
     };
     this.statePanel.querySelector<HTMLButtonElement>('#economy-toggle')!.onclick = () => {
-      this.economyOpen = !this.economyOpen;
+      this.economyOpen = !this.economyOpen; forceRebuild();
     };
     this.statePanel.querySelector<HTMLButtonElement>('#convention-btn')?.addEventListener('click', () => {
       this.conventionOpen = true;
@@ -2608,6 +2619,11 @@ export class RegionView {
       return;
     }
     this.researchPanel.classList.remove('hidden');
+    // DOM-stability guard (see drawStatePanel): rebuild on a ~1s timer, not every
+    // frame, or the "research"/"cancel" buttons are replaced mid-click and never fire.
+    if (this.frame - this.lastResearchBuildFrame < 60) return;
+    this.lastResearchBuildFrame = this.frame;
+    const forceResearchRebuild = () => { this.lastResearchBuildFrame = -999; };
     const rate = r.researchRate().toFixed(1);
     const active = r.activeResearch ? TECH_TREE.find((n) => n.id === r.activeResearch) : null;
     const progressPct = active ? Math.min(100, Math.round((r.researchProgress / active.cost) * 100)) : 0;
@@ -2643,10 +2659,10 @@ export class RegionView {
       civicNodes;
 
     for (const btn of this.researchPanel.querySelectorAll<HTMLButtonElement>('.res-start-btn')) {
-      btn.onclick = () => r.startResearch(btn.dataset.id!);
+      btn.onclick = () => { r.startResearch(btn.dataset.id!); forceResearchRebuild(); };
     }
     const cancelBtn = this.researchPanel.querySelector<HTMLButtonElement>('.res-cancel-btn');
-    if (cancelBtn) cancelBtn.onclick = () => r.cancelResearch();
+    if (cancelBtn) cancelBtn.onclick = () => { r.cancelResearch(); forceResearchRebuild(); };
   }
 
   private panelHtml(t: Settlement): string {
