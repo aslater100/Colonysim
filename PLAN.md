@@ -36,6 +36,9 @@ Track A is **substantially complete**; the bug fixes landed alongside the govern
 - 🔶 **Phase 5** — *sim-side landed; main-loop wiring pending.*
   - ✅ **Dormant tick (sim):** `Simulation.tickDormant()` + `isActive` flag. Once-a-day coarse update — crop growth + auto sow/harvest into the stockpile, plus the existing food-gated population flows — skipping every per-tick agent path (pathfinding, needs/deaths, raids, weather drama, trading). Self-contained and additive, mirroring the Phase 2/3 approach. Tests: `tests/dormant.test.ts`.
   - ⬜ **Remaining:** the `main.ts` budget loop (active = full ticks, dormant parcels round-robin one `tickDormant()` per game-day) — lands when `ParcelManager` is wired into `main.ts` alongside Phase 4.
+- 🔶 **Phase 6** — *foundation landed; region.ts adoption pending.*
+  - ✅ **Typed-array fog (`src/sim/fogmap.ts`):** `FogMap` — a 100×100 `Uint8Array` with the same three-state `fogged/explored/scouted` semantics as `RegionSim.explorationMap`, a circular `reveal()` matching `revealTiles`, `clearScouted()`, `exploredFraction()` (for the zoom-out gate), compact base64 (de)serialization (scouted persisted as explored, as today), and `fromLegacyRows()`/`toLegacyRows()` migration off the existing `'0'`/`'1'` row-string save format. Portable base64 (no Buffer/btoa) so it runs in Node, browser, and the Phase 7 worker. Additive — the live `region.ts` serializer is untouched. Tests: `tests/fogmap.test.ts`.
+  - ⬜ **Remaining:** swap `region.ts`'s `explorationMap` reads/writes onto `FogMap` and migrate its serializer (v-bump + `fromLegacyRows` on load), plus the multi-zoom fog rendering. A broad refactor across the 6,967-line `region.ts` with save-compat surface — sequence it with the Phase 4 renderer so fog and chunks change together.
 
 ### What this plan covers (two tracks, sequential)
 
