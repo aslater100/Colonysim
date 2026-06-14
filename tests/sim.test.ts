@@ -63,13 +63,26 @@ describe('Simulation', () => {
     expect(sim.gameOver).toBe(true);
   });
 
-  it('soft population ceiling reduces work efficiency above the cap', () => {
+  it('the old soft population ceiling no longer taxes work or mood (retired)', () => {
     const sim = new Simulation(42);
     expect(sim.softCapWorkMult()).toBe(1);
     for (let i = 0; i < 70; i++) sim.spawnSettler(48, 48);
     expect(sim.settlers.length).toBeGreaterThan(TUNING.softCapPop);
-    expect(sim.softCapWorkMult()).toBeLessThan(1);
-    expect(sim.softCapMoodPenalty()).toBeGreaterThan(0);
+    // Degradation removed: a large colony runs at full efficiency and no crowding mood hit.
+    expect(sim.softCapWorkMult()).toBe(1);
+    expect(sim.softCapMoodPenalty()).toBe(0);
+  });
+
+  it('population growth is gated by built housing, not an arbitrary cap', () => {
+    const sim = new Simulation(42);
+    const housing = sim.housingCapacity();
+    expect(housing).toBeGreaterThan(0); // the founding party arrives with shelter
+    // Fill every bed, then feed the colony lavishly: with no spare housing the
+    // population must hold steady rather than balloon past its beds.
+    sim.stock.meal = 5000; sim.stock.grain = 5000;
+    while (sim.settlers.length < housing) sim.spawnSettler(48, 48);
+    runDays(sim, 25);
+    expect(sim.settlers.length).toBeLessThanOrEqual(housing);
   });
 
   it('raids arrive, are fought off or leave, and the colony endures', () => {

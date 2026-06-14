@@ -354,14 +354,17 @@ export class Simulation {
     return this.settlers.reduce((s, p) => s + p.mood, 0) / this.settlers.length;
   }
 
-  /** Soft-ceiling penalties on town #1 (GDD §2.3). */
+  /**
+   * Soft-ceiling penalties on town #1 (GDD §2.3) — retired. Growth is now gated
+   * by real housing (see housingCapacity / updatePopulationFlows), so a large,
+   * well-housed colony no longer suffers an arbitrary work/mood tax for its size.
+   * Kept as neutral no-ops so existing call sites stay valid.
+   */
   softCapWorkMult(): number {
-    const over = Math.max(0, this.settlers.length - TUNING.softCapPop);
-    return Math.max(0.4, 1 - over * TUNING.softCapWorkPenaltyPer);
+    return 1;
   }
   softCapMoodPenalty(): number {
-    const over = Math.max(0, this.settlers.length - TUNING.softCapPop);
-    return Math.floor(over / 10) * TUNING.softCapMoodPenaltyPer10;
+    return 0;
   }
 
   // ---- setup ----
@@ -373,8 +376,24 @@ export class Simulation {
         this.planZone('stockpile', cx - 1 + dx, cy - 1 + dy);
       }
     }
-    this.placeBuilding('house', cx - 5, cy - 2, 0, true);
-    this.placeBuilding('house', cx + 3, cy - 2, 0, true);
+    // The wagons arrive with shelter for everyone: two established cabins, raised
+    // to a level whose beds house the founding party with a little headroom to
+    // grow into. Population now grows only into built housing (updatePopulationFlows),
+    // so without this the town would start over-capacity and stuck — the very
+    // "growth without housing" bug this gating prevents. Keeping it to the two
+    // original footprints leaves the rest of the campsite clear.
+    const homes = [
+      this.placeBuilding('house', cx - 5, cy - 2, 0, true),
+      this.placeBuilding('house', cx + 3, cy - 2, 0, true),
+    ].filter((b): b is Building => b !== null);
+    const houseDef = buildingDef('house');
+    const maxLevel = (houseDef.upgrades?.length ?? 0) + 1;
+    const bedsAt = (lvl: number) =>
+      (houseDef.capacity ?? 0) + (houseDef.upgrades ?? []).slice(0, lvl - 1).reduce((s, u) => s + (u.capacityBonus ?? 0), 0);
+    // Smallest level at which the two cabins bed everyone plus a couple spare.
+    let level = 1;
+    while (level < maxLevel && homes.length * bedsAt(level) < startingPop + 2) level++;
+    for (const h of homes) h.level = level;
     for (let i = 0; i < startingPop; i++) {
       this.spawnSettler(cx - 3 + (i % 6), cy + 3 + Math.floor(i / 6));
     }
@@ -494,6 +513,12 @@ export class Simulation {
     return (b.rotation ?? 0) % 2 === 1 ? def.w : def.h;
   }
 
+  /** Total settlers the built shelter can house — the sum of every bed across
+   *  all finished sleep buildings. Population growth stops at this ceiling. */
+  housingCapacity(): number {
+    return this.builtOf('sleep').reduce((sum, b) => sum + this.buildingEffectiveCapacity(b), 0);
+  }
+
   /** Capacity adjusted by upgrade level. */
   buildingEffectiveCapacity(b: Building): number {
     const def = buildingDef(b.defId);
@@ -566,7 +591,7 @@ export class Simulation {
     const i = this.buildings.findIndex((b) => b.id === id && !b.built);
     if (i < 0) return;
     const b = this.buildings[i];
-    this.stock.wood += b.delivered;
+    this.addStock('wood', b.delivered, b.x, b.y);
     const w = this.buildingW(b);
     const h = this.buildingH(b);
     for (let dy = 0; dy < h; dy++) {
@@ -584,7 +609,7 @@ export class Simulation {
     if (!b) return;
     const def = buildingDef(b.defId);
     // Refund half the base wood cost
-    this.stock.wood += Math.floor((def.cost.wood ?? 0) / 2);
+    this.addStock('wood', Math.floor((def.cost.wood ?? 0) / 2), b.x, b.y);
     const w = this.buildingW(b);
     const h = this.buildingH(b);
     for (let dy = 0; dy < h; dy++) {
@@ -770,7 +795,7 @@ export class Simulation {
       this.world.invalidatePathCache();
       return true;
     } else if (kind === 'trap') {
-      if (t.trapZone) { t.trapZone = false; this.stock.wood += TUNING.trapWoodCost; return true; }
+      if (t.trapZone) { t.trapZone = false; this.addStock('wood', TUNING.trapWoodCost, x, y); return true; }
       if (t.kind === 'water' || t.kind === 'rock' || t.wall || t.gate || t.buildingId !== null) return false;
       if (this.stock.wood < TUNING.trapWoodCost) return false;
       this.stock.wood -= TUNING.trapWoodCost;
@@ -855,7 +880,7 @@ export class Simulation {
     }
     if (t.trapZone) {
       t.trapZone = false;
-      this.stock.wood += TUNING.trapWoodCost;
+      this.addStock('wood', TUNING.trapWoodCost, x, y);
       return;
     }
     if (t.flaxZone) { t.flaxZone = false; if (!t.sown && t.growth === 0) t.kind = 'grass'; return; }
@@ -900,10 +925,27 @@ export class Simulation {
 
   /** Total raw goods in stock (excludes food/food-precursor items tracked separately by mealCap). */
   totalRawStock(): number {
-    const FOOD_KINDS = new Set<ResourceKind>(['grain', 'flour', 'meal', 'game_meal', 'fish_meal', 'bread', 'dairy', 'produce', 'preserved', 'ale']);
     return (Object.keys(this.stock) as ResourceKind[])
-      .filter((k) => !FOOD_KINDS.has(k))
+      .filter((k) => !FOOD_HAUL_KINDS.has(k))
       .reduce((sum, k) => sum + this.stock[k], 0);
+  }
+
+  /**
+   * Add `qty` of `kind` to the shared stores, honouring the raw-good cap so the
+   * stockpile can never read over its capacity. Food kinds bypass the cap (meal
+   * spoilage governs them separately). Anything that doesn't fit is left on the
+   * ground at (x, y) as a haulable pile rather than vanishing. Returns the amount
+   * actually stored.
+   */
+  private addStock(kind: ResourceKind, qty: number, x: number, y: number): number {
+    if (qty <= 0) return 0;
+    if (FOOD_HAUL_KINDS.has(kind)) { this.stock[kind] += qty; return qty; }
+    const room = Math.max(0, this.stockpileCapacity() - this.totalRawStock());
+    const stored = Math.min(qty, room);
+    if (stored > 0) this.stock[kind] += stored;
+    const overflow = qty - stored;
+    if (overflow > 0) this.dropItem(kind, overflow, Math.round(x), Math.round(y));
+    return stored;
   }
 
   building(id: number | null | undefined): Building | undefined {
@@ -1118,7 +1160,7 @@ export class Simulation {
         if (t.growth >= 100) { this.stock.grain += grainYield; t.growth = 0; }
       } else if (t.flaxZone) {
         t.growth += flaxPerDay; // flax is perennial — grows year-round
-        if (t.growth >= 100) { this.stock.flax += TUNING.flaxYieldPerTile; t.growth = 0; }
+        if (t.growth >= 100) { this.addStock('flax', TUNING.flaxYieldPerTile, Math.floor(MAP_W / 2), Math.floor(MAP_H / 2)); t.growth = 0; }
       }
     }
   }
@@ -1278,8 +1320,11 @@ export class Simulation {
     const pop = this.settlers.length;
     if (pop === 0) return;
     const food = this.stock.meal + this.stock.grain;
+    // Housing is the real ceiling: a colony only grows into the beds it has built.
+    // Without spare shelter, wagons roll past and young couples wait.
+    const housing = this.housingCapacity();
     // Immigration: word of a well-fed colony travels; wagons stop when there's no room.
-    if (this.day >= t.firstImmigrantDay && pop < t.immigrantStopPop &&
+    if (this.day >= t.firstImmigrantDay && pop < housing && pop < t.immigrantStopPop &&
         food >= pop * t.immigrantFoodPerCapita && this.rng.chance(t.immigrantChancePerDay)) {
       const gate = { x: 1, y: Math.floor(MAP_H / 2) };
       const edge = this.world.passable(gate.x, gate.y) ? gate : this.world.nearestPassable(gate);
@@ -1290,7 +1335,7 @@ export class Simulation {
     }
     // Births: the colony's youth come of age (children are abstracted at town tier).
     const couples = Math.floor(pop / 2);
-    if (pop >= t.birthMinPop && pop < t.hardCapPop && food >= pop * 2 &&
+    if (pop >= t.birthMinPop && pop < housing && pop < t.hardCapPop && food >= pop * 2 &&
         this.rng.chance(Math.min(0.25, couples * t.birthChancePerCoupleDay))) {
       const home = this.builtOf('sleep')[0];
       const at = home ? this.buildingCenter(home) : { x: Math.floor(MAP_W / 2), y: Math.floor(MAP_H / 2) };
@@ -1581,7 +1626,8 @@ export class Simulation {
   /** A fallen deadfall near the tree line: free timber. */
   private evtWindfallTimber(): void {
     const logs = 15 + this.rng.int(10);
-    this.stock.wood += logs;
+    const drop = this.nearestStockpileTile({ x: Math.floor(MAP_W / 2), y: Math.floor(MAP_H / 2) }) ?? { x: Math.floor(MAP_W / 2), y: Math.floor(MAP_H / 2) };
+    this.addStock('wood', logs, drop.x, drop.y);
     this.addLog(`A deadfall near the tree line yields ${logs} timber — the settlers haul it in.`, 'good');
   }
 
@@ -2670,7 +2716,7 @@ export class Simulation {
           this.setDestination(s, spTile);
           return;
         }
-        this.stock[s.carrying.kind] += s.carrying.qty;
+        this.addStock(s.carrying.kind, s.carrying.qty, task.x, task.y);
         s.carrying = null;
         this.finishTask(s);
         return;
@@ -2940,7 +2986,7 @@ export class Simulation {
           task.workLeft -= work;
           if (task.workLeft <= 0) {
             this.stock.coal -= TUNING.cokeCoalCost;
-            this.stock.coke++;
+            this.addStock('coke', 1, s.pos.x, s.pos.y);
             this.finishTask(s);
           }
           return;
@@ -2952,7 +2998,7 @@ export class Simulation {
           if (task.workLeft <= 0) {
             this.stock.iron_ore -= TUNING.smeltOrePerIron;
             this.stock.coke -= TUNING.smeltCokePerIron;
-            this.stock.iron++;
+            this.addStock('iron', 1, s.pos.x, s.pos.y);
             this.finishTask(s);
           }
         } else if (task.label === 'smith tools') {
@@ -2960,7 +3006,7 @@ export class Simulation {
           task.workLeft -= work;
           if (task.workLeft <= 0) {
             this.stock.iron -= TUNING.smithIronPerTools;
-            this.stock.tools++;
+            this.addStock('tools', 1, s.pos.x, s.pos.y);
             if (this.stock.tools === 1) this.addLog('First batch of tools forged. Construction is 20% faster.', 'good');
             this.finishTask(s);
           }
@@ -2981,14 +3027,14 @@ export class Simulation {
           if (this.hasTech('iron_mining')) {
             const roll = this.rng.next();
             if (roll < 0.5) {
-              this.stock.clay += Math.round(TUNING.mineClayPerCharge * yieldMult);
+              this.addStock('clay', Math.round(TUNING.mineClayPerCharge * yieldMult), s.pos.x, s.pos.y);
             } else if (roll < 0.8) {
-              this.stock.iron_ore += Math.round(TUNING.mineIronOrePerCharge * yieldMult);
+              this.addStock('iron_ore', Math.round(TUNING.mineIronOrePerCharge * yieldMult), s.pos.x, s.pos.y);
             } else {
-              this.stock.coal += Math.round(TUNING.mineCoalPerCharge * yieldMult);
+              this.addStock('coal', Math.round(TUNING.mineCoalPerCharge * yieldMult), s.pos.x, s.pos.y);
             }
           } else {
-            this.stock.clay += Math.round(TUNING.mineClayPerCharge * yieldMult);
+            this.addStock('clay', Math.round(TUNING.mineClayPerCharge * yieldMult), s.pos.x, s.pos.y);
           }
           if (tile.mineCharges <= 0) {
             tile.mineZone = false;
@@ -3005,7 +3051,7 @@ export class Simulation {
         if (task.workLeft <= 0) {
           if (rb.defId === 'herb_garden') {
             const herbMult = rb.level >= 3 ? 2 : rb.level >= 2 ? 1.5 : 1;
-            this.stock.herbs += Math.round(TUNING.herbsPerHarvest * herbMult);
+            this.addStock('herbs', Math.round(TUNING.herbsPerHarvest * herbMult), s.pos.x, s.pos.y);
             rb.herbGrowthMinutes = 0;
             this.finishTask(s);
             return;
@@ -3040,7 +3086,7 @@ export class Simulation {
           task.workLeft -= work;
           if (task.workLeft <= 0) {
             this.stock.wood -= TUNING.sawmillWoodPerTimber;
-            this.stock.timber++;
+            this.addStock('timber', 1, s.pos.x, s.pos.y);
             this.finishTask(s);
           }
           return;
@@ -3050,7 +3096,7 @@ export class Simulation {
           task.workLeft -= work;
           if (task.workLeft <= 0) {
             this.stock.clay -= TUNING.kilnClayPerBrick;
-            this.stock.brick++;
+            this.addStock('brick', 1, s.pos.x, s.pos.y);
             this.finishTask(s);
           }
           return;
@@ -3060,7 +3106,7 @@ export class Simulation {
           task.workLeft -= work;
           if (task.workLeft <= 0) {
             this.stock.herbs -= TUNING.medicineHerbCost;
-            this.stock.medicine++;
+            this.addStock('medicine', 1, s.pos.x, s.pos.y);
             this.finishTask(s);
           }
           return;
@@ -3071,7 +3117,7 @@ export class Simulation {
           task.workLeft -= work;
           if (task.workLeft <= 0) {
             this.stock.flax -= TUNING.ropeFlaxCost;
-            this.stock.rope++;
+            this.addStock('rope', 1, s.pos.x, s.pos.y);
             this.finishTask(s);
           }
           return;
@@ -3098,7 +3144,7 @@ export class Simulation {
           } else {
             this.stock.grain -= TUNING.clothesGrainCost;
           }
-          this.stock.clothes++;
+          this.addStock('clothes', 1, s.pos.x, s.pos.y);
           this.finishTask(s);
         }
         return;
@@ -3110,7 +3156,7 @@ export class Simulation {
         task.workLeft -= work * speedMult;
         if (task.workLeft <= 0) {
           this.stock.timber -= TUNING.forgeTimberCost;
-          this.stock.weapons++;
+          this.addStock('weapons', 1, s.pos.x, s.pos.y);
           this.finishTask(s);
         }
         return;

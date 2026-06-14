@@ -6,6 +6,8 @@
  * TILE = 32: doubled from the original 16 to match RimWorld's detail density.
  * Every sprite function has been redrawn at the new resolution.
  */
+import { STATION_DEFS } from '../sim/defs';
+
 export const TILE = 32;
 
 type Px = string | null;
@@ -156,6 +158,10 @@ export interface SpriteSet {
   corpse: HTMLCanvasElement;
   buildings: Record<string, HTMLCanvasElement>;
   blueprints: Record<string, HTMLCanvasElement>;
+  /** Room build-system art: plank floor, stone wall, and per-station furniture. */
+  interiorFloor: HTMLCanvasElement;
+  interiorWall: HTMLCanvasElement;
+  stations: Record<string, HTMLCanvasElement>;
 }
 
 /** Soft ground: organic tone patches + sparse grass blades at 32×32. */
@@ -1797,6 +1803,233 @@ function applyLevelPips(base: HTMLCanvasElement, level: number): HTMLCanvasEleme
   return c;
 }
 
+// ---------------------------------------------------------------------------
+// Room build-system art: a plank floor, a stone wall block, and a recognizable
+// furniture sprite for every workstation. Replaces the old flat dark squares so
+// a designated room reads as a real room (Songs-of-Syx: the room IS its stations).
+// ---------------------------------------------------------------------------
+
+/** Warm plank floor laid inside a designated room. */
+function interiorFloorTile(): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE; c.height = TILE;
+  const g = c.getContext('2d')!;
+  g.fillStyle = P.plankDark;
+  g.fillRect(0, 0, TILE, TILE);
+  // Two courses of staggered planks.
+  for (let row = 0; row < TILE; row += 8) {
+    g.fillStyle = P.plank;
+    g.fillRect(0, row + 1, TILE, 6);
+    g.fillStyle = P.plankLight;
+    g.fillRect(0, row + 1, TILE, 1);
+    // board seams, offset every other row
+    const off = (row / 8) % 2 === 0 ? 0 : 16;
+    g.fillStyle = P.plankDark;
+    g.fillRect((off) % TILE, row + 1, 1, 6);
+    g.fillRect((off + 16) % TILE, row + 1, 1, 6);
+  }
+  return c;
+}
+
+/** Mortared stone wall block (with a top bevel for a hint of height). */
+function interiorWallTile(): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE; c.height = TILE;
+  const g = c.getContext('2d')!;
+  g.fillStyle = P.rockDark;
+  g.fillRect(0, 0, TILE, TILE);
+  // Brick/stone courses.
+  for (let row = 0; row < TILE; row += 8) {
+    const off = (row / 8) % 2 === 0 ? 0 : 8;
+    for (let x = -off; x < TILE; x += 16) {
+      g.fillStyle = P.rock;
+      g.fillRect(x + 1, row + 1, 14, 6);
+      g.fillStyle = P.rockLight;
+      g.fillRect(x + 1, row + 1, 14, 1);
+    }
+  }
+  // Lit top edge so walls feel slightly raised.
+  g.fillStyle = P.rockHighlight;
+  g.fillRect(0, 0, TILE, 1);
+  g.fillStyle = P.shadow;
+  g.fillRect(0, TILE - 2, TILE, 2);
+  return c;
+}
+
+/** A furniture sprite for one workstation, sized to its w×h tile footprint. */
+function stationSprite(id: string, w: number, h: number): HTMLCanvasElement {
+  const W = w * TILE, H = h * TILE;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d')!;
+  const m = 2;
+  const shadow = () => { g.fillStyle = P.shadow; g.fillRect(m + 1, H - 4, W - 2 * m - 2, 3); };
+  const disc = (cx: number, cy: number, r: number, col: string) => {
+    g.fillStyle = col; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill();
+  };
+  const woodTop = (x: number, y: number, bw: number, bh: number) => {
+    g.fillStyle = P.woodDark; g.fillRect(x, y, bw, bh);
+    g.fillStyle = P.wood; g.fillRect(x + 1, y + 1, bw - 2, bh - 2);
+    g.fillStyle = P.woodLight; g.fillRect(x + 1, y + 1, bw - 2, 2);
+    g.fillStyle = P.woodDark; g.fillRect(x + 2, y + bh - 2, 2, 2); // leg shadow
+    g.fillRect(x + bw - 4, y + bh - 2, 2, 2);
+  };
+  const stoneBody = (dark: boolean) => {
+    g.fillStyle = dark ? '#34302b' : P.rockDark; g.fillRect(m, m + 2, W - 2 * m, H - 2 * m - 2);
+    g.fillStyle = dark ? '#4c483f' : P.rock; g.fillRect(m + 1, m + 3, W - 2 * m - 2, H - 2 * m - 4);
+    g.fillStyle = dark ? '#5e594e' : P.rockLight; g.fillRect(m + 1, m + 3, W - 2 * m - 2, 2);
+  };
+  const furnace = (dark: boolean, lit = true) => {
+    shadow(); stoneBody(dark);
+    const mw = Math.min(W - 10, 16), mx = (W - mw) / 2, my = H - 17;
+    g.fillStyle = '#140d06'; g.fillRect(mx, my, mw, 12);
+    if (lit) {
+      g.fillStyle = P.winOrange; g.fillRect(mx + 2, my + 3, mw - 4, 8);
+      g.fillStyle = '#f4d65e'; g.fillRect(mx + 4, my + 5, mw - 8, 4);
+    }
+    g.fillStyle = P.rockLight; g.fillRect(W / 2 - 3, m, 6, 4); // flue
+  };
+  const bed = (variant: 'bed' | 'bunk' | 'sick') => {
+    shadow();
+    g.fillStyle = P.woodDark; g.fillRect(m, m, W - 2 * m, H - 2 * m);
+    g.fillStyle = '#b8a888'; g.fillRect(m + 2, m + 2, W - 2 * m - 4, H - 2 * m - 4);
+    const by = m + 2 + Math.round((H - 2 * m - 4) * 0.4);
+    g.fillStyle = variant === 'sick' ? '#cdd6d0' : '#6f7d6a';
+    g.fillRect(m + 2, by, W - 2 * m - 4, H - by - m - 2);
+    g.fillStyle = variant === 'sick' ? '#e0e7e1' : '#7e8c78';
+    g.fillRect(m + 2, by, W - 2 * m - 4, 2);
+    g.fillStyle = '#e6ddc8'; g.fillRect(m + 4, m + 4, W - 2 * m - 8, 9);
+    g.fillStyle = '#f1ead8'; g.fillRect(m + 4, m + 4, W - 2 * m - 8, 3);
+    if (variant === 'bunk') {
+      g.fillStyle = P.woodDark; g.fillRect(m + 2, Math.floor(H / 2) - 1, W - 2 * m - 4, 2);
+      g.fillStyle = '#e6ddc8'; g.fillRect(m + 4, Math.floor(H / 2) + 3, W - 2 * m - 8, 8);
+    }
+    if (variant === 'sick') {
+      g.fillStyle = '#cc3a3a';
+      g.fillRect(Math.floor(W / 2) - 1, by + 5, 3, 9);
+      g.fillRect(Math.floor(W / 2) - 4, by + 8, 9, 3);
+    }
+  };
+
+  switch (id) {
+    case 'bed': bed('bed'); break;
+    case 'bunk': bed('bunk'); break;
+    case 'sickbed': bed('sick'); break;
+    case 'oven': case 'baking_oven': furnace(false); break;
+    case 'smelter': case 'coke_oven': furnace(true); break;
+    case 'kiln': {
+      shadow(); stoneBody(false);
+      g.fillStyle = P.wallBrick; g.fillRect(m + 3, m + 4, W - 2 * m - 6, H - 2 * m - 8);
+      g.fillStyle = P.wallBrickDk;
+      for (let y = m + 4; y < H - m - 6; y += 5) g.fillRect(m + 3, y, W - 2 * m - 6, 1);
+      g.fillStyle = '#140d06'; g.fillRect(W / 2 - 7, H - 18, 14, 12);
+      g.fillStyle = P.winOrange; g.fillRect(W / 2 - 5, H - 15, 10, 8);
+      break;
+    }
+    case 'millstone': {
+      shadow();
+      const cx = W / 2, cy = H / 2;
+      disc(cx, cy, 24, P.rockDark);
+      disc(cx, cy, 22, P.rock);
+      g.fillStyle = P.rockLight; g.beginPath(); g.arc(cx, cy, 22, Math.PI, Math.PI * 1.5); g.lineTo(cx, cy); g.fill();
+      disc(cx, cy, 6, P.rockDark);
+      g.fillStyle = P.wood; g.fillRect(cx - 2, cy - 2, 4, 4);
+      break;
+    }
+    case 'anvil': {
+      shadow();
+      woodTop(m + 1, H - 11, W - 2 * m - 2, 9);
+      g.fillStyle = '#3a3a44'; g.fillRect(5, 11, W - 10, 6);
+      g.fillStyle = '#52525e'; g.fillRect(5, 11, W - 10, 2);
+      g.fillStyle = '#3a3a44'; g.fillRect(W / 2 - 3, 17, 6, 5);
+      g.fillStyle = '#2c2c34'; g.fillRect(3, 13, 4, 3); // horn
+      break;
+    }
+    case 'weapon_bench': {
+      shadow(); woodTop(m, 11, W - 2 * m, H - 13);
+      g.fillStyle = P.wood; g.fillRect(10, 16, W - 26, 3);
+      g.fillStyle = P.rockLight; g.fillRect(W - 16, 13, 9, 7); // spearhead
+      g.fillStyle = P.rockHighlight; g.fillRect(W - 15, 14, 4, 2);
+      break;
+    }
+    case 'saw_bench': {
+      shadow(); woodTop(m, 12, W - 2 * m, H - 14);
+      disc(W - 16, H / 2, 8, '#8b8b95'); // circular blade
+      disc(W - 16, H / 2, 3, P.woodDark);
+      g.fillStyle = '#b8b8c0';
+      for (let a = 0; a < Math.PI * 2; a += Math.PI / 6) g.fillRect(W - 16 + Math.cos(a) * 8 - 1, H / 2 + Math.sin(a) * 8 - 1, 2, 2);
+      break;
+    }
+    case 'loom': {
+      shadow();
+      g.fillStyle = P.woodDark; g.fillRect(m + 2, m + 2, 3, H - 2 * m - 4); g.fillRect(W - m - 5, m + 2, 3, H - 2 * m - 4);
+      g.fillStyle = P.wood; g.fillRect(m + 2, m + 3, W - 2 * m - 4, 3); g.fillRect(m + 2, H - m - 6, W - 2 * m - 4, 3);
+      g.fillStyle = '#d8cdb2';
+      for (let x = m + 8; x < W - m - 6; x += 4) g.fillRect(x, m + 6, 1, H - 2 * m - 12); // warp threads
+      break;
+    }
+    case 'rope_walk': {
+      shadow();
+      g.fillStyle = P.woodDark; g.fillRect(m + 1, m + 4, 4, H - 2 * m - 8); g.fillRect(W - m - 5, m + 4, 4, H - 2 * m - 8);
+      for (let i = 0; i < 3; i++) {
+        const y = H / 2 - 6 + i * 6;
+        g.fillStyle = i % 2 ? '#b89a5e' : '#a88a50';
+        g.fillRect(m + 5, y, W - 2 * m - 10, 3);
+        g.fillStyle = '#c9ab6e';
+        for (let x = m + 6; x < W - m - 6; x += 4) g.fillRect(x, y, 2, 1); // twist
+      }
+      break;
+    }
+    case 'herb_table': {
+      shadow(); woodTop(m, 11, W - 2 * m, H - 13);
+      g.fillStyle = '#3c8a4c';
+      for (let i = 0; i < 4; i++) { const x = 8 + i * ((W - 16) / 4); g.fillRect(x, 13, 3, 6); g.fillRect(x - 2, 13, 7, 2); }
+      break;
+    }
+    case 'brew_vat': {
+      shadow();
+      g.fillStyle = P.woodDark; g.fillRect(m + 4, m + 3, W - 2 * m - 8, H - 2 * m - 4);
+      g.fillStyle = P.wood; g.fillRect(m + 6, m + 4, W - 2 * m - 12, H - 2 * m - 6);
+      g.fillStyle = P.woodLight; g.fillRect(m + 6, m + 4, 3, H - 2 * m - 6);
+      g.fillStyle = P.trunkDark; g.fillRect(m + 4, m + 8, W - 2 * m - 8, 3); g.fillRect(m + 4, H - m - 10, W - 2 * m - 8, 3); // hoops
+      disc(W / 2, m + 6, 5, '#5a4a36'); // open top
+      disc(W / 2, m + 6, 3, '#7a6a30');
+      break;
+    }
+    case 'desk': {
+      shadow(); woodTop(m, 12, W - 2 * m, H - 14);
+      g.fillStyle = '#e6ddc8'; g.fillRect(7, 14, 11, 8); // open book
+      g.fillStyle = P.woodDark; g.fillRect(W / 2 - 1, 14, 1, 8);
+      g.fillStyle = '#a89878'; g.fillRect(8, 16, 4, 1); g.fillRect(8, 18, 4, 1);
+      break;
+    }
+    case 'table': {
+      shadow(); woodTop(m, 11, W - 2 * m, H - 13);
+      disc(W * 0.32, H / 2, 4, '#cfd4dc'); disc(W * 0.68, H / 2, 4, '#cfd4dc'); // plates
+      break;
+    }
+    case 'shelf': {
+      shadow();
+      g.fillStyle = P.woodDark; g.fillRect(m + 1, m + 1, W - 2 * m - 2, H - 2 * m - 2);
+      g.fillStyle = P.wood; g.fillRect(m + 2, m + 2, W - 2 * m - 4, H - 2 * m - 4);
+      for (let row = 0; row < 2; row++) {
+        const y = m + 5 + row * ((H - 2 * m - 8) / 2);
+        g.fillStyle = P.woodDark; g.fillRect(m + 2, y + 7, W - 2 * m - 4, 2); // shelf board
+        g.fillStyle = ['#9c6b40', '#7a9040', '#a88a50'][row % 3];
+        for (let x = m + 4; x < W - m - 5; x += 5) g.fillRect(x, y + 1, 3, 6); // goods
+      }
+      break;
+    }
+    default: { // generic crate
+      shadow();
+      woodTop(m + 2, m + 3, W - 2 * m - 4, H - 2 * m - 5);
+      g.fillStyle = P.woodDark;
+      g.fillRect(m + 2, Math.floor(H / 2), W - 2 * m - 4, 1);
+    }
+  }
+  return c;
+}
+
 export function buildSprites(buildingDefs: { id: string; w: number; h: number; upgrades?: unknown[] }[]): SpriteSet {
   const buildings: Record<string, HTMLCanvasElement> = {};
   const blueprints: Record<string, HTMLCanvasElement> = {};
@@ -1812,6 +2045,8 @@ export function buildSprites(buildingDefs: { id: string; w: number; h: number; u
       }
     }
   }
+  const stations: Record<string, HTMLCanvasElement> = {};
+  for (const sd of STATION_DEFS) stations[sd.id] = stationSprite(sd.id, sd.w, sd.h);
   const roads: Record<string, HTMLCanvasElement> = {};
   const roadPlans: Record<string, HTMLCanvasElement> = {};
   for (const k of ['dirt', 'plank', 'gravel', 'bridge']) {
@@ -1893,5 +2128,8 @@ export function buildSprites(buildingDefs: { id: string; w: number; h: number; u
     corpse: corpseSprite(),
     buildings,
     blueprints,
+    interiorFloor: interiorFloorTile(),
+    interiorWall: interiorWallTile(),
+    stations,
   };
 }

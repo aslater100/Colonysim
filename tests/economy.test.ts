@@ -152,8 +152,8 @@ describe('dynamic supply/demand pricing', () => {
     const sim = new Simulation(42);
     sim.townTechsResearched.push('textile_farming');
     sim.placeBuilding('tailor', 54, 48, true);
-    sim.stock.flax = 200;
-    sim.stock.clothes = 200; // nobody is threadbare → tailor spins rope instead
+    sim.stock.flax = 120;
+    sim.stock.clothes = 20; // nobody is threadbare → tailor spins rope instead
     for (const s of sim.settlers) s.clothedUntil = sim.minute + 1e9;
     runDays(sim, 2);
     expect(sim.stock.rope).toBeGreaterThan(0);
