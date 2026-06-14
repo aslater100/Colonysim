@@ -1,8 +1,9 @@
 import './style.css';
 import { Simulation } from './sim/sim';
 import { RegionSim } from './sim/region';
-import { TICKS_PER_SECOND, TUNING } from './sim/defs';
+import { TICKS_PER_SECOND, TUNING, BLUEPRINT_DEFS } from './sim/defs';
 import { MAP_W, MAP_H } from './sim/world';
+import { BuildGrid } from './sim/build';
 import { Renderer, drawMinimap } from './ui/render';
 import type { Camera } from './ui/render';
 import { Hud } from './ui/hud';
@@ -73,6 +74,7 @@ const boot = bootSim();
 const sim = boot.sim;
 // Debug/automation hook (used by headless smoke tests; harmless in play)
 (window as unknown as { sim: Simulation }).sim = sim;
+const buildGrid = new BuildGrid();
 const cam: Camera = {
   x: (MAP_W * TILE) / 2 - window.innerWidth / 2,
   y: (MAP_H * TILE) / 2 - window.innerHeight / 2,
@@ -86,6 +88,11 @@ const cam: Camera = {
   selectedSettler: null,
   selectedBuilding: null,
   selectedStockpile: null,
+  buildGrid,
+  roomPaintMode: null,
+  roomTypeId: 0,
+  stationTypeId: 0,
+  stampBlueprint: null,
 };
 
 function resize(): void {
@@ -245,11 +252,16 @@ window.addEventListener('keydown', (e) => {
     // First escape clears whatever tool/selection is live; a bare escape
     // with nothing active opens the menu.
     const anythingActive = cam.placing !== null || cam.placingZone !== null || cam.chopMode ||
+      cam.roomPaintMode !== null || cam.stampBlueprint !== null ||
       cam.selectedSettler !== null || cam.selectedBuilding !== null || cam.selectedStockpile !== null;
     cam.placing = null;
     cam.placingRotation = 0;
     cam.placingZone = null;
     cam.chopMode = false;
+    cam.roomPaintMode = null;
+    cam.roomTypeId = 0;
+    cam.stationTypeId = 0;
+    cam.stampBlueprint = null;
     cam.selectedSettler = null;
     cam.selectedBuilding = null;
     cam.selectedStockpile = null;
@@ -340,8 +352,19 @@ canvas.addEventListener('mousemove', (e) => {
       } else if (cam.chopMode && !paintedTiles.has(key)) {
         paintedTiles.add(key);
         sim.markTree(pt.x, pt.y);
+      } else if (cam.roomPaintMode && cam.roomPaintMode !== 'station' && !paintedTiles.has(key)) {
+        paintedTiles.add(key);
+        if (cam.roomPaintMode === 'wall') buildGrid.setWall(pt.x, pt.y);
+        else if (cam.roomPaintMode === 'floor') buildGrid.setFloor(pt.x, pt.y);
+        else if (cam.roomPaintMode === 'room' && cam.roomTypeId) buildGrid.designate(pt.x, pt.y, cam.roomTypeId);
+        else if (cam.roomPaintMode === 'erase') {
+          buildGrid.clearWall(pt.x, pt.y);
+          buildGrid.clearFloor(pt.x, pt.y);
+          buildGrid.clearDesignation(pt.x, pt.y);
+        }
       }
     }
+    if (cam.roomPaintMode && cam.roomPaintMode !== 'station') buildGrid.rebuildRooms();
   } else {
     prevDragTile = null;
   }
@@ -389,6 +412,31 @@ canvas.addEventListener('click', (e) => {
   }
   if (mode === 'region') return; // diorama is look-only
   const t = renderer.tileAt(e.clientX, e.clientY);
+  if (cam.stampBlueprint) {
+    const bp = BLUEPRINT_DEFS.find((b) => b.id === cam.stampBlueprint);
+    if (bp) buildGrid.stampBlueprint(bp, t.x - Math.floor(bp.w / 2), t.y - Math.floor(bp.h / 2));
+    if (!e.shiftKey) { cam.stampBlueprint = null; hud.refreshBuildBarState(); }
+    return;
+  }
+  if (cam.roomPaintMode === 'station' && cam.stationTypeId > 0) {
+    buildGrid.placeStation(cam.stationTypeId, t.x, t.y);
+    buildGrid.rebuildRooms();
+    if (!e.shiftKey) { cam.roomPaintMode = null; cam.stationTypeId = 0; hud.refreshBuildBarState(); }
+    return;
+  }
+  if (cam.roomPaintMode && cam.roomPaintMode !== 'station') {
+    // single-click paint (drag handles multi-tile; single click covers the gap)
+    if (cam.roomPaintMode === 'wall') buildGrid.setWall(t.x, t.y);
+    else if (cam.roomPaintMode === 'floor') buildGrid.setFloor(t.x, t.y);
+    else if (cam.roomPaintMode === 'room' && cam.roomTypeId) buildGrid.designate(t.x, t.y, cam.roomTypeId);
+    else if (cam.roomPaintMode === 'erase') {
+      buildGrid.clearWall(t.x, t.y);
+      buildGrid.clearFloor(t.x, t.y);
+      buildGrid.clearDesignation(t.x, t.y);
+    }
+    buildGrid.rebuildRooms();
+    return;
+  }
   if (cam.placing) {
     if (sim.placeBuilding(cam.placing, t.x, t.y, cam.placingRotation ?? 0)) {
       if (!e.shiftKey) {

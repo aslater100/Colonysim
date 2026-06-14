@@ -3,7 +3,7 @@
  * inspector panel, work priorities, event log.
  */
 import type { Simulation, Settler, Building } from '../sim/sim';
-import { buildingDef, traitDef, WORK_KINDS, TUNING, TOWN_TECH_DEFS, formatCurrency } from '../sim/defs';
+import { buildingDef, traitDef, WORK_KINDS, TUNING, TOWN_TECH_DEFS, formatCurrency, ROOM_TYPE_ID, STATION_TYPE_ID } from '../sim/defs';
 import type { ResourceKind, WorkKind } from '../sim/defs';
 import { BASE_PRICES } from '../sim/economy';
 import type { Camera } from './render';
@@ -29,8 +29,8 @@ interface BuildCategory {
 }
 
 interface BuildItem {
-  kind: 'building' | 'zone' | 'tool';
-  id: string; // defId for buildings, PaintKind for zones, 'chop'/'overlay'/'priorities' for tools
+  kind: 'building' | 'zone' | 'tool' | 'room-tool' | 'blueprint';
+  id: string;
   label: string;
   cost?: string;
   hotkey?: string;
@@ -112,6 +112,51 @@ const BUILD_CATEGORIES: BuildCategory[] = [
       { kind: 'building', id: 'armory', label: 'Armoury', cost: '30w', desc: 'Forges weapons from wood. Armed settlers deal more damage.' },
       { kind: 'building', id: 'watchtower', label: 'Watchtower', cost: '25w', desc: 'Warns of raids 1 day early. Needs Fortification tech.' },
       { kind: 'building', id: 'well', label: 'Well', cost: '10w+5s', desc: 'Reduces infection risk colony-wide. Needs First Aid tech.' },
+    ],
+  },
+  {
+    id: 'rooms',
+    icon: '⬛',
+    label: 'ROOMS',
+    items: [
+      // Paint tools
+      { kind: 'room-tool', id: 'wall', label: 'Wall [V]', hotkey: 'v', desc: 'Paint room walls.' },
+      { kind: 'room-tool', id: 'floor', label: 'Floor', desc: 'Paint interior floors.' },
+      { kind: 'room-tool', id: 'erase', label: 'Erase', desc: 'Remove walls, floors, and room designations.' },
+      // Room designations
+      { kind: 'room-tool', id: 'room-home', label: 'Home', desc: 'Sleeping quarters. Place beds/bunks inside.' },
+      { kind: 'room-tool', id: 'room-kitchen', label: 'Kitchen', desc: 'Cook grain into meals. Needs ovens.' },
+      { kind: 'room-tool', id: 'room-bakery', label: 'Bakery', desc: 'Bake flour into bread. Needs baking ovens.' },
+      { kind: 'room-tool', id: 'room-mill', label: 'Mill', desc: 'Grind grain into flour. Needs millstones.' },
+      { kind: 'room-tool', id: 'room-smithy', label: 'Smithy', desc: 'Forge iron into tools and weapons.' },
+      { kind: 'room-tool', id: 'room-foundry', label: 'Foundry', desc: 'Smelt ore into iron. Needs smelters.' },
+      { kind: 'room-tool', id: 'room-sawmill', label: 'Sawmill', desc: 'Cut wood into timber. Needs saw benches.' },
+      { kind: 'room-tool', id: 'room-workshop', label: 'Workshop', desc: 'Weave flax into cloth and rope.' },
+      { kind: 'room-tool', id: 'room-kilnhouse', label: 'Kilnhouse', desc: 'Fire clay into brick; coal into coke.' },
+      { kind: 'room-tool', id: 'room-library', label: 'Library', desc: 'Study and research. Needs desks.' },
+      { kind: 'room-tool', id: 'room-infirmary', label: 'Infirmary', desc: 'Treat the sick. Needs sickbeds.' },
+      { kind: 'room-tool', id: 'room-apothecary', label: 'Apothecary', desc: 'Brew herbs into medicine.' },
+      { kind: 'room-tool', id: 'room-tavern', label: 'Tavern', desc: 'Recreation and ale. Needs tables.' },
+      { kind: 'room-tool', id: 'room-storehouse', label: 'Storehouse', desc: 'Bulk storage. Needs shelves.' },
+      // Stations
+      { kind: 'room-tool', id: 'station-bed', label: 'Bed', desc: 'Sleeping slot (1) in a Home.' },
+      { kind: 'room-tool', id: 'station-bunk', label: 'Bunk', desc: 'Sleeping slots (3) in a Home.' },
+      { kind: 'room-tool', id: 'station-oven', label: 'Oven', desc: 'Grain→meal in a Kitchen.' },
+      { kind: 'room-tool', id: 'station-millstone', label: 'Millstone', desc: 'Grain→flour in a Mill.' },
+      { kind: 'room-tool', id: 'station-saw_bench', label: 'Saw Bench', desc: 'Wood→timber in a Sawmill.' },
+      { kind: 'room-tool', id: 'station-loom', label: 'Loom', desc: 'Flax→clothes in a Workshop.' },
+      { kind: 'room-tool', id: 'station-sickbed', label: 'Sickbed', desc: 'Medical slot in an Infirmary.' },
+      { kind: 'room-tool', id: 'station-desk', label: 'Desk', desc: 'Education slot in a Library.' },
+      { kind: 'room-tool', id: 'station-table', label: 'Table', desc: 'Recreation slots (2) in a Tavern.' },
+      { kind: 'room-tool', id: 'station-shelf', label: 'Shelf', desc: 'Storage (+50) in Storehouse or Library.' },
+      // Blueprint stamps
+      { kind: 'blueprint', id: 'hut', label: 'Hut (5×5)', desc: 'Small sleeping hut with 2 beds.' },
+      { kind: 'blueprint', id: 'kitchen', label: 'Kitchen (5×4)', desc: '2 ovens cook grain into meals.' },
+      { kind: 'blueprint', id: 'mill', label: 'Mill (6×6)', desc: '2 millstones grind grain into flour.' },
+      { kind: 'blueprint', id: 'sawmill', label: 'Sawmill (7×4)', desc: '2 saw benches cut timber.' },
+      { kind: 'blueprint', id: 'workshop', label: 'Workshop (8×4)', desc: 'Loom + rope walk.' },
+      { kind: 'blueprint', id: 'tavern', label: 'Tavern (7×6)', desc: 'Tables + brew vat.' },
+      { kind: 'blueprint', id: 'infirmary', label: 'Infirmary (6×5)', desc: '3 sickbeds treat the wounded.' },
     ],
   },
   {
@@ -198,7 +243,7 @@ export class Hud {
       const btn = (e.target as HTMLElement).closest<HTMLElement>('.build-item-btn');
       if (!btn) return;
       this.sfx?.click();
-      const kind = btn.dataset.kind as 'building' | 'zone' | 'tool';
+      const kind = btn.dataset.kind as 'building' | 'zone' | 'tool' | 'room-tool' | 'blueprint';
       const id = btn.dataset.id!;
       this.handleBuildItemClick(kind, id);
     });
@@ -417,29 +462,69 @@ export class Hud {
       const active =
         (item.kind === 'building' && this.cam.placing === item.id) ||
         (item.kind === 'zone' && this.cam.placingZone === item.id) ||
-        (item.kind === 'tool' && item.id === 'chop' && this.cam.chopMode);
+        (item.kind === 'tool' && item.id === 'chop' && this.cam.chopMode) ||
+        (item.kind === 'room-tool' && (
+          ((item.id === 'wall' || item.id === 'floor' || item.id === 'erase') && this.cam.roomPaintMode === item.id) ||
+          (item.id.startsWith('room-') && this.cam.roomPaintMode === 'room' && ROOM_TYPE_ID.get(item.id.slice(5)) === this.cam.roomTypeId) ||
+          (item.id.startsWith('station-') && this.cam.roomPaintMode === 'station' && STATION_TYPE_ID.get(item.id.slice(8)) === this.cam.stationTypeId)
+        )) ||
+        (item.kind === 'blueprint' && this.cam.stampBlueprint === item.id);
       btn.classList.toggle('active', active);
       this.buildSubmenu.appendChild(btn);
     }
   }
 
-  private handleBuildItemClick(kind: 'building' | 'zone' | 'tool', id: string): void {
+  private handleBuildItemClick(kind: 'building' | 'zone' | 'tool' | 'room-tool' | 'blueprint', id: string): void {
     if (kind === 'building') {
       this.cam.placing = this.cam.placing === id ? null : id;
       this.cam.placingZone = null;
       this.cam.chopMode = false;
+      this.cam.roomPaintMode = null;
+      this.cam.stampBlueprint = null;
       if (this.cam.placing === null) this.cam.placingRotation = 0;
     } else if (kind === 'zone') {
       const zoneId = id as PaintKind;
       this.cam.placingZone = this.cam.placingZone === zoneId ? null : zoneId;
       this.cam.placing = null;
       this.cam.chopMode = false;
+      this.cam.roomPaintMode = null;
+      this.cam.stampBlueprint = null;
     } else if (kind === 'tool' && id === 'chop') {
       this.cam.chopMode = !this.cam.chopMode;
       this.cam.placing = null;
       this.cam.placingZone = null;
+      this.cam.roomPaintMode = null;
+      this.cam.stampBlueprint = null;
     } else if (kind === 'tool' && id === 'overlay') {
       this.cam.overlay = this.cam.overlay === 'traffic' ? 'none' : 'traffic';
+    } else if (kind === 'room-tool') {
+      this.cam.placing = null;
+      this.cam.placingZone = null;
+      this.cam.chopMode = false;
+      this.cam.stampBlueprint = null;
+      if (id === 'wall' || id === 'floor' || id === 'erase') {
+        this.cam.roomPaintMode = this.cam.roomPaintMode === id ? null : id as typeof this.cam.roomPaintMode;
+        this.cam.roomTypeId = 0;
+        this.cam.stationTypeId = 0;
+      } else if (id.startsWith('room-')) {
+        const typeId = ROOM_TYPE_ID.get(id.slice(5)) ?? 0;
+        const toggle = this.cam.roomPaintMode === 'room' && this.cam.roomTypeId === typeId;
+        this.cam.roomPaintMode = toggle ? null : 'room';
+        this.cam.roomTypeId = toggle ? 0 : typeId;
+        this.cam.stationTypeId = 0;
+      } else if (id.startsWith('station-')) {
+        const stId = STATION_TYPE_ID.get(id.slice(8)) ?? 0;
+        const toggle = this.cam.roomPaintMode === 'station' && this.cam.stationTypeId === stId;
+        this.cam.roomPaintMode = toggle ? null : 'station';
+        this.cam.stationTypeId = toggle ? 0 : stId;
+        this.cam.roomTypeId = 0;
+      }
+    } else if (kind === 'blueprint') {
+      this.cam.placing = null;
+      this.cam.placingZone = null;
+      this.cam.chopMode = false;
+      this.cam.roomPaintMode = null;
+      this.cam.stampBlueprint = this.cam.stampBlueprint === id ? null : id;
     }
     this.refreshBuildBarState();
     if (this.activeCat) this.renderSubmenu();
@@ -485,6 +570,15 @@ export class Hud {
       this.cam.placing = null;
       this.cam.placingZone = null;
       this.refreshBuildBarState();
+      return true;
+    }
+    if (k === 'v') {
+      const toggle = this.cam.roomPaintMode === 'wall';
+      this.cam.placing = null; this.cam.placingZone = null; this.cam.chopMode = false; this.cam.stampBlueprint = null;
+      this.cam.roomPaintMode = toggle ? null : 'wall';
+      this.cam.roomTypeId = 0; this.cam.stationTypeId = 0;
+      this.refreshBuildBarState();
+      if (!toggle && this.activeCat !== 'rooms') this.toggleCategory('rooms');
       return true;
     }
     if (k === 'r') { this.showResources = !this.showResources; return true; }

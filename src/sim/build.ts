@@ -26,7 +26,7 @@
  * Run the self-check:  npx tsx src/sim/build.ts
  */
 import { MAP_W, MAP_H } from './world';
-import type { ResourceKind, CapacityKind } from './defs';
+import type { ResourceKind, CapacityKind, BlueprintDef } from './defs';
 import {
   ROOM_TYPE_ID, STATION_TYPE_ID, STATION_DEF_BY_NUM, ROOM_DEF_BY_NUM,
 } from './defs';
@@ -354,6 +354,33 @@ export class BuildGrid {
 
       this._progress.set(s.id, progress);
     }
+  }
+
+  /**
+   * Stamp a blueprint at world origin (ox, oy). Paints floors first, then
+   * walls over them, designates the interior, and places stations. Returns
+   * false if the footprint is out of bounds. Station placement silently skips
+   * occupied tiles so partially-overlapping stamps stay valid.
+   */
+  stampBlueprint(bp: BlueprintDef, ox: number, oy: number): boolean {
+    if (!this.inBounds(ox, oy) || !this.inBounds(ox + bp.w - 1, oy + bp.h - 1)) return false;
+    const [fx0, fy0, fx1, fy1] = bp.floorRect;
+    for (let y = fy0; y <= fy1; y++)
+      for (let x = fx0; x <= fx1; x++)
+        this.setFloor(ox + x, oy + y);
+    for (const [wx0, wy0, wx1, wy1] of bp.wallRects)
+      for (let y = wy0; y <= wy1; y++)
+        for (let x = wx0; x <= wx1; x++)
+          this.setWall(ox + x, oy + y);
+    const typeId = ROOM_TYPE_ID.get(bp.roomType) ?? 0;
+    if (typeId > 0)
+      for (let y = fy0; y <= fy1; y++)
+        for (let x = fx0; x <= fx1; x++)
+          this.designate(ox + x, oy + y, typeId);
+    for (const st of bp.stations)
+      this.placeStation(st.type, ox + st.x, oy + st.y);
+    this.rebuildRooms();
+    return true;
   }
 
   /** Aggregate everything a room delivers, summed over its valid stations. */

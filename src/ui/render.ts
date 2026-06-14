@@ -5,7 +5,7 @@
  */
 import type { Simulation } from '../sim/sim';
 import { MAP_W, MAP_H } from '../sim/world';
-import { buildingDef, BUILDING_DEFS, TUNING } from '../sim/defs';
+import { buildingDef, BUILDING_DEFS, TUNING, STATION_DEF_BY_NUM, ROOM_TYPE_ID, BLUEPRINT_DEFS } from '../sim/defs';
 import { buildSprites, TILE } from './sprites';
 import type { SpriteSet } from './sprites';
 import type { RegionMap } from '../sim/worldgen';
@@ -24,11 +24,36 @@ export interface Camera {
   selectedSettler: number | null;
   selectedBuilding: number | null;
   selectedStockpile: { x: number; y: number } | null;
+  // B-5 room paint layer (BuildGrid tool — not wired to live sim until B-6)
+  buildGrid: import('../sim/build').BuildGrid | null;
+  roomPaintMode: 'wall' | 'floor' | 'room' | 'station' | 'erase' | null;
+  roomTypeId: number;     // numeric ROOM_TYPE_ID; 0 = none
+  stationTypeId: number;  // numeric STATION_TYPE_ID; 0 = none
+  stampBlueprint: string | null;
 }
 
 const SKY_DAY = [104, 144, 170];
 const SKY_DUSK = [168, 110, 86];
 const SKY_NIGHT = [18, 22, 38];
+
+// Room type overlay colours — index = numeric typeId (1-based from ROOM_DEFS order).
+const ROOM_TYPE_COLORS = [
+  '',                          // 0 = none
+  'rgba(200,170,120,0.38)',   // 1  home       — warm tan
+  'rgba(220,140,60,0.42)',    // 2  kitchen    — orange
+  'rgba(220,190,80,0.42)',    // 3  bakery     — golden
+  'rgba(200,190,140,0.38)',   // 4  mill       — wheat
+  'rgba(220,90,50,0.42)',     // 5  smithy     — red-orange
+  'rgba(180,60,40,0.48)',     // 6  foundry    — dark red
+  'rgba(160,130,80,0.38)',    // 7  sawmill    — brown
+  'rgba(100,130,180,0.42)',   // 8  workshop   — blue-grey
+  'rgba(180,90,60,0.42)',     // 9  kilnhouse  — brick red
+  'rgba(80,110,200,0.42)',    // 10 library    — blue
+  'rgba(160,210,180,0.42)',   // 11 infirmary  — pale green
+  'rgba(80,190,100,0.42)',    // 12 apothecary — green
+  'rgba(160,100,200,0.42)',   // 13 tavern     — purple
+  'rgba(150,150,130,0.38)',   // 14 storehouse — grey
+];
 
 // Buildings that vent chimney smoke while built
 const SMOKE_BUILDINGS = new Set([
@@ -291,6 +316,47 @@ export class Renderer {
       }
     }
 
+    // BuildGrid overlay: floor tint, room colour, walls, station labels (B-5)
+    if (this.cam.buildGrid) {
+      const grid = this.cam.buildGrid;
+      for (let y = ty0; y < ty1; y++) {
+        for (let x = tx0; x < tx1; x++) {
+          const i = grid.index(x, y);
+          if (grid.floor[i] === 0 && grid.wall[i] === 0) continue;
+          const px = ox + x * TILE;
+          const py = oy + y * TILE;
+          if (grid.wall[i] > 0) {
+            g.fillStyle = 'rgba(48,38,26,0.9)';
+            g.fillRect(px, py, TILE, TILE);
+            g.fillStyle = 'rgba(88,74,52,0.45)';
+            g.fillRect(px, py, TILE, 1);
+            g.fillRect(px, py, 1, TILE);
+          } else {
+            g.fillStyle = 'rgba(210,195,160,0.28)';
+            g.fillRect(px, py, TILE, TILE);
+            const rid = grid.roomId[i];
+            if (rid >= 0) {
+              const col = ROOM_TYPE_COLORS[grid.rooms[rid]?.typeId ?? 0];
+              if (col) { g.fillStyle = col; g.fillRect(px, py, TILE, TILE); }
+            }
+          }
+        }
+      }
+      for (const s of grid.stations) {
+        const spx = ox + s.x * TILE;
+        const spy = oy + s.y * TILE;
+        if (!this.isInViewport(spx, spy, s.w * TILE + TILE)) continue;
+        g.fillStyle = 'rgba(28,20,12,0.72)';
+        g.fillRect(spx + 2, spy + 2, s.w * TILE - 4, s.h * TILE - 4);
+        const def = STATION_DEF_BY_NUM[s.typeId];
+        if (def) {
+          g.fillStyle = '#d8c89a';
+          g.font = '7px monospace';
+          g.fillText(def.name.slice(0, 6), spx + 3, spy + 9);
+        }
+      }
+    }
+
     // Buildings (built solid, blueprints ghosted)
     for (const b of sim.buildings) {
       const def = buildingDef(b.defId);
@@ -534,6 +600,67 @@ export class Renderer {
     } else if (cam.chopMode) {
       g.strokeStyle = '#c25b2e';
       g.strokeRect(ox + cam.mouseTile.x * TILE + 0.5, oy + cam.mouseTile.y * TILE + 0.5, TILE - 1, TILE - 1);
+    } else if (cam.stampBlueprint) {
+      const bp = BLUEPRINT_DEFS.find((b) => b.id === cam.stampBlueprint);
+      if (bp) {
+        const bx = ox + (cam.mouseTile.x - Math.floor(bp.w / 2)) * TILE;
+        const by = oy + (cam.mouseTile.y - Math.floor(bp.h / 2)) * TILE;
+        const roomCol = ROOM_TYPE_COLORS[ROOM_TYPE_ID.get(bp.roomType) ?? 0] || 'rgba(200,190,160,0.38)';
+        for (const [wx0, wy0, wx1, wy1] of bp.wallRects)
+          for (let wy = wy0; wy <= wy1; wy++)
+            for (let wx = wx0; wx <= wx1; wx++) {
+              g.fillStyle = 'rgba(48,38,26,0.55)';
+              g.fillRect(bx + wx * TILE, by + wy * TILE, TILE, TILE);
+            }
+        const [fx0, fy0, fx1, fy1] = bp.floorRect;
+        for (let fy = fy0; fy <= fy1; fy++)
+          for (let fx = fx0; fx <= fx1; fx++) {
+            g.fillStyle = roomCol;
+            g.fillRect(bx + fx * TILE, by + fy * TILE, TILE, TILE);
+          }
+        g.strokeStyle = '#e8d27a';
+        g.lineWidth = 1;
+        g.strokeRect(bx + 0.5, by + 0.5, bp.w * TILE - 1, bp.h * TILE - 1);
+      }
+    } else if (cam.roomPaintMode) {
+      const mpx = ox + cam.mouseTile.x * TILE;
+      const mpy = oy + cam.mouseTile.y * TILE;
+      if (cam.roomPaintMode === 'wall') {
+        g.fillStyle = 'rgba(48,38,26,0.6)';
+        g.fillRect(mpx, mpy, TILE, TILE);
+      } else if (cam.roomPaintMode === 'floor') {
+        g.fillStyle = 'rgba(210,195,160,0.55)';
+        g.fillRect(mpx, mpy, TILE, TILE);
+      } else if (cam.roomPaintMode === 'room') {
+        const col = ROOM_TYPE_COLORS[cam.roomTypeId] || 'rgba(200,200,200,0.45)';
+        g.fillStyle = col;
+        g.fillRect(mpx, mpy, TILE, TILE);
+      } else if (cam.roomPaintMode === 'station' && cam.stationTypeId) {
+        const def = STATION_DEF_BY_NUM[cam.stationTypeId];
+        if (def) {
+          g.fillStyle = 'rgba(28,20,12,0.52)';
+          g.fillRect(mpx, mpy, def.w * TILE, def.h * TILE);
+          g.strokeStyle = '#e8d27a';
+          g.lineWidth = 1;
+          g.strokeRect(mpx + 0.5, mpy + 0.5, def.w * TILE - 1, def.h * TILE - 1);
+        }
+      } else if (cam.roomPaintMode === 'erase') {
+        g.strokeStyle = '#c25b2e';
+        g.lineWidth = 2;
+        g.strokeRect(mpx + 0.5, mpy + 0.5, TILE - 1, TILE - 1);
+        g.beginPath();
+        g.moveTo(mpx + 4, mpy + 4);
+        g.lineTo(mpx + TILE - 4, mpy + TILE - 4);
+        g.moveTo(mpx + TILE - 4, mpy + 4);
+        g.lineTo(mpx + 4, mpy + TILE - 4);
+        g.stroke();
+        g.lineWidth = 1;
+      }
+      if (cam.roomPaintMode !== 'station' && cam.roomPaintMode !== 'erase') {
+        g.strokeStyle = '#9cc4e4';
+        g.lineWidth = 1;
+        g.strokeRect(mpx + 0.5, mpy + 0.5, TILE - 1, TILE - 1);
+      }
     }
   }
 }

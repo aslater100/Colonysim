@@ -4,6 +4,7 @@ import namesJson from '../data/names.json';
 import townTechsJson from '../data/town_techs.json';
 import roomsJson from '../data/rooms.json';
 import stationsJson from '../data/stations.json';
+import blueprintsJson from '../data/blueprints.json';
 
 /** All content defs load from JSON so they are moddable without touching code (GDD §8.8). */
 
@@ -314,6 +315,23 @@ export function stationDef(id: string): StationDef {
 export const ROOM_DEF_BY_NUM: (RoomTypeDef | null)[] = [null, ...ROOM_DEFS];
 /** Numeric station-type id → def. 1-based; 0 = none. */
 export const STATION_DEF_BY_NUM: (StationDef | null)[] = [null, ...STATION_DEFS];
+
+/** A pre-built room template: walls + floor + designation + stations in one click. */
+export interface BlueprintDef {
+  id: string;
+  name: string;
+  desc: string;
+  w: number;
+  h: number;
+  /** Filled rectangles [x0,y0,x1,y1] of wall tiles, relative to top-left origin. */
+  wallRects: [number, number, number, number][];
+  /** Filled rectangle [x0,y0,x1,y1] of floor + room-designation tiles. */
+  floorRect: [number, number, number, number];
+  roomType: string;
+  stations: Array<{ type: string; x: number; y: number }>;
+}
+
+export const BLUEPRINT_DEFS: BlueprintDef[] = blueprintsJson.blueprints as BlueprintDef[];
 
 // Validate cross-references once at load (cheap; catches data typos in CI).
 for (const s of STATION_DEFS) {

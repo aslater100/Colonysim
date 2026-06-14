@@ -114,8 +114,12 @@ Stages (extend Track C; the live game is untouched until B-6):
   slot → rest, a free recreation slot → recreation (both bed/table capacity-gated).
   Kept out of `AgentStore.tick` so the bench still reads the movement floor. Tests:
   `tests/needs.test.ts` (13). Additive.
-- **B-5 — Render + paint UI.** Wall/floor/room/station tools + room overlay; lands
-  with the Phase-4 chunk renderer.
+- **B-5 — Render + paint UI. ✅ LANDED.** `src/data/blueprints.json` (7 templates); `BlueprintDef`+
+  `BLUEPRINT_DEFS` in `defs.ts`; `BuildGrid.stampBlueprint()`; `Camera` gains `buildGrid`/`roomPaintMode`/
+  `roomTypeId`/`stationTypeId`/`stampBlueprint`; `render.ts` draws floor-tint + per-room-type colour
+  overlay + station labels + blueprint/paint-cursor ghosts; `hud.ts` ROOMS category with Wall/Floor/Erase
+  tools, 14 room-type buttons, 10 station buttons, 7 blueprint stamps ([V] hotkey for wall); `main.ts`
+  wires drag-paint + single-click stamp against a standalone `BuildGrid`. Tests: `tests/blueprints.test.ts` (7). Additive.
 - **B-6 — Swap + retire `buildings.json`.** Once at parity, the room-based scale-engine
   town tier replaces the discrete-building `Simulation`; save-format v-bump.
 
@@ -131,7 +135,7 @@ Stages (extend Track C; the live game is untouched until B-6):
 
 ### Current state (updated 2026-06-14)
 
-**Test baseline: 507 passing** (441 base + 11 flow-field + 13 rooms + 16 production + 13 jobs + 13 needs). `tsc` + `vite build` clean. **All landed work below is already merged into `main` except B-2→B-4, which are on `claude/build-system-b2-b6-mkfsqk` / PR #103 awaiting review.**
+**Test baseline: 514 passing** (441 base + 11 flow-field + 13 rooms + 16 production + 13 jobs + 13 needs + 7 blueprints). `tsc` + `vite build` clean. **All landed work below is already merged into `main` except B-2→B-5, which are on `claude/build-system-b2-b6-mkfsqk` / PR #103 awaiting review.**
 
 **Scale engine (Track C):**
 - **Stage 1 ✅** — `src/sim/agents.ts` (`AgentStore`, SoA agent core).
