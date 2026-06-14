@@ -5,9 +5,27 @@
 ## Session Handoff (Read This First in a New Session)
 
 **Repo:** `/home/user/Centuria` — TypeScript + Canvas 2D + Vite + Electron city-builder.  
-**Branch:** `claude/focused-noether-rc0yq9` — push all work here; never push to main without user approval.  
+**Branch:** `claude/continue-wjijeb` — push all work here; never push to main without user approval.  
 **Git remote:** `aslater100/centuria`  
-**Plan file:** `.claude/plans/system-reminder-message-sent-at-sat-streamed-sunbeam.md` (this file, committed to repo)
+**Plan file:** `PLAN.md` (this file, committed to repo)
+
+### Track A status — verified against source 2026-06-14 (v0.31.0)
+
+Track A is **substantially complete**; the bug fixes landed alongside the governor-tier work
+(see `docs/HANDOFF.md`). Verified by reading the live code:
+
+| Fix | Status | Evidence |
+|---|---|---|
+| **1 — Worldgen sparse** | ⚠️ **Partial** | Ore deposits done (`worldgen.ts` `generateOre()`, `Cell.ore`). The FBM/river/mountain *density retuning* was deliberately **not** applied — the shipped game (and its colony-balance/CI tests) is tuned around the current generator (4 octaves, mountain >0.72, ≤7 rivers); `worldgen.test.ts` passes as-is. Retuning is deferred to avoid destabilizing live balance. |
+| **2 — Stockpile/cook/preempt** | ✅ Done | `CAPACITY_PER_TILE`/`NEED_INTERRUPT_THRESHOLD`/`cookTriggerMult` in `defs.ts`; capacity + cook + need-break preemption wired in `sim.ts`. |
+| **3 — Tech gating** | ✅ Done | `requiredTech` in `buildings.json`, enforced in `sim.ts` `canPlace()` and disabled in `hud.ts`. |
+| **4 — Upgrade visuals** | ✅ Done | `render.ts` keys building sprites by `` `${defId}:${level}` ``. |
+| **5 — Gate meshing** | ✅ Done | `sprites.gateVariants[16]`; `render.ts` neighbor-mask gate draw. |
+| **6 — Supply chains** | ✅ Done | flour/bread/flax/quarry/timber/brick wired in `sim.ts`; `stockHistory` tracked; **RES** resources panel in `hud.ts`. |
+| **7 — Treasury continuity** | ⬜ Deferred | By design folded into **Track B Phase 2** (no `ParcelManager` / `homeSim` canonical economy exists yet). |
+
+**Net:** the active forward work is **Track B (Seamless World)**, which also subsumes Fix 7.
+Phase 1 (WorldCamera + coordinate system) is the current increment.
 
 ### What this plan covers (two tracks, sequential)
 
