@@ -428,6 +428,9 @@ export class RegionView {
 
     // Charter banner — the path to the State. Each requirement reads as a
     // ✓/✗ chip so the player can see exactly what still blocks Incorporation.
+    // Drawn above the 44px DOM bottombar (which always renders over the canvas),
+    // so the banner clears it instead of hiding behind the S/R/E/T buttons.
+    const barTop = H - 52; // top of the banner's reserved strip (above bottombar)
     if (!region.stateProclaimed) {
       if (region.ceremonyPending || region.charterEligible()) {
         g.font = 'bold 13px monospace';
@@ -436,12 +439,12 @@ export class RegionView {
           : `Regional Charter being drafted… ${Math.floor(region.charterProgress)}%`;
         const bw = Math.max(460, g.measureText(need).width + 28);
         g.fillStyle = 'rgba(12,10,7,0.94)';
-        g.fillRect(W / 2 - bw / 2, H - 46, bw, 32);
+        g.fillRect(W / 2 - bw / 2, barTop - 32, bw, 32);
         g.strokeStyle = 'rgba(143,194,106,0.5)';
-        g.strokeRect(W / 2 - bw / 2 + 0.5, H - 46 + 0.5, bw - 1, 31);
+        g.strokeRect(W / 2 - bw / 2 + 0.5, barTop - 32 + 0.5, bw - 1, 31);
         g.fillStyle = '#a8e06a';
         g.textAlign = 'center';
-        g.fillText(need, W / 2, H - 25);
+        g.fillText(need, W / 2, barTop - 11);
         g.textAlign = 'left';
       } else {
         // Not yet eligible: draw the gate chips, color-coded, centered.
@@ -457,11 +460,11 @@ export class RegionView {
           segs.reduce((w, s, i) => w + g.measureText(s.text).width + (i ? g.measureText(sep).width : 0), 0);
         const bw = Math.max(460, totalW + 28);
         g.fillStyle = 'rgba(12,10,7,0.94)';
-        g.fillRect(W / 2 - bw / 2, H - 46, bw, 32);
+        g.fillRect(W / 2 - bw / 2, barTop - 32, bw, 32);
         g.strokeStyle = 'rgba(143,194,106,0.45)';
-        g.strokeRect(W / 2 - bw / 2 + 0.5, H - 46 + 0.5, bw - 1, 31);
+        g.strokeRect(W / 2 - bw / 2 + 0.5, barTop - 32 + 0.5, bw - 1, 31);
         let x = W / 2 - totalW / 2;
-        const y = H - 25;
+        const y = barTop - 11;
         g.textAlign = 'left';
         g.fillStyle = '#fffcf0';
         g.fillText(head, x, y);
@@ -475,11 +478,11 @@ export class RegionView {
       }
     } else {
       g.fillStyle = 'rgba(110,74,47,0.92)';
-      g.fillRect(W / 2 - 200, H - 44, 400, 30);
+      g.fillRect(W / 2 - 200, barTop - 30, 400, 30);
       g.fillStyle = '#e8d27a';
       g.font = 'bold 14px monospace';
       g.textAlign = 'center';
-      g.fillText(`★ ${region.stateName.toUpperCase()} ★`, W / 2, H - 24);
+      g.fillText(`★ ${region.stateName.toUpperCase()} ★`, W / 2, barTop - 10);
       g.textAlign = 'left';
     }
 
