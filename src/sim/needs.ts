@@ -92,9 +92,12 @@ export function aggregateCapacities(grid: BuildGrid): RoomServices {
 /**
  * Apply one tick of room-driven need recovery to every agent. Allocation is one
  * small Map per call (room count, not agent count); the per-agent body is O(1).
+ * Temperature affects the ambient warmth floor: cold cuts deeper, warmth helps exposed settlers.
  */
-export function serveNeeds(grid: BuildGrid, agents: AgentStore, minutesPerTick: number): void {
+export function serveNeeds(grid: BuildGrid, agents: AgentStore, minutesPerTick: number, tempAnomalyC: number = 0): void {
   const hours = minutesPerTick / 60;
+  // Warmth ambient floor driven by temperature: ±4°C scales ±10 warmth, clamped 20..80.
+  const ambientFloor = Math.max(20, Math.min(80, WARMTH_AMBIENT_FLOOR + tempAnomalyC * 2.5));
   // Cache each room's usable output once (rooms ≪ agents).
   const outputs = new Map<number, RoomOutput>();
   for (const room of grid.rooms) {
@@ -109,14 +112,14 @@ export function serveNeeds(grid: BuildGrid, agents: AgentStore, minutesPerTick: 
     const rid = grid.inBounds(x, y) ? grid.roomId[grid.index(x, y)] : -1;
     const room = rid >= 0 ? grid.rooms[rid] : null;
 
-    // Warmth: enclosure shelters all occupants; otherwise drift to the ambient floor.
+    // Warmth: enclosure shelters all occupants; otherwise drift to the temperature-scaled floor.
     if (room && room.enclosed) {
       const w = agents.warmth[i] + WARMTH_REGEN_ENCLOSED * hours;
       agents.warmth[i] = w < 100 ? w : 100;
     } else {
-      // Hardy settlers (warmthDecayMult < 1) shrug off the cold; the floor is unchanged.
+      // Hardy settlers (warmthDecayMult < 1) shrug off the cold; the floor is temperature-driven.
       const w = agents.warmth[i] - WARMTH_DECAY_EXPOSED * hours * agents.warmthDecayMult[i];
-      agents.warmth[i] = w > WARMTH_AMBIENT_FLOOR ? w : WARMTH_AMBIENT_FLOOR;
+      agents.warmth[i] = w > ambientFloor ? w : ambientFloor;
     }
 
     if (!room) continue;

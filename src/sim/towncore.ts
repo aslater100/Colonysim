@@ -33,6 +33,7 @@ import { JobBoard } from './jobs';
 import { FlowField } from './flowfield';
 import { serveNeeds, serveMedical, aggregateCapacities, type RoomServices } from './needs';
 import { Relations, socialize } from './social';
+import { Weather } from './weather';
 import { Rng } from './rng';
 import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, TUNING } from './defs';
 
@@ -60,6 +61,7 @@ export interface TownCoreSave {
   minute: number;
   day: number;
   rngState: number;
+  weatherSeed: number;
   homeX: number;
   homeY: number;
   deaths: number;
@@ -84,6 +86,8 @@ export class TownCore {
   readonly board: JobBoard;
   /** Sparse pairwise opinions — bonds grow co-recreating, friends grieve harder. */
   readonly relations = new Relations();
+  /** Daily weather: temperature drives warmth decay, freezing deals death. */
+  readonly weather: Weather;
   private readonly jobField: FlowField;
   private readonly rng: Rng;
   private readonly _rand: () => number;
@@ -97,15 +101,20 @@ export class TownCore {
   homeX: number;
   homeY: number;
 
+  private readonly weatherSeed: number;
+
   constructor(opts: TownCoreOpts = {}) {
     const width = opts.width ?? MAP_W;
     const height = opts.height ?? MAP_H;
+    const seed = opts.seed ?? 1;
     this.grid = new BuildGrid(width, height);
     this.agents = new AgentStore(opts.capacity ?? 256);
     this.stock = new Stockpile();
     this.board = new JobBoard();
     this.jobField = new FlowField(width, height);
-    this.rng = new Rng(opts.seed ?? 1);
+    this.weatherSeed = seed;
+    this.weather = new Weather(seed);
+    this.rng = new Rng(seed);
     this._rand = () => this.rng.next();
     this.homeX = Math.floor(width / 2);
     this.homeY = Math.floor(height / 2);
@@ -176,7 +185,8 @@ export class TownCore {
 
     // 4. Needs from rooms: warmth (enclosure), rest (beds), recreation (tables),
     //    and medical recovery (infirmary sickbeds + apothecary medicine).
-    serveNeeds(this.grid, a, MINUTES_PER_TICK);
+    const dayWeather = this.weather.forDay(this.day);
+    serveNeeds(this.grid, a, MINUTES_PER_TICK, dayWeather.tempAnomalyC);
     serveMedical(this.grid, a, this.stock);
 
     // 4b. Bonding: agents sharing a tavern grow their mutual opinion.
@@ -277,6 +287,7 @@ export class TownCore {
       minute: this.minute,
       day: this.day,
       rngState: this.rng.getState(),
+      weatherSeed: this.weatherSeed,
       homeX: this.homeX,
       homeY: this.homeY,
       deaths: this.deaths,
@@ -290,7 +301,8 @@ export class TownCore {
 
   static deserialize(data: TownCoreSave): TownCore {
     const grid = BuildGrid.deserialize(data.grid);
-    const core = new TownCore({ width: grid.width, height: grid.height, capacity: data.agents.capacity });
+    const weatherSeed = data.weatherSeed ?? 1; // backfill for old saves
+    const core = new TownCore({ width: grid.width, height: grid.height, capacity: data.agents.capacity, seed: weatherSeed });
     // Replace the freshly-built sub-systems with the restored ones.
     (core as { grid: BuildGrid }).grid = grid;
     (core as { agents: AgentStore }).agents = AgentStore.deserialize(data.agents);

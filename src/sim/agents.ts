@@ -92,6 +92,7 @@ const SICK_BLEED = TUNING.sickHealthPerHour;             // health/hr while feve
 export const SICK_WORK_MULT = TUNING.sickWorkMult;       // work-speed factor while feverish
 const HEALTH_REGEN = TUNING.healthRegenPerHour;          // baseline recovery
 const STARVE_BLEED = 1.5;                                 // health/hr at 0 food (SoA baseline)
+const FREEZE_BLEED = 1.0;                                 // health/hr at warmth ≤ 0 (prolonged exposure)
 
 // Thoughts (Stage 4 behavior port) — transient mood modifiers with an expiry.
 // The fat sim keeps a per-settler `Thought[]`; here each agent gets a fixed ring
@@ -524,6 +525,7 @@ export class AgentStore {
       this.sick[i] = feverish ? 1 : 0; // tickProduction reads this for the work penalty
       if (feverish) bleed += SICK_BLEED;
       if (this.food[i] <= 0) bleed += STARVE_BLEED;
+      if (this.warmth[i] <= 0) bleed += FREEZE_BLEED;
 
       if (bleed > 0) {
         this.health[i] -= bleed * HOURS_PER_TICK;
