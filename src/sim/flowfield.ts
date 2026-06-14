@@ -226,7 +226,7 @@ export class FlowField {
 }
 
 // --- self-check: npx tsx src/sim/flowfield.ts ---
-if (process.argv[1]?.endsWith('/flowfield.ts')) {
+if (typeof process !== 'undefined' && process.argv[1]?.endsWith('/flowfield.ts')) {
   // 5×5 open grid, goal at centre, uniform cost. Every tile should point inward.
   const W = 5;
   const ff = new FlowField(W, W);

@@ -137,7 +137,7 @@ export function serveNeeds(grid: BuildGrid, agents: AgentStore, minutesPerTick: 
 }
 
 // --- self-check: npx tsx src/sim/needs.ts ---
-if (process.argv[1]?.endsWith('/needs.ts')) {
+if (typeof process !== 'undefined' && process.argv[1]?.endsWith('/needs.ts')) {
   const HOME = ROOM_TYPE_ID.get('home')!;
   const TAVERN = ROOM_TYPE_ID.get('tavern')!;
 

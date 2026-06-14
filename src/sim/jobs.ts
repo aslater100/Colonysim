@@ -139,7 +139,7 @@ function hasInputs(stockpile: Stockpile, inputs: Record<string, number>): boolea
 }
 
 // --- self-check: npx tsx src/sim/jobs.ts ---
-if (process.argv[1]?.endsWith('/jobs.ts')) {
+if (typeof process !== 'undefined' && process.argv[1]?.endsWith('/jobs.ts')) {
   const KITCHEN = ROOM_TYPE_ID.get('kitchen')!;
   const g = new BuildGridImpl(16, 16);
   g.designateRect(1, 1, 6, 3, KITCHEN);

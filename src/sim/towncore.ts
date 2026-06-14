@@ -258,7 +258,7 @@ export class TownCore {
 }
 
 // --- self-check: npx tsx src/sim/towncore.ts ---
-if (process.argv[1]?.endsWith('/towncore.ts')) {
+if (typeof process !== 'undefined' && process.argv[1]?.endsWith('/towncore.ts')) {
   // A walled kitchen with two ovens + a walled home with two beds, side by side.
   const core = new TownCore({ width: 32, height: 32, seed: 7 });
   const g = core.grid;

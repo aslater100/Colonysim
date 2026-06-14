@@ -300,7 +300,7 @@ export class AgentStore {
 }
 
 // --- self-check: npx tsx src/sim/agents.ts ---
-if (process.argv[1]?.endsWith('/agents.ts')) {
+if (typeof process !== 'undefined' && process.argv[1]?.endsWith('/agents.ts')) {
   const s = new AgentStore(10);
   for (let i = 0; i < 5; i++) s.spawn(10 + i, 10);
   console.assert(s.count === 5, 'spawned 5');

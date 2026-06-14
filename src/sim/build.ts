@@ -491,7 +491,7 @@ export class BuildGrid {
 }
 
 // --- self-check: npx tsx src/sim/build.ts ---
-if (process.argv[1]?.endsWith('/build.ts')) {
+if (typeof process !== 'undefined' && process.argv[1]?.endsWith('/build.ts')) {
   const g = new BuildGrid(20, 20);
   const mill = ROOM_TYPE_ID.get('mill')!;
 

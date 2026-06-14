@@ -77,7 +77,7 @@ export class Stockpile {
 }
 
 // --- self-check: npx tsx src/sim/stockpile.ts ---
-if (process.argv[1]?.endsWith('/stockpile.ts')) {
+if (typeof process !== 'undefined' && process.argv[1]?.endsWith('/stockpile.ts')) {
   const s = new Stockpile();
   s.add('grain', 10);
   console.assert(s.count('grain') === 10, 'add grain');
