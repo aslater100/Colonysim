@@ -33,6 +33,7 @@ import { JobBoard } from './jobs';
 import { FlowField } from './flowfield';
 import { serveNeeds, serveMedical, aggregateCapacities, type RoomServices } from './needs';
 import { Relations, socialize } from './social';
+import { RaidDirector, type RaidSave } from './raid';
 import { Rng } from './rng';
 import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, TUNING } from './defs';
 
@@ -68,6 +69,7 @@ export interface TownCoreSave {
   agents: AgentStoreSave;
   stock: Partial<Record<string, number>>;
   relations: [number, number][];
+  raid: RaidSave;
 }
 
 export interface TownCoreOpts {
@@ -87,6 +89,8 @@ export class TownCore {
   private readonly jobField: FlowField;
   private readonly rng: Rng;
   private readonly _rand: () => number;
+  /** Raid scheduler + per-tick combat resolution. */
+  readonly raid: RaidDirector;
 
   tickNo = 0;
   minute = 0;
@@ -107,6 +111,7 @@ export class TownCore {
     this.jobField = new FlowField(width, height);
     this.rng = new Rng(opts.seed ?? 1);
     this._rand = () => this.rng.next();
+    this.raid = new RaidDirector(this._rand);
     this.homeX = Math.floor(width / 2);
     this.homeY = Math.floor(height / 2);
   }
@@ -121,6 +126,7 @@ export class TownCore {
     if (i < 0) return -1;
     this.agents.rollTraits(i, this._rand);
     this.agents.skill[i] = this.rng.int(8);
+    this.agents.combat[i] = this.rng.int(7); // 0..6 fighting aptitude (fat sim: rng.int(7))
     return i;
   }
 
@@ -195,6 +201,10 @@ export class TownCore {
       }
     }
 
+    // 5c. Raid: resolve one tick of any active raid (attrits raiders, wounds
+    //     defenders). Killed settlers fall through to the death sweep below.
+    if (this.raid.active) this.raid.tick(a, this.grid, this.stock, t, this._rand);
+
     // 6. Deaths: swap-remove the starved (iterate backwards — splice-safe). Each
     //    death grieves the survivors — friends mourn harder — and forgets the bond.
     for (let i = a.count - 1; i >= 0; i--) {
@@ -230,6 +240,9 @@ export class TownCore {
 
   private dailyUpdate(): void {
     const a = this.agents;
+
+    // Raids: muster one if due (size ramps with the calendar, capped by population).
+    this.raid.maybeStart(this.day, a.count, this.tickNo, this._rand);
 
     // Feed: each hungry agent eats one produced meal (restores food fully). Meals
     // are consumed in agent order until the larder runs dry — the rest stay hungry
@@ -285,6 +298,7 @@ export class TownCore {
       agents: this.agents.serialize(),
       stock: this.stock.serialize(),
       relations: this.relations.serialize(),
+      raid: this.raid.serialize(),
     };
   }
 
@@ -296,6 +310,7 @@ export class TownCore {
     (core as { agents: AgentStore }).agents = AgentStore.deserialize(data.agents);
     (core as { stock: Stockpile }).stock = Stockpile.deserialize(data.stock);
     (core as { relations: Relations }).relations = Relations.deserialize(data.relations);
+    (core as { raid: RaidDirector }).raid = RaidDirector.deserialize(data.raid, core._rand);
     core.rng.setState(data.rngState);
     core.tickNo = data.tickNo;
     core.minute = data.minute;

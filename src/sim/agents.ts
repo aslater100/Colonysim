@@ -53,7 +53,7 @@ export interface AgentStoreSave {
   recreation: number[]; social: number[];
   state: number[]; nextThink: number[];
   field: number[]; stationId: number[];
-  skill: number[]; trait0: number[]; trait1: number[];
+  skill: number[]; combat: number[]; trait0: number[]; trait1: number[];
   woundUntreated: number[]; woundAt: number[]; infectionRolled: number[];
   infection: number[]; sickUntilTick: number[];
   thoughtDelta: number[]; thoughtExpiry: number[]; thoughtKey: number[];
@@ -128,6 +128,8 @@ export class AgentStore {
   // --- traits + skills (Stage 4 behavior port) ---
   /** Craft skill 0..SKILL_CAP. Work speed = 0.5 + skill×0.1; grows while Working. */
   readonly skill: Float32Array;
+  /** Combat skill 0..10 — separate from work skill; drives raid fighting power. */
+  readonly combat: Int8Array;
   /** Two trait def indices (into TRAIT_DEFS), -1 = none. Identity + serialization only. */
   readonly trait0: Int8Array;
   readonly trait1: Int8Array;
@@ -189,6 +191,7 @@ export class AgentStore {
     this.field = new Int8Array(capacity);
     this.stationId = new Int32Array(capacity);
     this.skill = new Float32Array(capacity);
+    this.combat = new Int8Array(capacity);
     this.trait0 = new Int8Array(capacity);
     this.trait1 = new Int8Array(capacity);
     this.workSpeedMult = new Float32Array(capacity);
@@ -322,6 +325,7 @@ export class AgentStore {
     // default keeps spawn deterministic and leaves production identical to a plain
     // worker count until a persona is assigned.
     this.skill[i] = STARTING_SKILL;
+    this.combat[i] = 0;
     this.trait0[i] = -1;
     this.trait1[i] = -1;
     this.workSpeedMult[i] = 1;
@@ -360,6 +364,7 @@ export class AgentStore {
       this.field[i] = this.field[last];
       this.stationId[i] = this.stationId[last];
       this.skill[i] = this.skill[last];
+      this.combat[i] = this.combat[last];
       this.trait0[i] = this.trait0[last]; this.trait1[i] = this.trait1[last];
       this.workSpeedMult[i] = this.workSpeedMult[last];
       this.moodBaseBonus[i] = this.moodBaseBonus[last];
@@ -436,7 +441,7 @@ export class AgentStore {
       // Persist skill + the two trait indices; the collapsed multiplier columns are
       // a pure function of the traits, so they're re-derived on load (smaller save,
       // and no chance of mults drifting out of sync with the traits).
-      skill: slice(this.skill), trait0: slice(this.trait0), trait1: slice(this.trait1),
+      skill: slice(this.skill), combat: slice(this.combat), trait0: slice(this.trait0), trait1: slice(this.trait1),
       // Medical state (sick/healMult are transient — recomputed every tick).
       woundUntreated: slice(this.woundUntreated), woundAt: slice(this.woundAt),
       infectionRolled: slice(this.infectionRolled), infection: slice(this.infection),
@@ -464,6 +469,7 @@ export class AgentStore {
       store.field[i] = data.field[i]; store.stationId[i] = data.stationId[i];
       // Backfill persona for pre-Stage-4 saves: competent + untraited.
       store.skill[i] = data.skill?.[i] ?? STARTING_SKILL;
+      store.combat[i] = data.combat?.[i] ?? 0;
       store.trait0[i] = data.trait0?.[i] ?? -1;
       store.trait1[i] = data.trait1?.[i] ?? -1;
       store.applyTraits(i); // re-derive the collapsed multiplier columns

@@ -104,9 +104,22 @@ behavior. Add headless parity tests.
   `mentalBreakChancePerPointPerDay`), and on every death **grieves the survivors**
   (friends −18/6d, others −8/4d) + `relations.forget`. Thought slots + relations are
   serialized; old saves backfill empty. Tests: `tests/social.test.ts` (14).
-- ⬜ **Remaining Stage-4 slices** (each its own PR): combat power + raids (will use
-  `inflictWound`); weather (temperature → warmth/freezing); trading/economy. Each
-  needs headless parity tests vs the fat sim's behavior before B-6 PART 2 (the swap).
+- ✅ **Combat + raids (v0.36.0).** `AgentStore` gains a `combat` skill column (0..10,
+  serialized, rolled per founder/newcomer). New `src/sim/raid.ts`: `RaidDirector`
+  schedules raids (`firstRaidDay`/`raidIntervalDays`, size ramps with the calendar,
+  capped by `raidPopFactor`/`raidMaxRaiders`) and resolves them as a **deterministic
+  abstracted exchange** rather than a second pathing population — each tick defenders
+  (`combat ≥ fightMinCombat`, `health > 50`, armed from the `weapons` stockpile) attrit
+  a raider HP pool, and the raiders wound a random defender (`inflictWound` → the
+  medical system; deaths → the grief path). Walls mitigate incoming damage; raids end
+  on wipe-out or `raidTimeoutHours`. `TownCore` musters in `dailyUpdate`, resolves in
+  the tick before the death sweep, and serializes `RaidDirector`. Tests:
+  `tests/raid.test.ts` (12). **Note:** the abstracted model has no per-raider tiles/
+  pathing or wall-smashing — those stay in the fat sim until (if) the renderer needs
+  them; the headless outcome (attrition, wounds, casualties, survival) matches in spirit.
+- ⬜ **Remaining Stage-4 slices** (each its own PR): weather (temperature →
+  warmth/freezing); trading/economy. Each needs headless parity tests vs the fat
+  sim's behavior before B-6 PART 2 (the swap).
 
 **Stage 5 — Render + bigger maps.** 96×96 holds only ~9k tiles; SoS cities need
 larger worlds. Wire to the chunk-LOD renderer (Phase 4 foundation already landed).
@@ -206,7 +219,7 @@ Stages (extend Track C; the live game is untouched until B-6):
 
 ### Current state (updated 2026-06-14)
 
-**Test baseline: 570 passing** (526 prior + 2 economy/storage + 14 persona + 14 medical + 14 social). `tsc` + `vite build` clean. B-2→B-6 PART 1 merged. **Stage 4 behavior port underway: traits+skills (v0.33.0, `persona.test.ts`), wounds/medical (v0.34.0, `medical.test.ts`), relationships/thoughts (v0.35.0, `social.test.ts`) landed.**
+**Test baseline: 582 passing** (526 prior + 2 economy/storage + 14 persona + 14 medical + 14 social + 12 raid). `tsc` + `vite build` clean. B-2→B-6 PART 1 merged. **Stage 4 behavior port underway: traits+skills (v0.33.0), wounds/medical (v0.34.0), relationships/thoughts (v0.35.0), combat/raids (v0.36.0, `raid.test.ts`) landed; weather + trading/economy remain.**
 
 **Scale engine (Track C):**
 - **Stage 1 ✅** — `src/sim/agents.ts` (`AgentStore`, SoA agent core).
