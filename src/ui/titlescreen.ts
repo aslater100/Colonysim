@@ -376,7 +376,7 @@ export class TitleScreen {
             "A colony is only as strong as the hands willing to work it —<br>
             and the mind willing to lead them."
           </blockquote>
-          <p class="ts-version">v0.31.0 &nbsp;·&nbsp; Early Access</p>
+          <p class="ts-version">v${__APP_VERSION__} &nbsp;·&nbsp; Early Access</p>
         </div>
         <div class="ts-panel">
           <nav class="ts-nav">
