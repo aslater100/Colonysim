@@ -18,9 +18,20 @@
  * fields registered the store falls back to the Stage-1 straight-line wander, so
  * the bench can still read the pure cost FLOOR (everything except pathing).
  *
+ * Stage 4 (behavior port) adds per-agent **traits + skills** as SoA columns. The
+ * fat-object sim stores `traits: string[]` and `skills: Record<WorkKind, number>`
+ * and re-walks them every tick (a per-agent allocation + branch storm). Here each
+ * trait's effects are collapsed once, at spawn, into flat multiplier columns
+ * (`workSpeedMult`, `foodDecayMult`, …) the hot tick reads branch-free, and the
+ * 21-way WorkKind skill split — a discrete-building artifact — becomes a single
+ * `skill` column that accelerates whichever craft station the agent mans (the
+ * room/station model has no per-kind work). Skill grows while Working, capped, and
+ * feeds production through `tickProduction`'s effort sum.
+ *
  * Run the self-check:  npx tsx src/sim/agents.ts
  */
 import { FlowField } from './flowfield';
+import { TRAIT_DEFS } from './defs';
 
 export const enum AState {
   Idle = 0,
@@ -42,6 +53,7 @@ export interface AgentStoreSave {
   recreation: number[]; social: number[];
   state: number[]; nextThink: number[];
   field: number[]; stationId: number[];
+  skill: number[]; trait0: number[]; trait1: number[];
 }
 
 const SPEED = 0.45;              // tiles per game-minute (matches SETTLER_SPEED)
@@ -54,6 +66,17 @@ const DECAY_FOOD = 2.2;
 const DECAY_REST = 2.0;
 const DECAY_REC = 1.4;
 const DECAY_SOCIAL = 1.2;
+
+// Skill model (mirrors the fat sim): work speed = 0.5 + skill×0.1 (skill 5 → 1.0×),
+// skill grows 0.06/hr while working and is capped (literacy/academy bonuses are
+// tech/building features not yet ported, so the cap is the bare base here).
+export const STARTING_SKILL = 5;             // competent default → work-speed mult 1.0
+const SKILL_GROWTH_PER_HOUR = 0.06;
+const SKILL_CAP = 10;
+
+/** Trait housing preference → compact enum (0 = none). */
+const HOUSING_PREF: Readonly<Record<string, number>> = { private: 1, communal: 2, military: 3 };
+export const enum Housing { None = 0, Private = 1, Communal = 2, Military = 3 }
 
 export class AgentStore {
   readonly capacity: number;
@@ -77,6 +100,20 @@ export class AgentStore {
   readonly field: Int8Array;      // index into `fields` the agent is navigating, -1 = straight-line
   /** Station id the agent is currently working at (0 = none; ids are 1+). Set by assignStation(). */
   readonly stationId: Int32Array;
+
+  // --- traits + skills (Stage 4 behavior port) ---
+  /** Craft skill 0..SKILL_CAP. Work speed = 0.5 + skill×0.1; grows while Working. */
+  readonly skill: Float32Array;
+  /** Two trait def indices (into TRAIT_DEFS), -1 = none. Identity + serialization only. */
+  readonly trait0: Int8Array;
+  readonly trait1: Int8Array;
+  // Collapsed trait effects — derived from trait0/trait1 once at spawn/load so the
+  // hot tick reads a single multiplier instead of re-walking the trait list.
+  readonly workSpeedMult: Float32Array;   // ∏ trait.workSpeed   (production speed)
+  readonly moodBaseBonus: Float32Array;   // Σ trait.moodBase     (additive mood target)
+  readonly warmthDecayMult: Float32Array; // ∏ trait.warmthDecay  (exposed cooling)
+  readonly foodDecayMult: Float32Array;   // ∏ trait.foodDecay    (hunger rate)
+  readonly housingPref: Int8Array;        // Housing enum (first trait pref wins)
 
   /** Registered flow fields (one per hot destination). Empty = Stage-1 wander. */
   fields: FlowField[] = [];
@@ -103,6 +140,50 @@ export class AgentStore {
     this.nextThink = new Int32Array(capacity);
     this.field = new Int8Array(capacity);
     this.stationId = new Int32Array(capacity);
+    this.skill = new Float32Array(capacity);
+    this.trait0 = new Int8Array(capacity);
+    this.trait1 = new Int8Array(capacity);
+    this.workSpeedMult = new Float32Array(capacity);
+    this.moodBaseBonus = new Float32Array(capacity);
+    this.warmthDecayMult = new Float32Array(capacity);
+    this.foodDecayMult = new Float32Array(capacity);
+    this.housingPref = new Int8Array(capacity);
+  }
+
+  /** Recompute the collapsed trait-effect columns for agent `i` from trait0/trait1. */
+  private applyTraits(i: number): void {
+    let ws = 1, md = 0, wd = 1, fd = 1, hp = 0;
+    const t0 = this.trait0[i], t1 = this.trait1[i];
+    for (const t of [t0, t1]) {
+      if (t < 0) continue;
+      const def = TRAIT_DEFS[t];
+      if (!def) continue;
+      ws *= def.workSpeed ?? 1;
+      md += def.moodBase ?? 0;
+      wd *= def.warmthDecay ?? 1;
+      fd *= def.foodDecay ?? 1;
+      if (hp === 0 && def.housingPreference) hp = HOUSING_PREF[def.housingPreference] ?? 0;
+    }
+    this.workSpeedMult[i] = ws;
+    this.moodBaseBonus[i] = md;
+    this.warmthDecayMult[i] = wd;
+    this.foodDecayMult[i] = fd;
+    this.housingPref[i] = hp;
+  }
+
+  /**
+   * Roll two distinct traits onto agent `i` (mirrors the fat sim's birth roll) and
+   * collapse their effects. `rand` is the external sim RNG so the store stays
+   * deterministic and side-effect-free.
+   */
+  rollTraits(i: number, rand: () => number): void {
+    const n = TRAIT_DEFS.length;
+    const a = Math.floor(rand() * n);
+    let b = Math.floor(rand() * n);
+    while (b === a) b = Math.floor(rand() * n);
+    this.trait0[i] = a;
+    this.trait1[i] = b;
+    this.applyTraits(i);
   }
 
   /** Add an agent; returns its index, or -1 if full. */
@@ -120,6 +201,18 @@ export class AgentStore {
     this.state[i] = AState.Idle;
     this.field[i] = -1;
     this.stationId[i] = 0;
+    // Default persona: competent (skill 5 → work-speed mult 1.0) and untraited.
+    // Callers roll real traits/skill via rollTraits()/skill[i] = …; the neutral
+    // default keeps spawn deterministic and leaves production identical to a plain
+    // worker count until a persona is assigned.
+    this.skill[i] = STARTING_SKILL;
+    this.trait0[i] = -1;
+    this.trait1[i] = -1;
+    this.workSpeedMult[i] = 1;
+    this.moodBaseBonus[i] = 0;
+    this.warmthDecayMult[i] = 1;
+    this.foodDecayMult[i] = 1;
+    this.housingPref[i] = 0;
     // Stagger first decision so a cohort spawned together doesn't think in lockstep.
     this.nextThink[i] = i % THINK_INTERVAL;
     return i;
@@ -139,6 +232,13 @@ export class AgentStore {
       this.nextThink[i] = this.nextThink[last];
       this.field[i] = this.field[last];
       this.stationId[i] = this.stationId[last];
+      this.skill[i] = this.skill[last];
+      this.trait0[i] = this.trait0[last]; this.trait1[i] = this.trait1[last];
+      this.workSpeedMult[i] = this.workSpeedMult[last];
+      this.moodBaseBonus[i] = this.moodBaseBonus[last];
+      this.warmthDecayMult[i] = this.warmthDecayMult[last];
+      this.foodDecayMult[i] = this.foodDecayMult[last];
+      this.housingPref[i] = this.housingPref[last];
     }
   }
 
@@ -192,6 +292,10 @@ export class AgentStore {
       recreation: slice(this.recreation), social: slice(this.social),
       state: slice(this.state), nextThink: slice(this.nextThink),
       field: slice(this.field), stationId: slice(this.stationId),
+      // Persist skill + the two trait indices; the collapsed multiplier columns are
+      // a pure function of the traits, so they're re-derived on load (smaller save,
+      // and no chance of mults drifting out of sync with the traits).
+      skill: slice(this.skill), trait0: slice(this.trait0), trait1: slice(this.trait1),
     };
   }
 
@@ -209,6 +313,11 @@ export class AgentStore {
       store.recreation[i] = data.recreation[i]; store.social[i] = data.social[i];
       store.state[i] = data.state[i]; store.nextThink[i] = data.nextThink[i];
       store.field[i] = data.field[i]; store.stationId[i] = data.stationId[i];
+      // Backfill persona for pre-Stage-4 saves: competent + untraited.
+      store.skill[i] = data.skill?.[i] ?? STARTING_SKILL;
+      store.trait0[i] = data.trait0?.[i] ?? -1;
+      store.trait1[i] = data.trait1?.[i] ?? -1;
+      store.applyTraits(i); // re-derive the collapsed multiplier columns
     }
     return store;
   }
@@ -223,7 +332,7 @@ export class AgentStore {
     const n = this.count;
     for (let i = 0; i < n; i++) {
       // --- needs decay (tight, branch-light: the part that vectorizes) ---
-      const f = this.food[i] - DECAY_FOOD * HOURS_PER_TICK;
+      const f = this.food[i] - DECAY_FOOD * HOURS_PER_TICK * this.foodDecayMult[i];
       this.food[i] = f > 0 ? f : 0;
       if (this.state[i] !== AState.Sleeping) {
         const r = this.rest[i] - DECAY_REST * HOURS_PER_TICK;
@@ -242,10 +351,18 @@ export class AgentStore {
         this.health[i] = h < 100 ? h : 100;
       }
 
-      // --- mood: ease toward the weighted-need target (matches sim's 0.05 lerp) ---
-      const target = this.food[i] * 0.3 + this.rest[i] * 0.25 + this.warmth[i] * 0.2
-        + this.recreation[i] * 0.15 + this.social[i] * 0.1;
+      // --- mood: ease toward the weighted-need target + trait base, clamped 0..100
+      //     (matches the fat sim's clamped 0.05 lerp). ---
+      let target = this.food[i] * 0.3 + this.rest[i] * 0.25 + this.warmth[i] * 0.2
+        + this.recreation[i] * 0.15 + this.social[i] * 0.1 + this.moodBaseBonus[i];
+      target = target < 0 ? 0 : target > 100 ? 100 : target;
       this.mood[i] += (target - this.mood[i]) * 0.05;
+
+      // --- skill: a Working agent gets better at the craft, capped. ---
+      if (this.state[i] === AState.Working && this.skill[i] < SKILL_CAP) {
+        const sk = this.skill[i] + SKILL_GROWTH_PER_HOUR * HOURS_PER_TICK;
+        this.skill[i] = sk < SKILL_CAP ? sk : SKILL_CAP;
+      }
 
       // --- time-sliced decision: only idle agents that are due re-pick a goal ---
       if (this.state[i] === AState.Idle && tickNo >= this.nextThink[i]) {
@@ -325,6 +442,23 @@ if (typeof process !== 'undefined' && process.argv[1]?.endsWith('/agents.ts')) {
   console.assert(Math.abs(s2.posX[a] - 16) <= 1.5 && Math.abs(s2.posY[a] - 16) <= 1.5,
     'agent followed the flow field to the goal');
 
+  // Stage 4: traits collapse into multiplier columns; skill grows while Working.
+  const s3 = new AgentStore(4);
+  const p = s3.spawn(0, 0);
+  console.assert(s3.skill[p] === 10 - 5 && s3.workSpeedMult[p] === 1, 'neutral default persona');
+  s3.rollTraits(p, rand);
+  console.assert(s3.trait0[p] >= 0 && s3.trait1[p] >= 0 && s3.trait0[p] !== s3.trait1[p],
+    'two distinct traits rolled');
+  s3.state[p] = AState.Working;
+  const skill0 = s3.skill[p];
+  for (let t = 0; t < 50; t++) s3.tick(t, rand);
+  console.assert(s3.skill[p] > skill0, 'skill grew while working');
+  // Persona survives a serialize round-trip (mults re-derived from trait indices).
+  const s3r = AgentStore.deserialize(s3.serialize());
+  console.assert(s3r.trait0[0] === s3.trait0[p] && s3r.workSpeedMult[0] === s3.workSpeedMult[p],
+    'traits + derived mults round-trip');
+
   console.log('agents.ts self-check OK — count', s.count, 'food', s.food[0].toFixed(1),
-    '— flow-field arrival', `(${s2.posX[a].toFixed(1)},${s2.posY[a].toFixed(1)})`);
+    '— flow-field arrival', `(${s2.posX[a].toFixed(1)},${s2.posY[a].toFixed(1)})`,
+    '— skill', s3.skill[p].toFixed(2));
 }

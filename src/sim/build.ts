@@ -32,11 +32,15 @@ import {
 } from './defs';
 import type { Stockpile } from './stockpile';
 
-/** Narrow slice of AgentStore used by tickProduction — avoids a circular import. */
+/** Narrow slice of AgentStore used by tickProduction — avoids a circular import.
+ *  `skill`/`workSpeedMult` are optional: when present, a worker contributes its
+ *  skill+trait effort (0.5 + skill×0.1) × workSpeedMult instead of a flat 1.0. */
 interface WorkerSource {
   count: number;
   stationId: Int32Array;
   state: Uint8Array;
+  skill?: Float32Array;
+  workSpeedMult?: Float32Array;
 }
 
 /** A placed workstation instance. Few and rarely mutated, so plain objects are fine. */
@@ -369,20 +373,26 @@ export class BuildGrid {
    * `AState.Working = 3`; agents in any other state are not counted as workers.
    */
   tickProduction(agents: WorkerSource, stockpile: Stockpile, minutesPerTick: number): void {
-    // Count workers per station in one O(agents) pass.
-    const workerCount = new Map<number, number>();
+    // Sum worker *effort* per station in one O(agents) pass. With no skill/trait
+    // columns each worker is 1.0 effort (so progress = minutes × headcount, exactly
+    // as before); with them, a skilled or industrious settler advances the recipe
+    // faster (0.5 + skill×0.1) × workSpeedMult — skill 5 + neutral traits = 1.0.
+    const { skill, workSpeedMult } = agents;
+    const workerEffort = new Map<number, number>();
     for (let i = 0; i < agents.count; i++) {
       if (agents.state[i] !== 3 /* AState.Working */) continue;
       const sid = agents.stationId[i];
-      if (sid > 0) workerCount.set(sid, (workerCount.get(sid) ?? 0) + 1);
+      if (sid <= 0) continue;
+      const effort = skill && workSpeedMult ? (0.5 + skill[i] * 0.1) * workSpeedMult[i] : 1;
+      workerEffort.set(sid, (workerEffort.get(sid) ?? 0) + effort);
     }
 
     for (const s of this.stations) {
       const def = STATION_DEF_BY_NUM[s.typeId];
       if (!def || def.kind !== 'craft' || !def.recipe) continue;
 
-      const workers = workerCount.get(s.id) ?? 0;
-      if (workers === 0) continue;
+      const workers = workerEffort.get(s.id) ?? 0;
+      if (workers <= 0) continue;
 
       const recipe = def.recipe;
       let progress = (this._progress.get(s.id) ?? 0) + minutesPerTick * workers;

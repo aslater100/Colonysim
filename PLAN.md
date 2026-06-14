@@ -52,9 +52,30 @@ come from open jobs rather than a fixed destination.
 (O(agents+jobs)) instead of each scanning the map (O(agents×map)). Replaces
 `findTask`'s per-settler full scan.
 
-**Stage 4 — Behavior port.** Move full-fidelity needs/mood/thoughts/skills/combat/
-traits onto the SoA columns until the new core matches the old sim's 441-test
+**Stage 4 — Behavior port. 🔶 IN PROGRESS.** Move full-fidelity needs/mood/thoughts/
+skills/combat/traits onto the SoA columns until the new core matches the old sim's
 behavior. Add headless parity tests.
+
+- ✅ **Traits + skills (v0.33.0).** `AgentStore` gains a `skill` column plus two
+  trait-index columns (`trait0`/`trait1`) whose effects are collapsed once, at
+  spawn, into flat multiplier columns (`workSpeedMult`/`moodBaseBonus`/
+  `warmthDecayMult`/`foodDecayMult`/`housingPref`) so the hot tick reads one
+  multiplier instead of re-walking a `string[]` per agent (the fat sim's per-tick
+  allocation+branch cost). The 21-way per-`WorkKind` skill split — a discrete-
+  building artifact — collapses to one craft `skill` that accelerates whichever
+  station an agent mans: `tickProduction` now sums worker *effort*
+  `(0.5 + skill×0.1) × workSpeedMult` (skill 5 + neutral traits = 1.0, so every
+  pre-existing test is bit-identical). Skill grows `0.06/hr` while Working, capped
+  at 10; food decay × `foodDecayMult`; exposed warmth loss × `warmthDecayMult`;
+  mood target += `moodBaseBonus`, clamped 0..100 (matches the fat sim). `TownCore`
+  rolls two distinct traits + a 0..7 starting skill on every founder/newcomer.
+  Serialization persists `skill`/`trait0`/`trait1` and re-derives the mults on load
+  (pre-Stage-4 saves backfill to competent+untraited). Tests: `tests/persona.test.ts`
+  (14 cases). `agents.ts` stays pure/SoA — only new import is `TRAIT_DEFS` from defs.
+- ⬜ **Remaining Stage-4 slices** (each its own PR): wounds/infection/sickness +
+  medical recovery; relationships/thoughts/mood events; combat power + raids;
+  weather (temperature → warmth model); trading/economy. Each needs headless
+  parity tests vs the fat sim's behavior before B-6 PART 2 (the live swap).
 
 **Stage 5 — Render + bigger maps.** 96×96 holds only ~9k tiles; SoS cities need
 larger worlds. Wire to the chunk-LOD renderer (Phase 4 foundation already landed).
@@ -154,7 +175,7 @@ Stages (extend Track C; the live game is untouched until B-6):
 
 ### Current state (updated 2026-06-14)
 
-**Test baseline: 526 passing** (441 base + 11 flow-field + 13 rooms + 16 production + 13 jobs + 13 needs + 7 blueprints + 12 towncore). `tsc` + `vite build` clean. B-2→B-5 merged (PR #103/#104). **B-6 PART 1 (`TownCore` integrated swap candidate) is on `claude/focused-maxwell-ofuwv5`.**
+**Test baseline: 540 passing** (526 prior + 14 persona). `tsc` + `vite build` clean. B-2→B-6 PART 1 merged. **Stage 4 behavior port has begun: traits + skills landed (v0.33.0, `tests/persona.test.ts`).**
 
 **Scale engine (Track C):**
 - **Stage 1 ✅** — `src/sim/agents.ts` (`AgentStore`, SoA agent core).

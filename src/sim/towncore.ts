@@ -98,6 +98,19 @@ export class TownCore {
     this.homeY = Math.floor(height / 2);
   }
 
+  /**
+   * Spawn one settler at (x, y) with a rolled persona: two distinct traits and a
+   * green-to-competent starting skill (0..7, like the fat sim's birth roll). Uses
+   * the core RNG so colonies stay deterministic. Returns the agent index, or -1.
+   */
+  private spawnPerson(x: number, y: number): number {
+    const i = this.agents.spawn(x, y);
+    if (i < 0) return -1;
+    this.agents.rollTraits(i, this._rand);
+    this.agents.skill[i] = this.rng.int(8);
+    return i;
+  }
+
   /** Spawn `n` founding settlers clustered around (cx, cy). Returns the count placed. */
   seedColony(cx: number, cy: number, n: number): number {
     this.homeX = cx;
@@ -106,7 +119,7 @@ export class TownCore {
     for (let i = 0; i < n; i++) {
       const dx = (i % 3) - 1;
       const dy = (Math.floor(i / 3) % 3) - 1;
-      if (this.agents.spawn(cx + dx, cy + dy) >= 0) placed++;
+      if (this.spawnPerson(cx + dx, cy + dy) >= 0) placed++;
     }
     return placed;
   }
@@ -197,7 +210,7 @@ export class TownCore {
     const avgMood = this.averageMood();
     const fed = this.stock.count('meal') >= a.count;
     if (a.count < housing && a.count < a.capacity && avgMood >= BIRTH_MOOD_MIN && fed) {
-      if (a.spawn(this.homeX, this.homeY) >= 0) this.births++;
+      if (this.spawnPerson(this.homeX, this.homeY) >= 0) this.births++;
     }
   }
 

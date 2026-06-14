@@ -107,7 +107,8 @@ export function serveNeeds(grid: BuildGrid, agents: AgentStore, minutesPerTick: 
       const w = agents.warmth[i] + WARMTH_REGEN_ENCLOSED * hours;
       agents.warmth[i] = w < 100 ? w : 100;
     } else {
-      const w = agents.warmth[i] - WARMTH_DECAY_EXPOSED * hours;
+      // Hardy settlers (warmthDecayMult < 1) shrug off the cold; the floor is unchanged.
+      const w = agents.warmth[i] - WARMTH_DECAY_EXPOSED * hours * agents.warmthDecayMult[i];
       agents.warmth[i] = w > WARMTH_AMBIENT_FLOOR ? w : WARMTH_AMBIENT_FLOOR;
     }
 
