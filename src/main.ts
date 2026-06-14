@@ -14,6 +14,7 @@ import { Music } from './ui/music';
 import { Soundscape } from './ui/soundscape';
 import { DesignScreen } from './ui/designscreen';
 import { TitleScreen } from './ui/titlescreen';
+import { WindowManager } from './ui/WindowManager';
 import type { TownDesign } from './sim/defs';
 
 const root = document.getElementById('app')!;
@@ -114,6 +115,9 @@ window.addEventListener('keydown', () => { sfx.unlock(); music.unlock(); soundsc
 const renderer = new Renderer(canvas, sim, cam);
 const hud = new Hud(root, sim, cam, sfx, music, soundscape);
 
+// Draggable windows: panels remember where you drag them and raise on click.
+const windows = new WindowManager(hud.draggablePanels);
+
 hud.onSave = () => {
   try {
     localStorage.setItem(SAVE_KEY, sim.serialize());
@@ -191,6 +195,7 @@ function enterRegionMode(r: RegionSim): void {
   region = r;
   (window as unknown as { region: RegionSim }).region = r;
   regionView = new RegionView(canvas, r, root);
+  for (const p of regionView.draggablePanels) windows.register(p);
   mode = 'region';
   dioramaOpen = false;
   hud.resetLogLen(); // region log starts independently from town log

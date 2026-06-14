@@ -29,11 +29,17 @@ export class RegionView {
   conventionOpen = false;
   private g: CanvasRenderingContext2D;
   private panel: HTMLElement;
+  private panelTab: 'overview' | 'economy' | 'people' = 'overview';
   private statePanel: HTMLElement;
   private lastStatePanelBuildFrame = -999;
+  /** Active tab in the (dense) state panel — split into Finance/Politics/Diplomacy. */
+  private statePanelTab: 'finance' | 'politics' | 'diplomacy' = 'finance';
+  /** Sub-tab within Finance: Treasury (dashboard + controls) vs Credit (lenders/monetary/freight). */
+  private financeSubTab: 'treasury' | 'credit' = 'treasury';
   private researchPanel: HTMLElement;
   researchOpen = false;
   private lastResearchBuildFrame = -999;
+  private researchTab: 'tech' | 'civics' = 'tech';
   /** Phase A: the region-wide Route Network panel (toggle with the R key). */
   private routeNetworkPanel: HTMLElement;
   routeNetworkOpen = false;
@@ -46,6 +52,7 @@ export class RegionView {
   private economyPanel: HTMLElement;
   economyOpen = false;
   private lastEconomyBuildFrame = -999;
+  private economyTab: 'overview' | 'settlements' = 'overview';
   private ceremony: HTMLElement;
   private convention: HTMLElement;
   private policyModal: HTMLElement;
@@ -116,6 +123,19 @@ export class RegionView {
     this.rivalPanel = document.createElement('div');
     this.rivalPanel.className = 'inspector region-panel hidden';
     root.appendChild(this.rivalPanel);
+  }
+
+  /** Draggable panels for the WindowManager (region mode). */
+  get draggablePanels(): { id: string; element: HTMLElement; baseZ: number }[] {
+    return [
+      { id: 'region-selection', element: this.panel, baseZ: 20 },
+      { id: 'region-state', element: this.statePanel, baseZ: 12 },
+      { id: 'region-research', element: this.researchPanel, baseZ: 12 },
+      { id: 'region-routes', element: this.routeNetworkPanel, baseZ: 12 },
+      { id: 'region-settlements', element: this.settlementListPanel, baseZ: 12 },
+      { id: 'region-economy', element: this.economyPanel, baseZ: 12 },
+      { id: 'region-rival', element: this.rivalPanel, baseZ: 20 },
+    ];
   }
 
   destroyPanel(): void {
@@ -415,6 +435,9 @@ export class RegionView {
 
     // Charter banner — the path to the State. Each requirement reads as a
     // ✓/✗ chip so the player can see exactly what still blocks Incorporation.
+    // Drawn above the 44px DOM bottombar (which always renders over the canvas),
+    // so the banner clears it instead of hiding behind the S/R/E/T buttons.
+    const barTop = H - 52; // top of the banner's reserved strip (above bottombar)
     if (!region.stateProclaimed) {
       if (region.ceremonyPending || region.charterEligible()) {
         g.font = 'bold 13px monospace';
@@ -423,12 +446,12 @@ export class RegionView {
           : `Regional Charter being drafted… ${Math.floor(region.charterProgress)}%`;
         const bw = Math.max(460, g.measureText(need).width + 28);
         g.fillStyle = 'rgba(12,10,7,0.94)';
-        g.fillRect(W / 2 - bw / 2, H - 46, bw, 32);
+        g.fillRect(W / 2 - bw / 2, barTop - 32, bw, 32);
         g.strokeStyle = 'rgba(143,194,106,0.5)';
-        g.strokeRect(W / 2 - bw / 2 + 0.5, H - 46 + 0.5, bw - 1, 31);
+        g.strokeRect(W / 2 - bw / 2 + 0.5, barTop - 32 + 0.5, bw - 1, 31);
         g.fillStyle = '#a8e06a';
         g.textAlign = 'center';
-        g.fillText(need, W / 2, H - 25);
+        g.fillText(need, W / 2, barTop - 11);
         g.textAlign = 'left';
       } else {
         // Not yet eligible: draw the gate chips, color-coded, centered.
@@ -444,11 +467,11 @@ export class RegionView {
           segs.reduce((w, s, i) => w + g.measureText(s.text).width + (i ? g.measureText(sep).width : 0), 0);
         const bw = Math.max(460, totalW + 28);
         g.fillStyle = 'rgba(12,10,7,0.94)';
-        g.fillRect(W / 2 - bw / 2, H - 46, bw, 32);
+        g.fillRect(W / 2 - bw / 2, barTop - 32, bw, 32);
         g.strokeStyle = 'rgba(143,194,106,0.45)';
-        g.strokeRect(W / 2 - bw / 2 + 0.5, H - 46 + 0.5, bw - 1, 31);
+        g.strokeRect(W / 2 - bw / 2 + 0.5, barTop - 32 + 0.5, bw - 1, 31);
         let x = W / 2 - totalW / 2;
-        const y = H - 25;
+        const y = barTop - 11;
         g.textAlign = 'left';
         g.fillStyle = '#fffcf0';
         g.fillText(head, x, y);
@@ -462,11 +485,11 @@ export class RegionView {
       }
     } else {
       g.fillStyle = 'rgba(110,74,47,0.92)';
-      g.fillRect(W / 2 - 200, H - 44, 400, 30);
+      g.fillRect(W / 2 - 200, barTop - 30, 400, 30);
       g.fillStyle = '#e8d27a';
       g.font = 'bold 14px monospace';
       g.textAlign = 'center';
-      g.fillText(`★ ${region.stateName.toUpperCase()} ★`, W / 2, H - 24);
+      g.fillText(`★ ${region.stateName.toUpperCase()} ★`, W / 2, barTop - 10);
       g.textAlign = 'left';
     }
 
@@ -1110,6 +1133,30 @@ export class RegionView {
   }
 
   /** Tier-2 dashboard: treasury, taxes, funded services — visible once proclaimed. */
+  /** Wire a panel's tab buttons to show the matching section. Sections all stay
+   *  in the DOM (so ID-bound handlers survive); switching is pure CSS, no
+   *  rebuild. `set` records the choice so the next rebuild matches. The class
+   *  pair is parameterised so a panel can nest a second (sub-tab) level. */
+  private wireTabs(
+    panel: HTMLElement,
+    set: (tab: string) => void,
+    tabClass = 'pal-tab',
+    sectionClass = 'pal-section',
+  ): void {
+    for (const btn of panel.querySelectorAll<HTMLButtonElement>(`.${tabClass}`)) {
+      btn.onclick = () => {
+        const tab = btn.dataset.ptab!;
+        set(tab);
+        for (const t of panel.querySelectorAll<HTMLElement>(`.${tabClass}`)) {
+          t.classList.toggle('active', t.dataset.ptab === tab);
+        }
+        for (const s of panel.querySelectorAll<HTMLElement>(`.${sectionClass}`)) {
+          s.classList.toggle('hidden', s.dataset.psection !== tab);
+        }
+      };
+    }
+  }
+
   private drawStatePanel(): void {
     const r = this.region;
     if (!r.stateProclaimed) {
@@ -1125,12 +1172,22 @@ export class RegionView {
     this.lastStatePanelBuildFrame = this.frame;
     const forceRebuild = () => { this.lastStatePanelBuildFrame = -999; };
     const lvl = (v: number) => ['none', 'basic', 'funded'][v];
-    this.statePanel.innerHTML =
-      `<div class="pal-title">${r.nationProclaimed ? r.nationName.toUpperCase() : r.stateName.toUpperCase()}</div>` +
-      `<p class="insp-skills">${r.nationProclaimed && r.govType
-        ? GOV_TYPES.find((g) => g.id === r.govType)!.name
-        : r.govLean ? GOV_LEANS[r.govLean].name : ''}</p>` +
-      (r.nationProclaimed ? this.nationHtml() : '') +
+    const tab = this.statePanelTab;
+    // Tab strip: Finance / Politics / Diplomacy. Sections always render (so the
+    // ~25 ID-bound handlers below still find their nodes) but only the active one
+    // is shown — switching just toggles CSS, no rebuild.
+    const tabStrip =
+      `<div class="pal-tabs">` +
+      `<button class="pal-tab${tab === 'finance' ? ' active' : ''}" data-ptab="finance">Finance</button>` +
+      `<button class="pal-tab${tab === 'politics' ? ' active' : ''}" data-ptab="politics">Politics</button>` +
+      `<button class="pal-tab${tab === 'diplomacy' ? ' active' : ''}" data-ptab="diplomacy">Diplomacy</button>` +
+      `</div>`;
+    const sec = (id: string, body: string) =>
+      `<div class="pal-section${tab === id ? '' : ' hidden'}" data-psection="${id}">${body}</div>`;
+
+    const ftab = this.financeSubTab;
+    // Treasury sub-tab: the at-a-glance dashboard + the tax/services/militia dials.
+    const treasuryBody =
       `<p>treasury ` + formatCurrency(Math.floor(r.treasury)) + ` · coin ${r.currencySymbol}</p>` +
       (r.currencyTransition && r.day < r.currencyTransition.endDay
         ? `<p style="color:#e0a040" title="The currency switch is still settling: output runs at ${Math.round(r.currencyEfficiency() * 100)}% and prices swing until markets stabilize.">` +
@@ -1147,13 +1204,15 @@ export class RegionView {
         ? `<p><button class="mini" id="geo-deploy-btn" title="Deploy stratospheric aerosols: −${GEOENGINEER_COOLING}°C over 2 years, but all rivals lose 15 relations (one-time)">⚗ deploy geoengineering</button></p>`
         : '') +
       `<p>trade ` + formatCurrency(Math.floor(r.tradeValueLastMonth)) + `/mo turnover</p>` +
-      this.monetaryHtml() +
-      this.lendersHtml() +
       `<p>tax <span id="tax-val">${Math.round(r.taxRate * 100)}%</span></p>` +
       `<input id="tax-slider" type="range" min="0" max="30" value="${Math.round(r.taxRate * 100)}">` +
       `<p>services: <b>${lvl(r.servicesLevel)}</b> <button class="mini" id="svc-up">+</button><button class="mini" id="svc-dn">−</button></p>` +
       `<p>militia: <b>${lvl(r.militiaLevel)}</b> <button class="mini" id="mil-up">+</button><button class="mini" id="mil-dn">−</button></p>` +
-      `<p class="insp-skills">high taxes breed strikes; services cost coin but save lives</p>` +
+      `<p class="insp-skills">high taxes breed strikes; services cost coin but save lives</p>`;
+    // Credit sub-tab: the lengthy monetary / lenders / freight machinery.
+    const creditBody =
+      this.monetaryHtml() +
+      this.lendersHtml() +
       `<p class="insp-skills">${r.maglevUnlocked()
         ? 'THE FLOATING FREIGHT — maglev guideways from any town panel'
         : r.highwayUnlocked()
@@ -1161,14 +1220,16 @@ export class RegionView {
           : r.railUnlocked()
             ? 'RAILWORKS chartered — lay rail from any town panel'
             : `railworks expected ~${RAIL_ERA_YEAR}`}</p>` +
-      `<p>` +
-      `<button class="mini" id="research-toggle" title="Research tree (T)">${this.researchOpen ? '▲' : '▼'} T:research</button> ` +
-      `<button class="mini" id="routenet-toggle" title="Route network (R)">${this.routeNetworkOpen ? '▲' : '▼'} R:routes</button>` +
-      `</p>` +
-      `<p>` +
-      `<button class="mini" id="settlements-toggle" title="Settlement list (S)">${this.settlementListOpen ? '▲' : '▼'} S:towns</button> ` +
-      `<button class="mini" id="economy-toggle" title="Economy panel (E)">${this.economyOpen ? '▲' : '▼'} E:econ</button>` +
-      `</p>` +
+      this.freightHtml();
+    const financeBody =
+      `<div class="pal-subtabs">` +
+      `<button class="pal-subtab${ftab === 'treasury' ? ' active' : ''}" data-ptab="treasury">Treasury</button>` +
+      `<button class="pal-subtab${ftab === 'credit' ? ' active' : ''}" data-ptab="credit">Credit</button>` +
+      `</div>` +
+      `<div class="pal-subsection${ftab === 'treasury' ? '' : ' hidden'}" data-psection="treasury">${treasuryBody}</div>` +
+      `<div class="pal-subsection${ftab === 'credit' ? '' : ' hidden'}" data-psection="credit">${creditBody}</div>`;
+
+    const politicsBody =
       (!r.nationProclaimed && r.stateProclaimed && !r.proclamationReady
         ? `<p style="color:#bfae86;font-size:10px">territory ${(r.playerTerritoryControl() * 100).toFixed(0)}% / 50% needed for nation gate</p>`
         : '') +
@@ -1177,9 +1238,28 @@ export class RegionView {
         : '') +
       (r.canCallConvention() ? `<p><button id="convention-btn" style="font-size:10px;background:#8b5cf6;color:#fff;border:none;padding:4px 8px;cursor:pointer">★ CONVENE CONSTITUTIONAL CONVENTION</button></p>` : '') +
       this.politicsHtml() +
-      this.diplomacyHtml() +
-      this.factionIntelHtml() +
-      this.freightHtml();
+      this.factionIntelHtml();
+
+    this.statePanel.innerHTML =
+      `<div class="pal-title">${r.nationProclaimed ? r.nationName.toUpperCase() : r.stateName.toUpperCase()}</div>` +
+      `<p class="insp-skills">${r.nationProclaimed && r.govType
+        ? GOV_TYPES.find((g) => g.id === r.govType)!.name
+        : r.govLean ? GOV_LEANS[r.govLean].name : ''}</p>` +
+      (r.nationProclaimed ? this.nationHtml() : '') +
+      // Navigation to the other windows stays always-visible.
+      `<p>` +
+      `<button class="mini" id="research-toggle" title="Research tree (T)">${this.researchOpen ? '▲' : '▼'} T:research</button> ` +
+      `<button class="mini" id="routenet-toggle" title="Route network (R)">${this.routeNetworkOpen ? '▲' : '▼'} R:routes</button> ` +
+      `<button class="mini" id="settlements-toggle" title="Settlement list (S)">${this.settlementListOpen ? '▲' : '▼'} S:towns</button> ` +
+      `<button class="mini" id="economy-toggle" title="Economy panel (E)">${this.economyOpen ? '▲' : '▼'} E:econ</button>` +
+      `</p>` +
+      tabStrip +
+      sec('finance', financeBody) +
+      sec('politics', politicsBody) +
+      sec('diplomacy', this.diplomacyHtml());
+
+    this.wireTabs(this.statePanel, (t) => { this.statePanelTab = t as 'finance' | 'politics' | 'diplomacy'; });
+    this.wireTabs(this.statePanel, (t) => { this.financeSubTab = t as 'treasury' | 'credit'; }, 'pal-subtab', 'pal-subsection');
     this.statePanel.querySelector<HTMLInputElement>('#tax-slider')!.oninput = (e) => {
       r.taxRate = Number((e.target as HTMLInputElement).value) / 100;
       const taxVal = this.statePanel.querySelector<HTMLElement>('#tax-val');
@@ -1978,6 +2058,7 @@ export class RegionView {
     this.lastPanelBuildFrame = this.frame;
 
     this.panel.innerHTML = this.panelHtml(t);
+    this.wireTabs(this.panel, (tab) => { this.panelTab = tab as 'overview' | 'economy' | 'people'; });
     const btn = this.panel.querySelector<HTMLButtonElement>('#found-btn');
     if (btn) {
       btn.onclick = () => { this.region.foundTown(t.id); this.refreshPanel(); };
@@ -2532,6 +2613,7 @@ export class RegionView {
     this.lastEconomyBuildFrame = this.frame;
     this.economyPanel.innerHTML = this.economyPanelHtml();
     const refresh = () => { this.lastEconomyBuildFrame = -999; };
+    this.wireTabs(this.economyPanel, (t) => { this.economyTab = t as 'overview' | 'settlements'; });
     for (const b of this.economyPanel.querySelectorAll<HTMLButtonElement>('.ep-close')) {
       b.onclick = () => { this.economyOpen = false; };
     }
@@ -2600,14 +2682,21 @@ export class RegionView {
         `</div>`
       );
     }).join('');
-    return (
-      `<div class="pal-title">ECONOMY [E] <button class="mini ep-close" title="close (E)">✕</button></div>` +
+    const etab = this.economyTab;
+    const overviewBody =
       `<p>treasury ` + formatCurrency(Math.floor(r.treasury)) + ` · GDP ` + formatCurrency(Math.floor(r.gdpLastMonth)) + `/mo</p>` +
       `<p>global tax ${Math.round(r.taxRate * 100)}% · trade ` + formatCurrency(Math.floor(r.tradeValueLastMonth)) + `/mo</p>` +
       (factionHtml ? `<p class="insp-skills">FACTION MOOD</p>${factionHtml}` : '') +
-      actionsHtml +
-      `<p class="insp-skills">PER SETTLEMENT</p>` +
-      `<div class="thoughts">${settRows || '<p class="insp-skills">no towns yet</p>'}</div>`
+      actionsHtml;
+    return (
+      `<div class="pal-title">ECONOMY [E] <button class="mini ep-close" title="close (E)">✕</button></div>` +
+      `<div class="pal-tabs">` +
+      `<button class="pal-tab${etab === 'overview' ? ' active' : ''}" data-ptab="overview">Overview</button>` +
+      `<button class="pal-tab${etab === 'settlements' ? ' active' : ''}" data-ptab="settlements">Settlements</button>` +
+      `</div>` +
+      `<div class="pal-section${etab === 'overview' ? '' : ' hidden'}" data-psection="overview">${overviewBody}</div>` +
+      `<div class="pal-section${etab === 'settlements' ? '' : ' hidden'}" data-psection="settlements">` +
+        `<div class="thoughts">${settRows || '<p class="insp-skills">no towns yet</p>'}</div></div>`
     );
   }
 
@@ -2648,16 +2737,20 @@ export class RegionView {
 
     const techNodes = TECH_TREE.filter((n) => n.tree === 'tech').map((n) => nodeRow(n.id)).join('');
     const civicNodes = TECH_TREE.filter((n) => n.tree === 'civics').map((n) => nodeRow(n.id)).join('');
+    const rtab = this.researchTab;
 
     this.researchPanel.innerHTML =
       `<div class="pal-title">RESEARCH</div>` +
       `<p class="insp-skills">${rate} RP/day${active ? ` → <b>${active.name}</b>` : ' (idle)'}</p>` +
       (active ? `<div class="res-bar"><div class="res-bar-fill" style="width:${progressPct}%"></div></div>` : '') +
-      `<p class="insp-skills" style="margin-top:6px">TECHNOLOGY</p>` +
-      techNodes +
-      `<p class="insp-skills" style="margin-top:6px">CIVICS</p>` +
-      civicNodes;
+      `<div class="pal-tabs">` +
+      `<button class="pal-tab${rtab === 'tech' ? ' active' : ''}" data-ptab="tech">Technology</button>` +
+      `<button class="pal-tab${rtab === 'civics' ? ' active' : ''}" data-ptab="civics">Civics</button>` +
+      `</div>` +
+      `<div class="pal-section${rtab === 'tech' ? '' : ' hidden'}" data-psection="tech">${techNodes}</div>` +
+      `<div class="pal-section${rtab === 'civics' ? '' : ' hidden'}" data-psection="civics">${civicNodes}</div>`;
 
+    this.wireTabs(this.researchPanel, (t) => { this.researchTab = t as 'tech' | 'civics'; });
     for (const btn of this.researchPanel.querySelectorAll<HTMLButtonElement>('.res-start-btn')) {
       btn.onclick = () => { r.startResearch(btn.dataset.id!); forceResearchRebuild(); };
     }
@@ -2683,7 +2776,10 @@ export class RegionView {
           ).join('')
         }</ul>`
       : '';
-    return (
+    const ptab = this.panelTab;
+    // Identity header stays visible; the dense sub-panels split into tabs so no
+    // single view needs scrolling.
+    const header =
       `<h3>${t.name} <button id="rename-btn" class="mini" title="Rename this town">✎</button></h3>` +
       `<p class="insp-lvl">${tier} · day ${r.day - t.foundedDay} old</p>` +
       `<p class="insp-state">pop ${Math.round(r.popOf(t))} · housing ${Math.floor(t.housing)} · satisfaction ${Math.round(t.satisfaction)}</p>` +
@@ -2691,7 +2787,9 @@ export class RegionView {
         ? `<p class="${t.grievance > 50 ? 'insp-cond' : 'insp-skills'}">grievance ${Math.round(t.grievance)}${this.region.day < t.strikeUntil ? ' · ON STRIKE' : ''}</p>`
         : '') +
       `<p>food ${Math.floor(t.food)} · wood ${Math.floor(t.wood)} · land ${t.landQuality.toFixed(2)}</p>` +
-      `<p class="insp-skills">market: grain ` + formatCurrency(t.prices.food, 2) + ` · timber ` + formatCurrency(t.prices.wood, 2) + ` /unit</p>` +
+      `<p class="insp-skills">market: grain ` + formatCurrency(t.prices.food, 2) + ` · timber ` + formatCurrency(t.prices.wood, 2) + ` /unit</p>`;
+
+    const overviewBody =
       `<p class="insp-skills">${[
         t.site.river ? 'river (fishery, flood risk)' : '',
         t.site.coastal ? (t.seaWall ? 'coastal (sea wall raised)' : 'coastal (fishery)') : '',
@@ -2705,16 +2803,31 @@ export class RegionView {
           `sea wall ` + formatCurrency(r.seaWallCost(t)) + `</button></p>`
         : '') +
       this.garrisonHtml(t) +
+      this.crisisActionsHtml(t) +
+      recentHtml;
+
+    const economyBody =
       this.sectorsHtml(t) +
       this.policiesHtml(t) +
       this.cityHtml(t) +
-      this.routesHtml(t) +
-      recentHtml +
-      this.crisisActionsHtml(t) +
+      this.routesHtml(t);
+
+    const peopleBody =
       `<p class="insp-skills">COHORTS</p>` + bands +
       (notables ? `<p class="insp-skills">NOTABLES</p><ul class="thoughts">${notables}</ul>` : '') +
       `<button id="found-btn" ${can.ok ? '' : 'disabled'} title="${can.reason}">Found new town (8 pop, 80 food, 80 wood)</button>` +
-      (can.ok ? '' : `<p class="insp-skills">${can.reason}</p>`)
+      (can.ok ? '' : `<p class="insp-skills">${can.reason}</p>`);
+
+    return (
+      header +
+      `<div class="pal-tabs">` +
+      `<button class="pal-tab${ptab === 'overview' ? ' active' : ''}" data-ptab="overview">Overview</button>` +
+      `<button class="pal-tab${ptab === 'economy' ? ' active' : ''}" data-ptab="economy">Economy</button>` +
+      `<button class="pal-tab${ptab === 'people' ? ' active' : ''}" data-ptab="people">People</button>` +
+      `</div>` +
+      `<div class="pal-section${ptab === 'overview' ? '' : ' hidden'}" data-psection="overview">${overviewBody}</div>` +
+      `<div class="pal-section${ptab === 'economy' ? '' : ' hidden'}" data-psection="economy">${economyBody}</div>` +
+      `<div class="pal-section${ptab === 'people' ? '' : ' hidden'}" data-psection="people">${peopleBody}</div>`
     );
   }
 
