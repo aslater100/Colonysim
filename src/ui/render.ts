@@ -326,14 +326,10 @@ export class Renderer {
           const px = ox + x * TILE;
           const py = oy + y * TILE;
           if (grid.wall[i] > 0) {
-            g.fillStyle = 'rgba(48,38,26,0.9)';
-            g.fillRect(px, py, TILE, TILE);
-            g.fillStyle = 'rgba(88,74,52,0.45)';
-            g.fillRect(px, py, TILE, 1);
-            g.fillRect(px, py, 1, TILE);
+            g.drawImage(this.sprites.interiorWall, px, py);
           } else {
-            g.fillStyle = 'rgba(210,195,160,0.28)';
-            g.fillRect(px, py, TILE, TILE);
+            // Plank floor, then a translucent room-type wash so designations read.
+            g.drawImage(this.sprites.interiorFloor, px, py);
             const rid = grid.roomId[i];
             if (rid >= 0) {
               const col = ROOM_TYPE_COLORS[grid.rooms[rid]?.typeId ?? 0];
@@ -346,14 +342,9 @@ export class Renderer {
         const spx = ox + s.x * TILE;
         const spy = oy + s.y * TILE;
         if (!this.isInViewport(spx, spy, s.w * TILE + TILE)) continue;
-        g.fillStyle = 'rgba(28,20,12,0.72)';
-        g.fillRect(spx + 2, spy + 2, s.w * TILE - 4, s.h * TILE - 4);
         const def = STATION_DEF_BY_NUM[s.typeId];
-        if (def) {
-          g.fillStyle = '#d8c89a';
-          g.font = '7px monospace';
-          g.fillText(def.name.slice(0, 6), spx + 3, spy + 9);
-        }
+        const img = def ? this.sprites.stations[def.id] : undefined;
+        if (img) g.drawImage(img, spx, spy);
       }
     }
 
@@ -606,18 +597,23 @@ export class Renderer {
         const bx = ox + (cam.mouseTile.x - Math.floor(bp.w / 2)) * TILE;
         const by = oy + (cam.mouseTile.y - Math.floor(bp.h / 2)) * TILE;
         const roomCol = ROOM_TYPE_COLORS[ROOM_TYPE_ID.get(bp.roomType) ?? 0] || 'rgba(200,190,160,0.38)';
-        for (const [wx0, wy0, wx1, wy1] of bp.wallRects)
-          for (let wy = wy0; wy <= wy1; wy++)
-            for (let wx = wx0; wx <= wx1; wx++) {
-              g.fillStyle = 'rgba(48,38,26,0.55)';
-              g.fillRect(bx + wx * TILE, by + wy * TILE, TILE, TILE);
-            }
         const [fx0, fy0, fx1, fy1] = bp.floorRect;
+        g.globalAlpha = 0.6;
+        for (let fy = fy0; fy <= fy1; fy++)
+          for (let fx = fx0; fx <= fx1; fx++)
+            g.drawImage(this.sprites.interiorFloor, bx + fx * TILE, by + fy * TILE);
+        g.globalAlpha = 1;
         for (let fy = fy0; fy <= fy1; fy++)
           for (let fx = fx0; fx <= fx1; fx++) {
             g.fillStyle = roomCol;
             g.fillRect(bx + fx * TILE, by + fy * TILE, TILE, TILE);
           }
+        g.globalAlpha = 0.6;
+        for (const [wx0, wy0, wx1, wy1] of bp.wallRects)
+          for (let wy = wy0; wy <= wy1; wy++)
+            for (let wx = wx0; wx <= wx1; wx++)
+              g.drawImage(this.sprites.interiorWall, bx + wx * TILE, by + wy * TILE);
+        g.globalAlpha = 1;
         g.strokeStyle = '#e8d27a';
         g.lineWidth = 1;
         g.strokeRect(bx + 0.5, by + 0.5, bp.w * TILE - 1, bp.h * TILE - 1);
@@ -626,11 +622,13 @@ export class Renderer {
       const mpx = ox + cam.mouseTile.x * TILE;
       const mpy = oy + cam.mouseTile.y * TILE;
       if (cam.roomPaintMode === 'wall') {
-        g.fillStyle = 'rgba(48,38,26,0.6)';
-        g.fillRect(mpx, mpy, TILE, TILE);
+        g.globalAlpha = 0.7;
+        g.drawImage(this.sprites.interiorWall, mpx, mpy);
+        g.globalAlpha = 1;
       } else if (cam.roomPaintMode === 'floor') {
-        g.fillStyle = 'rgba(210,195,160,0.55)';
-        g.fillRect(mpx, mpy, TILE, TILE);
+        g.globalAlpha = 0.7;
+        g.drawImage(this.sprites.interiorFloor, mpx, mpy);
+        g.globalAlpha = 1;
       } else if (cam.roomPaintMode === 'room') {
         const col = ROOM_TYPE_COLORS[cam.roomTypeId] || 'rgba(200,200,200,0.45)';
         g.fillStyle = col;
@@ -638,8 +636,8 @@ export class Renderer {
       } else if (cam.roomPaintMode === 'station' && cam.stationTypeId) {
         const def = STATION_DEF_BY_NUM[cam.stationTypeId];
         if (def) {
-          g.fillStyle = 'rgba(28,20,12,0.52)';
-          g.fillRect(mpx, mpy, def.w * TILE, def.h * TILE);
+          const img = this.sprites.stations[def.id];
+          if (img) { g.globalAlpha = 0.65; g.drawImage(img, mpx, mpy); g.globalAlpha = 1; }
           g.strokeStyle = '#e8d27a';
           g.lineWidth = 1;
           g.strokeRect(mpx + 0.5, mpy + 0.5, def.w * TILE - 1, def.h * TILE - 1);
