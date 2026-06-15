@@ -175,10 +175,11 @@ describe('TownCore research integration', () => {
     core.seedColony(12, 12, 4);
     core.grid.setTerrain(3, 3, TERRAIN.SOIL);
     core.grid.setZone(3, 3, ZONE.FIELD);
+    core.stock.add('meal', 100); // settlers eat meals so harvested grain is undisturbed
     const before = core.stock.count('grain');
     core.run(360); // one day
-    // crop_rotation is free → 1.25 grain (not 1.0)
-    expect(core.stock.count('grain')).toBeGreaterThan(before + 1);
+    // crop_rotation is free → 1.25 × weather.growthMult(0) grain (> 1.0 base)
+    expect(core.stock.count('grain')).toBeGreaterThan(before + 1 * core.weather.growthMult(0));
   });
 
   it('crop_science stacks on top of crop_rotation for higher field yield', () => {
@@ -193,6 +194,7 @@ describe('TownCore research integration', () => {
     core.research('crop_science');
     expect(core.researchBook.hasTech('crop_science')).toBe(true);
 
+    core.stock.add('meal', 100); // settlers eat meals so harvested grain is undisturbed
     const before = core.stock.count('grain');
     core.run(360);
     // 1 tile × (1 + 0.25 + 0.20) × weather.growthMult(day 0)

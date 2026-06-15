@@ -588,13 +588,21 @@ export class TownCore {
       else this.priceModifiers.set(kind, healed);
     }
 
-    // Feed: each hungry agent eats one produced meal (restores food fully). Meals
-    // are consumed in agent order until the larder runs dry — the rest stay hungry
-    // and bleed health via the per-tick starvation path.
+    // Feed: priority meal → bread → raw grain (fallback; penalty thought added).
+    // Mirrors the fat sim's consumeFood priority order.
+    const MEAL_VAL = TUNING.mealFoodValue;
+    const GRAIN_VAL = TUNING.rawGrainFoodValue;
     for (let i = 0; i < a.count; i++) {
       if (a.food[i] >= 100) continue;
-      if (!this.stock.remove('meal', 1)) break;
-      a.food[i] = 100;
+      if (this.stock.remove('meal', 1)) {
+        a.food[i] = Math.min(100, a.food[i] + MEAL_VAL);
+      } else if (this.stock.remove('bread', 1)) {
+        a.food[i] = Math.min(100, a.food[i] + MEAL_VAL);
+        a.addThought(i, this.tickNo, 3, TICKS_PER_DAY); // bread is a slight mood boost
+      } else if (this.stock.remove('grain', 1)) {
+        a.food[i] = Math.min(100, a.food[i] + GRAIN_VAL);
+        a.addThought(i, this.tickNo, -4, TICKS_PER_DAY, ThoughtKey.Anon); // "ate raw grain"
+      }
     }
 
     // Growth: a content, well-housed, well-fed colony attracts a newcomer.

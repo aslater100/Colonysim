@@ -350,6 +350,7 @@ describe('TownCore harvest zones', () => {
     let fields = 0;
     for (let x = 2; x < 8; x++) { c.grid.setTerrain(x, 2, TERRAIN.SOIL); if (c.grid.setZone(x, 2, ZONE.FIELD)) fields++; }
     expect(fields).toBe(6);
+    c.stock.add('meal', 100); // settlers eat meals so harvested grain is undisturbed
     const before = c.stock.count('grain');
     c.run(360); // one day
     // crop_rotation free → 1.25/tile/day, then scaled by weather.growthMult(day 0)
@@ -373,9 +374,11 @@ describe('TownCore harvest zones', () => {
   });
 
   it('weather growthMult modulates field yield: drought suppresses, well-watered boosts', () => {
-    // seed 9 → growthMult 0.35 (drought) on day 0; seed 7 → growthMult 1.1 (well-watered).
+    // seed 9 → drought on day 0; seed 7 → well-watered (1.1×). Meals pre-loaded so
+    // settlers eat meals instead of grain, keeping the yield measurement clean.
     const dry = new TownCore({ width: 20, height: 20, seed: 9 });
     dry.seedColony(10, 10, 4);
+    dry.stock.add('meal', 100);
     dry.grid.setTerrain(3, 3, TERRAIN.SOIL); dry.grid.setZone(3, 3, ZONE.FIELD);
     const dryBefore = dry.stock.count('grain');
     dry.run(360);
@@ -383,6 +386,7 @@ describe('TownCore harvest zones', () => {
 
     const wet = new TownCore({ width: 20, height: 20, seed: 7 }); // growthMult 1.1
     wet.seedColony(10, 10, 4);
+    wet.stock.add('meal', 100);
     wet.grid.setTerrain(3, 3, TERRAIN.SOIL); wet.grid.setZone(3, 3, ZONE.FIELD);
     const wetBefore = wet.stock.count('grain');
     wet.run(360);
@@ -420,6 +424,7 @@ describe('TownCore harvest zones', () => {
     let n = 0;
     for (let x = 2; x < 12; x++) { c.grid.setTerrain(x, 2, TERRAIN.SOIL); if (c.grid.setZone(x, 2, ZONE.FIELD)) n++; }
     expect(n).toBe(10);
+    c.stock.add('meal', 100); // settler eats meals so harvested grain is undisturbed
     const before = c.stock.count('grain');
     c.run(360);
     // capped at 1 worker × 4 tiles × 1.25 (crop_rotation) × weather.growthMult(day 0)
@@ -451,6 +456,8 @@ describe('TownCore random events', () => {
     let merchantFired = false;
     for (let d = 0; d < 120; d++) {
       core.run(360);
+      // Dismiss any pending choice so the event stream stays unblocked.
+      if (core.pendingChoice) core.resolveEventChoice(1);
       if (core.log.some((e) => e.text.includes('merchant') || e.text.includes('tinker'))) {
         merchantFired = true;
         break;
