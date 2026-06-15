@@ -16,19 +16,26 @@
 import './style.css';
 import { TownCore } from './sim/towncore';
 import { AState } from './sim/agents';
+import { TERRAIN } from './sim/build';
 import { ROOM_TYPE_ID, TICKS_PER_SECOND } from './sim/defs';
 
 const MAP = 64;
-const core = new TownCore({ width: MAP, height: MAP, seed: Date.now() % 100000 });
+// B-6 PART 3: boot WITH terrain so the play-test shows the Songs-of-Syx world
+// (forests/water/rock/ore) the colony is painted onto, not a featureless plane.
+const core = new TownCore({ width: MAP, height: MAP, seed: Date.now() % 100000, terrain: true });
 (window as unknown as { core: TownCore }).core = core; // debug/automation hook
 
 // ── starter town: doored kitchen + home + tavern, sized so a real colony lives ──
-// Doorways matter: BuildGrid has no gate, so a fully-walled room is unreachable —
-// agents path through wall gaps only. A gap forfeits the enclosure (warmth) bonus
-// but beds/ovens/tables still serve, so the colony works.
+// Each room is fully walled with a single gate cut into the south side: a gate is
+// passable (settlers path through) yet still seals the room for the enclosure
+// (warmth) bonus, so the colony stays both reachable and warm.
 {
   const g = core.grid;
   const cx = MAP >> 1, cy = MAP >> 1;
+  // Clear the starter-town footprint back to grass so generated water/rock can't
+  // land under the demo rooms (the heart clearing already handles trees/rock, but
+  // not water). The wider world keeps its forests/lakes/outcrops.
+  for (let y = cy - 12; y <= cy + 12; y++) for (let x = cx - 12; x <= cx + 16; x++) g.setTerrain(x, y, TERRAIN.GRASS);
   // Floor [x0..x1, y0..y1], wall the perimeter just outside it, then cut a south door.
   const room = (x0: number, y0: number, x1: number, y1: number, type: string): void => {
     g.designateRect(x0, y0, x1, y1, ROOM_TYPE_ID.get(type)!);
@@ -95,8 +102,16 @@ function draw(): void {
   const g = core.grid;
   ctx.fillStyle = '#15151a';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // Terrain underlay (grass / tree / water / soil / rock), index-aligned with TERRAIN.
+  const TERRAIN_COLORS = ['#243a22', '#1c3a1c', '#1d3a5c', '#3a3320', '#4a4a52'];
   for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) {
     const i = y * MAP + x;
+    const t = g.terrain[i];
+    if (t !== TERRAIN.GRASS || !g.floor[i]) { // grass under a floor is hidden anyway
+      ctx.fillStyle = TERRAIN_COLORS[t];
+      ctx.fillRect(x * px, y * px, px, px);
+    }
+    if (g.ore[i]) { ctx.fillStyle = '#b8924a'; ctx.fillRect(x * px + px / 3, y * px + px / 3, px / 3, px / 3); }
     if (g.floor[i]) { ctx.fillStyle = '#2a2a32'; ctx.fillRect(x * px, y * px, px, px); }
     if (g.wall[i]) { ctx.fillStyle = '#6b5b4b'; ctx.fillRect(x * px, y * px, px, px); }
     if (g.gate[i]) { ctx.fillStyle = '#9a7b3b'; ctx.fillRect(x * px + px / 4, y * px + px / 4, px / 2, px / 2); }
@@ -126,6 +141,16 @@ function draw(): void {
   line(4, `${paused ? 'PAUSED' : 'speed ' + speed + '×'}`);
   line(5, `space pause · 1/2/3 speed · R raid · N settler`);
   line(6, `left-drag wall · right-drag erase`);
+
+  // Event log: last few entries, bottom-left, colour-coded like the live HUD.
+  const recent = core.log.slice(-6);
+  const logColor = { good: '#7fe07f', bad: '#ff6b6b', info: '#d8d8d8' };
+  ctx.font = '12px monospace';
+  for (let k = 0; k < recent.length; k++) {
+    const e = recent[recent.length - 1 - k];
+    ctx.fillStyle = logColor[e.kind];
+    ctx.fillText(`d${e.day} ${e.text}`, 8, canvas.height - 10 - k * 16);
+  }
 }
 
 // ── loop: fixed-timestep sim, rAF render ──
