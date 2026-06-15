@@ -1382,3 +1382,90 @@ describe('TownCore immigration gates', () => {
     expect(c.population).toBeLessThanOrEqual(TUNING.immigrantStopPop);
   });
 });
+
+// ── Event variety (parity with fat-sim tests) ─────────────────────────────────
+
+describe('TownCore event variety', () => {
+  it('evtBumperHarvest adds grain', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 1 });
+    c.seedColony(10, 10, 2);
+    const before = c.stock.count('grain');
+    // Trigger bumper harvest via private method access
+    (c as unknown as { evtBumperHarvest(): void }).evtBumperHarvest();
+    expect(c.stock.count('grain')).toBeGreaterThan(before);
+  });
+
+  it('evtWindfallTimber adds wood', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 1 });
+    c.seedColony(10, 10, 2);
+    const before = c.stock.count('wood');
+    (c as unknown as { evtWindfallTimber(): void }).evtWindfallTimber();
+    expect(c.stock.count('wood')).toBeGreaterThan(before);
+    expect(c.log.some(e => e.text.includes('deadfall'))).toBe(true);
+  });
+
+  it('evtSkillBreakthrough improves a settler skill', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 1 });
+    c.seedColony(10, 10, 4);
+    const skillsBefore = Array.from({ length: c.agents.count }, (_, i) => c.agents.skill[i]);
+    (c as unknown as { evtSkillBreakthrough(): void }).evtSkillBreakthrough();
+    const skillsAfter = Array.from({ length: c.agents.count }, (_, i) => c.agents.skill[i]);
+    const improved = skillsAfter.some((s, i) => s > skillsBefore[i]);
+    expect(improved).toBe(true);
+  });
+
+  it('evtStormDamage spoils provisions and destroys a palisade section', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 1 });
+    c.seedColony(10, 10, 2);
+    c.stock.add('meal', 100);
+    c.grid.setWall(5, 5);
+    c.grid.setWall(6, 5);
+    const wallsBefore = Array.from(c.grid.wall).filter(Boolean).length;
+    const mealsBefore = c.stock.count('meal');
+    (c as unknown as { evtStormDamage(): void }).evtStormDamage();
+    const wallsAfter = Array.from(c.grid.wall).filter(Boolean).length;
+    expect(wallsAfter).toBeLessThan(wallsBefore);
+    expect(c.stock.count('meal')).toBeLessThanOrEqual(mealsBefore);
+    expect(c.log.some(e => e.text.includes('storm'))).toBe(true);
+  });
+
+  it('evtInjuredWorker wounds a healthy settler', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 1 });
+    c.seedColony(10, 10, 4);
+    // Ensure all settlers are healthy and unwounded
+    for (let i = 0; i < c.agents.count; i++) {
+      c.agents.health[i] = 100;
+      c.agents.woundUntreated[i] = 0;
+    }
+    const woundedBefore = Array.from({ length: c.agents.count }, (_, i) => c.agents.woundUntreated[i]).filter(Boolean).length;
+    (c as unknown as { evtInjuredWorker(): void }).evtInjuredWorker();
+    const woundedAfter = Array.from({ length: c.agents.count }, (_, i) => c.agents.woundUntreated[i]).filter(Boolean).length;
+    expect(woundedAfter).toBeGreaterThan(woundedBefore);
+  });
+});
+
+// ── Save v9: serialization of clothing/festival/milestone state ───────────────
+
+describe('TownCore save v9 serialization', () => {
+  it('clothingDay survives round-trip', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 1 });
+    c.seedColony(10, 10, 2);
+    c.stock.add('grain', 2000);
+    c.run(360 * 5); // accumulate some state
+    const saved = c.serialize();
+    expect(saved.v).toBe(9);
+    const twin = TownCore.deserialize(saved);
+    // Serialized state exists; twin won't re-fire clothing event on next tick
+    expect(twin.serialize().clothingDay).toBe(saved.clothingDay);
+  });
+
+  it('lastPopMilestone survives round-trip', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 1 });
+    c.seedColony(10, 10, 12); // 12 settlers → past the 10 milestone
+    c.stock.add('grain', 5000);
+    c.run(360); // triggers daily update → milestone check
+    const saved = c.serialize();
+    const twin = TownCore.deserialize(saved);
+    expect(twin.serialize().lastPopMilestone).toBe(saved.lastPopMilestone);
+  });
+});

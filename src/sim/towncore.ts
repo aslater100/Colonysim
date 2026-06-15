@@ -69,7 +69,7 @@ const ECONOMY_MONTH_DAYS = 30;
 const FIRST_EVENT_DAY = 7;
 const EVENT_INTERVAL = [3, 7] as const;
 
-const SAVE_VERSION = 8;
+const SAVE_VERSION = 9;
 
 // Behavior thresholds for the integration loop (modest, deterministic — full
 // mood/skills/trait fidelity is the remaining parity work, not this stage).
@@ -225,6 +225,12 @@ export interface TownCoreSave {
   deerNextId?: number;
   /** v9+: deer-stream rng state (fresh on old saves). */
   deerRngState?: number;
+  /** v9+: day the next clothes check falls due (prevents double-consumption on load). */
+  clothingDay?: number;
+  /** v9+: day festivals can fire again (prevents repeat festivals on load). */
+  festivalCooldown?: number;
+  /** v9+: last population milestone already logged (prevents milestone spam on load). */
+  lastPopMilestone?: number;
 }
 
 export interface TownCoreOpts {
@@ -1808,6 +1814,9 @@ export class TownCore {
       deer: this.deer.length > 0 ? this.deer.map((d) => ({ ...d })) : undefined,
       deerNextId: this._deerNextId > 1 ? this._deerNextId : undefined,
       deerRngState: this._deerRng.getState(),
+      clothingDay: this._clothingDay > 0 ? this._clothingDay : undefined,
+      festivalCooldown: this._festivalCooldown > 0 ? this._festivalCooldown : undefined,
+      lastPopMilestone: this._lastPopMilestone > 0 ? this._lastPopMilestone : undefined,
     };
   }
 
@@ -1866,6 +1875,10 @@ export class TownCore {
     if (data.deer) { core.deer = data.deer.map((d) => ({ ...d })); }
     (core as unknown as { _deerNextId: number })._deerNextId = data.deerNextId ?? 1;
     if (data.deerRngState != null) (core as unknown as { _deerRng: Rng })._deerRng.setState(data.deerRngState);
+    // v9+: restore clothing/festival/milestone state so they don't double-fire on load.
+    if (data.clothingDay != null) (core as unknown as { _clothingDay: number })._clothingDay = data.clothingDay;
+    if (data.festivalCooldown != null) (core as unknown as { _festivalCooldown: number })._festivalCooldown = data.festivalCooldown;
+    if (data.lastPopMilestone != null) (core as unknown as { _lastPopMilestone: number })._lastPopMilestone = data.lastPopMilestone;
     return core;
   }
 }
