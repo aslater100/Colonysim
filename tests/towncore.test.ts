@@ -432,6 +432,54 @@ describe('TownCore harvest zones', () => {
   });
 });
 
+// --- Flax zone and loom production chain ---
+describe('TownCore flax zone', () => {
+  it('a flax zone on soil yields flax each day', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 7 });
+    c.seedColony(10, 10, 4);
+    c.stock.add('meal', 200); // feed settlers so they don't eat grain
+    c.grid.setTerrain(3, 3, TERRAIN.SOIL);
+    expect(c.grid.setZone(3, 3, ZONE.FLAX)).toBe(true);
+    c.run(360); // one day
+    expect(c.stock.count('flax')).toBeGreaterThan(0);
+  });
+
+  it('flax zone produces in winter when grain fields are fallow', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 7 });
+    c.seedColony(10, 10, 4);
+    c.stock.add('meal', 5000);
+    c.grid.setTerrain(3, 3, TERRAIN.SOIL);
+    c.grid.setTerrain(4, 3, TERRAIN.SOIL);
+    c.grid.setZone(3, 3, ZONE.FIELD);
+    c.grid.setZone(4, 3, ZONE.FLAX);
+    // Advance to winter (day 45, season index 3)
+    c.run(360 * 45);
+    const grainBefore = c.stock.count('grain');
+    const flaxBefore  = c.stock.count('flax');
+    c.run(360); // one winter day
+    // Grain field is fallow in winter; flax is perennial
+    expect(c.stock.count('grain')).toBe(grainBefore);
+    expect(c.stock.count('flax')).toBeGreaterThan(flaxBefore);
+  });
+
+  it('loom in a workshop consumes flax and produces clothes', () => {
+    const WORKSHOP = ROOM_TYPE_ID.get('workshop')!;
+    const c = new TownCore({ width: 20, height: 20, seed: 7 });
+    // Build a walled workshop with a loom
+    const g = c.grid;
+    g.designateRect(1, 1, 4, 3, WORKSHOP);
+    for (let x = 0; x <= 5; x++) { g.setWall(x, 0); g.setWall(x, 4); }
+    for (let y = 0; y <= 4; y++) { g.setWall(0, y); g.setWall(5, y); }
+    g.placeStation('loom', 1, 1);
+    g.rebuildRooms();
+    c.stock.add('flax', 30);
+    c.stock.add('meal', 500);
+    c.seedColony(10, 10, 2);
+    c.run(360 * 5); // 5 days
+    expect(c.stock.count('clothes')).toBeGreaterThan(0);
+  });
+});
+
 // --- B-6 random events ---
 describe('TownCore random events', () => {
   it('fires at least one event in a 30-day run', () => {

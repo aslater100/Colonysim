@@ -131,25 +131,28 @@ export const TERRAIN_NAMES = ['grass', 'tree', 'water', 'soil', 'rock'] as const
  * zone over matching terrain and the colony works it into raw goods: a FIELD on
  * soil grows grain, a WOODCUTTER fells forest for wood, a QUARRY cuts rock for
  * stone (or iron ore where it's flecked), a FISHERY by water lands meals.
+ * FLAX is a perennial fibre crop on soil — produces flax year-round for the loom.
  * WOODCUTTER/QUARRY are consuming — the tile reverts to grass once worked out —
- * while FIELD/FISHERY renew. Each id's `terrain` is the tile it may sit on
+ * while FIELD/FISHERY/FLAX renew. Each id's `terrain` is the tile it may sit on
  * (FISHERY is special-cased: any passable tile next to water).
  */
-export const ZONE = { NONE: 0, FIELD: 1, WOODCUTTER: 2, QUARRY: 3, FISHERY: 4 } as const;
+export const ZONE = { NONE: 0, FIELD: 1, WOODCUTTER: 2, QUARRY: 3, FISHERY: 4, FLAX: 5 } as const;
 export type ZoneCode = (typeof ZONE)[keyof typeof ZONE];
 export interface ZoneDef {
   id: string;
   terrain: number;        // required terrain under the zone (FISHERY ignores this)
   resource: ResourceKind; // what a worked tile yields
   renewable: boolean;     // false → the tile is consumed (terrain → grass) when worked
+  seasonal?: boolean;     // true → zone lies fallow in winter (default true for FIELD, false otherwise)
 }
 /** 1-based; index 0 = ZONE.NONE. */
 export const ZONE_DEFS: (ZoneDef | null)[] = [
   null,
-  { id: 'field', terrain: TERRAIN.SOIL, resource: 'grain', renewable: true },
+  { id: 'field', terrain: TERRAIN.SOIL, resource: 'grain', renewable: true, seasonal: true },
   { id: 'woodcutter', terrain: TERRAIN.TREE, resource: 'wood', renewable: false },
   { id: 'quarry', terrain: TERRAIN.ROCK, resource: 'stone', renewable: false },
   { id: 'fishery', terrain: TERRAIN.WATER, resource: 'fish_meal', renewable: true },
+  { id: 'flax', terrain: TERRAIN.SOIL, resource: 'flax', renewable: true },
 ];
 
 // Portable base64 for the byte layers (no Buffer/btoa — runs in Node, browser, worker).

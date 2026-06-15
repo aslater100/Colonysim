@@ -123,7 +123,7 @@ let speed = 3;
 let painting: 0 | 1 | 2 = 0; // 0=none, 1=apply, 2=erase
 
 type Tool = 'wall' | 'erase' | 'gate' | 'floor' | 'room' | 'station'
-           | 'field' | 'woodcutter' | 'quarry' | 'fishery';
+           | 'field' | 'woodcutter' | 'quarry' | 'fishery' | 'flax';
 let tool: Tool = 'wall';
 
 // Room designation sub-tool: cycle through room type names.
@@ -171,6 +171,7 @@ addEventListener('keydown', (e) => {
   if (k === 'c') { tool = 'woodcutter'; return; }
   if (k === 'q') { tool = 'quarry'; return; }
   if (k === 'b') { tool = 'fishery'; return; }
+  if (k === 'l') { tool = 'flax'; return; }
   // Cycle room type
   if (e.key === '[') { roomTypeIdx = (roomTypeIdx - 1 + ROOM_TYPE_NAMES.length) % ROOM_TYPE_NAMES.length; return; }
   if (e.key === ']') { roomTypeIdx = (roomTypeIdx + 1) % ROOM_TYPE_NAMES.length; return; }
@@ -249,11 +250,12 @@ function paintAt(e: MouseEvent): void {
     case 'woodcutter': g.setZone(t.x, t.y, ZONE.WOODCUTTER);  break;
     case 'quarry':     g.setZone(t.x, t.y, ZONE.QUARRY);      break;
     case 'fishery':    g.setZone(t.x, t.y, ZONE.FISHERY);     break;
+    case 'flax':       g.setZone(t.x, t.y, ZONE.FLAX);        break;
   }
 }
 
 // ── Render ────────────────────────────────────────────────────────────────
-const ZONE_OUTLINE = ['', '#d4d46a', '#6ad48a', '#c8c8d8', '#6ad4d4'];
+const ZONE_OUTLINE = ['', '#d4d46a', '#6ad48a', '#c8c8d8', '#6ad4d4', '#d4a06a']; // flax = warm amber
 
 function draw(): void {
   const px = tilePx();
@@ -360,7 +362,7 @@ function draw(): void {
   const deerCount = [...core.deerViews()].length;
   line(2, `game_meal ${gameMeal.toFixed(0)}  fish_meal ${fishMeal.toFixed(0)}  deer ${deerCount}`, gameMeal > 0 || fishMeal > 0 ? '#aed6a0' : '#888');
   line(3, `wood ${core.stock.count('wood').toFixed(0)}${flowStr('wood') ? `(${flowStr('wood')})` : ''}  stone ${core.stock.count('stone').toFixed(0)}  iron ${core.stock.count('iron').toFixed(0)}  ore ${core.stock.count('iron_ore').toFixed(0)}  tools ${core.stock.count('tools').toFixed(0)}`);
-  line(4, `clothes ${core.stock.count('clothes').toFixed(0)}  weapons ${core.stock.count('weapons').toFixed(0)}  medicine ${core.stock.count('medicine').toFixed(0)}`);
+  line(4, `clothes ${core.stock.count('clothes').toFixed(0)}  weapons ${core.stock.count('weapons').toFixed(0)}  medicine ${core.stock.count('medicine').toFixed(0)}  flax ${core.stock.count('flax').toFixed(0)}  rope ${core.stock.count('rope').toFixed(0)}`);
   const unburied = core.unburiedCount > 0 ? `  ⚠ unburied ${core.unburiedCount}` : '';
   line(5, `births ${core.births}  deaths ${core.deaths}  prestige ${core.prestige}  inflation ${(core.inflation * 100).toFixed(1)}%${unburied}`, core.unburiedCount > 0 ? '#ff8844' : '#ddd');
   const raidLine = core.raidActive
@@ -378,7 +380,7 @@ function draw(): void {
   // Key hints
   ctx.fillStyle = '#888'; ctx.font = '11px monospace';
   ctx.fillText('W wall  E erase  G gate  D floor  Z room([ ])  A station(, .)', 8, 20 + 9 * 17);
-  ctx.fillText('F field  C chop  Q quarry  B fishery  R raid  N settler  X research  space pause', 8, 20 + 10 * 17);
+  ctx.fillText('F field  C chop  Q quarry  B fishery  L flax  R raid  N settler  X research  space pause', 8, 20 + 10 * 17);
 
   // ── Settler inspector panel (top-right) ──────────────────────────────────
   if (inspected) {

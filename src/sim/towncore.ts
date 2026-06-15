@@ -1020,8 +1020,9 @@ export class TownCore {
    * Work the designated harvest zones into raw goods. Labour-capped: the colony can
    * only work so many tiles a day, scaled by headcount, so a vast field still needs
    * hands to reap it. Consuming zones (woodcutter/quarry) strip the tile back to
-   * grass once worked; renewable ones (field/fishery) yield again next day. A
-   * quarry on an ore-flecked tile pulls iron ore instead of plain stone.
+   * grass once worked; renewable ones (field/fishery/flax) yield again next day. A
+   * quarry on an ore-flecked tile pulls iron ore instead of plain stone. Flax is
+   * perennial and produces year-round; grain fields lie fallow in winter.
    * ponytail: flat per-worker tile budget + flat yield — the knobs to tune in the
    * GUI; per-tile pathing/regrowth timers can come later if it needs the texture.
    */
@@ -1046,12 +1047,12 @@ export class TownCore {
       if (z === ZONE.NONE) continue;
       const def = ZONE_DEFS[z];
       if (!def) continue;
-      // Fields lie fallow in winter — labour still counts (clearing snow etc.) but no grain.
-      if (z === ZONE.FIELD && !growingSeason) { budget--; continue; }
+      // Seasonal zones (field) lie fallow in winter — labour still counts but no yield.
+      if (def.seasonal && !growingSeason) { budget--; continue; }
       const x = i % grid.width, y = (i / grid.width) | 0;
       if (!grid.canZone(x, y, z)) { grid.zone[i] = ZONE.NONE; continue; } // terrain changed under it
       const res = z === ZONE.QUARRY && grid.ore[i] ? 'iron_ore' : def.resource;
-      const yield_ = z === ZONE.FIELD ? HARVEST_YIELD * fieldMult : HARVEST_YIELD;
+      const yield_ = (z === ZONE.FIELD || z === ZONE.FLAX) ? HARVEST_YIELD * fieldMult : HARVEST_YIELD;
       this.stock.add(res, yield_);
       budget--;
       if (!def.renewable) { grid.setTerrain(x, y, TERRAIN.GRASS); grid.zone[i] = ZONE.NONE; }
