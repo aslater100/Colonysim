@@ -40,7 +40,7 @@ import { Ledger, type LedgerSave, type BorrowResult, type RepayResult } from './
 import { ResearchBook, type ResearchBookSave } from './research';
 import { Rng } from './rng';
 import { BASE_PRICES } from './economy';
-import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, STATION_DEF_BY_NUM, STATION_TYPE_ID, TRAIT_DEFS, TUNING, type ResourceKind } from './defs';
+import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, ROOM_DEF_BY_NUM, STATION_DEF_BY_NUM, STATION_TYPE_ID, TRAIT_DEFS, TUNING, type ResourceKind } from './defs';
 
 const TICKS_PER_DAY = MINUTES_PER_DAY / MINUTES_PER_TICK;
 // Grief on a death (mirrors the fat sim): friends mourn harder and longer.
@@ -65,8 +65,11 @@ const INFLATION_EASE = 0.25;         // fraction of the gap closed each month
 const INFLATION_MAX = 0.5;           // hard cap (50%) so it can't run away
 // The economy settles on a 30-day month, matching the ledger's payment cadence.
 const ECONOMY_MONTH_DAYS = 30;
+// Random events: fire every 3–7 days starting on day FIRST_EVENT_DAY.
+const FIRST_EVENT_DAY = 7;
+const EVENT_INTERVAL = [3, 7] as const;
 
-const SAVE_VERSION = 7;
+const SAVE_VERSION = 8;
 
 // Behavior thresholds for the integration loop (modest, deterministic — full
 // mood/skills/trait fidelity is the remaining parity work, not this stage).
@@ -175,6 +178,8 @@ export interface TownCoreSave {
   builds?: BuildOrder[];
   /** v7+: the research book (points + unlocked techs; old saves restore defaults). */
   researchBook?: ResearchBookSave;
+  /** v8+: next scheduled random-event day (old saves restart the timer from scratch). */
+  nextEventDay?: number;
 }
 
 export interface TownCoreOpts {
@@ -243,6 +248,8 @@ export class TownCore {
   /** Colony anchor — where newcomers appear and the camera first looks. */
   homeX: number;
   homeY: number;
+  /** Day the next random event fires. */
+  nextEventDay: number = FIRST_EVENT_DAY;
 
   private readonly weatherSeed: number;
 
@@ -597,6 +604,9 @@ export class TownCore {
     // Economy: once a month, accrue loan interest, auto-service the debt from the
     // treasury, and re-reckon inflation from the money supply.
     if (this.day > 0 && this.day % ECONOMY_MONTH_DAYS === 0) this.monthlyEconomy();
+
+    // Random events: merchant visits, weather surprises, wanderers, etc.
+    if (this.day >= this.nextEventDay) this.fireRandomEvent();
   }
 
   /**
@@ -731,6 +741,85 @@ export class TownCore {
     const target = Math.min(INFLATION_MAX, Math.max(0, imbalance) * INFLATION_SENSITIVITY);
     this.inflation += (target - this.inflation) * INFLATION_EASE;
     if (this.inflation < 1e-4) this.inflation = 0;
+  }
+
+  // ── random events ─────────────────────────────────────────────────────────────
+
+  private fireRandomEvent(): void {
+    const [min, max] = EVENT_INTERVAL;
+    this.nextEventDay = this.day + min + this.rng.int(max - min + 1);
+    const roll = this.rng.next();
+    if      (roll < 0.18) this.evtMerchant();
+    else if (roll < 0.35) this.evtBumperHarvest();
+    else if (roll < 0.50) this.evtWanderer();
+    else if (roll < 0.65) this.evtFeverOutbreak();
+    else if (roll < 0.82) this.evtFestival();
+    else                  this.evtStormDamage();
+  }
+
+  private evtMerchant(): void {
+    const hasTavern = this.grid.rooms.some((r) => {
+      const def = ROOM_DEF_BY_NUM[r.typeId];
+      return def?.id === 'tavern' && r.enclosed;
+    });
+    if (hasTavern && this.stock.count('wood') >= 5) {
+      this.stock.remove('wood', 5);
+      this.stock.add('grain', 8);
+      this.addLog('A merchant caravan stops at the tavern — 5 wood trades for 8 grain.', 'good');
+    } else {
+      const gift = 3 + this.rng.int(4);
+      this.stock.add('grain', gift);
+      this.addLog(`A tinker's cart rolls through at dusk — leaves ${gift} grain for a night's hospitality.`, 'good');
+    }
+  }
+
+  private evtBumperHarvest(): void {
+    const bonus = 10 + this.rng.int(11); // 10–20 grain
+    this.stock.add('grain', bonus);
+    this.addLog(`Bumper harvest: ${bonus} extra grain gathered from the fields.`, 'good');
+  }
+
+  private evtWanderer(): void {
+    const services = aggregateCapacities(this.grid);
+    if (this.agents.count < services.sleep && this.agents.count < this.agents.capacity) {
+      const idx = this.spawnPerson(this.homeX, this.homeY);
+      if (idx >= 0) {
+        this.births++;
+        this.addLog(`${this.agents.name(idx)} wanders in and asks to stay.`, 'good');
+      }
+    } else {
+      this.addLog('A wanderer passes through but the colony has no spare beds.', 'info');
+    }
+  }
+
+  private evtFeverOutbreak(): void {
+    if (this.agents.count === 0) return;
+    const target = this.rng.int(this.agents.count);
+    this.agents.sickUntilTick[target] = this.tickNo + 3 * TICKS_PER_DAY;
+    this.addLog(`${this.agents.name(target)} comes down with a fever.`, 'bad');
+  }
+
+  private evtFestival(): void {
+    const MOOD_BOOST = 5;
+    for (let i = 0; i < this.agents.count; i++) {
+      this.agents.mood[i] = Math.min(100, this.agents.mood[i] + MOOD_BOOST);
+    }
+    this.addLog('The colony holds a festival — settlers are in high spirits.', 'good');
+  }
+
+  private evtStormDamage(): void {
+    // A storm tears down one random wall tile if any walls exist.
+    const walls: number[] = [];
+    for (let i = 0; i < this.grid.size; i++) if (this.grid.wall[i]) walls.push(i);
+    if (walls.length === 0) {
+      this.addLog('A fierce storm rattles the settlement but does no lasting damage.', 'info');
+      return;
+    }
+    const idx = walls[this.rng.int(walls.length)];
+    const x = idx % this.grid.width;
+    const y = (idx / this.grid.width) | 0;
+    this.grid.clearWall(x, y);
+    this.addLog('A storm collapses part of the colony walls — repairs needed.', 'bad');
   }
 
   // ── research ──────────────────────────────────────────────────────────────────
@@ -887,6 +976,7 @@ export class TownCore {
       log: this.log.length > 0 ? this.log : undefined,
       builds: this.builds.length > 0 ? this.builds : undefined,
       researchBook: this.researchBook.serialize(),
+      nextEventDay: this.nextEventDay,
     };
   }
 
@@ -926,6 +1016,8 @@ export class TownCore {
     if (data.builds) core.builds.push(...data.builds);
     // v7+: restore the research book (old saves keep the default: crop_rotation free, 0 pts).
     if (data.researchBook) (core as { researchBook: ResearchBook }).researchBook = ResearchBook.deserialize(data.researchBook);
+    // v8+: restore the random-event schedule (old saves restart the timer from day 7).
+    if (data.nextEventDay != null) core.nextEventDay = data.nextEventDay;
     return core;
   }
 }

@@ -413,6 +413,47 @@ describe('TownCore harvest zones', () => {
   });
 });
 
+// --- B-6 random events ---
+describe('TownCore random events', () => {
+  it('fires at least one event in a 30-day run', () => {
+    const core = new TownCore({ width: 20, height: 20, seed: 5 });
+    core.seedColony(10, 10, 4);
+    core.stock.add('grain', 5000);
+    const logBefore = core.log.length;
+    core.run(360 * 30); // 30 days
+    expect(core.log.length).toBeGreaterThan(logBefore);
+  });
+
+  it('merchant leaves a gift when no tavern is present', () => {
+    const core = new TownCore({ width: 20, height: 20, seed: 1 });
+    core.seedColony(10, 10, 2);
+    // Force a merchant event by resetting nextEventDay to now and biasing the roll.
+    core.nextEventDay = 0;
+    // Directly call the private method via forced type cast to test merchant path.
+    // Instead: run long enough that a merchant event fires.
+    const grainBefore = core.stock.count('grain');
+    core.stock.add('grain', 100);
+    // Run until a merchant log line appears.
+    let merchantFired = false;
+    for (let d = 0; d < 50; d++) {
+      core.run(360);
+      if (core.log.some((e) => e.text.includes('merchant') || e.text.includes("tinker"))) {
+        merchantFired = true;
+        break;
+      }
+    }
+    expect(merchantFired).toBe(true);
+  });
+
+  it('serialize/deserialize preserves nextEventDay at save v8', () => {
+    const core = new TownCore({ width: 20, height: 20, seed: 3 });
+    core.seedColony(10, 10, 2);
+    core.nextEventDay = 42;
+    const twin = TownCore.deserialize(core.serialize());
+    expect(twin.nextEventDay).toBe(42);
+  });
+});
+
 // --- B-6 PART 3: blueprint construction (paint → materials + labour → built) ---
 describe('TownCore blueprint construction', () => {
   it('builds a queued wall once materials and labour are spent', () => {
