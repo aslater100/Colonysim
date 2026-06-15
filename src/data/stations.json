@@ -30,6 +30,8 @@
 
     { "id": "hunting_lodge", "name": "Hunting Lodge", "roomTypes": ["outpost"], "w": 2, "h": 2, "cost": { "wood": 10 }, "buildWork": 180, "kind": "craft", "recipe": { "inputs": {}, "outputs": { "game_meal": 3 }, "work": 240 } },
 
-    { "id": "watch_post", "name": "Watch Post", "roomTypes": ["watchtower"], "w": 1, "h": 1, "cost": { "wood": 4, "timber": 1 }, "buildWork": 100, "kind": "capacity", "capacity": { "kind": "watch", "amount": 1 } }
+    { "id": "watch_post", "name": "Watch Post", "roomTypes": ["watchtower"], "w": 1, "h": 1, "cost": { "wood": 4, "timber": 1 }, "buildWork": 100, "kind": "capacity", "capacity": { "kind": "watch", "amount": 1 } },
+
+    { "id": "well", "name": "Well", "roomTypes": ["yard", "storehouse"], "w": 1, "h": 1, "cost": { "stone": 6, "wood": 4 }, "buildWork": 120, "kind": "capacity", "capacity": { "kind": "well", "amount": 1 } }
   ]
 }

@@ -63,6 +63,7 @@ const ROOM_COLORS: Record<string, string> = {
   burial_ground: '#607060',
   outpost: '#705020',
   watchtower: '#506080',
+  yard: '#507050',
 };
 
 // ── Starter town ──────────────────────────────────────────────────────────
@@ -280,6 +281,12 @@ function draw(): void {
     else if (t === TERRAIN.ROCK) blit(g.ore[i] ? sprites.rockMarked : sprites.rock, x, y);
     else blit(sprites.grass[(x * 3 + y) % 4], x, y);
     if (t === TERRAIN.TREE) blit(sprites.tree, x, y);
+
+    // Sapling: green tint on tiles growing back to forest
+    if (g.saplingAge[i] > 0) {
+      ctx.fillStyle = '#30a03040';
+      ctx.fillRect(x * px, y * px, px, px);
+    }
 
     // Zone outline
     if (g.zone[i]) {

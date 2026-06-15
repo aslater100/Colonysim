@@ -1189,6 +1189,30 @@ describe('TownCore housing preference', () => {
   });
 });
 
+// ── Well: clean water lowers infection risk ───────────────────────────────────
+
+const YARD = ROOM_TYPE_ID.get('yard')!;
+
+describe('TownCore well', () => {
+  it('well station in a yard contributes well capacity via aggregateCapacities', () => {
+    const core = new TownCore({ width: 20, height: 20, seed: 3 });
+    expect(core.services().well).toBe(0); // no well yet
+    core.grid.designateRect(1, 1, 3, 3, YARD);
+    core.grid.placeStation('well', 1, 1);
+    core.grid.rebuildRooms();
+    expect(core.services().well).toBeGreaterThanOrEqual(1);
+  });
+
+  it('well in storehouse also provides well capacity', () => {
+    const core = new TownCore({ width: 20, height: 20, seed: 3 });
+    const STOREHOUSE2 = ROOM_TYPE_ID.get('storehouse')!;
+    core.grid.designateRect(5, 5, 8, 8, STOREHOUSE2);
+    core.grid.placeStation('well', 5, 5);
+    core.grid.rebuildRooms();
+    expect(core.services().well).toBeGreaterThanOrEqual(1);
+  });
+});
+
 // ── Watchtower early-warning system ──────────────────────────────────────────
 
 const TICKS_PER_DAY = 360; // MINUTES_PER_DAY(1440) / MINUTES_PER_TICK(4)

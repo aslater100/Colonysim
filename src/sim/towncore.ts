@@ -349,6 +349,8 @@ export class TownCore {
   private _settlersClothed = false;
   /** Game-day the current round of clothes wears out and the next batch is due. */
   private _clothingDay = 0;
+  /** True when at least one well station is operational — cached daily to avoid per-tick room scan. */
+  private _hasWell = false;
 
   private readonly weatherSeed: number;
 
@@ -565,8 +567,11 @@ export class TownCore {
     socialize(this.grid, a, this.relations, MINUTES_PER_TICK);
 
     // 5. Agent tick: needs decay, mood ease (incl. thoughts), health, movement.
+    // infectionChanceMult stacks: first_aid × germ_theory × well (each reduces independently).
+    const infectionChanceMult = (this.researchBook.hasTech('first_aid') ? 0.6 : 1.0)
+      * (this._hasWell ? (1 - TUNING.wellInfectionReduction) : 1.0);
     a.tick(t, this._rand,
-      this.researchBook.hasTech('first_aid') ? 0.6 : 1.0,
+      infectionChanceMult,
       this.researchBook.hasTech('germ_theory') ? 0.5 : 1.0);
 
     // 5b. Mental break: a miserable settler may crack, leaving a sour thought.
@@ -870,6 +875,7 @@ export class TownCore {
     // Growth: a content, well-housed, well-fed colony attracts a newcomer.
     const services = aggregateCapacities(this.grid);
     const housing = services.sleep;
+    this._hasWell = services.well > 0; // cache for per-tick infection calc
     const avgMood = this.averageMood();
     const fed = this.stock.count('meal') >= a.count;
     if (a.count < housing && a.count < a.capacity && avgMood >= BIRTH_MOOD_MIN && fed) {
