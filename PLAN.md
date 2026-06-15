@@ -234,8 +234,15 @@ PART 3, not a one-commit wire-up.
    ported from `world.ts`'s blob generator, base64 serialized (back-compat: old saves = all grass),
    opt-in via `new TownCore({ terrain: true })` (dedicated rng stream, so weather/raids are
    byte-identical when off). Tests: `tests/build.test.ts` (terrain suite) + `tests/towncore.test.ts`.
-2. **Terrain-aware resources** — trees→wood (chop), rock/ore→stone/metal (mine), water→fishing +
-   soil fertility for farms. Wire into `JobBoard`/production so the painted world feeds the economy.
+2. **Terrain-aware resources** ✅ *(this session — Songs-of-Syx zones)* — a `zone` layer on
+   `BuildGrid` (field/woodcutter/quarry/fishery), each only designable on matching terrain (fishery:
+   dry tile next to water). `TownCore.harvestZones()` works them into the stockpile each day —
+   field→grain, woodcutter→wood, quarry→stone (iron_ore on an ore tile), fishery→meal — **labour-
+   capped** by headcount (`HARVEST_TILES_PER_WORKER`), with consuming zones (woodcutter/quarry)
+   stripping the tile back to grass and renewable ones (field/fishery) yielding again. Serialized
+   (optional layer; old saves have none). `core.html` gains paint tools (W/F/C/Q/B) + an auto-zone so
+   it runs out of the box. Yields/cap are flat ponytail constants to tune in the GUI; per-tile pathing
+   and regrowth timers are deferred. Tests: `build.test.ts` (zone suite) + `towncore.test.ts` (harvest).
 3. **Event log on `TownCore`** ✅ *(this session)* — append-only `log: LogEntry[]` whose shape
    (`{ day, text, kind }`) mirrors the fat sim's `LogEntry`, so the existing HUD log box + audio can
    consume it unchanged at swap time. Entries on founding, raid muster, raid repelled, wolves in/out,

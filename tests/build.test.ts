@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BuildGrid, TERRAIN } from '../src/sim/build';
+import { BuildGrid, TERRAIN, ZONE } from '../src/sim/build';
 import { ROOM_TYPE_ID, STATION_TYPE_ID, ROOM_DEFS, STATION_DEFS } from '../src/sim/defs';
 import { Rng } from '../src/sim/rng';
 
@@ -266,5 +266,34 @@ describe('terrain layer', () => {
     delete save.terrain; delete save.ore; // simulate an old save
     const r = BuildGrid.deserialize(save);
     for (let i = 0; i < r.size; i++) expect(r.terrain[i]).toBe(TERRAIN.GRASS);
+  });
+});
+
+// --- B-6 PART 3: harvest zones (Songs-of-Syx primary production) ---
+describe('harvest zones', () => {
+  it('only designates a zone on matching terrain', () => {
+    const g = new BuildGrid(8, 8);
+    g.setTerrain(1, 1, TERRAIN.SOIL);
+    g.setTerrain(2, 2, TERRAIN.TREE);
+    expect(g.setZone(1, 1, ZONE.FIELD)).toBe(true);       // soil → field ok
+    expect(g.setZone(1, 1, ZONE.WOODCUTTER)).toBe(false); // soil ≠ tree
+    expect(g.setZone(2, 2, ZONE.WOODCUTTER)).toBe(true);  // tree → woodcutter ok
+    expect(g.zoneAt(1, 1)).toBe(ZONE.FIELD);
+    expect(g.zoneAt(2, 2)).toBe(ZONE.WOODCUTTER);
+  });
+
+  it('a fishery needs a dry tile next to water', () => {
+    const g = new BuildGrid(8, 8);
+    g.setTerrain(3, 3, TERRAIN.WATER);
+    expect(g.setZone(3, 4, ZONE.FISHERY)).toBe(true);  // grass beside water
+    expect(g.setZone(3, 3, ZONE.FISHERY)).toBe(false); // on the water itself
+    expect(g.setZone(6, 6, ZONE.FISHERY)).toBe(false); // far from water
+  });
+
+  it('round-trips the zone layer', () => {
+    const g = new BuildGrid(8, 8);
+    g.setTerrain(1, 1, TERRAIN.SOIL); g.setZone(1, 1, ZONE.FIELD);
+    const r = BuildGrid.deserialize(g.serialize());
+    expect(r.zoneAt(1, 1)).toBe(ZONE.FIELD);
   });
 });

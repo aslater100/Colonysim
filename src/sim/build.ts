@@ -99,6 +99,8 @@ export interface BuildGridSave {
   terrain?: string;
   /** base64 of the ore-deposit layer (optional: absent in pre-terrain saves). */
   ore?: string;
+  /** base64 of the harvest-zone layer (optional: absent in pre-zone saves). */
+  zone?: string;
   floor: string;
   roomType: string;
   stations: Array<{ id: number; typeId: number; x: number; y: number; w: number; h: number }>;
@@ -121,6 +123,32 @@ export const TERRAIN = { GRASS: 0, TREE: 1, WATER: 2, SOIL: 3, ROCK: 4 } as cons
 export type TerrainCode = (typeof TERRAIN)[keyof typeof TERRAIN];
 /** Index-aligned with TERRAIN values — for renderers/inspectors. */
 export const TERRAIN_NAMES = ['grass', 'tree', 'water', 'soil', 'rock'] as const;
+
+/**
+ * Harvest zones (B-6 PART 3, Songs-of-Syx primary production). The player paints a
+ * zone over matching terrain and the colony works it into raw goods: a FIELD on
+ * soil grows grain, a WOODCUTTER fells forest for wood, a QUARRY cuts rock for
+ * stone (or iron ore where it's flecked), a FISHERY by water lands meals.
+ * WOODCUTTER/QUARRY are consuming — the tile reverts to grass once worked out —
+ * while FIELD/FISHERY renew. Each id's `terrain` is the tile it may sit on
+ * (FISHERY is special-cased: any passable tile next to water).
+ */
+export const ZONE = { NONE: 0, FIELD: 1, WOODCUTTER: 2, QUARRY: 3, FISHERY: 4 } as const;
+export type ZoneCode = (typeof ZONE)[keyof typeof ZONE];
+export interface ZoneDef {
+  id: string;
+  terrain: number;        // required terrain under the zone (FISHERY ignores this)
+  resource: ResourceKind; // what a worked tile yields
+  renewable: boolean;     // false → the tile is consumed (terrain → grass) when worked
+}
+/** 1-based; index 0 = ZONE.NONE. */
+export const ZONE_DEFS: (ZoneDef | null)[] = [
+  null,
+  { id: 'field', terrain: TERRAIN.SOIL, resource: 'grain', renewable: true },
+  { id: 'woodcutter', terrain: TERRAIN.TREE, resource: 'wood', renewable: false },
+  { id: 'quarry', terrain: TERRAIN.ROCK, resource: 'stone', renewable: false },
+  { id: 'fishery', terrain: TERRAIN.WATER, resource: 'meal', renewable: true },
+];
 
 // Portable base64 for the byte layers (no Buffer/btoa — runs in Node, browser, worker).
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -179,6 +207,8 @@ export class BuildGrid {
   readonly terrain: Uint8Array;
   /** 1 = this rock tile carries an ore deposit (mineable for metal). Only on ROCK. */
   readonly ore: Uint8Array;
+  /** Harvest-zone designation (see ZONE). 0 = none. Painted over matching terrain. */
+  readonly zone: Uint8Array;
 
   /** Placed stations, indexed by id. Compacted on remove (swap-remove). */
   readonly stations: Station[] = [];
@@ -203,6 +233,7 @@ export class BuildGrid {
     this.station = new Int32Array(this.size).fill(-1);
     this.terrain = new Uint8Array(this.size); // all GRASS (0)
     this.ore = new Uint8Array(this.size);
+    this.zone = new Uint8Array(this.size);
     this._visited = new Uint8Array(this.size);
   }
 
@@ -248,6 +279,41 @@ export class BuildGrid {
 
   hasOre(x: number, y: number): boolean {
     return this.inBounds(x, y) && this.ore[this.index(x, y)] === 1;
+  }
+
+  // --- harvest zones (B-6 PART 3) ---
+
+  /** Can zone type `type` be designated on (x, y)? Terrain must match the zone def
+   *  (FISHERY: a passable tile next to water). */
+  canZone(x: number, y: number, type: number): boolean {
+    const def = ZONE_DEFS[type];
+    if (!def || !this.inBounds(x, y)) return false;
+    if (type === ZONE.FISHERY) return this.terrainAt(x, y) !== TERRAIN.WATER && this._nextToWater(x, y);
+    return this.terrainAt(x, y) === def.terrain;
+  }
+
+  /** Designate a harvest zone if the terrain suits it; returns success. */
+  setZone(x: number, y: number, type: number): boolean {
+    if (!this.canZone(x, y, type)) return false;
+    this.zone[this.index(x, y)] = type;
+    return true;
+  }
+
+  clearZone(x: number, y: number): boolean {
+    if (!this.inBounds(x, y)) return false;
+    this.zone[this.index(x, y)] = ZONE.NONE;
+    return true;
+  }
+
+  zoneAt(x: number, y: number): number {
+    return this.inBounds(x, y) ? this.zone[this.index(x, y)] : ZONE.NONE;
+  }
+
+  private _nextToWater(x: number, y: number): boolean {
+    for (let d = 0; d < 4; d++) {
+      if (this.terrainAt(x + NX4[d], y + NY4[d]) === TERRAIN.WATER) return true;
+    }
+    return false;
   }
 
   /**
@@ -633,6 +699,7 @@ export class BuildGrid {
       trap: bytesToB64(this.trap),
       terrain: bytesToB64(this.terrain),
       ore: bytesToB64(this.ore),
+      zone: bytesToB64(this.zone),
       floor: bytesToB64(this.floor),
       roomType: bytesToB64(this.roomType),
       stations: this.stations.map((s) => ({ id: s.id, typeId: s.typeId, x: s.x, y: s.y, w: s.w, h: s.h })),
@@ -648,6 +715,7 @@ export class BuildGrid {
     if (data.trap) g.trap.set(b64ToBytes(data.trap, g.size)); // backfill: old saves have no traps
     if (data.terrain) g.terrain.set(b64ToBytes(data.terrain, g.size)); // backfill: old saves are all grass
     if (data.ore) g.ore.set(b64ToBytes(data.ore, g.size));
+    if (data.zone) g.zone.set(b64ToBytes(data.zone, g.size)); // backfill: old saves have no zones
     g.floor.set(b64ToBytes(data.floor, g.size));
     g.roomType.set(b64ToBytes(data.roomType, g.size));
     for (const s of data.stations) {

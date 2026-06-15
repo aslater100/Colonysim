@@ -16,7 +16,7 @@
 import './style.css';
 import { TownCore } from './sim/towncore';
 import { AState } from './sim/agents';
-import { TERRAIN } from './sim/build';
+import { TERRAIN, ZONE } from './sim/build';
 import { ROOM_TYPE_ID, TICKS_PER_SECOND } from './sim/defs';
 
 const MAP = 64;
@@ -59,6 +59,19 @@ const core = new TownCore({ width: MAP, height: MAP, seed: Date.now() % 100000, 
   g.rebuildRooms();
   core.stock.add('grain', 5000);
   core.seedColony(cx, cy, 8); // spawn on open ground at the centre — reachable via the doors
+
+  // Auto-designate the nearest patches of each resource so the harvest loop runs
+  // out of the box (the player can paint more with F/C/Q/B). ponytail: just grab
+  // the first matching tiles by scan order; no nearest-search.
+  const autoZone = (type: number, cap: number): void => {
+    for (let i = 0, n = 0; i < g.size && n < cap; i++) {
+      if (g.setZone(i % MAP, (i / MAP) | 0, type)) n++;
+    }
+  };
+  autoZone(ZONE.FIELD, 16);
+  autoZone(ZONE.WOODCUTTER, 12);
+  autoZone(ZONE.QUARRY, 8);
+  autoZone(ZONE.FISHERY, 6);
 }
 
 // ── canvas ──
@@ -76,24 +89,33 @@ const tileAt = (mx: number, my: number) => ({ x: Math.floor(mx / tilePx()), y: M
 // ── input ──
 let paused = false;
 let speed = 3;
-let paint: 0 | 1 | 2 = 0; // 0 none, 1 wall, 2 erase
+let painting: 0 | 1 | 2 = 0; // 0 none, 1 apply tool, 2 erase
+// Current paint tool: 'wall' or a harvest-zone type (designate matching terrain).
+type Tool = 'wall' | 'field' | 'woodcutter' | 'quarry' | 'fishery';
+let tool: Tool = 'wall';
+const TOOL_KEYS: Record<string, Tool> = { w: 'wall', f: 'field', c: 'woodcutter', q: 'quarry', b: 'fishery' };
 addEventListener('keydown', (e) => {
+  const k = e.key.toLowerCase();
   if (e.key === ' ') { paused = !paused; e.preventDefault(); }
   else if (e.key === '1') speed = 1;
   else if (e.key === '2') speed = 3;
   else if (e.key === '3') speed = 8;
-  else if (e.key === 'r' || e.key === 'R') core.musterRaid();
-  else if (e.key === 'n' || e.key === 'N') core.seedColony(core.homeX, core.homeY, 1);
+  else if (k === 'r') core.musterRaid();
+  else if (k === 'n') core.seedColony(core.homeX, core.homeY, 1);
+  else if (TOOL_KEYS[k]) tool = TOOL_KEYS[k];
 });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-canvas.addEventListener('mousedown', (e) => { paint = e.button === 2 ? 2 : 1; paintAt(e); });
-addEventListener('mouseup', () => { paint = 0; core.grid.rebuildRooms(); });
-canvas.addEventListener('mousemove', (e) => { if (paint) paintAt(e); });
+canvas.addEventListener('mousedown', (e) => { painting = e.button === 2 ? 2 : 1; paintAt(e); });
+addEventListener('mouseup', () => { painting = 0; core.grid.rebuildRooms(); });
+canvas.addEventListener('mousemove', (e) => { if (painting) paintAt(e); });
 function paintAt(e: MouseEvent): void {
   const r = canvas.getBoundingClientRect();
   const t = tileAt(e.clientX - r.left, e.clientY - r.top);
-  if (!core.grid.inBounds(t.x, t.y)) return;
-  if (paint === 1) core.grid.setWall(t.x, t.y); else core.grid.clearWall(t.x, t.y);
+  const g = core.grid;
+  if (!g.inBounds(t.x, t.y)) return;
+  if (painting === 2) { g.clearWall(t.x, t.y); g.clearZone(t.x, t.y); return; }
+  if (tool === 'wall') g.setWall(t.x, t.y);
+  else g.setZone(t.x, t.y, ZONE[tool.toUpperCase() as keyof typeof ZONE]); // succeeds only on matching terrain
 }
 
 // ── render ──
@@ -104,6 +126,8 @@ function draw(): void {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   // Terrain underlay (grass / tree / water / soil / rock), index-aligned with TERRAIN.
   const TERRAIN_COLORS = ['#243a22', '#1c3a1c', '#1d3a5c', '#3a3320', '#4a4a52'];
+  // Zone outline colours, index-aligned with ZONE (none/field/woodcutter/quarry/fishery).
+  const ZONE_COLORS = ['', '#d4d46a', '#6ad48a', '#c8c8d8', '#6ad4d4'];
   for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) {
     const i = y * MAP + x;
     const t = g.terrain[i];
@@ -112,6 +136,7 @@ function draw(): void {
       ctx.fillRect(x * px, y * px, px, px);
     }
     if (g.ore[i]) { ctx.fillStyle = '#b8924a'; ctx.fillRect(x * px + px / 3, y * px + px / 3, px / 3, px / 3); }
+    if (g.zone[i]) { ctx.strokeStyle = ZONE_COLORS[g.zone[i]]; ctx.strokeRect(x * px + 0.5, y * px + 0.5, px - 1, px - 1); }
     if (g.floor[i]) { ctx.fillStyle = '#2a2a32'; ctx.fillRect(x * px, y * px, px, px); }
     if (g.wall[i]) { ctx.fillStyle = '#6b5b4b'; ctx.fillRect(x * px, y * px, px, px); }
     if (g.gate[i]) { ctx.fillStyle = '#9a7b3b'; ctx.fillRect(x * px + px / 4, y * px + px / 4, px / 2, px / 2); }
@@ -131,16 +156,16 @@ function draw(): void {
     ctx.fillRect(r.x * px + px / 2 - 3, r.y * px + px / 2 - 3, 6, 6);
   }
 
-  ctx.fillStyle = '#000a'; ctx.fillRect(0, 0, 290, 150);
+  ctx.fillStyle = '#000a'; ctx.fillRect(0, 0, 320, 168);
   ctx.fillStyle = '#fff'; ctx.font = '13px monospace';
   const line = (n: number, s: string) => ctx.fillText(s, 8, 20 + n * 18);
   line(0, `day ${core.day}  pop ${core.population}  mood ${core.averageMood().toFixed(0)}`);
-  line(1, `meals ${core.stock.count('meal')}  grain ${core.stock.count('grain')}  gold ${core.gold}`);
-  line(2, `births ${core.births}  deaths ${core.deaths}`);
+  line(1, `meal ${core.stock.count('meal')} grain ${core.stock.count('grain')} wood ${core.stock.count('wood')} stone ${core.stock.count('stone')}`);
+  line(2, `births ${core.births}  deaths ${core.deaths}  ore ${core.stock.count('iron_ore')}`);
   line(3, core.raidActive ? `RAID — ${core.raids.raiders.length} raiders (slain ${core.raids.slain})` : `next raid day ${core.nextRaidDay}`);
-  line(4, `${paused ? 'PAUSED' : 'speed ' + speed + '×'}`);
+  line(4, `${paused ? 'PAUSED' : 'speed ' + speed + '×'}  ·  tool: ${tool}`);
   line(5, `space pause · 1/2/3 speed · R raid · N settler`);
-  line(6, `left-drag wall · right-drag erase`);
+  line(6, `tools: W wall · F field · C chop · Q quarry · B fishery · drag to paint, right-erase`);
 
   // Event log: last few entries, bottom-left, colour-coded like the live HUD.
   const recent = core.log.slice(-6);

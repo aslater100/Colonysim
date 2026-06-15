@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TownCore } from '../src/sim/towncore';
-import { BuildGrid } from '../src/sim/build';
+import { BuildGrid, TERRAIN, ZONE } from '../src/sim/build';
 import { AgentStore, AState } from '../src/sim/agents';
 import { Stockpile } from '../src/sim/stockpile';
 import { ROOM_TYPE_ID } from '../src/sim/defs';
@@ -274,5 +274,55 @@ describe('TownCore.inspect', () => {
     c.seedColony(48, 48, 2);
     expect(c.inspect(5)).toBeNull();
     expect(c.inspect(-1)).toBeNull();
+  });
+});
+
+// --- B-6 PART 3: harvest zones turn terrain into raw goods ---
+describe('TownCore harvest zones', () => {
+  it('a worked field yields grain each day and renews', () => {
+    const c = new TownCore({ width: 24, height: 24, seed: 7 });
+    c.seedColony(12, 12, 4);
+    let fields = 0;
+    for (let x = 2; x < 8; x++) { c.grid.setTerrain(x, 2, TERRAIN.SOIL); if (c.grid.setZone(x, 2, ZONE.FIELD)) fields++; }
+    expect(fields).toBe(6);
+    const before = c.stock.count('grain');
+    c.run(360); // one day
+    expect(c.stock.count('grain')).toBe(before + fields * 1); // 1 grain/tile/day
+    // Renewable: the field tiles are still fields.
+    for (let x = 2; x < 8; x++) expect(c.grid.zoneAt(x, 2)).toBe(ZONE.FIELD);
+  });
+
+  it('a woodcutter consumes the forest: wood now, bare grass after', () => {
+    const c = new TownCore({ width: 24, height: 24, seed: 7 });
+    c.seedColony(12, 12, 4);
+    c.grid.setTerrain(3, 3, TERRAIN.TREE);
+    c.grid.setZone(3, 3, ZONE.WOODCUTTER);
+    const before = c.stock.count('wood');
+    c.run(360);
+    expect(c.stock.count('wood')).toBe(before + 1);
+    expect(c.grid.terrainAt(3, 3)).toBe(TERRAIN.GRASS); // felled
+    expect(c.grid.zoneAt(3, 3)).toBe(ZONE.NONE);        // zone cleared
+  });
+
+  it('a quarry on an ore tile pulls iron ore, not stone', () => {
+    const c = new TownCore({ width: 24, height: 24, seed: 7 });
+    c.seedColony(12, 12, 4);
+    c.grid.setTerrain(5, 5, TERRAIN.ROCK);
+    c.grid.ore[c.grid.index(5, 5)] = 1;
+    c.grid.setZone(5, 5, ZONE.QUARRY);
+    c.run(360);
+    expect(c.stock.count('iron_ore')).toBe(1);
+    expect(c.stock.count('stone')).toBe(0);
+  });
+
+  it('labour caps the daily harvest: more zones than hands → only some worked', () => {
+    const c = new TownCore({ width: 24, height: 24, seed: 7 });
+    c.seedColony(12, 12, 1); // 1 settler → 4 tiles/day budget
+    let n = 0;
+    for (let x = 2; x < 12; x++) { c.grid.setTerrain(x, 2, TERRAIN.SOIL); if (c.grid.setZone(x, 2, ZONE.FIELD)) n++; }
+    expect(n).toBe(10);
+    const before = c.stock.count('grain');
+    c.run(360);
+    expect(c.stock.count('grain')).toBe(before + 4); // capped at 1×4, not 10
   });
 });

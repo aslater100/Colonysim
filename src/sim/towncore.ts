@@ -26,7 +26,7 @@
  * Run the self-check:  npx tsx src/sim/towncore.ts
  */
 import { MAP_W, MAP_H } from './world';
-import { BuildGrid, type BuildGridSave } from './build';
+import { BuildGrid, ZONE, ZONE_DEFS, TERRAIN, type BuildGridSave } from './build';
 import { AgentStore, AState, ThoughtKey, type AgentStoreSave } from './agents';
 import { Stockpile } from './stockpile';
 import { JobBoard } from './jobs';
@@ -73,6 +73,8 @@ const REST_SLEEP_BELOW = 30;   // rest under this → go to sleep, releasing any
 const REST_WAKE_AT = 95;       // rest at/over this → wake up and look for work
 const BIRTH_MOOD_MIN = 50;     // colony must be reasonably content to grow
 const STARVED_HEALTH = 0;      // health at/under this → death (swap-removed)
+const HARVEST_TILES_PER_WORKER = 4; // zone tiles one settler can work per day (labour cap)
+const HARVEST_YIELD = 1;            // raw goods a worked zone tile yields per day
 
 /** A dated event line for the HUD feed + audio cues. Shape mirrors the fat sim's
  *  `LogEntry` ({ day, text, kind }) so the existing HUD log box can consume a
@@ -454,6 +456,10 @@ export class TownCore {
   private dailyUpdate(): void {
     const a = this.agents;
 
+    // Primary production: the colony works its designated harvest zones into raw
+    // goods (run before feeding so the day's grain/meals are on hand).
+    this.harvestZones();
+
     // Market: price modifiers heal a fraction of the way back to 1.0 each day, so
     // a single panic buy/sell doesn't dislocate prices forever (mirrors the fat sim).
     for (const [kind, mod] of this.priceModifiers) {
@@ -493,6 +499,33 @@ export class TownCore {
     // Economy: once a month, accrue loan interest, auto-service the debt from the
     // treasury, and re-reckon inflation from the money supply.
     if (this.day > 0 && this.day % ECONOMY_MONTH_DAYS === 0) this.monthlyEconomy();
+  }
+
+  /**
+   * Work the designated harvest zones into raw goods. Labour-capped: the colony can
+   * only work so many tiles a day, scaled by headcount, so a vast field still needs
+   * hands to reap it. Consuming zones (woodcutter/quarry) strip the tile back to
+   * grass once worked; renewable ones (field/fishery) yield again next day. A
+   * quarry on an ore-flecked tile pulls iron ore instead of plain stone.
+   * ponytail: flat per-worker tile budget + flat yield — the knobs to tune in the
+   * GUI; per-tile pathing/regrowth timers can come later if it needs the texture.
+   */
+  private harvestZones(): void {
+    const grid = this.grid;
+    let budget = Math.floor(this.agents.count * HARVEST_TILES_PER_WORKER);
+    if (budget <= 0) return;
+    for (let i = 0; i < grid.size && budget > 0; i++) {
+      const z = grid.zone[i];
+      if (z === ZONE.NONE) continue;
+      const def = ZONE_DEFS[z];
+      if (!def) continue;
+      const x = i % grid.width, y = (i / grid.width) | 0;
+      if (!grid.canZone(x, y, z)) { grid.zone[i] = ZONE.NONE; continue; } // terrain changed under it
+      const res = z === ZONE.QUARRY && grid.ore[i] ? 'iron_ore' : def.resource;
+      this.stock.add(res, HARVEST_YIELD);
+      budget--;
+      if (!def.renewable) { grid.setTerrain(x, y, TERRAIN.GRASS); grid.zone[i] = ZONE.NONE; }
+    }
   }
 
   /** Monthly credit + inflation update (loans accrue, get serviced, prices reckon). */

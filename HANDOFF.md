@@ -1,7 +1,7 @@
 # Handoff — Centuria Development Guide
 
 **Last updated:** 2026-06-15  
-**Current test count:** 674 passing  
+**Current test count:** 681 passing  
 **Branch pattern:** feature branches off `main` via `claude/...` naming; merge via draft PR  
 **Model guidance:** See PLAN.md § Model Assignment for context ceilings per task
 
@@ -225,6 +225,10 @@ roadmap in `PLAN.md` § *B-6 PART 3*. Status:
 - **Stage 1 — terrain layer on `BuildGrid`** ✅ landed: `terrain`/`ore` Uint8 layers (grass/tree/
   water/soil/rock), terrain-aware `passable()`, deterministic `generateTerrain()`, base64
   serialization (old saves backfill to all-grass), opt-in `new TownCore({ terrain: true })`.
+- **Stage 2 — harvest zones (Songs-of-Syx)** ✅ landed: a `zone` layer (field/woodcutter/quarry/
+  fishery) designable only on matching terrain; `TownCore.harvestZones()` works them into raw goods
+  daily (grain/wood/stone/iron_ore/meal), labour-capped, consuming zones deplete. `core.html` has
+  paint tools + auto-zone. Yields are GUI-tunable flat constants.
 - **Stage 3 — event log on `TownCore`** ✅ landed: `log: LogEntry[]` (`{ day, text, kind }`, the fat
   sim's shape) fed on founding/raids/wolves/deaths/births; save **v5** (old saves → empty log).
 - **Stage 2** (terrain-aware resources: chop/mine/fish + soil fertility) is additive + headlessly
