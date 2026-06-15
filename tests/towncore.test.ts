@@ -495,6 +495,69 @@ describe('TownCore random events', () => {
   });
 });
 
+// --- B-6 burial ground ---
+describe('TownCore burial ground', () => {
+  const BURIAL_GROUND = ROOM_TYPE_ID.get('burial_ground')!;
+
+  function burialColony(): TownCore {
+    const core = new TownCore({ width: 20, height: 20, seed: 3 });
+    const g = core.grid;
+    // Open burial ground (no enclosure required) with 2 grave markers.
+    g.designateRect(2, 2, 6, 4, BURIAL_GROUND);
+    g.placeStation('grave_marker', 2, 2);
+    g.placeStation('grave_marker', 4, 2);
+    g.rebuildRooms();
+    core.stock.add('meal', 1000);
+    core.seedColony(10, 10, 4);
+    return core;
+  }
+
+  it('grave_marker stations give burial capacity', () => {
+    const core = burialColony();
+    expect(core.services().burial).toBe(2);
+  });
+
+  it('a death increments unburiedCount', () => {
+    const core = burialColony();
+    core.agents.health[0] = 0;
+    core.agents.food[0] = 0;
+    const before = core.unburiedCount;
+    core.tick();
+    expect(core.unburiedCount).toBe(before + 1);
+  });
+
+  it('burial ground processes one interment per marker per day and clears log', () => {
+    const core = burialColony();
+    core.unburiedCount = 1;
+    const logBefore = core.log.length;
+    core.run(360); // one day
+    expect(core.unburiedCount).toBe(0);
+    expect(core.log.length).toBeGreaterThan(logBefore);
+    expect(core.log.some(e => /laid to rest/i.test(e.text))).toBe(true);
+  });
+
+  it('without a burial ground the unburied dead reduce settler mood', () => {
+    const core = new TownCore({ width: 20, height: 20, seed: 3 });
+    core.stock.add('meal', 1000);
+    core.seedColony(10, 10, 4);
+    // Fix moods so we can measure the penalty precisely.
+    for (let i = 0; i < core.agents.count; i++) core.agents.mood[i] = 60;
+    core.unburiedCount = 2;
+    core.run(360); // one day — no burial ground → penalty fires
+    // 2 unburied × 6 penalty = 12 points below 60.
+    for (let i = 0; i < core.agents.count; i++) {
+      expect(core.agents.mood[i]).toBeLessThan(60);
+    }
+  });
+
+  it('serialize/deserialize preserves unburiedCount', () => {
+    const core = burialColony();
+    core.unburiedCount = 3;
+    const twin = TownCore.deserialize(core.serialize());
+    expect(twin.unburiedCount).toBe(3);
+  });
+});
+
 // --- B-6 PART 3: blueprint construction (paint → materials + labour → built) ---
 describe('TownCore blueprint construction', () => {
   it('builds a queued wall once materials and labour are spent', () => {

@@ -191,6 +191,8 @@ export interface TownCoreSave {
   nextEventDay?: number;
   /** v8+: last logged season index — prevents duplicate season-change log lines on load. */
   lastSeasonIdx?: number;
+  /** v8+: number of dead settlers not yet interred (defaults to 0 on old saves). */
+  unburiedCount?: number;
 }
 
 export interface TownCoreOpts {
@@ -253,6 +255,8 @@ export class TownCore {
   day = 0;
   deaths = 0;
   births = 0;
+  /** Number of dead settlers not yet interred; drives a daily mood penalty when positive. */
+  unburiedCount = 0;
   gold = 0;
   /** Market price modifiers: track supply/demand shifts (recover daily toward 1.0). */
   priceModifiers = new Map<string, number>();
@@ -512,6 +516,7 @@ export class TownCore {
         this.relations.forget(deadId);
         a.remove(i);
         this.deaths++;
+        this.unburiedCount++;
         died++;
       }
     }
@@ -629,6 +634,22 @@ export class TownCore {
     this.researchBook.addPoints(services.education);
     const autoResearched = this.researchBook.autoResearch();
     if (autoResearched) this.addLog(`Research complete: ${autoResearched}`, 'good');
+
+    // Burial: process one interment per grave marker per day, or penalise morale.
+    if (this.unburiedCount > 0) {
+      if (services.burial > 0) {
+        const buried = Math.min(this.unburiedCount, services.burial);
+        this.unburiedCount -= buried;
+        if (buried > 0) this.addLog(`${buried === 1 ? 'A settler is' : `${buried} settlers are`} laid to rest.`, 'info');
+      } else {
+        // No burial ground: each unburied corpse drags on every living settler's mood.
+        const penalty = this.unburiedCount * TUNING.unburiedMoodPenalty;
+        for (let i = 0; i < a.count; i++) {
+          const m = a.mood[i] - penalty;
+          a.mood[i] = m < -100 ? -100 : m;
+        }
+      }
+    }
 
     // Economy: once a month, accrue loan interest, auto-service the debt from the
     // treasury, and re-reckon inflation from the money supply.
@@ -1158,6 +1179,7 @@ export class TownCore {
       researchBook: this.researchBook.serialize(),
       nextEventDay: this.nextEventDay,
       lastSeasonIdx: this._lastSeasonIdx,
+      unburiedCount: this.unburiedCount > 0 ? this.unburiedCount : undefined,
     };
   }
 
@@ -1179,6 +1201,7 @@ export class TownCore {
     core.homeY = data.homeY;
     core.deaths = data.deaths ?? 0;
     core.births = data.births ?? 0;
+    core.unburiedCount = data.unburiedCount ?? 0;
     if (data.priceModifiers) {
       core.priceModifiers = new Map(Object.entries(data.priceModifiers));
     }

@@ -25,6 +25,7 @@
     { "id": "desk", "name": "Study Desk", "roomTypes": ["library"], "w": 1, "h": 1, "cost": { "wood": 6 }, "buildWork": 120, "kind": "capacity", "capacity": { "kind": "education", "amount": 1 } },
     { "id": "table", "name": "Table", "roomTypes": ["tavern"], "w": 2, "h": 1, "cost": { "wood": 6 }, "buildWork": 100, "kind": "capacity", "capacity": { "kind": "recreation", "amount": 2 } },
     { "id": "sickbed", "name": "Sickbed", "roomTypes": ["infirmary"], "w": 1, "h": 2, "cost": { "wood": 8, "clothes": 1 }, "buildWork": 140, "kind": "capacity", "capacity": { "kind": "medical", "amount": 1 } },
-    { "id": "shelf", "name": "Shelf", "roomTypes": ["storehouse", "library"], "w": 1, "h": 1, "cost": { "wood": 5 }, "buildWork": 80, "kind": "capacity", "capacity": { "kind": "storage", "amount": 50 } }
+    { "id": "shelf", "name": "Shelf", "roomTypes": ["storehouse", "library"], "w": 1, "h": 1, "cost": { "wood": 5 }, "buildWork": 80, "kind": "capacity", "capacity": { "kind": "storage", "amount": 50 } },
+    { "id": "grave_marker", "name": "Grave Marker", "roomTypes": ["burial_ground"], "w": 1, "h": 1, "cost": { "wood": 3 }, "buildWork": 60, "kind": "capacity", "capacity": { "kind": "burial", "amount": 1 } }
   ]
 }
