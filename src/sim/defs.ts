@@ -686,6 +686,19 @@ export const TUNING = {
   festivalWoodCost: 5,
   festivalMoodBonus: 15,
   festivalMoodDays: 3,
+  // ---- Cost scaling with nation development & size (region tier) ----
+  // Sinks were flat 1900-era constants while income climbed with the value
+  // chain. These let money/research costs rise with the nation, grounded in:
+  //  · Baumol's cost disease  — public works track the economy's wage level.
+  //  · Wagner's law           — public spending grows as a share of GDP.
+  //  · "Ideas harder to find" — research effort must rise to keep advancing.
+  // All factors floor at 1.0, so a fresh 1900 state (and existing tests) are
+  // unchanged. Exponents are sub-linear: growth still buys some real progress.
+  baumolBaseGdpPerCapita: 6, // £/capita/month of a fresh GDD-era state → devFactor 1
+  baumolExp: 0.7, // money build-cost elasticity to wage/output level (<1)
+  wagnerExp: 1.15, // upkeep outpaces build cost (public-sector share rises)
+  researchBaseRate: 2, // ≈ a young state's raw RP/day, with headroom so early game is unscaled
+  researchScaleExp: 0.6, // RP-cost growth vs. nation size (<1: net speedup remains)
 };
 
 // ---- Parcel / land-expansion tuning (Track B Phase 2–3) ----

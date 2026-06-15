@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Simulation } from '../src/sim/sim';
-import { RegionSim, REGION_MINUTES_PER_TICK, REGION_LAWS, GOV_TYPES, POLICY_CARDS, POLICY_SWAP_COST, REGION_BUILDINGS, REGION_EVENT_DEFS } from '../src/sim/region';
+import { RegionSim, REGION_MINUTES_PER_TICK, REGION_LAWS, GOV_TYPES, POLICY_CARDS, POLICY_SWAP_COST, REGION_BUILDINGS, REGION_EVENT_DEFS, TECH_TREE } from '../src/sim/region';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
 import { REGION_N } from '../src/sim/worldgen';
 
@@ -1088,6 +1088,57 @@ describe('City works & zoning (Phase 2)', () => {
     expect(c2.buildings).toContain('waterworks');
     expect(c2.construction?.id).toBe('grain_exchange');
     expect(c2.focus).toBe('agriculture');
+  });
+});
+
+describe('Cost scaling with development & size (Baumol / Wagner / ideas-harder-to-find)', () => {
+  function freshState(seed: number): RegionSim {
+    const sim = new Simulation(seed);
+    grow(sim);
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    runDays(r, 5);
+    r.stateProclaimed = true;
+    r.treasury = 5000;
+    return r;
+  }
+
+  const factory = REGION_BUILDINGS.find((b) => b.id === 'factory')!;
+  const node = TECH_TREE.find((n) => n.cost > 0)!;
+
+  it('a fresh state pays the raw 1900 prices (factors floor at 1.0)', () => {
+    const r = freshState(42);
+    expect(r.devFactor()).toBe(1);
+    expect(r.researchScale()).toBe(1);
+    expect(r.cityBuildCost(factory)).toBe(factory.cost);
+    expect(r.techCost(node)).toBe(node.cost);
+  });
+
+  it('a large, wealthy nation pays strictly more for the same work and the same tech', () => {
+    const r = freshState(42);
+    // Inflate to a populous, value-chain-rich nation: ~10k people earning well
+    // above the £6/capita baseline.
+    for (const t of r.settlements) t.cohorts.bands = [2000, 3000, 3000, 1500, 500];
+    r.gdpLastMonth = r.totalPop() * 60; // 10× the Baumol baseline per capita
+
+    expect(r.devFactor()).toBeGreaterThan(1);
+    expect(r.researchScale()).toBeGreaterThan(1);
+    expect(r.cityBuildCost(factory)).toBeGreaterThan(factory.cost);
+    expect(r.techCost(node)).toBeGreaterThan(node.cost);
+    // Sub-linear: a 10× richer economy does not pay 10× for a building.
+    expect(r.cityBuildCost(factory)).toBeLessThan(factory.cost * 10);
+  });
+
+  it('actually charges the scaled price from the treasury', () => {
+    const r = freshState(42);
+    for (const t of r.settlements) t.cohorts.bands = [2000, 3000, 3000, 1500, 500];
+    r.gdpLastMonth = r.totalPop() * 60;
+    r.researched.push('steel_industry', 'mass_production'); // unlock the factory
+    const capital = r.settlements[0];
+    const cost = r.cityBuildCost(factory);
+    const before = r.treasury;
+    expect(r.buildCity(capital.id, 'factory')).toBe(true);
+    expect(r.treasury).toBeCloseTo(before - cost, 6);
+    expect(cost).toBeGreaterThan(factory.cost);
   });
 });
 

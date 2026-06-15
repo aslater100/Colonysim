@@ -2228,7 +2228,7 @@ export class RegionView {
       .map((def) => {
         const check = r.cityBuildCheck(t, def);
         return `<li>${def.name} <button class="mini city-build-btn" data-b="${def.id}" ${check.ok ? '' : 'disabled'} ` +
-          `title="${def.desc}${check.ok ? '' : ' — ' + check.reason}">` + formatCurrency(def.cost) + ` · ${def.days}d</button></li>`;
+          `title="${def.desc}${check.ok ? '' : ' — ' + check.reason}">` + formatCurrency(r.cityBuildCost(def)) + ` · ${def.days}d</button></li>`;
       })
       .join('');
     const focusBtns = (['balanced', ...SECTOR_IDS] as TownFocus[])
@@ -2626,7 +2626,7 @@ export class RegionView {
     const forceResearchRebuild = () => { this.lastResearchBuildFrame = -999; };
     const rate = r.researchRate().toFixed(1);
     const active = r.activeResearch ? TECH_TREE.find((n) => n.id === r.activeResearch) : null;
-    const progressPct = active ? Math.min(100, Math.round((r.researchProgress / active.cost) * 100)) : 0;
+    const progressPct = active ? Math.min(100, Math.round((r.researchProgress / r.techCost(active)) * 100)) : 0;
 
     const nodeRow = (id: string): string => {
       const node = TECH_TREE.find((n) => n.id === id)!;
@@ -2643,7 +2643,7 @@ export class RegionView {
         btn = `<button class="mini res-cancel-btn">cancel</button>`;
       }
       const pctStr = isActive ? ` ${progressPct}%` : '';
-      return `<div class="res-row ${cls}" title="${node.desc}">[${label}] ${node.name} (${node.cost || '✓'} RP)${pctStr}${btn}</div>`;
+      return `<div class="res-row ${cls}" title="${node.desc}">[${label}] ${node.name} (${r.techCost(node) || '✓'} RP)${pctStr}${btn}</div>`;
     };
 
     const techNodes = TECH_TREE.filter((n) => n.tree === 'tech').map((n) => nodeRow(n.id)).join('');

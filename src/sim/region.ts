@@ -7,7 +7,7 @@
  * performance answer that lets the game scale to a State and beyond.
  */
 import { Rng } from './rng';
-import { MINUTES_PER_DAY, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, formatCurrency, setCurrencySymbol, AI_DIFFICULTY } from './defs';
+import { MINUTES_PER_DAY, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, formatCurrency, setCurrencySymbol, AI_DIFFICULTY, TUNING } from './defs';
 import type { CurrencySymbol, RegionDesign, NationDesign, AiDifficulty } from './defs';
 import { computePenalty, transitionEfficiency, ANNOUNCE_LEAD_DAYS } from './currency';
 import type { CurrencyChangeCause, CurrencyAnnouncement, CurrencyTransition } from './currency';
@@ -2170,7 +2170,7 @@ export class RegionSim {
       counts[label] = (counts[label] ?? 0) + 1;
     }
     const breakdown = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ');
-    return { total: Math.ceil(c.cost * ROUTE_SPECS[kind].buildPerCost), cells: c.path.length, breakdown };
+    return { total: Math.ceil(c.cost * ROUTE_SPECS[kind].buildPerCost * this.devFactor()), cells: c.path.length, breakdown };
   }
 
   roadCost(aId: number, bId: number): { total: number; cells: number; breakdown: string } | null {
@@ -2212,6 +2212,37 @@ export class RegionSim {
     return base * mult;
   }
 
+  /** Development factor for money costs (Baumol's cost disease): public works
+   *  track the economy's wage/output level, which climbs as labor moves up the
+   *  value chain. Reads the cached monthly GDP — O(1), safe on the per-row HUD
+   *  path. Floors at 1, so a fresh state pays the raw 1900 prices. */
+  devFactor(): number {
+    const pop = this.totalPop();
+    const gdpPerCapita = pop > 0 ? this.gdpLastMonth / pop : 0;
+    const ratio = gdpPerCapita / TUNING.baumolBaseGdpPerCapita;
+    return Math.max(1, ratio ** TUNING.baumolExp);
+  }
+
+  /** Research-cost scale ("ideas are getting harder to find"): each tech costs
+   *  more RP as the nation grows, so it stays a real investment instead of being
+   *  blitzed. Driven by the RAW size rate (not the boosted researchRate), so
+   *  research-boost buildings/civics still give a net speedup. Floors at 1. */
+  researchScale(): number {
+    const baseRate = this.settlements.length * 0.5 + this.totalPop() * 0.004;
+    const ratio = baseRate / TUNING.researchBaseRate;
+    return Math.max(1, ratio ** TUNING.researchScaleExp);
+  }
+
+  /** What a civic work actually costs to raise here and now (Baumol-scaled). */
+  cityBuildCost(def: RegionalBuildingDef): number {
+    return Math.round(def.cost * this.devFactor());
+  }
+
+  /** What a tech/civics node actually costs in RP for a nation this size. */
+  techCost(node: TechNode): number {
+    return Math.ceil(node.cost * this.researchScale());
+  }
+
   /** Nodes that can be started right now: prereqs met, era reached, not yet done. */
   availableToResearch(): TechNode[] {
     return TECH_TREE.filter(
@@ -2244,7 +2275,7 @@ export class RegionSim {
     const node = TECH_TREE.find((n) => n.id === this.activeResearch);
     if (!node) { this.activeResearch = null; return; }
     this.researchProgress += this.researchRate();
-    if (this.researchProgress >= node.cost) {
+    if (this.researchProgress >= this.techCost(node)) {
       this.researched.push(this.activeResearch);
       const label = node.tree === 'tech' ? 'Technology' : 'Civics';
       this.addLog(`${label} breakthrough: "${node.name}". ${node.desc.split('.')[0]}.`, 'good');
@@ -2731,7 +2762,9 @@ export class RegionSim {
    *  Freight research swaps the work crews for machines at 60% the cost. */
   maintBill(r: Route): number {
     const automation = this.has('automated_logistics') ? 0.6 : 1;
-    return r.path.length * ROUTE_SPECS[r.kind].maintPerCell * automation;
+    // Wagner tilt: running costs outpace build costs as the nation develops.
+    const wagner = this.devFactor() ** TUNING.wagnerExp;
+    return r.path.length * ROUTE_SPECS[r.kind].maintPerCell * automation * wagner;
   }
 
   /** Monthly upkeep on built links from the treasury — an unmaintained
@@ -3699,7 +3732,8 @@ export class RegionSim {
       return { ok: false, reason: `requires ${node?.name ?? def.prereq}` };
     }
     if (this.buildingCount(t, def.id) >= def.max) return { ok: false, reason: 'already built' };
-    if (this.treasury < def.cost) return { ok: false, reason: `needs ` + formatCurrency(def.cost) + `` };
+    const cost = this.cityBuildCost(def);
+    if (this.treasury < cost) return { ok: false, reason: `needs ` + formatCurrency(cost) + `` };
     return { ok: true, reason: '' };
   }
 
@@ -3709,9 +3743,10 @@ export class RegionSim {
     const t = this.settlement(townId);
     const def = REGION_BUILDINGS.find((b) => b.id === defId);
     if (!t || !def || !this.cityBuildCheck(t, def).ok) return false;
-    this.treasury -= def.cost;
+    const cost = this.cityBuildCost(def);
+    this.treasury -= cost;
     t.construction = { id: def.id, doneDay: this.day + def.days };
-    this.addLog(`Ground is broken for the ${def.name} at ${t.name} — ` + formatCurrency(def.cost) + `, ${def.days} days.`, 'info');
+    this.addLog(`Ground is broken for the ${def.name} at ${t.name} — ` + formatCurrency(cost) + `, ${def.days} days.`, 'info');
     return true;
   }
 
@@ -3759,7 +3794,8 @@ export class RegionSim {
       if (t.factionId !== this.playerFactionId) continue;
       for (const id of t.buildings) total += REGION_BUILDINGS.find((b) => b.id === id)?.upkeep ?? 0;
     }
-    return total;
+    // Wagner tilt: the public sector's share of GDP rises as the nation develops.
+    return total * this.devFactor() ** TUNING.wagnerExp;
   }
 
   // ---- Phase 4: Regional Events ----
