@@ -44,6 +44,7 @@ export interface RoomServices {
   medical: number;
   storage: number;
   burial: number;
+  watch: number;
 }
 
 // Per-hour need rates (aligned with TUNING.sleepRestPerHour.bed / recreationPerHour
@@ -60,7 +61,7 @@ const CLINIC_REGEN_MULT = TUNING.clinicRegenMult;       // ×regen resting in an
 const APOTHECARY_HEAL_MULT = TUNING.apothecaryHealMult; // extra ×regen when medicine is applied
 const MEDICINE_PER_TREAT = 1;                           // medicine consumed to cure one casualty
 
-const EMPTY_OUTPUT: RoomOutput = { sleep: 0, recreation: 0, education: 0, medical: 0, storage: 0, burial: 0, flow: {} };
+const EMPTY_OUTPUT: RoomOutput = { sleep: 0, recreation: 0, education: 0, medical: 0, storage: 0, burial: 0, watch: 0, flow: {} };
 
 /** Is this room currently usable (an enclosure-required type must be walled in)? */
 function roomUsable(room: Room): boolean {
@@ -77,7 +78,7 @@ export function roomAt(grid: BuildGrid, x: number, y: number): Room | null {
 
 /** Town-wide service capacities, summing only usable rooms. Call after rebuildRooms(). */
 export function aggregateCapacities(grid: BuildGrid): RoomServices {
-  const out: RoomServices = { sleep: 0, recreation: 0, education: 0, medical: 0, storage: 0, burial: 0 };
+  const out: RoomServices = { sleep: 0, recreation: 0, education: 0, medical: 0, storage: 0, burial: 0, watch: 0 };
   for (const room of grid.rooms) {
     if (!roomUsable(room)) continue;
     const o = grid.roomOutput(room);
@@ -87,6 +88,7 @@ export function aggregateCapacities(grid: BuildGrid): RoomServices {
     out.medical += o.medical;
     out.storage += o.storage;
     out.burial += o.burial;
+    out.watch += o.watch;
   }
   return out;
 }

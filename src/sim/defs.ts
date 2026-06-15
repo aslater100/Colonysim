@@ -356,7 +356,7 @@ export interface RoomTypeDef {
 }
 
 /** Passive capacity a `capacity` station contributes to its room. */
-export type CapacityKind = 'sleep' | 'recreation' | 'education' | 'medical' | 'storage' | 'burial';
+export type CapacityKind = 'sleep' | 'recreation' | 'education' | 'medical' | 'storage' | 'burial' | 'watch';
 
 /** A recipe a `craft` station runs: inputs → outputs over `work` settler-minutes. */
 export interface StationRecipe {

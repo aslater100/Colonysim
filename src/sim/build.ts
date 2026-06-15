@@ -82,6 +82,7 @@ export interface RoomOutput {
   medical: number;
   storage: number;
   burial: number;
+  watch: number;
   /** net resource flow per full work cycle of every craft station (inputs negative) */
   flow: Partial<Record<ResourceKind, number>>;
 }
@@ -736,7 +737,7 @@ export class BuildGrid {
 
   /** Aggregate everything a room delivers, summed over its valid stations. */
   roomOutput(room: Room): RoomOutput {
-    const out: RoomOutput = { sleep: 0, recreation: 0, education: 0, medical: 0, storage: 0, burial: 0, flow: {} };
+    const out: RoomOutput = { sleep: 0, recreation: 0, education: 0, medical: 0, storage: 0, burial: 0, watch: 0, flow: {} };
     for (const sid of room.stationIds) {
       const s = this.stationById(sid);
       if (!s) continue;

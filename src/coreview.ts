@@ -61,6 +61,8 @@ const ROOM_COLORS: Record<string, string> = {
   tavern: '#8030c0',
   storehouse: '#a08060',
   burial_ground: '#607060',
+  outpost: '#705020',
+  watchtower: '#506080',
 };
 
 // ── Starter town ──────────────────────────────────────────────────────────
@@ -325,6 +327,10 @@ function draw(): void {
     }
   }
 
+  // Deer
+  const deerFrame = (performance.now() / 400 | 0) % sprites.deer.length;
+  for (const d of core.deerViews()) blit(sprites.deer[deerFrame], d.x | 0, d.y | 0);
+
   // Raiders
   for (const r of core.raids.raiders) {
     blit(sprites.raider[r.fleeing ? 0 : (performance.now() / 200 | 0) % sprites.raider.length], r.x, r.y);
@@ -336,7 +342,7 @@ function draw(): void {
   ctx.setLineDash([]);
 
   // ── Stats overlay (top-left) ────────────────────────────────────────────
-  ctx.fillStyle = '#000a'; ctx.fillRect(0, 0, 340, 248);
+  ctx.fillStyle = '#000a'; ctx.fillRect(0, 0, 340, 280);
   ctx.fillStyle = '#ddd'; ctx.font = '13px monospace';
   const line = (n: number, s: string, color = '#ddd') => { ctx.fillStyle = color; ctx.fillText(s, 8, 20 + n * 17); };
 
@@ -350,26 +356,29 @@ function draw(): void {
   };
   const meal = core.stock.count('meal'), grain = core.stock.count('grain');
   line(1, `meal ${meal.toFixed(0)}${flowStr('meal') ? `(${flowStr('meal')})` : ''}  grain ${grain.toFixed(0)}${flowStr('grain') ? `(${flowStr('grain')})` : ''}  bread ${core.stock.count('bread').toFixed(0)}  ale ${core.stock.count('ale').toFixed(0)}`);
-  line(2, `wood ${core.stock.count('wood').toFixed(0)}${flowStr('wood') ? `(${flowStr('wood')})` : ''}  stone ${core.stock.count('stone').toFixed(0)}  iron ${core.stock.count('iron').toFixed(0)}  ore ${core.stock.count('iron_ore').toFixed(0)}  tools ${core.stock.count('tools').toFixed(0)}`);
-  line(3, `clothes ${core.stock.count('clothes').toFixed(0)}  weapons ${core.stock.count('weapons').toFixed(0)}  medicine ${core.stock.count('medicine').toFixed(0)}`);
+  const gameMeal = core.stock.count('game_meal'), fishMeal = core.stock.count('fish_meal');
+  const deerCount = [...core.deerViews()].length;
+  line(2, `game_meal ${gameMeal.toFixed(0)}  fish_meal ${fishMeal.toFixed(0)}  deer ${deerCount}`, gameMeal > 0 || fishMeal > 0 ? '#aed6a0' : '#888');
+  line(3, `wood ${core.stock.count('wood').toFixed(0)}${flowStr('wood') ? `(${flowStr('wood')})` : ''}  stone ${core.stock.count('stone').toFixed(0)}  iron ${core.stock.count('iron').toFixed(0)}  ore ${core.stock.count('iron_ore').toFixed(0)}  tools ${core.stock.count('tools').toFixed(0)}`);
+  line(4, `clothes ${core.stock.count('clothes').toFixed(0)}  weapons ${core.stock.count('weapons').toFixed(0)}  medicine ${core.stock.count('medicine').toFixed(0)}`);
   const unburied = core.unburiedCount > 0 ? `  ⚠ unburied ${core.unburiedCount}` : '';
-  line(4, `births ${core.births}  deaths ${core.deaths}  prestige ${core.prestige}  inflation ${(core.inflation * 100).toFixed(1)}%${unburied}`, core.unburiedCount > 0 ? '#ff8844' : '#ddd');
+  line(5, `births ${core.births}  deaths ${core.deaths}  prestige ${core.prestige}  inflation ${(core.inflation * 100).toFixed(1)}%${unburied}`, core.unburiedCount > 0 ? '#ff8844' : '#ddd');
   const raidLine = core.raidActive
     ? `RAID — ${core.raids.raiders.length} raiders (slain ${core.raids.slain})`
     : `next raid day ${core.nextRaidDay}`;
-  line(5, raidLine, core.raidActive ? '#ff6b6b' : '#ddd');
-  line(6, `${paused ? 'PAUSED' : 'speed ' + speed + '×'}`);
+  line(6, raidLine, core.raidActive ? '#ff6b6b' : '#ddd');
+  line(7, `${paused ? 'PAUSED' : 'speed ' + speed + '×'}`);
 
   // Tool info
   let toolLabel: string = tool;
   if (tool === 'room') toolLabel = `room:${ROOM_TYPE_NAMES[roomTypeIdx]}`;
   if (tool === 'station') toolLabel = `station:${STATION_TYPE_NAMES[stationTypeIdx]}`;
-  line(7, `tool: ${toolLabel}`);
+  line(8, `tool: ${toolLabel}`);
 
   // Key hints
   ctx.fillStyle = '#888'; ctx.font = '11px monospace';
-  ctx.fillText('W wall  E erase  G gate  D floor  Z room([ ])  A station(, .)', 8, 20 + 8 * 17);
-  ctx.fillText('F field  C chop  Q quarry  B fishery  R raid  N settler  X research  space pause', 8, 20 + 9 * 17);
+  ctx.fillText('W wall  E erase  G gate  D floor  Z room([ ])  A station(, .)', 8, 20 + 9 * 17);
+  ctx.fillText('F field  C chop  Q quarry  B fishery  R raid  N settler  X research  space pause', 8, 20 + 10 * 17);
 
   // ── Settler inspector panel (top-right) ──────────────────────────────────
   if (inspected) {

@@ -16,6 +16,7 @@
     { "id": "tavern", "name": "Tavern", "enclosedRequired": true, "desc": "Rest and recreation. Tables give recreation; brew vats make ale." },
     { "id": "storehouse", "name": "Storehouse", "enclosedRequired": false, "desc": "Bulk storage. Each shelf adds stockpile capacity." },
     { "id": "burial_ground", "name": "Burial Ground", "enclosedRequired": false, "desc": "The colony's graveyard. Each grave marker gives one burial slot; without one the unburied dead drag on morale." },
-    { "id": "outpost", "name": "Outpost", "enclosedRequired": false, "desc": "An open-air work post for hunters and rangers. Hunting lodges placed here send workers into the wilds for game." }
+    { "id": "outpost", "name": "Outpost", "enclosedRequired": false, "desc": "An open-air work post for hunters and rangers. Hunting lodges placed here send workers into the wilds for game." },
+    { "id": "watchtower", "name": "Watchtower", "enclosedRequired": false, "desc": "A tall sentry post. Watch posts inside give advance warning of approaching raids and reduce the colony's chance of being caught off-guard." }
   ]
 }

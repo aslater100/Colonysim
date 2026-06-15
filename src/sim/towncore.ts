@@ -940,6 +940,14 @@ export class TownCore {
       });
     }
 
+    // Watchtower: sentinels with watch_post stations give early warning of approaching raids.
+    if (services.watch > 0) {
+      const daysUntilRaid = this.nextRaidDay - this.day;
+      if (daysUntilRaid === TUNING.watchtowerWarningDays) {
+        this.addLog('Your sentinels spot enemy forces gathering on the horizon. A raid approaches!', 'bad');
+      }
+    }
+
     // Research: library desks (education capacity) generate points daily.
     // Auto-research if a queue target is now affordable (player set via core.researchBook.queue).
     this.researchBook.addPoints(services.education);

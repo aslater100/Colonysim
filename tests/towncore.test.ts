@@ -1089,3 +1089,53 @@ describe('TownCore housing preference', () => {
     expect(mismatch.agents.mood[0]).toBeCloseTo(noPref.agents.mood[0], 0);
   });
 });
+
+// ── Watchtower early-warning system ──────────────────────────────────────────
+
+const TICKS_PER_DAY = 360; // MINUTES_PER_DAY(1440) / MINUTES_PER_TICK(4)
+
+const WATCHTOWER = ROOM_TYPE_ID.get('watchtower')!;
+
+/** Build a watchtower at the top-left of a 32×32 grid. */
+function withWatchtower(seed = 99): TownCore {
+  const core = new TownCore({ width: 32, height: 32, seed });
+  const g = core.grid;
+  // watchtower has enclosedRequired: false — designateRect lays floors, no walls needed
+  g.designateRect(1, 1, 3, 3, WATCHTOWER);
+  g.placeStation('watch_post', 1, 1);
+  g.rebuildRooms();
+  core.stock.add('meal', 2000);
+  core.seedColony(16, 16, 4);
+  return core;
+}
+
+describe('TownCore watchtower', () => {
+  it('watch_post station contributes watch capacity through aggregateCapacities', () => {
+    const core = withWatchtower();
+    const services = core.services();
+    expect(services.watch).toBeGreaterThanOrEqual(1);
+  });
+
+  it('a watchtower fires an advance-warning log entry before the raid arrives', () => {
+    const core = withWatchtower(42);
+    // Advance to one day before the raid without triggering the raid itself
+    const warningDay = core.nextRaidDay - TUNING.watchtowerWarningDays;
+    // Run to the day before the warning fires
+    while (core.day < warningDay - 1) core.run(TICKS_PER_DAY);
+    const logsBefore = core.log.length;
+    core.run(TICKS_PER_DAY); // crosses warningDay
+    const warningEntry = core.log.slice(logsBefore).find(e => e.text.includes('sentinels') || e.text.includes('raid approaches'));
+    expect(warningEntry).toBeDefined();
+  });
+
+  it('without a watchtower no advance warning is logged', () => {
+    const core = colony({ seed: 42 });
+    core.stock.add('meal', 2000);
+    const warningDay = core.nextRaidDay - TUNING.watchtowerWarningDays;
+    while (core.day < warningDay - 1) core.run(TICKS_PER_DAY);
+    const logsBefore = core.log.length;
+    core.run(TICKS_PER_DAY);
+    const warningEntry = core.log.slice(logsBefore).find(e => e.text.includes('sentinels') || e.text.includes('raid approaches'));
+    expect(warningEntry).toBeUndefined();
+  });
+});
