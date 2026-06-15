@@ -225,9 +225,12 @@ blind swap would *delete the playable game*. Do it incrementally, behind a flag,
   Tests: `tests/raid.test.ts` (10) + raid cases in `tests/parity.test.ts`.
 - **Still missing before a swap is safe:** spike traps, forged-weapon/spear bonuses, wolf packs,
   the `region.ts` flip, and **raid balance tuning** (headless numbers are conservative — tune in the GUI).
-- **Gate that remains: GUI play-test.** Recommended first move is a *non-destructive parallel mode*
-  (opt-in flag) that renders the SoA core in the real GUI without removing `Simulation`, so the new
-  core can be play-verified before anything is ripped out. Only then do the destructive swap.
+- **Gate that remains: GUI play-test.** A *non-destructive parallel mode* now exists: `core.html`
+  + `src/coreview.ts` boot a `TownCore` with a starter town and render it (agents/walls/stations/
+  raiders + a stats overlay) in a real browser — `npm run dev` → `/core.html`. Controls: space
+  pause · 1/2/3 speed · R raid now · N add settler · left-drag wall · right-drag erase. The live
+  game (`main.ts`/`index.html`) is untouched. Use this to play-verify the core (esp. raid balance)
+  before the destructive swap. ponytail: direct canvas draw, not the fat-sim `Renderer`.
 
 **Future (after B-6 PART 2):**
 - Phase 3 (Parcel purchase UI) — right-click fog cell, cost panel, purchase button (low friction; no new architecture)

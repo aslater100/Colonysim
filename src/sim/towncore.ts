@@ -243,9 +243,7 @@ export class TownCore {
     //     settlers, walls slow them, and awake settlers fight back. Casualties fall
     //     through the death pass below; the wounded carry a dread thought.
     if (this.day >= this.nextRaidDay && !this.raids.active) {
-      const n = raidSize(this.wealth(), this.day, a.count);
-      this.raids.start(n, this.grid.width, this.grid.height, this.rng, t);
-      this.nextRaidDay = this.day + TUNING.raidIntervalDays + this.rng.int(5);
+      this.musterRaid();
     }
     if (this.raids.active) {
       // The horn rallies the colony: nobody sleeps through a raid.
@@ -287,6 +285,14 @@ export class TownCore {
   /** Convenience: advance `n` ticks. */
   run(n: number): void {
     for (let i = 0; i < n; i++) this.tick();
+  }
+
+  /** Muster a raid now and reschedule the next (the tick scheduler + the UI's "raid" key). */
+  musterRaid(): void {
+    if (this.raids.active) return;
+    const n = raidSize(this.wealth(), this.day, this.agents.count);
+    this.raids.start(n, this.grid.width, this.grid.height, this.rng, this.tickNo);
+    this.nextRaidDay = this.day + TUNING.raidIntervalDays + this.rng.int(5);
   }
 
   // ── daily coarse update: feeding + population flows ──────────────────────────

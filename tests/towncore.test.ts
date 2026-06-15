@@ -112,6 +112,17 @@ describe('TownCore serialization', () => {
     expect(restored.grid.rooms.length).toBe(core.grid.rooms.length);
     expect(restored.stock.count('meal')).toBe(core.stock.count('meal'));
   });
+
+  it('musterRaid starts a raid now and reschedules the next', () => {
+    const core = colony({ pop: 6 });
+    core.musterRaid();
+    expect(core.raidActive).toBe(true);
+    expect(core.raids.raiders.length).toBeGreaterThan(0);
+    expect(core.nextRaidDay).toBeGreaterThan(core.day); // pushed to a future day
+    const scheduled = core.nextRaidDay;
+    core.musterRaid(); // no-op while one is already running
+    expect(core.nextRaidDay).toBe(scheduled);
+  });
 });
 
 describe('scale-engine module serialization', () => {
