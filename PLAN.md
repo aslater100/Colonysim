@@ -248,7 +248,8 @@ PART 3, not a one-commit wire-up.
    settler). Tests: `tests/persona.test.ts` (names suite).
 4. **View adapter (`TownCoreView`)** — read-model exposing what a renderer needs (agents/stations/
    rooms/terrain/raiders as plain iterables, settlers as `{ name, mood, traits, … }`) so the renderer
-   and HUD never reach into SoA internals.
+   and HUD never reach into SoA internals. *Partial:* `TownCore.inspect(i) → SettlerView` landed (the
+   per-settler record for the inspector panel); the iterables for tiles/stations/raiders are still TODO.
 5. **SoA renderer** — a render path that draws a `TownCore` via the adapter (terrain + painted
    walls/floors/rooms/stations + agents + raiders). Large; **GUI-verify required** (not headless).
 6. **Live wiring behind a flag** — boot `TownCore` in `main.ts` parallel to `Simulation` behind a
