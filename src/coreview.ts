@@ -157,10 +157,13 @@ addEventListener('keydown', (e) => {
   if (k === 'r') { core.musterRaid(); return; }
   if (k === 'n') { core.seedColony(core.homeX, core.homeY, 1); return; }
   if (k === 'x') {
-    // Research the first affordable available tech (for play-test convenience)
+    // Cycle research queue: X rotates through available techs; auto-researches when affordable
     const avail = core.researchBook.available();
-    const affordable = avail.find(t => core.researchBook.points >= t.cost);
-    if (affordable) core.research(affordable.id);
+    if (avail.length > 0) {
+      const cur = core.researchBook.queue;
+      const idx = cur ? avail.findIndex(t => t.id === cur) : -1;
+      core.researchBook.queue = avail[(idx + 1) % avail.length].id;
+    }
     return;
   }
   // Tool keys
@@ -411,7 +414,10 @@ function draw(): void {
   const raidLine = core.raidActive
     ? `RAID — ${core.raids.raiders.length} raiders (slain ${core.raids.slain})`
     : `next raid day ${core.nextRaidDay}`;
-  line(6, raidLine, core.raidActive ? '#ff6b6b' : '#ddd');
+  const sky = core.weather.forDay(core.day).sky;
+  const skyLabel = sky === 'storm' ? '[storm]' : sky === 'snow' ? '[snow]' : sky === 'rain' ? '[rain]' : sky === 'overcast' ? '[overcast]' : '[clear]';
+  const skyColor = sky === 'storm' ? '#ff8844' : sky === 'snow' ? '#aaddff' : sky === 'rain' ? '#88bbff' : '#ddd';
+  line(6, `${raidLine}  ${skyLabel}`, core.raidActive ? '#ff6b6b' : skyColor);
   line(7, `${paused ? 'PAUSED' : 'speed ' + speed + '×'}${core.builds.length > 0 ? `  blueprints: ${core.builds.length}` : ''}`);
   { const svc = core.services();
     const parts: string[] = [`sleep ${svc.sleep}`];
@@ -432,7 +438,7 @@ function draw(): void {
   // Key hints
   ctx.fillStyle = '#888'; ctx.font = '11px monospace';
   ctx.fillText('W wall  E erase  G gate  D floor  T trap  Z room([ ])  A station(, .)', 8, 20 + 10 * 17);
-  ctx.fillText('F field  C chop  Q quarry  B fishery  L flax  R raid  N settler  X research  space pause', 8, 20 + 11 * 17);
+  ctx.fillText('F field  C chop  Q quarry  B fishery  L flax  R raid  N settler  X queue research  space pause', 8, 20 + 11 * 17);
 
   // ── Settler inspector panel (top-right) ──────────────────────────────────
   if (inspected) {
@@ -471,11 +477,13 @@ function draw(): void {
     ctx.fillText('(build a library + desks)', rpx + 6, rpy + 14 + row++ * RPH);
   } else {
     ctx.fillStyle = '#aae';
-    ctx.fillText('Available:', rpx + 6, rpy + 14 + row++ * RPH);
+    ctx.fillText(`Available: (X to queue${rb.queue ? ` — queued: ${rb.queue}` : ''})`, rpx + 6, rpy + 14 + row++ * RPH);
     for (const t of avail.slice(0, 5)) {
       const affordable = rb.points >= t.cost;
-      ctx.fillStyle = affordable ? '#88ff88' : '#aaaaff';
-      const label = `  ${t.name} (${t.cost}pt) — ${t.desc.slice(0, 28)}`;
+      const queued = rb.queue === t.id;
+      ctx.fillStyle = queued ? '#ffd700' : affordable ? '#88ff88' : '#aaaaff';
+      const prefix = queued ? '> ' : '  ';
+      const label = `${prefix}${t.name} (${t.cost}pt) — ${t.desc.slice(0, 26)}`;
       ctx.fillText(label, rpx + 6, rpy + 14 + row++ * RPH);
     }
   }
