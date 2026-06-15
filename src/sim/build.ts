@@ -90,6 +90,8 @@ export interface BuildGridSave {
   height: number;
   /** base64 of the wall / floor / roomType Uint8 layers. */
   wall: string;
+  /** base64 of the gate layer (optional: absent in pre-gate saves). */
+  gate?: string;
   floor: string;
   roomType: string;
   stations: Array<{ id: number; typeId: number; x: number; y: number; w: number; h: number }>;
@@ -140,6 +142,8 @@ export class BuildGrid {
 
   /** 0 = none, else wall material id (1+). Blocks movement. */
   readonly wall: Uint8Array;
+  /** 1 = a gate: passable like a gap, but counts as a wall for room enclosure. */
+  readonly gate: Uint8Array;
   /** 0 = none, else floor material id (1+). Required for a room to form. */
   readonly floor: Uint8Array;
   /** 0 = undesignated, else room-type id (see ROOM_TYPE_ID). */
@@ -164,6 +168,7 @@ export class BuildGrid {
     this.height = height;
     this.size = width * height;
     this.wall = new Uint8Array(this.size);
+    this.gate = new Uint8Array(this.size);
     this.floor = new Uint8Array(this.size);
     this.roomType = new Uint8Array(this.size);
     this.roomId = new Int32Array(this.size).fill(-1);
@@ -201,6 +206,21 @@ export class BuildGrid {
   setFloor(x: number, y: number, material = 1): boolean {
     if (!this.inBounds(x, y)) return false;
     this.floor[this.index(x, y)] = material;
+    return true;
+  }
+
+  /** Place a gate: a passable opening that still seals a room for enclosure. */
+  setGate(x: number, y: number): boolean {
+    if (!this.inBounds(x, y)) return false;
+    const i = this.index(x, y);
+    this.wall[i] = 0; // a gate is an opening in the wall line
+    this.gate[i] = 1;
+    return true;
+  }
+
+  clearGate(x: number, y: number): boolean {
+    if (!this.inBounds(x, y)) return false;
+    this.gate[this.index(x, y)] = 0;
     return true;
   }
 
@@ -298,7 +318,7 @@ export class BuildGrid {
    * (only if its type is allowed there). O(map).
    */
   rebuildRooms(): Room[] {
-    const { size, width, floor, wall, roomType, roomId } = this;
+    const { size, width, floor, wall, gate, roomType, roomId } = this;
     const visited = this._visited;
     visited.fill(0);
     roomId.fill(-1);
@@ -329,7 +349,7 @@ export class BuildGrid {
           const ny = cy + NY4[d];
           if (nx < 0 || ny < 0 || nx >= width || ny >= this.height) { enclosed = false; continue; }
           const ni = ny * width + nx;
-          if (wall[ni] !== 0) continue; // a wall is a hard boundary (and a roof edge)
+          if (wall[ni] !== 0 || gate[ni] !== 0) continue; // wall or gate: a hard boundary (roof edge)
           if (floor[ni] === 0) { enclosed = false; continue; } // leaks onto open ground
           if (roomType[ni] !== type) continue; // a different designation is a boundary
           if (!visited[ni]) { visited[ni] = 1; queue[qTail++] = ni; }
@@ -455,6 +475,7 @@ export class BuildGrid {
       width: this.width,
       height: this.height,
       wall: bytesToB64(this.wall),
+      gate: bytesToB64(this.gate),
       floor: bytesToB64(this.floor),
       roomType: bytesToB64(this.roomType),
       stations: this.stations.map((s) => ({ id: s.id, typeId: s.typeId, x: s.x, y: s.y, w: s.w, h: s.h })),
@@ -466,6 +487,7 @@ export class BuildGrid {
   static deserialize(data: BuildGridSave): BuildGrid {
     const g = new BuildGrid(data.width, data.height);
     g.wall.set(b64ToBytes(data.wall, g.size));
+    if (data.gate) g.gate.set(b64ToBytes(data.gate, g.size)); // backfill: old saves have no gates
     g.floor.set(b64ToBytes(data.floor, g.size));
     g.roomType.set(b64ToBytes(data.roomType, g.size));
     for (const s of data.stations) {

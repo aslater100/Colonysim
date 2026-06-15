@@ -220,7 +220,7 @@ export class TownCore {
     // 4. Needs from rooms: warmth (enclosure), rest (beds), recreation (tables),
     //    and medical recovery (infirmary sickbeds + apothecary medicine).
     const dayWeather = this.weather.forDay(this.day);
-    serveNeeds(this.grid, a, MINUTES_PER_TICK, dayWeather.tempAnomalyC);
+    serveNeeds(this.grid, a, MINUTES_PER_TICK, dayWeather.tempAnomalyC, true /* colony-wide beds/tables */);
     serveMedical(this.grid, a, this.stock);
 
     // 4b. Bonding: agents sharing a tavern grow their mutual opinion.
