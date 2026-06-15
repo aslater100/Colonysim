@@ -354,6 +354,8 @@ export class TownCore {
   private _lastSeasonIdx = -1;
   /** Last logged population milestone (10, 25, 50, 100…). */
   private _lastPopMilestone = 0;
+  /** Last logged prestige tier (25, 50, 100, 200). */
+  private _lastPrestigeMilestone = 0;
   /** Rolling 7-day food-type log for variety mood effects. */
   private _foodVarietyLog: string[] = [];
   /** Whether all settlers are currently clothed (set daily by clothing distribution). */
@@ -1005,6 +1007,15 @@ export class TownCore {
     // Era transition: check if the industrial-age threshold has been crossed.
     this.checkEraTransition();
 
+    // Prestige tiers: celebrate notable accomplishments.
+    for (const tier of [25, 50, 100, 200] as const) {
+      if (this.prestige >= tier && this._lastPrestigeMilestone < tier) {
+        this._lastPrestigeMilestone = tier;
+        const title = tier >= 200 ? 'legendary' : tier >= 100 ? 'renowned' : tier >= 50 ? 'prosperous' : 'respected';
+        this.addLog(`${this.townName} is now ${title} — ${tier} prestige earned.`, 'good');
+      }
+    }
+
     // Burial: process one interment per grave marker per day, or penalise morale.
     if (this.unburiedCount > 0) {
       if (services.burial > 0) {
@@ -1260,11 +1271,12 @@ export class TownCore {
     const [min, max] = EVENT_INTERVAL;
     this.nextEventDay = this.day + min + this.rng.int(max - min + 1);
     const roll = this.rng.next();
-    if      (roll < 0.06) this.evtChoiceTrader();
-    else if (roll < 0.11) this.evtChoiceBandits();
-    else if (roll < 0.16) this.evtChoiceRefugees();
-    else if (roll < 0.21) this.evtChoiceFeud();
-    else if (roll < 0.25) this.evtMerchant();
+    if      (roll < 0.05) this.evtChoiceTrader();
+    else if (roll < 0.10) this.evtChoiceBandits();
+    else if (roll < 0.15) this.evtChoiceRefugees();
+    else if (roll < 0.20) this.evtChoiceFeud();
+    else if (roll < 0.24) this.evtChoiceScholar();
+    else if (roll < 0.28) this.evtMerchant();
     else if (roll < 0.31) this.evtWanderer();
     else if (roll < 0.38) this.evtColdSnap();
     else if (roll < 0.45) this.evtRats();
@@ -1487,6 +1499,20 @@ export class TownCore {
     };
   }
 
+  private evtChoiceScholar(): void {
+    if (this.agents.count === 0) { this.evtWanderer(); return; }
+    const SCHOLAR_COST = 15;
+    this.pendingChoice = {
+      id: 'scholar',
+      title: 'Travelling Scholar',
+      text: 'A learned scholar offers to train your most promising settler for 15 gold.',
+      choices: [
+        { label: `Pay ${SCHOLAR_COST} gold`, desc: `A settler's craft skill jumps by 2 (requires ${SCHOLAR_COST} gold).` },
+        { label: 'Decline', desc: 'The scholar moves on to the next town.' },
+      ],
+    };
+  }
+
   /**
    * Resolve a pending player-choice event. Returns true if the choice was valid.
    * Clears `pendingChoice` so the next event can fire.
@@ -1544,6 +1570,21 @@ export class TownCore {
           this.addLog('The feud continues to fester in the colony.', 'bad');
         }
         break;
+      case 'scholar': {
+        const SCHOLAR_COST = 15;
+        if (choiceIndex === 0 && this.gold >= SCHOLAR_COST && this.agents.count > 0) {
+          this.gold -= SCHOLAR_COST;
+          // Train the settler with the highest existing skill (most benefit from a boost).
+          let best = 0;
+          for (let i = 1; i < this.agents.count; i++)
+            if (this.agents.skill[i] > this.agents.skill[best]) best = i;
+          this.agents.skill[best] = Math.min(10, this.agents.skill[best] + 2);
+          this.addLog(`${this.agents.name(best)} is tutored by the scholar — skill rises to ${this.agents.skill[best].toFixed(1)}.`, 'good');
+        } else {
+          this.addLog('The scholar tips their hat and continues down the road.', 'info');
+        }
+        break;
+      }
     }
     return true;
   }

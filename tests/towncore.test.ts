@@ -1764,6 +1764,63 @@ describe('TownCore choice event resolution', () => {
   });
 });
 
+// ── Scholar traveller event ───────────────────────────────────────────────────
+
+describe('TownCore evtChoiceScholar', () => {
+  it('paying the scholar raises the highest-skilled settler by 2', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 1 });
+    c.seedColony(10, 10, 4);
+    c.gold = 30;
+    for (let i = 0; i < c.agents.count; i++) c.agents.skill[i] = 5;
+    c.agents.skill[0] = 7; // settler 0 is the best
+    (c as unknown as { evtChoiceScholar(): void }).evtChoiceScholar();
+    expect(c.pendingChoice?.id).toBe('scholar');
+    c.resolveEventChoice(0); // pay
+    expect(c.agents.skill[0]).toBeCloseTo(9, 5); // capped at 10
+    expect(c.gold).toBe(15); // paid 15
+    expect(c.log.some(e => e.text.includes('tutor'))).toBe(true);
+  });
+
+  it('declining the scholar costs nothing', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 1 });
+    c.seedColony(10, 10, 2);
+    c.gold = 30;
+    (c as unknown as { evtChoiceScholar(): void }).evtChoiceScholar();
+    c.resolveEventChoice(1); // decline
+    expect(c.gold).toBe(30);
+    expect(c.log.some(e => e.text.includes('scholar'))).toBe(true);
+  });
+});
+
+// ── Prestige tiers ────────────────────────────────────────────────────────────
+
+describe('TownCore prestige tiers', () => {
+  it('logs a prestige tier message when the colony first hits 25 prestige', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 1 });
+    c.seedColony(10, 10, 2);
+    c.stock.add('grain', 1000);
+    c.prestige = 24;
+    c.researchBook.addPoints(100);
+    c.research('blacksmithing'); // +1 prestige → 25
+    c.run(360); // dailyUpdate fires the prestige tier check
+    expect(c.log.some(e => e.text.includes('respected') && e.text.includes('25 prestige'))).toBe(true);
+  });
+
+  it('prestige tier is not logged twice at the same threshold', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 1 });
+    c.seedColony(10, 10, 2);
+    c.stock.add('grain', 1000);
+    c.prestige = 24;
+    c.researchBook.addPoints(100);
+    c.research('blacksmithing'); // hits 25
+    c.run(360);
+    const count25Before = c.log.filter(e => e.text.includes('25 prestige')).length;
+    c.run(360); // second day — should not re-log
+    const count25After = c.log.filter(e => e.text.includes('25 prestige')).length;
+    expect(count25After).toBe(count25Before);
+  });
+});
+
 // ── Focus bonuses (additional) ────────────────────────────────────────────────
 
 describe('TownCore strategic focus bonuses (additional)', () => {
