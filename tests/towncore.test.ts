@@ -445,6 +445,19 @@ describe('TownCore harvest zones', () => {
     expect(c.grid.zoneAt(3, 3)).toBe(ZONE.NONE);        // zone cleared
   });
 
+  it('a felled woodcutter tile regrows into a tree after saplingGrowDays', () => {
+    const c = new TownCore({ width: 24, height: 24, seed: 7 });
+    c.seedColony(12, 12, 4);
+    c.stock.add('meal', 500);
+    c.grid.setTerrain(3, 3, TERRAIN.TREE);
+    c.grid.setZone(3, 3, ZONE.WOODCUTTER);
+    c.run(360); // fell the tree
+    expect(c.grid.terrainAt(3, 3)).toBe(TERRAIN.GRASS);
+    // Advance saplingGrowDays + 1 more days for the sapling to mature
+    c.run(360 * (TUNING.saplingGrowDays + 1));
+    expect(c.grid.terrainAt(3, 3)).toBe(TERRAIN.TREE);
+  });
+
   it('a quarry on an ore tile pulls iron ore, not stone', () => {
     const c = new TownCore({ width: 24, height: 24, seed: 7 });
     c.seedColony(12, 12, 4);

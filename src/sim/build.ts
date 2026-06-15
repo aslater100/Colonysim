@@ -103,6 +103,8 @@ export interface BuildGridSave {
   ore?: string;
   /** base64 of the harvest-zone layer (optional: absent in pre-zone saves). */
   zone?: string;
+  /** base64 of the sapling-age layer (optional: absent in pre-forester saves). Days growing; 0 = no sapling. */
+  saplingAge?: string;
   floor: string;
   roomType: string;
   stations: Array<{ id: number; typeId: number; x: number; y: number; w: number; h: number }>;
@@ -214,6 +216,8 @@ export class BuildGrid {
   readonly ore: Uint8Array;
   /** Harvest-zone designation (see ZONE). 0 = none. Painted over matching terrain. */
   readonly zone: Uint8Array;
+  /** Days since the tile's tree was felled; 0 = no sapling. Advances in TownCore dailyUpdate. */
+  readonly saplingAge: Uint8Array;
 
   /** Placed stations, indexed by id. Compacted on remove (swap-remove). */
   readonly stations: Station[] = [];
@@ -239,6 +243,7 @@ export class BuildGrid {
     this.terrain = new Uint8Array(this.size); // all GRASS (0)
     this.ore = new Uint8Array(this.size);
     this.zone = new Uint8Array(this.size);
+    this.saplingAge = new Uint8Array(this.size);
     this._visited = new Uint8Array(this.size);
   }
 
@@ -706,6 +711,7 @@ export class BuildGrid {
       terrain: bytesToB64(this.terrain),
       ore: bytesToB64(this.ore),
       zone: bytesToB64(this.zone),
+      saplingAge: bytesToB64(this.saplingAge),
       floor: bytesToB64(this.floor),
       roomType: bytesToB64(this.roomType),
       stations: this.stations.map((s) => ({ id: s.id, typeId: s.typeId, x: s.x, y: s.y, w: s.w, h: s.h })),
@@ -722,6 +728,7 @@ export class BuildGrid {
     if (data.terrain) g.terrain.set(b64ToBytes(data.terrain, g.size)); // backfill: old saves are all grass
     if (data.ore) g.ore.set(b64ToBytes(data.ore, g.size));
     if (data.zone) g.zone.set(b64ToBytes(data.zone, g.size)); // backfill: old saves have no zones
+    if (data.saplingAge) g.saplingAge.set(b64ToBytes(data.saplingAge, g.size));
     g.floor.set(b64ToBytes(data.floor, g.size));
     g.roomType.set(b64ToBytes(data.roomType, g.size));
     for (const s of data.stations) {

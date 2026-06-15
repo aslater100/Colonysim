@@ -782,6 +782,8 @@ export class TownCore {
     // Primary production: the colony works its designated harvest zones into raw
     // goods (run before feeding so the day's grain/meals are on hand).
     this.harvestZones();
+    // Sapling regrowth: woodcutter-felled tiles grow back into forest over days.
+    this._tickSaplings();
     // Construction: spend the day's labour on the blueprint queue.
     this.tickConstruction();
 
@@ -1078,7 +1080,26 @@ export class TownCore {
       const yield_ = (z === ZONE.FIELD || z === ZONE.FLAX) ? HARVEST_YIELD * fieldMult : HARVEST_YIELD;
       this.stock.add(res, yield_);
       budget--;
-      if (!def.renewable) { grid.setTerrain(x, y, TERRAIN.GRASS); grid.zone[i] = ZONE.NONE; }
+      if (!def.renewable) {
+        grid.setTerrain(x, y, TERRAIN.GRASS);
+        grid.zone[i] = ZONE.NONE;
+        // Woodcutter-cleared tiles start regrowing (sapling age 1 = day 1 of growth).
+        if (z === ZONE.WOODCUTTER) grid.saplingAge[i] = 1;
+      }
+    }
+  }
+
+  /** Advance sapling growth one day; convert mature saplings to trees. */
+  private _tickSaplings(): void {
+    const grid = this.grid;
+    for (let i = 0; i < grid.size; i++) {
+      if (grid.saplingAge[i] === 0) continue;
+      if (grid.terrain[i] !== TERRAIN.GRASS) { grid.saplingAge[i] = 0; continue; } // terrain changed
+      grid.saplingAge[i]++;
+      if (grid.saplingAge[i] > TUNING.saplingGrowDays) {
+        grid.setTerrain(i % grid.width, (i / grid.width) | 0, TERRAIN.TREE);
+        grid.saplingAge[i] = 0;
+      }
     }
   }
 
