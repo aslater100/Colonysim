@@ -994,16 +994,19 @@ export class TownCore {
     else if (roll < 0.16) this.evtChoiceRefugees();
     else if (roll < 0.21) this.evtChoiceFeud();
     else if (roll < 0.25) this.evtMerchant();
-    else if (roll < 0.33) this.evtWanderer();
-    else if (roll < 0.41) this.evtColdSnap();
-    else if (roll < 0.49) this.evtRats();
-    else if (roll < 0.57) { if (this.day >= this._festivalCooldown) this.evtFestival(); else this.evtMerchant(); }
-    else if (roll < 0.65) this.evtFeverOutbreak();
-    else if (roll < 0.73) this.evtBumperHarvest();
-    else if (roll < 0.81) this.evtWindfallTimber();
-    else if (roll < 0.89) this.evtSkillBreakthrough();
-    else if (roll < 0.96) this.evtStormDamage();
-    else                  this.evtInjuredWorker();
+    else if (roll < 0.31) this.evtWanderer();
+    else if (roll < 0.38) this.evtColdSnap();
+    else if (roll < 0.45) this.evtRats();
+    else if (roll < 0.52) { if (this.day >= this._festivalCooldown) this.evtFestival(); else this.evtMerchant(); }
+    else if (roll < 0.59) this.evtFeverOutbreak();
+    else if (roll < 0.65) this.evtBumperHarvest();
+    else if (roll < 0.71) this.evtWindfallTimber();
+    else if (roll < 0.77) this.evtSkillBreakthrough();
+    else if (roll < 0.83) this.evtStormDamage();
+    else if (roll < 0.87) this.evtInjuredWorker();
+    else if (roll < 0.91) this.evtPlague();
+    else if (roll < 0.95) this.evtFoundGold();
+    else                  this.evtHeatwave();
   }
 
   private evtMerchant(): void {
@@ -1113,6 +1116,52 @@ export class TownCore {
     const i = healthy[this.rng.int(healthy.length)];
     this.agents.inflictWound(i, this.tickNo);
     this.addLog(`${this.agents.name(i)} takes a bad fall at work — they need treatment.`, 'bad');
+  }
+
+  private evtPlague(): void {
+    if (this.agents.count === 0) return;
+    const n = Math.min(this.agents.count, 2 + this.rng.int(3)); // 2–4 settlers
+    const targets = new Set<number>();
+    for (let guard = 0; targets.size < n && guard < n * 4; guard++) {
+      targets.add(this.rng.int(this.agents.count));
+    }
+    for (const i of targets) {
+      this.agents.sickUntilTick[i] = this.tickNo + 5 * TICKS_PER_DAY;
+    }
+    this.addLog(`A sickness sweeps the colony — ${n} settlers fall ill at once.`, 'bad');
+  }
+
+  private evtFoundGold(): void {
+    const nuggets = 3 + this.rng.int(8); // 3–10 gold
+    this.gold += nuggets;
+    const hasQuarry = this.grid.zone.some((z) => z === 3 /* QUARRY */);
+    if (hasQuarry) {
+      this.addLog(`A quarry worker unearths gold nuggets — ${nuggets} gold added to the treasury.`, 'good');
+    } else {
+      this.addLog(`A settler spots glittering flecks in the stream — ${nuggets} gold recovered.`, 'good');
+    }
+  }
+
+  private evtHeatwave(): void {
+    if (this.agents.count === 0) return;
+    // Heatwave: warmth spikes for everyone (pleasant in winter, oppressive in summer).
+    const seasonIdx = Math.floor((this.day % DAYS_PER_YEAR) / DAYS_PER_SEASON);
+    const isSummer = seasonIdx === 1 || seasonIdx === 2;
+    if (isSummer) {
+      // Spoil some food, raise warmth to uncomfortable highs.
+      const spoiled = Math.floor(this.stock.count('meal') * 0.08);
+      if (spoiled > 0) this.stock.remove('meal', spoiled);
+      for (let i = 0; i < this.agents.count; i++) {
+        this.agents.warmth[i] = Math.min(100, this.agents.warmth[i] + 20);
+      }
+      this.addLog(`A scorching heat wave bakes the colony${spoiled > 0 ? ` — ${spoiled} meals spoil in the heat` : ''}.`, 'bad');
+    } else {
+      // Off-season heatwave: a brief warm spell, slightly nice.
+      for (let i = 0; i < this.agents.count; i++) {
+        this.agents.warmth[i] = Math.min(100, this.agents.warmth[i] + 15);
+      }
+      this.addLog('An unseasonal warm spell — settlers shed their cloaks and enjoy the sunshine.', 'good');
+    }
   }
 
   private evtChoiceTrader(): void {
