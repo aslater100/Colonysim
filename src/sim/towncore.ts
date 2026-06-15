@@ -195,6 +195,10 @@ export interface TownCoreSave {
   unburiedCount?: number;
   /** v8+: any pending player-choice event (null/missing = no pending choice). */
   pendingChoice?: PendingEventChoice | null;
+  /** v8+: colony prestige score (0 on old saves). */
+  prestige?: number;
+  /** v8+: game era 1–4 (defaults to 1 on old saves). */
+  era?: 1 | 2 | 3 | 4;
 }
 
 export interface TownCoreOpts {
@@ -260,6 +264,11 @@ export class TownCore {
   /** Number of dead settlers not yet interred; drives a daily mood penalty when positive. */
   unburiedCount = 0;
   gold = 0;
+  /** Colony prestige score — increments by 1 each time a tech is researched. */
+  prestige = 0;
+  /** Current game era (1–4). Era 1→2 unlocks when iron_smelting + blacksmithing are
+   *  researched and sufficient tools + iron bars are stockpiled (GDD §3.1). */
+  era: 1 | 2 | 3 | 4 = 1;
   /** Market price modifiers: track supply/demand shifts (recover daily toward 1.0). */
   priceModifiers = new Map<string, number>();
   /** Colony anchor — where newcomers appear and the camera first looks. */
@@ -692,7 +701,13 @@ export class TownCore {
     // Auto-research if a queue target is now affordable (player set via core.researchBook.queue).
     this.researchBook.addPoints(services.education);
     const autoResearched = this.researchBook.autoResearch();
-    if (autoResearched) this.addLog(`Research complete: ${autoResearched}`, 'good');
+    if (autoResearched) {
+      this.addLog(`Research complete: ${autoResearched}`, 'good');
+      this.prestige++;
+    }
+
+    // Era transition: check if the industrial-age threshold has been crossed.
+    this.checkEraTransition();
 
     // Burial: process one interment per grave marker per day, or penalise morale.
     if (this.unburiedCount > 0) {
@@ -1140,8 +1155,29 @@ export class TownCore {
    */
   research(techId: string): boolean {
     const ok = this.researchBook.research(techId);
-    if (ok) this.addLog(`Research complete: ${techId}`, 'good');
+    if (ok) {
+      this.addLog(`Research complete: ${techId}`, 'good');
+      this.prestige++;
+    }
     return ok;
+  }
+
+  /**
+   * Check whether the colony has advanced to a new era (called daily).
+   * Era 1→2: iron_smelting + blacksmithing techs + tools/iron stockpile threshold.
+   * Future eras (3, 4) will be wired in when the coal/electrification content lands.
+   */
+  private checkEraTransition(): void {
+    if (this.era === 1 &&
+      this.researchBook.hasTech('iron_smelting') &&
+      this.researchBook.hasTech('blacksmithing') &&
+      this.stock.count('tools') >= TUNING.era2ToolsRequired &&
+      this.stock.count('iron') >= TUNING.era2IronRequired
+    ) {
+      this.era = 2;
+      this.prestige += 5; // era transitions are a major milestone
+      this.addLog('The Industrial Era begins — iron and tools transform the colony. New buildings and techs are now available.', 'good');
+    }
   }
 
   // ── read-only views ──────────────────────────────────────────────────────────
@@ -1289,6 +1325,8 @@ export class TownCore {
       lastSeasonIdx: this._lastSeasonIdx,
       unburiedCount: this.unburiedCount > 0 ? this.unburiedCount : undefined,
       pendingChoice: this.pendingChoice ?? undefined,
+      prestige: this.prestige > 0 ? this.prestige : undefined,
+      era: this.era > 1 ? this.era : undefined,
     };
   }
 
@@ -1336,6 +1374,8 @@ export class TownCore {
       data.lastSeasonIdx ?? Math.floor((core.day % DAYS_PER_YEAR) / DAYS_PER_SEASON);
     // v8+: restore any pending player-choice (old saves had no pending events).
     core.pendingChoice = data.pendingChoice ?? null;
+    core.prestige = data.prestige ?? 0;
+    core.era = data.era ?? 1;
     return core;
   }
 }

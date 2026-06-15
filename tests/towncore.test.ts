@@ -727,3 +727,41 @@ describe('TownCore blueprint construction', () => {
     expect(r.builds).toEqual(c.builds);
   });
 });
+
+// --- prestige + era progression ---
+describe('TownCore prestige and era', () => {
+  it('prestige starts at 0 and increments when research() succeeds', () => {
+    const core = colony({ ovens: 2, beds: 4, grain: 500, pop: 4, seed: 3 });
+    expect(core.prestige).toBe(0);
+    // blacksmithing costs 100 pts and has no prereqs.
+    core.researchBook.addPoints(100);
+    const ok = core.research('blacksmithing');
+    expect(ok).toBe(true);
+    expect(core.prestige).toBe(1);
+  });
+
+  it('era starts at 1 and advances to 2 when iron techs + stockpile threshold met', () => {
+    const core = colony({ ovens: 2, beds: 4, grain: 500, pop: 4, seed: 3 });
+    expect(core.era).toBe(1);
+    // iron_smelting requires blacksmithing as a prereq; both need points.
+    core.researchBook.addPoints(1000);
+    core.research('blacksmithing');      // unlocks first (no prereqs)
+    core.research('iron_smelting');      // now prereq satisfied
+    // Stock the threshold requirements.
+    core.stock.add('tools', 20);
+    core.stock.add('iron', 10);
+    // Run one day so checkEraTransition fires in dailyUpdate.
+    core.stock.add('meal', 100);
+    core.run(360);
+    expect(core.era).toBe(2);
+  });
+
+  it('prestige and era survive a save/load round-trip', () => {
+    const core = colony({ ovens: 2, beds: 4, grain: 500, pop: 4, seed: 3 });
+    core.prestige = 7;
+    core.era = 2;
+    const twin = TownCore.deserialize(core.serialize());
+    expect(twin.prestige).toBe(7);
+    expect(twin.era).toBe(2);
+  });
+});
