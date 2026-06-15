@@ -245,3 +245,15 @@ describe('AgentStore names', () => {
     expect(r.name(1)).toBe(a.name(1));
   });
 });
+
+// Guard: a degenerate RNG must not hang the distinct-trait reroll.
+describe('AgentStore.rollTraits robustness', () => {
+  it('terminates and yields two distinct traits even with a constant rand', () => {
+    const a = new AgentStore(2);
+    const i = a.spawn(0, 0);
+    a.rollTraits(i, () => 0.5); // constant: old code looped forever here
+    expect(a.trait0[i]).not.toBe(a.trait1[i]);
+    expect(a.trait0[i]).toBeGreaterThanOrEqual(0);
+    expect(a.trait1[i]).toBeGreaterThanOrEqual(0);
+  });
+});

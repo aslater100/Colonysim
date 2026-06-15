@@ -315,7 +315,11 @@ export class AgentStore {
     const n = TRAIT_DEFS.length;
     const a = Math.floor(rand() * n);
     let b = Math.floor(rand() * n);
-    while (b === a) b = Math.floor(rand() * n);
+    // Reroll to a distinct trait. Bounded so a degenerate rand (e.g. constant
+    // 0.5) can't spin forever; the real mulberry32 stream resolves in one or two
+    // tries, so this leaves normal-seed behaviour (and draw count) unchanged.
+    for (let guard = 0; b === a && guard < 8; guard++) b = Math.floor(rand() * n);
+    if (b === a) b = (a + 1) % n; // degenerate-rand fallback
     this.trait0[i] = a;
     this.trait1[i] = b;
     this.applyTraits(i);
