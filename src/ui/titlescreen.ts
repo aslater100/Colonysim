@@ -362,6 +362,9 @@ export class TitleScreen {
 
   private render(): void {
     this.el.innerHTML = this.view === 'main' ? this.mainHtml() : this.optionsHtml();
+    // innerHTML wiped the prepended background canvas — re-attach it so the
+    // animated scene survives navigation between the main and options views.
+    if (this.canvas) this.el.prepend(this.canvas);
   }
 
   private mainHtml(): string {
