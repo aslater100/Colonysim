@@ -925,7 +925,9 @@ body {
 .title-screen {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  /* Must sit above all in-game chrome (.topbar z=100, .buildbar z=101)
+     so the status bar and build toolbar don't bleed through the menu. */
+  z-index: 200;
   background: #5aaa38; /* fallback while canvas initialises */
   display: flex;
   align-items: stretch;
