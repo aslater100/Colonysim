@@ -1444,16 +1444,16 @@ describe('TownCore event variety', () => {
   });
 });
 
-// ── Save v9: serialization of clothing/festival/milestone state ───────────────
+// ── Save v10: serialization of clothing/festival/milestone/prestige state ─────
 
-describe('TownCore save v9 serialization', () => {
+describe('TownCore save v10 serialization', () => {
   it('clothingDay survives round-trip', () => {
     const c = new TownCore({ width: 20, height: 20, seed: 1 });
     c.seedColony(10, 10, 2);
     c.stock.add('grain', 2000);
     c.run(360 * 5); // accumulate some state
     const saved = c.serialize();
-    expect(saved.v).toBe(9);
+    expect(saved.v).toBe(10);
     const twin = TownCore.deserialize(saved);
     // Serialized state exists; twin won't re-fire clothing event on next tick
     expect(twin.serialize().clothingDay).toBe(saved.clothingDay);
@@ -1500,6 +1500,22 @@ describe('TownCore save v9 serialization', () => {
     const twin = TownCore.deserialize(c.serialize());
     // Net flow should be identical immediately post-load (no warm-up needed)
     expect(twin.netFlow('grain')).toBeCloseTo(flowBefore, 1);
+  });
+
+  it('lastPrestigeMilestone survives round-trip and prevents re-logging on load', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 1 });
+    c.seedColony(10, 10, 2);
+    c.stock.add('grain', 2000);
+    c.prestige = 24;
+    c.researchBook.addPoints(100);
+    c.research('blacksmithing'); // prestige → 25, tier message fires
+    c.run(360);
+    const logsAfterTier = c.log.filter(e => e.text.includes('25 prestige')).length;
+    expect(logsAfterTier).toBe(1); // exactly once
+    const twin = TownCore.deserialize(c.serialize());
+    twin.stock.add('grain', 2000);
+    twin.run(360); // should NOT re-log the 25-tier
+    expect(twin.log.filter(e => e.text.includes('25 prestige')).length).toBe(1);
   });
 });
 

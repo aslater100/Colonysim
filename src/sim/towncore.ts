@@ -69,7 +69,7 @@ const ECONOMY_MONTH_DAYS = 30;
 const FIRST_EVENT_DAY = 7;
 const EVENT_INTERVAL = [3, 7] as const;
 
-const SAVE_VERSION = 9;
+const SAVE_VERSION = 10;
 
 // Behavior thresholds for the integration loop (modest, deterministic — full
 // mood/skills/trait fidelity is the remaining parity work, not this stage).
@@ -236,6 +236,8 @@ export interface TownCoreSave {
   /** v9+: drought/flood active state (prevents duplicate transition logs on load). */
   droughtActive?: boolean;
   floodActive?: boolean;
+  /** v10+: last prestige tier already logged (prevents duplicate tier logs on load). */
+  lastPrestigeMilestone?: number;
 }
 
 export interface TownCoreOpts {
@@ -1882,6 +1884,7 @@ export class TownCore {
       stockHistory: this._stockHistory.size > 0 ? Object.fromEntries(this._stockHistory) : undefined,
       droughtActive: this._droughtActive || undefined,
       floodActive: this._floodActive || undefined,
+      lastPrestigeMilestone: this._lastPrestigeMilestone > 0 ? this._lastPrestigeMilestone : undefined,
     };
   }
 
@@ -1952,6 +1955,7 @@ export class TownCore {
     // v9+: restore drought/flood active flags so season-transition logs don't re-fire.
     if (data.droughtActive) (core as unknown as { _droughtActive: boolean })._droughtActive = true;
     if (data.floodActive) (core as unknown as { _floodActive: boolean })._floodActive = true;
+    if (data.lastPrestigeMilestone != null) (core as unknown as { _lastPrestigeMilestone: number })._lastPrestigeMilestone = data.lastPrestigeMilestone;
     return core;
   }
 }
