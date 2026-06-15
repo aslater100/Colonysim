@@ -60,6 +60,7 @@ const ROOM_COLORS: Record<string, string> = {
   apothecary: '#80c840',
   tavern: '#8030c0',
   storehouse: '#a08060',
+  burial_ground: '#607060',
 };
 
 // ── Starter town ──────────────────────────────────────────────────────────
@@ -343,10 +344,11 @@ function draw(): void {
   const year = START_YEAR + Math.floor(core.day / DAYS_PER_YEAR);
   const seasonLabel = `${SEASONS[seasonIdx]} ${year}`;
   line(0, `${seasonLabel}  day ${core.day}  pop ${core.population}  mood ${core.averageMood().toFixed(0)}  gold ${core.gold.toFixed(0)}`);
-  line(1, `meal ${core.stock.count('meal').toFixed(0)}  grain ${core.stock.count('grain').toFixed(0)}  flour ${core.stock.count('flour').toFixed(0)}  bread ${core.stock.count('bread').toFixed(0)}`);
+  line(1, `meal ${core.stock.count('meal').toFixed(0)}  grain ${core.stock.count('grain').toFixed(0)}  flour ${core.stock.count('flour').toFixed(0)}  bread ${core.stock.count('bread').toFixed(0)}  ale ${core.stock.count('ale').toFixed(0)}`);
   line(2, `wood ${core.stock.count('wood').toFixed(0)}  stone ${core.stock.count('stone').toFixed(0)}  iron ${core.stock.count('iron').toFixed(0)}  ore ${core.stock.count('iron_ore').toFixed(0)}`);
   line(3, `clothes ${core.stock.count('clothes').toFixed(0)}  weapons ${core.stock.count('weapons').toFixed(0)}  medicine ${core.stock.count('medicine').toFixed(0)}`);
-  line(4, `births ${core.births}  deaths ${core.deaths}  inflation ${(core.inflation * 100).toFixed(1)}%`);
+  const unburied = core.unburiedCount > 0 ? `  ⚠ unburied ${core.unburiedCount}` : '';
+  line(4, `births ${core.births}  deaths ${core.deaths}  inflation ${(core.inflation * 100).toFixed(1)}%${unburied}`, core.unburiedCount > 0 ? '#ff8844' : '#ddd');
   const raidLine = core.raidActive
     ? `RAID — ${core.raids.raiders.length} raiders (slain ${core.raids.slain})`
     : `next raid day ${core.nextRaidDay}`;
