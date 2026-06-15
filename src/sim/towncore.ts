@@ -40,7 +40,7 @@ import { Ledger, type LedgerSave, type BorrowResult, type RepayResult } from './
 import { ResearchBook, type ResearchBookSave } from './research';
 import { Rng } from './rng';
 import { BASE_PRICES } from './economy';
-import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, ROOM_DEF_BY_NUM, STATION_DEF_BY_NUM, STATION_TYPE_ID, TRAIT_DEFS, TUNING, type ResourceKind } from './defs';
+import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, ROOM_DEF_BY_NUM, STATION_DEF_BY_NUM, STATION_TYPE_ID, TRAIT_DEFS, TUNING, DAYS_PER_SEASON, DAYS_PER_YEAR, type ResourceKind } from './defs';
 
 const TICKS_PER_DAY = MINUTES_PER_DAY / MINUTES_PER_TICK;
 // Grief on a death (mirrors the fat sim): friends mourn harder and longer.
@@ -250,6 +250,8 @@ export class TownCore {
   homeY: number;
   /** Day the next random event fires. */
   nextEventDay: number = FIRST_EVENT_DAY;
+  /** Tracks current drought state to log transitions (drought start/end). */
+  private _droughtActive = false;
 
   private readonly weatherSeed: number;
 
@@ -607,6 +609,14 @@ export class TownCore {
 
     // Random events: merchant visits, weather surprises, wanderers, etc.
     if (this.day >= this.nextEventDay) this.fireRandomEvent();
+
+    // Drought/flood transitions: log once when conditions change.
+    const seasonIdx = Math.floor((this.day % DAYS_PER_YEAR) / DAYS_PER_SEASON);
+    const growingSeason = seasonIdx < 3;
+    const nowDrought = growingSeason && this.weather.isDrought(this.day);
+    if (nowDrought && !this._droughtActive) this.addLog('Drought. The soil cracks and crops slow to a crawl.', 'bad');
+    else if (!nowDrought && this._droughtActive) this.addLog('The drought breaks. Rain returns to the fields.', 'good');
+    this._droughtActive = nowDrought;
   }
 
   /**
@@ -622,6 +632,9 @@ export class TownCore {
     const grid = this.grid;
     let budget = Math.floor(this.agents.count * HARVEST_TILES_PER_WORKER);
     if (budget <= 0) return;
+    // Fields are seasonal: no grain in winter (season index 3 = days 45–59 of the year).
+    const seasonIdx = Math.floor((this.day % DAYS_PER_YEAR) / DAYS_PER_SEASON);
+    const growingSeason = seasonIdx < 3;
     // crop_rotation tech grants a 25% field yield bonus; crop_science stacks another 20%.
     const techMult = 1
       + (this.researchBook.hasTech('crop_rotation') ? 0.25 : 0)
@@ -634,6 +647,8 @@ export class TownCore {
       if (z === ZONE.NONE) continue;
       const def = ZONE_DEFS[z];
       if (!def) continue;
+      // Fields lie fallow in winter — labour still counts (clearing snow etc.) but no grain.
+      if (z === ZONE.FIELD && !growingSeason) { budget--; continue; }
       const x = i % grid.width, y = (i / grid.width) | 0;
       if (!grid.canZone(x, y, z)) { grid.zone[i] = ZONE.NONE; continue; } // terrain changed under it
       const res = z === ZONE.QUARRY && grid.ore[i] ? 'iron_ore' : def.resource;

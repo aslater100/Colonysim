@@ -358,6 +358,20 @@ describe('TownCore harvest zones', () => {
     for (let x = 2; x < 8; x++) expect(c.grid.zoneAt(x, 2)).toBe(ZONE.FIELD);
   });
 
+  it('fields lie fallow in winter: no grain harvested in season 3', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 7 });
+    c.seedColony(10, 10, 4);
+    c.grid.setTerrain(3, 3, TERRAIN.SOIL);
+    c.grid.setZone(3, 3, ZONE.FIELD);
+    // Advance to winter (day 45+ of year, season index 3 = days 45–59 of the 60-day year).
+    // Run 45 full days to reach winter.
+    c.run(360 * 45);
+    const winterGrain = c.stock.count('grain');
+    c.run(360); // one winter day
+    // Field should yield 0 grain in winter.
+    expect(c.stock.count('grain')).toBe(winterGrain);
+  });
+
   it('weather growthMult modulates field yield: drought suppresses, well-watered boosts', () => {
     // seed 9 → growthMult 0.35 (drought) on day 0; seed 7 → growthMult 1.1 (well-watered).
     const dry = new TownCore({ width: 20, height: 20, seed: 9 });
