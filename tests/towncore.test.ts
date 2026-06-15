@@ -1469,6 +1469,28 @@ describe('TownCore save v9 serialization', () => {
     expect(twin.serialize().lastPopMilestone).toBe(saved.lastPopMilestone);
   });
 
+  it('population milestone awards prestige and logs on first crossing', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 1 });
+    c.seedColony(10, 10, 12); // 12 settlers → will trigger the 10-settler milestone
+    c.stock.add('grain', 5000);
+    const prestigeBefore = c.prestige;
+    c.run(360); // daily update fires milestone check
+    expect(c.prestige).toBeGreaterThan(prestigeBefore); // +1 for reaching 10
+    expect(c.log.some(e => e.text.includes('10 settlers') && e.text.includes('prestige'))).toBe(true);
+  });
+
+  it('milestone prestige is not double-awarded after save/load', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 1 });
+    c.seedColony(10, 10, 12);
+    c.stock.add('grain', 5000);
+    c.run(360); // trigger milestone
+    const prestigeAfterMilestone = c.prestige;
+    const twin = TownCore.deserialize(c.serialize());
+    twin.stock.add('grain', 5000);
+    twin.run(360); // no double-award on reload
+    expect(twin.prestige).toBe(prestigeAfterMilestone);
+  });
+
   it('stockHistory survives round-trip so net-flow is accurate post-load', () => {
     const c = new TownCore({ width: 20, height: 20, seed: 1 });
     c.seedColony(10, 10, 2);

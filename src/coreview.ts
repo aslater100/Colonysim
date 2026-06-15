@@ -34,6 +34,7 @@ import {
   STATION_DEF_BY_NUM, STATION_DEFS,
   TICKS_PER_SECOND, SEASONS, START_YEAR, DAYS_PER_SEASON, DAYS_PER_YEAR,
 } from './sim/defs';
+import { RESEARCH_PER_DESK_PER_DAY } from './sim/research';
 import { buildSprites } from './ui/sprites';
 import { applyOverrides } from './ui/spriteOverrides';
 
@@ -156,6 +157,13 @@ addEventListener('keydown', (e) => {
   if (e.key === '3') { speed = 8; return; }
   if (k === 'r') { core.musterRaid(); return; }
   if (k === 'n') { core.seedColony(core.homeX, core.homeY, 1); return; }
+  if (k === 'y') {
+    const FOCUSES: import('./sim/defs').TownFocus[] = ['balanced', 'agricultural', 'military', 'trade', 'industrial', 'cultural'];
+    const idx = FOCUSES.indexOf(core.focus);
+    core.focus = FOCUSES[(idx + 1) % FOCUSES.length];
+    flashMsg = `Focus: ${core.focus}`; flashUntil = Date.now() + 1500;
+    return;
+  }
   if (k === 'x') {
     // Cycle research queue: X rotates through available techs; auto-researches when affordable
     const avail = core.researchBook.available();
@@ -451,7 +459,7 @@ function draw(): void {
   // Key hints
   ctx.fillStyle = '#888'; ctx.font = '11px monospace';
   ctx.fillText('W wall  E erase  G gate  D floor  T trap  Z room([ ])  A station(, .)', 8, 20 + 10 * 17);
-  ctx.fillText('F field  C chop  Q quarry  B fishery  L flax  R raid  N settler  X queue research  space pause', 8, 20 + 11 * 17);
+  ctx.fillText('F field  C chop  Q quarry  B fishery  L flax  R raid  N settler  X queue  Y focus  space pause', 8, 20 + 11 * 17);
 
   // ── Settler inspector panel (top-right) ──────────────────────────────────
   if (inspected) {
@@ -476,13 +484,14 @@ function draw(): void {
   const rb = core.researchBook;
   const avail = rb.available();
   const done = rb.all().filter(id => id !== 'crop_rotation');
+  const ptsPerDay = core.services().education * RESEARCH_PER_DESK_PER_DAY;
   const RPH = 16;
   const RP_ROWS = 2 + Math.min(avail.length, 5) + Math.min(done.length, 3);
-  const RPW = 280, RPH_TOTAL = RP_ROWS * RPH + 16;
+  const RPW = 300, RPH_TOTAL = RP_ROWS * RPH + 16;
   const rpx = canvas.width - RPW - 8, rpy = canvas.height - RPH_TOTAL - 8;
   ctx.fillStyle = '#000a'; ctx.fillRect(rpx, rpy, RPW, RPH_TOTAL);
   ctx.fillStyle = '#ffd700'; ctx.font = 'bold 12px monospace';
-  ctx.fillText(`Research  ${rb.points.toFixed(0)} pts`, rpx + 6, rpy + 14);
+  ctx.fillText(`Research  ${rb.points.toFixed(0)} pts${ptsPerDay > 0 ? `  (+${ptsPerDay}/day)` : ''}`, rpx + 6, rpy + 14);
   ctx.font = '11px monospace';
   let row = 1;
   if (avail.length === 0) {
@@ -496,7 +505,8 @@ function draw(): void {
       const queued = rb.queue === t.id;
       ctx.fillStyle = queued ? '#ffd700' : affordable ? '#88ff88' : '#aaaaff';
       const prefix = queued ? '> ' : '  ';
-      const label = `${prefix}${t.name} (${t.cost}pt) — ${t.desc.slice(0, 26)}`;
+      const daysLeft = ptsPerDay > 0 && !affordable ? `~${Math.ceil((t.cost - rb.points) / ptsPerDay)}d` : affordable ? 'ready' : '?';
+      const label = `${prefix}${t.name} (${t.cost}pt ${daysLeft})`;
       ctx.fillText(label, rpx + 6, rpy + 14 + row++ * RPH);
     }
   }

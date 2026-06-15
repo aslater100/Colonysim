@@ -1062,13 +1062,14 @@ export class TownCore {
     else if (!nowFlood && this._floodActive) this.addLog('The rains ease. Flood threat passes.', 'info');
     this._floodActive = nowFlood;
 
-    // Population milestones.
+    // Population milestones: prestige awarded at key thresholds.
     const pop = this.agents.count;
-    const MILESTONES = [10, 25, 50, 100, 200, 500];
-    for (const m of MILESTONES) {
+    const MILESTONE_PRESTIGE: [number, number][] = [[10, 1], [25, 2], [50, 3], [100, 5], [200, 8], [500, 15]];
+    for (const [m, pts] of MILESTONE_PRESTIGE) {
       if (pop >= m && this._lastPopMilestone < m) {
         this._lastPopMilestone = m;
-        this.addLog(`Colony reaches ${m} settlers — a growing community.`, 'good');
+        this.prestige += pts;
+        this.addLog(`Colony reaches ${m} settlers — a growing community. (+${pts} prestige)`, 'good');
       }
     }
   }
