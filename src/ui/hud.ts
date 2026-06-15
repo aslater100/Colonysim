@@ -216,6 +216,15 @@ export class Hud {
   private foundBtn: HTMLButtonElement | null = null;
   private htmlCache = new Map<HTMLElement, string>();
   private techPanel!: TechPanel;
+  private resourceTab = 0; // active group in the resources panel
+
+  /** Draggable panels for the WindowManager (town mode). */
+  get draggablePanels(): { id: string; element: HTMLElement; baseZ: number }[] {
+    return [
+      { id: 'town-inspector', element: this.inspector, baseZ: 20 },
+      { id: 'town-priorities', element: this.prioBox, baseZ: 19 },
+    ];
+  }
 
   constructor(
     root: HTMLElement,
@@ -262,6 +271,13 @@ export class Hud {
 
     // Delegate clicks on inspector
     this.inspector.addEventListener('mousedown', (e) => {
+      // Tab strip (e.g. resources panel groups): switch the active tab.
+      const tab = (e.target as HTMLElement).closest<HTMLElement>('[data-restab]');
+      if (tab) {
+        this.resourceTab = Number(tab.dataset.restab);
+        this.sfx?.click();
+        return;
+      }
       const shift = (e as MouseEvent).shiftKey;
       // Barter: base button trades 1 (Shift = all we can afford); ×N buttons carry their own qty.
       const trade = (e.target as HTMLElement).closest<HTMLElement>('.trade-btn, .trade-bulk');
@@ -950,27 +966,31 @@ export class Hud {
       flour: 'milling', medicine: 'germ_theory', herbs: 'herbalism',
       dairy: 'animal_husbandry', petroleum: 'coal_power',
     };
+    // Tabs by group so 30+ resource rows don't bury the panel in one long scroll.
+    const active = Math.max(0, Math.min(this.resourceTab, GROUPS.length - 1));
+    const tabs = GROUPS.map((g, i) =>
+      `<button class="insp-tab${i === active ? ' active' : ''}" data-restab="${i}">${g.label.replace(/ \(.*\)/, '')}</button>`
+    ).join('');
     let html = `<h3>Resources <button onclick="this.closest('.inspector').dispatchEvent(new CustomEvent('close-res'))" style="float:right;cursor:pointer">✕</button></h3>`;
-    for (const g of GROUPS) {
-      html += `<div class="insp-section"><b>${g.label}</b></div>`;
-      for (const k of g.kinds) {
-        const qty = s.stock[k] ?? 0;
-        const flow = s.netFlow(k);
-        const flowStr = flow > 0.05 ? `<span style="color:#6f6">+${flow.toFixed(1)}</span>`
-          : flow < -0.05 ? `<span style="color:#f66">${flow.toFixed(1)}</span>`
-          : `<span style="color:#888">~0</span>`;
-        const tech = techFor[k];
-        const locked = tech && !s.hasTech(tech);
-        const tag = locked ? ` <span style="color:#c80" title="Locked — research ${tech.replace('_', ' ')}">🔒</span>` : '';
-        // Live market price with supply/demand arrow.
-        const spot = s.marketPrice(k);
-        const base = BASE_PRICES[k] ?? 10;
-        const arrow = spot > base * 1.08 ? `<span style="color:#6f6">▲</span>`
-          : spot < base * 0.92 ? `<span style="color:#f66">▼</span>` : '';
-        html += `<div class="bar-row"><span style="min-width:74px">${k.replace('_', ' ')}</span>` +
-          `<span style="min-width:30px;text-align:right">${qty}</span> ${flowStr} ` +
-          `<span style="min-width:42px;text-align:right;color:#caa" title="market price/unit">${formatCurrency(spot)}${arrow}</span>${tag}</div>`;
-      }
+    html += `<div class="insp-tabs">${tabs}</div>`;
+    html += `<div class="insp-section"><b>${GROUPS[active].label}</b></div>`;
+    for (const k of GROUPS[active].kinds) {
+      const qty = s.stock[k] ?? 0;
+      const flow = s.netFlow(k);
+      const flowStr = flow > 0.05 ? `<span style="color:#6f6">+${flow.toFixed(1)}</span>`
+        : flow < -0.05 ? `<span style="color:#f66">${flow.toFixed(1)}</span>`
+        : `<span style="color:#888">~0</span>`;
+      const tech = techFor[k];
+      const locked = tech && !s.hasTech(tech);
+      const tag = locked ? ` <span style="color:#c80" title="Locked — research ${tech.replace('_', ' ')}">🔒</span>` : '';
+      // Live market price with supply/demand arrow.
+      const spot = s.marketPrice(k);
+      const base = BASE_PRICES[k] ?? 10;
+      const arrow = spot > base * 1.08 ? `<span style="color:#6f6">▲</span>`
+        : spot < base * 0.92 ? `<span style="color:#f66">▼</span>` : '';
+      html += `<div class="bar-row"><span style="min-width:74px">${k.replace('_', ' ')}</span>` +
+        `<span style="min-width:30px;text-align:right">${qty}</span> ${flowStr} ` +
+        `<span style="min-width:42px;text-align:right;color:#caa" title="market price/unit">${formatCurrency(spot)}${arrow}</span>${tag}</div>`;
     }
     return html;
   }
