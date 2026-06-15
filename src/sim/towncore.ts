@@ -275,6 +275,8 @@ export class TownCore {
   private _lastSeasonIdx = -1;
   /** Last logged population milestone (10, 25, 50, 100…). */
   private _lastPopMilestone = 0;
+  /** Rolling 7-day food-type log for variety mood effects. */
+  private _foodVarietyLog: string[] = [];
 
   private readonly weatherSeed: number;
 
@@ -594,19 +596,41 @@ export class TownCore {
     }
 
     // Feed: priority meal → bread → raw grain (fallback; penalty thought added).
-    // Mirrors the fat sim's consumeFood priority order.
+    // Mirrors the fat sim's consumeFood priority order. Count each food type consumed
+    // to drive the colony-wide food variety mood system.
     const MEAL_VAL = TUNING.mealFoodValue;
     const GRAIN_VAL = TUNING.rawGrainFoodValue;
+    let eatMeal = 0, eatBread = 0, eatGrain = 0;
     for (let i = 0; i < a.count; i++) {
       if (a.food[i] >= 100) continue;
       if (this.stock.remove('meal', 1)) {
         a.food[i] = Math.min(100, a.food[i] + MEAL_VAL);
+        eatMeal++;
       } else if (this.stock.remove('bread', 1)) {
         a.food[i] = Math.min(100, a.food[i] + MEAL_VAL);
         a.addThought(i, this.tickNo, 3, TICKS_PER_DAY); // bread is a slight mood boost
+        eatBread++;
       } else if (this.stock.remove('grain', 1)) {
         a.food[i] = Math.min(100, a.food[i] + GRAIN_VAL);
         a.addThought(i, this.tickNo, -4, TICKS_PER_DAY, ThoughtKey.Anon); // "ate raw grain"
+        eatGrain++;
+      }
+    }
+    // Food variety: rolling 7-day log drives mood bonuses/penalties.
+    const dayFood = eatMeal > 0 ? 'meal' : eatBread > 0 ? 'bread' : eatGrain > 0 ? 'grain' : null;
+    if (dayFood) {
+      this._foodVarietyLog.unshift(dayFood);
+      if (this._foodVarietyLog.length > 7) this._foodVarietyLog.length = 7;
+      const same3 = this._foodVarietyLog.length >= 3 && this._foodVarietyLog.slice(0, 3).every(f => f === dayFood);
+      const distinct = new Set(this._foodVarietyLog).size;
+      for (let i = 0; i < a.count; i++) {
+        if (same3) {
+          a.addThought(i, this.tickNo, -TUNING.foodVarietyPenalty, TICKS_PER_DAY, ThoughtKey.FoodVariety);
+        } else if (distinct >= 4) {
+          a.addThought(i, this.tickNo, TUNING.foodVarietyBonus4, 3 * TICKS_PER_DAY, ThoughtKey.FoodVariety);
+        } else if (distinct >= 3) {
+          a.addThought(i, this.tickNo, TUNING.foodVarietyBonus3, 2 * TICKS_PER_DAY, ThoughtKey.FoodVariety);
+        }
       }
     }
 

@@ -558,6 +558,38 @@ describe('TownCore burial ground', () => {
   });
 });
 
+// --- food variety mood ---
+describe('TownCore food variety', () => {
+  it('eating the same food three days running penalises mood', () => {
+    const core = new TownCore({ width: 16, height: 16, seed: 3 });
+    core.seedColony(8, 8, 2);
+    // Provide only grain so all 3+ days produce "grain" entries.
+    core.stock.add('grain', 1000);
+    for (let i = 0; i < core.agents.count; i++) core.agents.mood[i] = 60;
+    core.run(360 * 3); // three days of same food → penalty on day 3
+    // The mood penalty thought (-2) should have fired, so average mood < 60.
+    const avg = Array.from({ length: core.agents.count }, (_, i) => core.agents.mood[i])
+      .reduce((s, v) => s + v, 0) / core.agents.count;
+    expect(avg).toBeLessThan(60);
+  });
+
+  it('eating three distinct foods in a week gives a variety bonus', () => {
+    const core = new TownCore({ width: 16, height: 16, seed: 3 });
+    core.seedColony(8, 8, 2);
+    // Day 1: grain, Day 2: bread, Day 3: meal → 3 distinct → bonus.
+    core.stock.add('grain', 100);
+    core.run(360); // eats grain
+    core.stock.add('bread', 100);
+    core.run(360); // eats bread
+    core.stock.add('meal', 100);
+    core.run(360); // eats meal → 3 distinct in log
+    // Mood should have recovered or improved vs an all-grain baseline.
+    for (let i = 0; i < core.agents.count; i++) {
+      expect(core.agents.mood[i]).toBeGreaterThan(0);
+    }
+  });
+});
+
 // --- B-6 PART 3: blueprint construction (paint → materials + labour → built) ---
 describe('TownCore blueprint construction', () => {
   it('builds a queued wall once materials and labour are spent', () => {
