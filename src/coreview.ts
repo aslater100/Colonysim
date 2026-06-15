@@ -26,7 +26,7 @@
  */
 import './style.css';
 import { TownCore } from './sim/towncore';
-import type { SettlerView } from './sim/towncore';
+import type { SettlerView, PendingEventChoice } from './sim/towncore';
 import { AState } from './sim/agents';
 import { TERRAIN, ZONE } from './sim/build';
 import {
@@ -137,6 +137,13 @@ let inspected: SettlerView | null = null;
 // ── Input ─────────────────────────────────────────────────────────────────
 addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
+  // Choice event: 1/2 selects an option while a dialog is pending.
+  if (core.pendingChoice) {
+    if (e.key === '1') { core.resolveEventChoice(0); e.preventDefault(); return; }
+    if (e.key === '2') { core.resolveEventChoice(1); e.preventDefault(); return; }
+    e.preventDefault(); // block other keys while dialog is open
+    return;
+  }
   if (e.key === ' ') { paused = !paused; e.preventDefault(); return; }
   if (e.key === '1') { speed = 1; return; }
   if (e.key === '2') { speed = 3; return; }
@@ -413,6 +420,34 @@ function draw(): void {
     ctx.fillStyle = logColors[entry.kind];
     ctx.fillText(`d${entry.day} ${entry.text}`, 8, canvas.height - 10 - k * 16);
   }
+
+  // ── Pending choice modal (center) ─────────────────────────────────────
+  if (core.pendingChoice) {
+    const ch: PendingEventChoice = core.pendingChoice;
+    const MW = 440, MH = 30 + ch.choices.length * 36 + 32;
+    const mx = (canvas.width - MW) / 2;
+    const my = (canvas.height - MH) / 2;
+    ctx.fillStyle = '#111d'; ctx.fillRect(mx - 4, my - 4, MW + 8, MH + 8);
+    ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2;
+    ctx.strokeRect(mx - 4, my - 4, MW + 8, MH + 8);
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#ffd700'; ctx.font = 'bold 14px monospace';
+    ctx.fillText(ch.title, mx + 8, my + 18);
+    ctx.fillStyle = '#ccc'; ctx.font = '12px monospace';
+    ctx.fillText(ch.text, mx + 8, my + 36);
+    for (let ci = 0; ci < ch.choices.length; ci++) {
+      const opt = ch.choices[ci];
+      const oy = my + 56 + ci * 36;
+      ctx.fillStyle = '#1a2a1a'; ctx.fillRect(mx + 4, oy - 2, MW - 8, 28);
+      ctx.strokeStyle = '#88ff88'; ctx.strokeRect(mx + 4, oy - 2, MW - 8, 28);
+      ctx.fillStyle = '#88ff88'; ctx.font = 'bold 12px monospace';
+      ctx.fillText(`[${ci + 1}]  ${opt.label}`, mx + 12, oy + 12);
+      ctx.fillStyle = '#aaa'; ctx.font = '11px monospace';
+      ctx.fillText(opt.desc, mx + 12, oy + 26);
+    }
+    ctx.fillStyle = '#666'; ctx.font = '11px monospace';
+    ctx.fillText('Press 1 or 2 to choose', mx + 8, my + MH - 4);
+  }
 }
 
 // ── Loop ──────────────────────────────────────────────────────────────────
@@ -420,7 +455,7 @@ let acc = 0, last = performance.now();
 function loop(now: number): void {
   acc += Math.min(0.25, (now - last) / 1000) * TICKS_PER_SECOND * speed;
   last = now;
-  if (!paused) { let guard = 0; while (acc >= 1 && guard++ < 64) { core.tick(); acc -= 1; } }
+  if (!paused && !core.pendingChoice) { let guard = 0; while (acc >= 1 && guard++ < 64) { core.tick(); acc -= 1; } }
   else acc = 0;
   draw();
   requestAnimationFrame(loop);
