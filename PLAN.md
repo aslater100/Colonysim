@@ -241,8 +241,14 @@ PART 3, not a one-commit wire-up.
    consume it unchanged at swap time. Entries on founding, raid muster, raid repelled, wolves in/out,
    deaths (+ colony perished), and births. Serialized at save **v5** (old saves restore an empty log).
    Tests: `tests/towncore.test.ts` (event-log suite).
+3b. **Settler names on `AgentStore`** ✅ *(this session)* — a `names: string[]` column aligned with
+   the SoA agents, assigned deterministically from the agent id (no RNG, so streams are untouched and
+   a reloaded settler keeps its name), maintained through swap-remove, serialized (old saves derive
+   from id). Prerequisite for the HUD settler panels + the event log (deaths/births now name the
+   settler). Tests: `tests/persona.test.ts` (names suite).
 4. **View adapter (`TownCoreView`)** — read-model exposing what a renderer needs (agents/stations/
-   rooms/terrain/raiders as plain iterables) so the renderer never reaches into SoA internals.
+   rooms/terrain/raiders as plain iterables, settlers as `{ name, mood, traits, … }`) so the renderer
+   and HUD never reach into SoA internals.
 5. **SoA renderer** — a render path that draws a `TownCore` via the adapter (terrain + painted
    walls/floors/rooms/stations + agents + raiders). Large; **GUI-verify required** (not headless).
 6. **Live wiring behind a flag** — boot `TownCore` in `main.ts` parallel to `Simulation` behind a

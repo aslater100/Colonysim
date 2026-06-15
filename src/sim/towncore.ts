@@ -326,9 +326,11 @@ export class TownCore {
     // 6. Deaths: swap-remove the starved (iterate backwards — splice-safe). Each
     //    death grieves the survivors — friends mourn harder — and forgets the bond.
     let died = 0;
+    let lastDeadName = '';
     for (let i = a.count - 1; i >= 0; i--) {
       if (a.health[i] <= STARVED_HEALTH) {
         const deadId = a.id[i];
+        lastDeadName = a.name(i);
         for (let j = 0; j < a.count; j++) {
           if (j === i) continue;
           const friend = this.relations.areFriends(deadId, a.id[j]);
@@ -341,7 +343,7 @@ export class TownCore {
       }
     }
     if (died > 0) {
-      this.addLog(died === 1 ? 'A settler has died.' : `${died} settlers have died.`, 'bad');
+      this.addLog(died === 1 ? `${lastDeadName} has died.` : `${died} settlers have died.`, 'bad');
       if (a.count === 0) this.addLog('The colony has perished.', 'bad');
     }
 
@@ -422,9 +424,10 @@ export class TownCore {
     const avgMood = this.averageMood();
     const fed = this.stock.count('meal') >= a.count;
     if (a.count < housing && a.count < a.capacity && avgMood >= BIRTH_MOOD_MIN && fed) {
-      if (this.spawnPerson(this.homeX, this.homeY) >= 0) {
+      const newcomer = this.spawnPerson(this.homeX, this.homeY);
+      if (newcomer >= 0) {
         this.births++;
-        this.addLog('A new settler is drawn to the colony.', 'good');
+        this.addLog(`${a.name(newcomer)} is drawn to the colony.`, 'good');
       }
     }
 

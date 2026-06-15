@@ -206,3 +206,42 @@ describe('persona — serialization', () => {
     expect(r.workSpeedMult[0]).toBe(1);
   });
 });
+
+// --- B-6 PART 3: settler names on the SoA store ---
+describe('AgentStore names', () => {
+  it('assigns a stable, deterministic name on spawn', () => {
+    const a = new AgentStore(8);
+    const i = a.spawn(1, 1);
+    expect(a.name(i)).toMatch(/\S+ \S+/); // "First Last"
+    const b = new AgentStore(8);
+    const j = b.spawn(5, 5);
+    expect(a.name(i)).toBe(b.name(j)); // same id → same name, no rng
+  });
+
+  it('keeps names aligned through swap-remove', () => {
+    const a = new AgentStore(8);
+    a.spawn(0, 0); a.spawn(1, 1); a.spawn(2, 2);
+    const lastName = a.name(2);
+    a.remove(0); // index 2 swaps down into 0
+    expect(a.name(0)).toBe(lastName);
+    expect(a.name(a.count)).toBe(''); // out of range
+  });
+
+  it('round-trips names through serialize/deserialize', () => {
+    const a = new AgentStore(8);
+    a.spawn(0, 0); a.spawn(1, 1);
+    const names = [a.name(0), a.name(1)];
+    const r = AgentStore.deserialize(a.serialize());
+    expect([r.name(0), r.name(1)]).toEqual(names);
+  });
+
+  it('derives names from id for a pre-name save', () => {
+    const a = new AgentStore(8);
+    a.spawn(0, 0); a.spawn(1, 1);
+    const save = a.serialize();
+    delete save.names; // simulate an old save
+    const r = AgentStore.deserialize(save);
+    expect(r.name(0)).toBe(a.name(0));
+    expect(r.name(1)).toBe(a.name(1));
+  });
+});

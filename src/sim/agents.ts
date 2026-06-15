@@ -31,7 +31,15 @@
  * Run the self-check:  npx tsx src/sim/agents.ts
  */
 import { FlowField } from './flowfield';
-import { TRAIT_DEFS, TUNING } from './defs';
+import { TRAIT_DEFS, TUNING, FIRST_NAMES, LAST_NAMES } from './defs';
+
+/** Deterministic name from a stable agent id — no RNG, so naming never perturbs
+ *  the sim's random streams and a reloaded agent keeps the same name. */
+function nameForId(id: number): string {
+  const first = FIRST_NAMES[id % FIRST_NAMES.length];
+  const last = LAST_NAMES[Math.floor(id / FIRST_NAMES.length) % LAST_NAMES.length];
+  return `${first} ${last}`;
+}
 
 export const enum AState {
   Idle = 0,
@@ -46,6 +54,8 @@ export interface AgentStoreSave {
   count: number;
   nextId: number;
   id: number[];
+  /** Display names (optional: pre-name saves derive them from id on load). */
+  names?: string[];
   posX: number[]; posY: number[];
   destX: (number | null)[]; destY: (number | null)[];
   health: number[]; mood: number[];
@@ -110,6 +120,9 @@ export class AgentStore {
 
   // --- SoA columns (one entry per live agent, indices 0..count-1) ---
   readonly id: Int32Array;
+  /** Display name per agent, index-aligned (a string can't live in a typed array).
+   *  Maintained through swap-remove exactly like the numeric columns. */
+  readonly names: string[] = [];
   readonly posX: Float32Array;
   readonly posY: Float32Array;
   readonly destX: Float32Array;   // movement target; NaN = none
@@ -313,6 +326,7 @@ export class AgentStore {
     if (this.count >= this.capacity) return -1;
     const i = this.count++;
     this.id[i] = this.nextId++;
+    this.names[i] = nameForId(this.id[i]);
     this.posX[i] = x;
     this.posY[i] = y;
     this.destX[i] = NaN;
@@ -357,6 +371,7 @@ export class AgentStore {
     const last = --this.count;
     if (i !== last) {
       this.id[i] = this.id[last];
+      this.names[i] = this.names[last];
       this.posX[i] = this.posX[last]; this.posY[i] = this.posY[last];
       this.destX[i] = this.destX[last]; this.destY[i] = this.destY[last];
       this.health[i] = this.health[last]; this.mood[i] = this.mood[last];
@@ -418,6 +433,11 @@ export class AgentStore {
     this.state[i] = AState.Idle;
   }
 
+  /** Display name of agent `i` (empty string if out of range). */
+  name(i: number): string {
+    return i >= 0 && i < this.count ? this.names[i] : '';
+  }
+
   // --- serialization (round-trips the SoA columns; flow fields are re-registered
   //     by the caller, never persisted) ---
 
@@ -434,6 +454,7 @@ export class AgentStore {
       count: n,
       nextId: this.nextId,
       id: slice(this.id),
+      names: this.names.slice(0, n),
       posX: slice(this.posX), posY: slice(this.posY),
       destX: sliceDest(this.destX), destY: sliceDest(this.destY),
       health: slice(this.health), mood: slice(this.mood),
@@ -464,6 +485,7 @@ export class AgentStore {
     store.nextId = data.nextId;
     for (let i = 0; i < n; i++) {
       store.id[i] = data.id[i];
+      store.names[i] = data.names?.[i] ?? nameForId(data.id[i]); // pre-name saves derive from id
       store.posX[i] = data.posX[i]; store.posY[i] = data.posY[i];
       store.destX[i] = data.destX[i] ?? NaN; store.destY[i] = data.destY[i] ?? NaN;
       store.health[i] = data.health[i]; store.mood[i] = data.mood[i];
