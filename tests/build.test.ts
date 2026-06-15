@@ -148,4 +148,34 @@ describe('BuildGrid — stations & output', () => {
     expect(g.roomOutput(g.rooms[0]).flow.flour).toBe(3);
     expect(g.station[g.index(2, 2)]).toBe(-1); // tiles freed
   });
+
+  // Gates: a passable opening that still seals a room (vs a bare gap, which leaks).
+  function walledHome(): BuildGrid {
+    const g = new BuildGrid(12, 12);
+    g.designateRect(2, 2, 5, 5, HOME);
+    for (let x = 1; x <= 6; x++) { g.setWall(x, 1); g.setWall(x, 6); }
+    for (let y = 1; y <= 6; y++) { g.setWall(1, y); g.setWall(6, y); }
+    return g;
+  }
+
+  it('a gate keeps a room enclosed while staying passable; a bare gap leaks', () => {
+    const g = walledHome();
+    g.setGate(3, 6);
+    g.rebuildRooms();
+    expect(g.passable(3, 6)).toBe(true);     // settlers can walk through
+    expect(g.rooms[0].enclosed).toBe(true);  // …but the room is still sealed
+
+    g.clearGate(3, 6); g.clearWall(3, 6);    // turn the gate into a bare hole
+    g.rebuildRooms();
+    expect(g.rooms[0].enclosed).toBe(false); // now it leaks
+  });
+
+  it('round-trips the gate layer', () => {
+    const g = walledHome();
+    g.setGate(3, 6);
+    g.rebuildRooms();
+    const r = BuildGrid.deserialize(g.serialize());
+    expect(r.gate[r.index(3, 6)]).toBe(1);
+    expect(r.rooms[0].enclosed).toBe(true);
+  });
 });

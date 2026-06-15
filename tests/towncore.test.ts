@@ -50,6 +50,18 @@ describe('TownCore production loop', () => {
     expect(core.stock.count('grain')).toBeGreaterThanOrEqual(0);
     expect(core.stock.count('meal')).toBeGreaterThanOrEqual(0);
   });
+
+  it('a fed, bedded colony survives and grows over 30 days', () => {
+    // Regression for the sleep death-spiral: settlers recover rest colony-wide,
+    // so they keep cycling back to the ovens instead of sleeping forever. Beds
+    // live in a separate room from where they work — survival must not require
+    // each settler to physically walk to a bed.
+    const core = colony({ ovens: 4, beds: 4, grain: 5000, pop: 2 });
+    core.run(30 * 360); // 360 ticks/day
+    expect(core.population).toBeGreaterThanOrEqual(2); // didn't starve out
+    expect(core.births).toBeGreaterThan(0);            // grew into its free beds
+    expect(core.stock.count('meal')).toBeGreaterThan(0);
+  });
 });
 
 describe('TownCore room services', () => {
@@ -132,6 +144,18 @@ describe('scale-engine module serialization', () => {
     const r = Stockpile.deserialize(s.serialize());
     expect(r.count('grain')).toBe(12);
     expect(r.count('meal')).toBe(4);
+  });
+
+  it('an agent with a dangling field index goes Idle instead of crashing', () => {
+    // Repro of the GUI play-test crash: TownCore clears `fields` when there are
+    // no open jobs, but an agent mid-move still held field index 0 → dirAt on undefined.
+    const a = new AgentStore(4);
+    const i = a.spawn(5, 5);
+    a.field[i] = 0;            // index into the (empty) fields[]
+    a.state[i] = AState.Moving;
+    expect(() => a.tick(0, () => 0.5)).not.toThrow();
+    expect(a.state[i]).toBe(AState.Idle);
+    expect(a.field[i]).toBe(-1);
   });
 
   it('AgentStore round-trips every live column', () => {

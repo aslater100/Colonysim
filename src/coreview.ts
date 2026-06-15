@@ -22,23 +22,36 @@ const MAP = 64;
 const core = new TownCore({ width: MAP, height: MAP, seed: Date.now() % 100000 });
 (window as unknown as { core: TownCore }).core = core; // debug/automation hook
 
-// ── starter town: a walled kitchen (2 ovens) + a walled home (3 beds) + grain ──
+// ── starter town: doored kitchen + home + tavern, sized so a real colony lives ──
+// Doorways matter: BuildGrid has no gate, so a fully-walled room is unreachable —
+// agents path through wall gaps only. A gap forfeits the enclosure (warmth) bonus
+// but beds/ovens/tables still serve, so the colony works.
 {
   const g = core.grid;
-  const KITCHEN = ROOM_TYPE_ID.get('kitchen')!;
-  const HOME = ROOM_TYPE_ID.get('home')!;
   const cx = MAP >> 1, cy = MAP >> 1;
-  g.designateRect(cx - 3, cy - 4, cx + 2, cy - 1, KITCHEN);
-  for (let x = cx - 4; x <= cx + 3; x++) { g.setWall(x, cy - 5); g.setWall(x, cy); }
-  for (let y = cy - 5; y <= cy; y++) { g.setWall(cx - 4, y); g.setWall(cx + 3, y); }
-  g.placeStation('oven', cx - 3, cy - 4); g.placeStation('oven', cx - 1, cy - 4);
-  g.designateRect(cx - 3, cy + 3, cx + 2, cy + 6, HOME);
-  for (let x = cx - 4; x <= cx + 3; x++) { g.setWall(x, cy + 2); g.setWall(x, cy + 7); }
-  for (let y = cy + 2; y <= cy + 7; y++) { g.setWall(cx - 4, y); g.setWall(cx + 3, y); }
-  g.placeStation('bed', cx - 3, cy + 3); g.placeStation('bed', cx - 1, cy + 3); g.placeStation('bed', cx + 1, cy + 3);
+  // Floor [x0..x1, y0..y1], wall the perimeter just outside it, then cut a south door.
+  const room = (x0: number, y0: number, x1: number, y1: number, type: string): void => {
+    g.designateRect(x0, y0, x1, y1, ROOM_TYPE_ID.get(type)!);
+    for (let x = x0 - 1; x <= x1 + 1; x++) { g.setWall(x, y0 - 1); g.setWall(x, y1 + 1); }
+    for (let y = y0 - 1; y <= y1 + 1; y++) { g.setWall(x0 - 1, y); g.setWall(x1 + 1, y); }
+    g.setGate((x0 + x1) >> 1, y1 + 1); // gate: passable, but keeps the room enclosed (warmth + services)
+  };
+  const fill = (id: string, x0: number, y0: number, x1: number, y1: number, dx: number, dy: number): void => {
+    for (let y = y0; y <= y1; y += dy) for (let x = x0; x <= x1; x += dx) g.placeStation(id, x, y);
+  };
+
+  room(cx - 4, cy - 9, cx + 3, cy - 6, 'kitchen');   // 8×4 kitchen
+  fill('oven', cx - 4, cy - 9, cx + 3, cy - 9, 2, 1); // 4 ovens
+
+  room(cx - 5, cy + 4, cx + 4, cy + 9, 'home');       // 10×6 home
+  fill('bunk', cx - 5, cy + 4, cx + 4, cy + 8, 2, 3); // bunks (sleep 3 each) → ~36 beds
+
+  room(cx + 8, cy - 2, cx + 14, cy + 2, 'tavern');    // 7×5 tavern
+  fill('table', cx + 8, cy - 2, cx + 13, cy + 2, 3, 2); // tables (recreation 2 each)
+
   g.rebuildRooms();
-  core.stock.add('grain', 3000);
-  core.seedColony(cx, cy - 2, 6);
+  core.stock.add('grain', 5000);
+  core.seedColony(cx, cy, 8); // spawn on open ground at the centre — reachable via the doors
 }
 
 // ── canvas ──
@@ -86,6 +99,7 @@ function draw(): void {
     const i = y * MAP + x;
     if (g.floor[i]) { ctx.fillStyle = '#2a2a32'; ctx.fillRect(x * px, y * px, px, px); }
     if (g.wall[i]) { ctx.fillStyle = '#6b5b4b'; ctx.fillRect(x * px, y * px, px, px); }
+    if (g.gate[i]) { ctx.fillStyle = '#9a7b3b'; ctx.fillRect(x * px + px / 4, y * px + px / 4, px / 2, px / 2); }
   }
   for (const s of g.stations) { ctx.fillStyle = '#3a8f5a'; ctx.fillRect(s.x * px + 1, s.y * px + 1, s.w * px - 2, s.h * px - 2); }
 

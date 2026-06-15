@@ -570,10 +570,12 @@ export class AgentStore {
         const fi = this.field[i];
         if (fi >= 0) {
           // Flow-field follow: read this tile's precomputed step direction (O(1)).
+          // The field index can dangle if the owner cleared `fields` (e.g. no open
+          // jobs this tick) while we were mid-move — treat a missing field as "arrived".
           const field = this.fields[fi];
           const tx = Math.floor(this.posX[i]);
           const ty = Math.floor(this.posY[i]);
-          if (field.dirAt(tx, ty, this._dir)) {
+          if (field && field.dirAt(tx, ty, this._dir)) {
             const len = Math.sqrt(this._dir.x * this._dir.x + this._dir.y * this._dir.y) || 1;
             this.posX[i] += (this._dir.x / len) * step;
             this.posY[i] += (this._dir.y / len) * step;

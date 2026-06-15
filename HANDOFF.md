@@ -223,6 +223,15 @@ blind swap would *delete the playable game*. Do it incrementally, behind a flag,
   (`src/sim/raid.ts` — `RaidForce`/`raidSize()`; raiders converge, walls slow them, settlers rally
   as a militia, attackers flee on timeout; wired into `TownCore.tick` before the death pass).
   Tests: `tests/raid.test.ts` (10) + raid cases in `tests/parity.test.ts`.
+- **Play-test fixes (found by running `/core.html`):**
+  - `BuildGrid` now has a **gate** (`setGate`/`clearGate`, serialized): a passable opening that still
+    seals a room for enclosure — without it a fully-walled room was unreachable, so doored rooms
+    were impossible. (This was a listed swap blocker; now done.)
+  - **Rest/recreation are served colony-wide** in `TownCore` (`serveNeeds(..., colonyWide=true)`):
+    settlers recover from total bed/table capacity instead of needing to stand in the room — the
+    same global model already used for feeding. Before this, settlers slept where they collapsed,
+    never recovered rest, and the colony starved. Regression: `towncore.test.ts` "survives and grows
+    over 30 days" (the long-horizon test whose absence hid the bug).
 - **Still missing before a swap is safe:** spike traps, forged-weapon/spear bonuses, wolf packs,
   the `region.ts` flip, and **raid balance tuning** (headless numbers are conservative — tune in the GUI).
 - **Gate that remains: GUI play-test.** A *non-destructive parallel mode* now exists: `core.html`

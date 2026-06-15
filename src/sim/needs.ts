@@ -94,7 +94,15 @@ export function aggregateCapacities(grid: BuildGrid): RoomServices {
  * small Map per call (room count, not agent count); the per-agent body is O(1).
  * Temperature affects the ambient warmth floor: cold cuts deeper, warmth helps exposed settlers.
  */
-export function serveNeeds(grid: BuildGrid, agents: AgentStore, minutesPerTick: number, tempAnomalyC: number = 0): void {
+/**
+ * @param colonyWide  When true, rest/recreation are served from the colony's TOTAL
+ *   bed/table capacity regardless of where the agent stands — the coarse model
+ *   `TownCore` uses (it likewise feeds agents from one shared larder rather than
+ *   pathing each to a table). When false (default), recovery is room-local: the
+ *   agent must be standing in a usable room with a free slot. Warmth is always
+ *   enclosure-local. Off by default so existing callers/tests are unchanged.
+ */
+export function serveNeeds(grid: BuildGrid, agents: AgentStore, minutesPerTick: number, tempAnomalyC: number = 0, colonyWide = false): void {
   const hours = minutesPerTick / 60;
   // Warmth ambient floor driven by temperature: ±4°C scales ±10 warmth, clamped 20..80.
   const ambientFloor = Math.max(20, Math.min(80, WARMTH_AMBIENT_FLOOR + tempAnomalyC * 2.5));
@@ -105,6 +113,10 @@ export function serveNeeds(grid: BuildGrid, agents: AgentStore, minutesPerTick: 
   }
   const restUsed = new Map<number, number>();
   const recUsed = new Map<number, number>();
+  // Colony-wide budgets (only used when colonyWide): total bed/table slots, drawn down once per agent.
+  const caps = colonyWide ? aggregateCapacities(grid) : null;
+  let restBudget = caps ? caps.sleep : 0;
+  let recBudget = caps ? caps.recreation : 0;
 
   for (let i = 0; i < agents.count; i++) {
     const x = Math.floor(agents.posX[i]);
@@ -120,6 +132,22 @@ export function serveNeeds(grid: BuildGrid, agents: AgentStore, minutesPerTick: 
       // Hardy settlers (warmthDecayMult < 1) shrug off the cold; the floor is temperature-driven.
       const w = agents.warmth[i] - WARMTH_DECAY_EXPOSED * hours * agents.warmthDecayMult[i];
       agents.warmth[i] = w > ambientFloor ? w : ambientFloor;
+    }
+
+    if (colonyWide) {
+      // Rest: a sleeping settler recovers as long as the colony has a free bed.
+      if (agents.state[i] === AState.Sleeping && restBudget > 0) {
+        const r = agents.rest[i] + REST_REGEN_BED * hours;
+        agents.rest[i] = r < 100 ? r : 100;
+        restBudget--;
+      }
+      // Recreation: an off-duty settler unwinds while a table is free.
+      if (agents.state[i] !== AState.Working && recBudget > 0) {
+        const rc = agents.recreation[i] + RECREATION_REGEN * hours;
+        agents.recreation[i] = rc < 100 ? rc : 100;
+        recBudget--;
+      }
+      continue;
     }
 
     if (!room) continue;
