@@ -174,8 +174,8 @@ addEventListener('keydown', (e) => {
   if (k === 'c') { tool = 'woodcutter'; return; }
   if (k === 'q') { tool = 'quarry'; return; }
   if (k === 'b') { tool = 'fishery'; return; }
-  if (k === 'l') { tool = 'flax'; return; }
-  if (k === 't') { tool = 'trap'; return; }
+  if (k === 'l' && !e.ctrlKey) { tool = 'flax'; return; }
+  if (k === 't' && !e.ctrlKey) { tool = 'trap'; return; }
   // Save / Load via localStorage (Ctrl+S / Ctrl+L)
   if (e.ctrlKey && k === 's') {
     localStorage.setItem('centuria_save', JSON.stringify(core.serialize()));
@@ -382,8 +382,12 @@ function draw(): void {
   for (const o of core.builds) ctx.strokeRect(o.x * px + 1, o.y * px + 1, px - 2, px - 2);
   ctx.setLineDash([]);
 
+  // Winter tint: subtle cold-blue overlay in the fallow season
+  { const si = Math.floor((core.day % DAYS_PER_YEAR) / DAYS_PER_SEASON);
+    if (si === 3) { ctx.fillStyle = '#4488bb16'; ctx.fillRect(0, 0, MAP * px, MAP * px); } }
+
   // ── Stats overlay (top-left) ────────────────────────────────────────────
-  ctx.fillStyle = '#000a'; ctx.fillRect(0, 0, 340, 280);
+  ctx.fillStyle = '#000a'; ctx.fillRect(0, 0, 340, 300);
   ctx.fillStyle = '#ddd'; ctx.font = '13px monospace';
   const line = (n: number, s: string, color = '#ddd') => { ctx.fillStyle = color; ctx.fillText(s, 8, 20 + n * 17); };
 
@@ -408,18 +412,27 @@ function draw(): void {
     ? `RAID — ${core.raids.raiders.length} raiders (slain ${core.raids.slain})`
     : `next raid day ${core.nextRaidDay}`;
   line(6, raidLine, core.raidActive ? '#ff6b6b' : '#ddd');
-  line(7, `${paused ? 'PAUSED' : 'speed ' + speed + '×'}`);
+  line(7, `${paused ? 'PAUSED' : 'speed ' + speed + '×'}${core.builds.length > 0 ? `  blueprints: ${core.builds.length}` : ''}`);
+  { const svc = core.services();
+    const parts: string[] = [`sleep ${svc.sleep}`];
+    if (svc.watch > 0) parts.push(`watch ${svc.watch}`);
+    if (svc.burial > 0) parts.push(`burial ${svc.burial}`);
+    if (svc.well > 0) parts.push(`well ${svc.well}`);
+    if (svc.storage > 0) parts.push(`storage ${svc.storage}`);
+    if (svc.education > 0) parts.push(`edu ${svc.education}`);
+    if (svc.medical > 0) parts.push(`med ${svc.medical}`);
+    line(8, parts.join('  '), '#aaa'); }
 
   // Tool info
   let toolLabel: string = tool;
   if (tool === 'room') toolLabel = `room:${ROOM_TYPE_NAMES[roomTypeIdx]}`;
   if (tool === 'station') toolLabel = `station:${STATION_TYPE_NAMES[stationTypeIdx]}`;
-  line(8, `tool: ${toolLabel}`);
+  line(9, `tool: ${toolLabel}`);
 
   // Key hints
   ctx.fillStyle = '#888'; ctx.font = '11px monospace';
-  ctx.fillText('W wall  E erase  G gate  D floor  T trap  Z room([ ])  A station(, .)', 8, 20 + 9 * 17);
-  ctx.fillText('F field  C chop  Q quarry  B fishery  L flax  R raid  N settler  X research  space pause', 8, 20 + 10 * 17);
+  ctx.fillText('W wall  E erase  G gate  D floor  T trap  Z room([ ])  A station(, .)', 8, 20 + 10 * 17);
+  ctx.fillText('F field  C chop  Q quarry  B fishery  L flax  R raid  N settler  X research  space pause', 8, 20 + 11 * 17);
 
   // ── Settler inspector panel (top-right) ──────────────────────────────────
   if (inspected) {

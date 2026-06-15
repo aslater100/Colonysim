@@ -1301,7 +1301,7 @@ export class TownCore {
       this.agents.mood[i] = Math.min(100, this.agents.mood[i] + MOOD_BOOST);
     }
     this.addLog('The colony holds a festival — settlers are in high spirits.', 'good');
-    this._festivalCooldown = this.day + 10; // no back-to-back celebrations
+    this._festivalCooldown = this.day + TUNING.festivalCooldownDays;
   }
 
   private evtStormDamage(): void {
@@ -1316,7 +1316,9 @@ export class TownCore {
     const x = idx % this.grid.width;
     const y = (idx / this.grid.width) | 0;
     this.grid.clearWall(x, y);
-    this.addLog('A storm collapses part of the colony walls — repairs needed.', 'bad');
+    const spoiled = Math.min(Math.ceil(this.stock.count('meal') * 0.1), 10);
+    if (spoiled > 0) this.stock.remove('meal', spoiled);
+    this.addLog(`A storm collapses part of the colony walls${spoiled > 0 ? ` and spoils ${spoiled} meals` : ''} — brace for the cold.`, 'bad');
   }
 
   private evtColdSnap(): void {
