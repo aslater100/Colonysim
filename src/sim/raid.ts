@@ -121,8 +121,11 @@ export class RaidForce {
    * bashing through any wall in the way; awake settlers within reach fight back.
    * Mutates agent health/wounds and the grid's walls. Clears `active` when the
    * last raider falls or escapes. Returns the number of agents freshly wounded.
+   *
+   * `defenderDamageMult` scales settler melee damage (e.g. 1.3 for militia_training
+   * tech); defaults to 1.0.
    */
-  tick(grid: BuildGrid, agents: AgentStore, tickNo: number): number {
+  tick(grid: BuildGrid, agents: AgentStore, tickNo: number, defenderDamageMult = 1.0): number {
     if (!this.active) return 0;
     if (tickNo >= this.until) for (const r of this.raiders) r.fleeing = true;
 
@@ -163,7 +166,7 @@ export class RaidForce {
       if (agents.state[i] === AState.Sleeping || agents.health[i] <= 0) continue;
       const r = nearestRaider(this.raiders, agents.posX[i], agents.posY[i], DEFEND_REACH);
       if (!r) continue;
-      r.health -= settlerMeleeDamagePerHour(agents, i) * HOURS_PER_TICK;
+      r.health -= settlerMeleeDamagePerHour(agents, i) * HOURS_PER_TICK * defenderDamageMult;
     }
 
     // Cull the freshly killed so a slain raider can't deal a parting blow next tick.

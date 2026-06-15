@@ -352,7 +352,8 @@ describe('TownCore harvest zones', () => {
     expect(fields).toBe(6);
     const before = c.stock.count('grain');
     c.run(360); // one day
-    expect(c.stock.count('grain')).toBe(before + fields * 1); // 1 grain/tile/day
+    // crop_rotation is free at colony start → 1.25 grain/tile/day
+    expect(c.stock.count('grain')).toBe(before + fields * 1.25);
     // Renewable: the field tiles are still fields.
     for (let x = 2; x < 8; x++) expect(c.grid.zoneAt(x, 2)).toBe(ZONE.FIELD);
   });
@@ -388,7 +389,7 @@ describe('TownCore harvest zones', () => {
     expect(n).toBe(10);
     const before = c.stock.count('grain');
     c.run(360);
-    expect(c.stock.count('grain')).toBe(before + 4); // capped at 1×4, not 10
+    expect(c.stock.count('grain')).toBe(before + 5); // capped at 1 worker × 4 tiles × 1.25 (crop_rotation)
   });
 });
 

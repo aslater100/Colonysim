@@ -88,7 +88,7 @@ export class WolfPack {
    * health/wounds. Clears `active` when the last wolf falls or escapes. Returns
    * the number of agents freshly wounded this tick.
    */
-  tick(grid: { width: number; height: number }, agents: AgentStore, tickNo: number, rng: Rng): number {
+  tick(grid: { width: number; height: number }, agents: AgentStore, tickNo: number, rng: Rng, defenderDamageMult = 1.0): number {
     if (!this.active) return 0;
     const overstayed = tickNo >= this.until;
 
@@ -124,7 +124,7 @@ export class WolfPack {
         if (fresh) wounded++;
         // The bitten fight back — most wolves regret testing a colonist.
         if (agents.state[target] !== AState.Sleeping) {
-          w.health -= settlerMeleeDamagePerHour(agents, target) * HOURS_PER_TICK;
+          w.health -= settlerMeleeDamagePerHour(agents, target) * HOURS_PER_TICK * defenderDamageMult;
         }
       } else {
         w.x += (dx / dist) * STALK_SPEED;

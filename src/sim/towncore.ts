@@ -37,6 +37,7 @@ import { Weather } from './weather';
 import { RaidForce, raidSize, type RaidForceSave } from './raid';
 import { WolfPack, type WolfPackSave } from './wolves';
 import { Ledger, type LedgerSave, type BorrowResult, type RepayResult } from './ledger';
+import { ResearchBook, type ResearchBookSave } from './research';
 import { Rng } from './rng';
 import { BASE_PRICES } from './economy';
 import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, STATION_DEF_BY_NUM, STATION_TYPE_ID, TRAIT_DEFS, TUNING, type ResourceKind } from './defs';
@@ -65,7 +66,7 @@ const INFLATION_MAX = 0.5;           // hard cap (50%) so it can't run away
 // The economy settles on a 30-day month, matching the ledger's payment cadence.
 const ECONOMY_MONTH_DAYS = 30;
 
-const SAVE_VERSION = 6;
+const SAVE_VERSION = 7;
 
 // Behavior thresholds for the integration loop (modest, deterministic — full
 // mood/skills/trait fidelity is the remaining parity work, not this stage).
@@ -172,6 +173,8 @@ export interface TownCoreSave {
   log?: LogEntry[];
   /** v6+: the pending blueprint queue (old saves restore none). */
   builds?: BuildOrder[];
+  /** v7+: the research book (points + unlocked techs; old saves restore defaults). */
+  researchBook?: ResearchBookSave;
 }
 
 export interface TownCoreOpts {
@@ -206,6 +209,9 @@ export class TownCore {
   readonly log: LogEntry[] = [];
   /** Painted blueprints awaiting materials + labour (Songs-of-Syx construction). */
   readonly builds: BuildOrder[] = [];
+  /** Tech research: library desks accumulate points; the player spends them to
+   *  unlock techs that boost yields, combat, and medicine. */
+  readonly researchBook = new ResearchBook();
   /** Game-day the next raid musters (rescheduled after each one). */
   nextRaidDay: number;
   private readonly jobField: FlowField;
@@ -414,13 +420,15 @@ export class TownCore {
     //     through the death pass below; the wounded carry a dread thought.
     const wasRaiding = this.raids.active;
     const wasWolves = this.wolves.active;
+    // militia_training tech grants a 30% defender damage bonus in raids and wolf attacks.
+    const militiaMult = this.researchBook.hasTech('militia_training') ? 1.3 : 1.0;
     if (this.day >= this.nextRaidDay && !this.raids.active) {
       this.musterRaid();
     }
     if (this.raids.active) {
       // The horn rallies the colony: nobody sleeps through a raid.
       for (let i = 0; i < a.count; i++) if (a.state[i] === AState.Sleeping) a.state[i] = AState.Idle;
-      this.raids.tick(this.grid, a, t);
+      this.raids.tick(this.grid, a, t, militiaMult);
       for (let i = 0; i < a.count; i++) {
         if (a.woundUntreated[i] === 1 && a.woundAt[i] === t) {
           a.addThought(i, t, RAID_FEAR_DELTA, RAID_FEAR_TICKS);
@@ -431,7 +439,7 @@ export class TownCore {
     // 5d. Wolves: a prowling pack stalks strays and mauls whoever it catches.
     //     Casualties fall through the death pass below; the bitten carry the dread.
     if (this.wolves.active) {
-      this.wolves.tick(this.grid, a, t, this.rng);
+      this.wolves.tick(this.grid, a, t, this.rng, militiaMult);
       for (let i = 0; i < a.count; i++) {
         if (a.woundUntreated[i] === 1 && a.woundAt[i] === t) {
           a.addThought(i, t, RAID_FEAR_DELTA, RAID_FEAR_TICKS);
@@ -563,6 +571,12 @@ export class TownCore {
       this.summonWolves();
     }
 
+    // Research: library desks (education capacity) generate points daily.
+    // Auto-research if a queue target is now affordable (player set via core.researchBook.queue).
+    this.researchBook.addPoints(services.education);
+    const autoResearched = this.researchBook.autoResearch();
+    if (autoResearched) this.addLog(`Research complete: ${autoResearched}`, 'good');
+
     // Economy: once a month, accrue loan interest, auto-service the debt from the
     // treasury, and re-reckon inflation from the money supply.
     if (this.day > 0 && this.day % ECONOMY_MONTH_DAYS === 0) this.monthlyEconomy();
@@ -581,6 +595,10 @@ export class TownCore {
     const grid = this.grid;
     let budget = Math.floor(this.agents.count * HARVEST_TILES_PER_WORKER);
     if (budget <= 0) return;
+    // crop_rotation tech grants a 25% field yield bonus; crop_science stacks another 20%.
+    const fieldMult = 1
+      + (this.researchBook.hasTech('crop_rotation') ? 0.25 : 0)
+      + (this.researchBook.hasTech('crop_science') ? 0.20 : 0);
     for (let i = 0; i < grid.size && budget > 0; i++) {
       const z = grid.zone[i];
       if (z === ZONE.NONE) continue;
@@ -589,7 +607,8 @@ export class TownCore {
       const x = i % grid.width, y = (i / grid.width) | 0;
       if (!grid.canZone(x, y, z)) { grid.zone[i] = ZONE.NONE; continue; } // terrain changed under it
       const res = z === ZONE.QUARRY && grid.ore[i] ? 'iron_ore' : def.resource;
-      this.stock.add(res, HARVEST_YIELD);
+      const yield_ = z === ZONE.FIELD ? HARVEST_YIELD * fieldMult : HARVEST_YIELD;
+      this.stock.add(res, yield_);
       budget--;
       if (!def.renewable) { grid.setTerrain(x, y, TERRAIN.GRASS); grid.zone[i] = ZONE.NONE; }
     }
@@ -692,6 +711,19 @@ export class TownCore {
     const target = Math.min(INFLATION_MAX, Math.max(0, imbalance) * INFLATION_SENSITIVITY);
     this.inflation += (target - this.inflation) * INFLATION_EASE;
     if (this.inflation < 1e-4) this.inflation = 0;
+  }
+
+  // ── research ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Spend accumulated research points to unlock a tech.
+   * Returns true if the tech was successfully researched, false if prereqs are
+   * missing, already researched, or not enough points.  Logs the event.
+   */
+  research(techId: string): boolean {
+    const ok = this.researchBook.research(techId);
+    if (ok) this.addLog(`Research complete: ${techId}`, 'good');
+    return ok;
   }
 
   // ── read-only views ──────────────────────────────────────────────────────────
@@ -834,6 +866,7 @@ export class TownCore {
       inflation: this.inflation,
       log: this.log.length > 0 ? this.log : undefined,
       builds: this.builds.length > 0 ? this.builds : undefined,
+      researchBook: this.researchBook.serialize(),
     };
   }
 
@@ -871,6 +904,8 @@ export class TownCore {
     if (data.log) core.log.push(...data.log);
     // v6+: restore the blueprint queue.
     if (data.builds) core.builds.push(...data.builds);
+    // v7+: restore the research book (old saves keep the default: crop_rotation free, 0 pts).
+    if (data.researchBook) (core as { researchBook: ResearchBook }).researchBook = ResearchBook.deserialize(data.researchBook);
     return core;
   }
 }

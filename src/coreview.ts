@@ -143,6 +143,13 @@ addEventListener('keydown', (e) => {
   if (e.key === '3') { speed = 8; return; }
   if (k === 'r') { core.musterRaid(); return; }
   if (k === 'n') { core.seedColony(core.homeX, core.homeY, 1); return; }
+  if (k === 'x') {
+    // Research the first affordable available tech (for play-test convenience)
+    const avail = core.researchBook.available();
+    const affordable = avail.find(t => core.researchBook.points >= t.cost);
+    if (affordable) core.research(affordable.id);
+    return;
+  }
   // Tool keys
   if (k === 'w') { tool = 'wall'; return; }
   if (k === 'e') { tool = 'erase'; return; }
@@ -345,7 +352,7 @@ function draw(): void {
   // Key hints
   ctx.fillStyle = '#888'; ctx.font = '11px monospace';
   ctx.fillText('W wall  E erase  G gate  D floor  Z room([ ])  A station(, .)', 8, 20 + 8 * 17);
-  ctx.fillText('F field  C chop  Q quarry  B fishery  R raid  N settler  space pause', 8, 20 + 9 * 17);
+  ctx.fillText('F field  C chop  Q quarry  B fishery  R raid  N settler  X research  space pause', 8, 20 + 9 * 17);
 
   // ── Settler inspector panel (top-right) ──────────────────────────────────
   if (inspected) {
@@ -364,6 +371,37 @@ function draw(): void {
     if (flags.length) { ctx.fillStyle = '#ff6b6b'; iline(4, flags.join(' · ')); ctx.fillStyle = '#ddd'; }
     ctx.fillStyle = '#888'; ctx.font = '11px monospace';
     ctx.fillText('click agent to inspect', px2 + 8, 8 + PH - 10);
+  }
+
+  // ── Research panel (bottom-right) ────────────────────────────────────
+  const rb = core.researchBook;
+  const avail = rb.available();
+  const done = rb.all().filter(id => id !== 'crop_rotation');
+  const RPH = 16;
+  const RP_ROWS = 2 + Math.min(avail.length, 5) + Math.min(done.length, 3);
+  const RPW = 280, RPH_TOTAL = RP_ROWS * RPH + 16;
+  const rpx = canvas.width - RPW - 8, rpy = canvas.height - RPH_TOTAL - 8;
+  ctx.fillStyle = '#000a'; ctx.fillRect(rpx, rpy, RPW, RPH_TOTAL);
+  ctx.fillStyle = '#ffd700'; ctx.font = 'bold 12px monospace';
+  ctx.fillText(`Research  ${rb.points.toFixed(0)} pts`, rpx + 6, rpy + 14);
+  ctx.font = '11px monospace';
+  let row = 1;
+  if (avail.length === 0) {
+    ctx.fillStyle = '#888';
+    ctx.fillText('(build a library + desks)', rpx + 6, rpy + 14 + row++ * RPH);
+  } else {
+    ctx.fillStyle = '#aae';
+    ctx.fillText('Available:', rpx + 6, rpy + 14 + row++ * RPH);
+    for (const t of avail.slice(0, 5)) {
+      const affordable = rb.points >= t.cost;
+      ctx.fillStyle = affordable ? '#88ff88' : '#aaaaff';
+      const label = `  ${t.name} (${t.cost}pt) — ${t.desc.slice(0, 28)}`;
+      ctx.fillText(label, rpx + 6, rpy + 14 + row++ * RPH);
+    }
+  }
+  if (done.length > 0) {
+    ctx.fillStyle = '#888'; ctx.font = '11px monospace';
+    ctx.fillText(`Unlocked: ${done.slice(0, 3).join(', ')}${done.length > 3 ? '…' : ''}`, rpx + 6, rpy + 14 + row++ * RPH);
   }
 
   // ── Event log (bottom-left) ───────────────────────────────────────────
