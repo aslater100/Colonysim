@@ -40,7 +40,9 @@ interface SlotDef {
   prompt: string;
 }
 
-const SUFFIX = 'pixel art, 32x32, top-down view, warm sunlight from top-left, dark warm outline, clean transparent background, game sprite';
+// nerijs/pixel-art-xl trigger word is "pixel art"; top-down colony sim style
+const SUFFIX = 'pixel art, top-down view, warm sunlight from top-left, dark outline, transparent background, game sprite, RimWorld style';
+const NEGATIVE = 'realistic, 3d render, photograph, blurry, smooth shading, anti-aliased, watercolor, painting, low contrast';
 
 const CATALOG: SlotDef[] = [
   // Terrain
@@ -358,7 +360,9 @@ const CATALOG: SlotDef[] = [
 // HF Inference API
 // ---------------------------------------------------------------------------
 
-const DEFAULT_MODEL = 'black-forest-labs/FLUX.1-schnell';
+// nerijs/pixel-art-xl: SDXL LoRA trained on pixel art — much better output for
+// game sprites than a generic model; use the HF Serverless Inference endpoint.
+const DEFAULT_MODEL = 'nerijs/pixel-art-xl';
 const HF_API_BASE = 'https://api-inference.huggingface.co/models';
 
 function isPNG(buf: Buffer): boolean {
@@ -373,8 +377,9 @@ async function generateSprite(
   maxRetries: number,
 ): Promise<Buffer> {
   const url = `${HF_API_BASE}/${model}`;
-  const genW = Math.max(slot.w * 8, 256);
-  const genH = Math.max(slot.h * 8, 256);
+  // SDXL minimum is 512; scale up to nearest 64 multiple, at least 512
+  const genW = Math.max(Math.ceil((slot.w * 8) / 64) * 64, 512);
+  const genH = Math.max(Math.ceil((slot.h * 8) / 64) * 64, 512);
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const res = await fetch(url, {
@@ -386,7 +391,13 @@ async function generateSprite(
       },
       body: JSON.stringify({
         inputs: slot.prompt,
-        parameters: { width: genW, height: genH, num_inference_steps: 4 },
+        parameters: {
+          width: genW,
+          height: genH,
+          num_inference_steps: 25,
+          guidance_scale: 7,
+          negative_prompt: NEGATIVE,
+        },
       }),
     });
 
@@ -460,7 +471,9 @@ async function main() {
 
   if (opts.dryRun) {
     for (const s of slots) {
-      console.log(`  ${s.name}.png  (${s.w}×${s.h} → generates at ${Math.max(s.w * 8, 256)}×${Math.max(s.h * 8, 256)})`);
+      const gw = Math.max(Math.ceil((s.w * 8) / 64) * 64, 512);
+      const gh = Math.max(Math.ceil((s.h * 8) / 64) * 64, 512);
+      console.log(`  ${s.name}.png  (${s.w}×${s.h} → generates at ${gw}×${gh})`);
       console.log(`    "${s.prompt}"`);
     }
     console.log(`\n${slots.length} slot(s) would be generated.`);
