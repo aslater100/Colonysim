@@ -40,7 +40,7 @@ import { Ledger, type LedgerSave, type BorrowResult, type RepayResult } from './
 import { ResearchBook, type ResearchBookSave } from './research';
 import { Rng } from './rng';
 import { BASE_PRICES } from './economy';
-import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, ROOM_DEF_BY_NUM, STATION_DEF_BY_NUM, STATION_TYPE_ID, TRAIT_DEFS, TUNING, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, type ResourceKind, type TradeOrder, type TradeRecord, type TownFocus } from './defs';
+import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, ROOM_DEF_BY_NUM, STATION_DEF_BY_NUM, STATION_TYPE_ID, TRAIT_DEFS, TUNING, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, DIFFICULTY_PRESETS, type ResourceKind, type TradeOrder, type TradeRecord, type TownFocus } from './defs';
 
 const TICKS_PER_DAY = MINUTES_PER_DAY / MINUTES_PER_TICK;
 // Grief on a death (mirrors the fat sim): friends mourn harder and longer.
@@ -209,6 +209,8 @@ export interface TownCoreSave {
   townName?: string;
   /** v8+: strategic focus (defaults to 'balanced' on old saves). */
   focus?: TownFocus;
+  /** v8+: selected difficulty (defaults to 'normal' on old saves). */
+  difficulty?: 'easy' | 'normal' | 'hard';
 }
 
 export interface TownCoreOpts {
@@ -292,6 +294,8 @@ export class TownCore {
    *   balanced:     no bonus (default)
    */
   focus: TownFocus = 'balanced';
+  /** Selected difficulty (easy/normal/hard); scales starting stocks and gold. */
+  difficulty: 'easy' | 'normal' | 'hard' = 'normal';
   /** Market price modifiers: track supply/demand shifts (recover daily toward 1.0). */
   priceModifiers = new Map<string, number>();
   /** Standing trade orders: auto-executed daily (sell surplus / buy when low). */
@@ -448,6 +452,28 @@ export class TownCore {
     }
     if (placed > 0) this.addLog(`${placed} settlers step off the wagon and make camp.`, 'good');
     return placed;
+  }
+
+  /**
+   * Convenience start-up: apply difficulty scaling to a batch of founding supplies,
+   * seed the treasury, and place the colony at (cx, cy). Mirrors fat-sim's
+   * `applyTownDesign` + `foundColony`. Call after the grid is set up.
+   *
+   * Base supplies (scaled by difficulty multiplier):
+   *   100 grain, 50 wood, 20 meal — typical starter wagon cargo.
+   * Gold comes from the difficulty preset's `startCash`.
+   *
+   * Returns the number of settlers placed.
+   */
+  startColony(cx: number, cy: number, pop: number, d: 'easy' | 'normal' | 'hard' = 'normal', foc: TownFocus = 'balanced'): number {
+    this.difficulty = d;
+    this.focus = foc;
+    const preset = DIFFICULTY_PRESETS[d];
+    this.stock.add('grain', Math.round(100 * preset.stockMult));
+    this.stock.add('wood', Math.round(50 * preset.stockMult));
+    this.stock.add('meal', Math.round(20 * preset.stockMult));
+    this.gold = preset.startCash;
+    return this.seedColony(cx, cy, pop);
   }
 
   // ── per-tick orchestration ──────────────────────────────────────────────────
@@ -1451,6 +1477,7 @@ export class TownCore {
       nextOrderId: this._nextOrderId > 1 ? this._nextOrderId : undefined,
       townName: this.townName !== 'New Settlement' ? this.townName : undefined,
       focus: this.focus !== 'balanced' ? this.focus : undefined,
+      difficulty: this.difficulty !== 'normal' ? this.difficulty : undefined,
     };
   }
 
@@ -1505,6 +1532,7 @@ export class TownCore {
     (core as unknown as { _nextOrderId: number })._nextOrderId = data.nextOrderId ?? 1;
     core.townName = data.townName ?? 'New Settlement';
     core.focus = data.focus ?? 'balanced';
+    core.difficulty = data.difficulty ?? 'normal';
     return core;
   }
 }

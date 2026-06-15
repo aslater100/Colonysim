@@ -728,6 +728,32 @@ describe('TownCore blueprint construction', () => {
   });
 });
 
+// --- difficulty system ---
+describe('TownCore difficulty', () => {
+  it('easy starts with more grain and gold than normal', () => {
+    function starter(d: 'easy' | 'normal' | 'hard'): { grain: number; gold: number } {
+      const core = new TownCore({ width: 16, height: 16, seed: 1 });
+      core.startColony(8, 8, 4, d);
+      return { grain: core.stock.count('grain'), gold: core.gold };
+    }
+    const easy = starter('easy');
+    const normal = starter('normal');
+    const hard = starter('hard');
+    expect(easy.grain).toBeGreaterThan(normal.grain);
+    expect(normal.grain).toBeGreaterThan(hard.grain);
+    expect(easy.gold).toBeGreaterThan(normal.gold);
+    expect(normal.gold).toBeGreaterThan(hard.gold);
+  });
+
+  it('difficulty survives a save/load round-trip', () => {
+    const core = new TownCore({ width: 16, height: 16, seed: 1 });
+    core.startColony(8, 8, 2, 'hard');
+    const twin = TownCore.deserialize(core.serialize());
+    expect(twin.difficulty).toBe('hard');
+    expect(twin.gold).toBe(core.gold);
+  });
+});
+
 // --- town focus ---
 describe('TownCore town focus', () => {
   it('agricultural focus yields more grain than balanced over the same days', () => {
