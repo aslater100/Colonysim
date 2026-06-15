@@ -1,13 +1,55 @@
 # Handoff — Centuria Development Guide
 
 **Last updated:** 2026-06-15  
-**Current test count:** 685 passing  
+**Current test count:** 825 passing  
 **Branch pattern:** feature branches off `main` via `claude/...` naming; merge via draft PR  
 **Model guidance:** See PLAN.md § Model Assignment for context ceilings per task
 
 ---
 
 ## Session Snapshot — What Just Landed (2026-06-15)
+
+### PR #134 — TownCore parity completion + research + live-game UX (52 commits, +4,004/−146; suite 709 → **825** tests)
+
+The largest bundle to date. It closes the **B-6 behavior-parity gap** on the SoA `TownCore`,
+adds the colony's first tech tree, and ships a wave of live-game UX. Three threads:
+
+**1. `TownCore` reaches fat-sim parity (town tier).** Added on the deterministic core:
+- **Random-event deck** — full auto deck (cold snap, rats, festival, fever, bumper harvest,
+  windfall timber, skill breakthrough, storm, injured worker, merchant, settler feud) plus
+  **choice events** (trader caravan, bandit demand, refugees, feud, scholar) and
+  plague / found-gold / heatwave / wandering-healer / mineral-strike. `pendingChoice` serialized.
+- **Seasonal farming + drought** (`weather.growthMult` → field yield), **colony-wide food-variety
+  mood**, **clothing distribution + warmth decay**, **ale** as food+recreation, **burial-ground
+  room** + unburied-dead / slept-on-ground mood penalties.
+- **Progression & economy:** prestige + era progression, difficulty system + `startColony()`
+  convenience ctor, town focus + town name, standing trade orders, 7-day stock history + `netFlow()`.
+- **Content:** deer herd + hunting lodge, fishing → `fish_meal`, housing-preference mood bonus,
+  flax harvest zone (loom chain), watchtower early-warning, spike traps, meal-spoilage cap,
+  emigration, forester sapling regrowth, well + yard room, market room + stalls (passive gold),
+  carpentry bench (wood → tools) + rope scaffolding bonus, barracks + drill.
+
+**2. TownCore research system** — `src/sim/research.ts` (`ResearchBook`): 12 `CoreTechDef` across 3
+tiers, library-desk point generation (10 pts/day), auto-research queue, prereq checks, serialization.
+Real effects: `crop_rotation` (free) field yield ×1.25, `militia_training` +30% settler melee in raid
+& wolf defense (via `defenderDamageMult` on `RaidForce.tick`/`WolfPack.tick`), `crop_science` stacks
+to ×1.45. **TownCore save format bumped through v7 → v10** (research book, event timer, season tracker,
+clothing/festival/milestone/drought state all serialized; old saves backfill).
+
+**3. B-6 Stage 4 view adapter DONE + play-test + live UX.**
+- **Iterator API** so renderers never reach into SoA columns: `TownCore.settlers()`,
+  `stationViews()`, `raiders()` generators (+ `SettlerView`/station/raider view interfaces).
+- **`core.html` is now a playable colony sim** — room paint (Z, `[`/`]` cycles 14 types), station
+  tool (A, `,`/`.` cycles 19 types), gate (G), bare floor (D), unified erase (E), click-to-inspect
+  settler overlay, expanded stats overlay; `index.html?core` routes the main app URL to it.
+- **Live game (`sim.ts` + HUD):** research queue UI + per-tech ETA + tech descriptions, weather &
+  temperature HUD, drought/flood overlays + HUD indicator, day/night cycle, prestige (pop milestones
+  25/50/100/200, tiers, raid-survival), Y-key focus cycle, sick indicator + colony-health HUD +
+  food-projection HUD, scholar event, library + infirmary + starting herbs in the founding town,
+  tile hover tooltip, services HUD, winter tint, tools build bonus, immigration gates. Live save
+  (`sim.ts`) stays `v: 3`; the **main-app `SAVE_VERSION` is 10**. Comprehensive event tests added.
+
+---
 
 PRs #131–132 added AI sprite generation on top of the PNG override pipeline from PR #130:
 
@@ -223,7 +265,7 @@ if (detailZoom) {
 
 ## Testing
 
-**Unit tests:** `npx vitest run` (599 tests, ~90s)  
+**Unit tests:** `npx vitest run` (825 tests, ~100s)  
 **Type check:** `npx tsc --noEmit` (must pass before commit)  
 **Build:** `npm run build` (must pass before commit)  
 **Manual test:** `npm run dev` → http://localhost:5173 → play for 5 minutes at various zoom levels, check FPS and panel usability
@@ -237,7 +279,7 @@ if (detailZoom) {
 
 ## B-6 PART 3 — the swap, re-scoped (2026-06-15)
 
-**Verdict from this session's verification:** repo is green (tsc + build clean, **685 tests** after
+**Verdict from this session's verification:** repo is green (tsc + build clean, **825 tests** after
 this session's stages) and
 every PART 2 parity port is real. The raid GUI play-test is cleared. **But the swap is blocked
 *structurally*, not by tuning** — a direct `TownCore`-for-`Simulation` swap would delete the playable
@@ -259,12 +301,16 @@ roadmap in `PLAN.md` § *B-6 PART 3*. Status:
   sim's shape) fed on founding/raids/wolves/deaths/births; save **v5** (old saves → empty log).
 - **Stage 3b — settler names** ✅ landed: `AgentStore.names[]` (deterministic from id), through
   swap-remove, serialized; deaths/births named in the log.
-- **Stage 4 (partial) — settler view** ✅ landed: `TownCore.inspect(i) → SettlerView` for the HUD
-  inspector. The rest of the view adapter (tiles/stations/raiders/zones/builds iterables) is still
-  TODO and should be built **with** the renderer (Stage 5) so it isn't speculative.
+- **Stage 4 — settler + collection view** ✅ landed (completed in PR #134): `TownCore.inspect(i) →
+  SettlerView` for the HUD inspector, plus the renderer-facing iterator API —
+  `settlers()` / `stationViews()` / `raiders()` generators so renderers never reach into SoA
+  columns. (`tiles`/`zones`/`builds` iterables, if needed beyond the existing getters, land with the
+  Stage 5 renderer.)
 - **Stage 7 — blueprint construction** ✅ landed: `TownCore.builds[]` + `blueprintWall/Floor/Station`
-  + `tickConstruction()` (materials + labour → real build), `cancelBlueprint`; save **v6**.
+  + `tickConstruction()` (materials + labour → real build), `cancelBlueprint`.
   `core.html`'s wall tool now paints blueprints the colony builds.
+- **Research (PR #134)** ✅ landed: `src/sim/research.ts` (`ResearchBook`) — colony tech tree fed by
+  library desks, with real raid/yield/health effects. Save bumped to **v10**.
 - **Remaining: Stages 5, 6, 8 — renderer / live wiring / destructive swap.** These touch
   `render.ts`/`main.ts` (no test catches a regression), so land them in a session where the result
   can be watched. `core.html` + `src/coreview.ts` is the working SoA reference renderer to port from;
@@ -273,18 +319,22 @@ roadmap in `PLAN.md` § *B-6 PART 3*. Status:
 **Current SoA-core feature set (all on `TownCore`, deterministic + serialized):** terrain, harvest
 zones + primary production, blueprint construction, room/station crafting, needs/mood/thoughts,
 traits/skills, wounds/medical, relationships, weather, raids, wolves, town economy (loans/inflation),
-settler names, event log, `inspect()` view. Save format **v6**.
+settler names, event log (full random-event deck + choice events), seasonal farming/drought,
+food-variety + clothing + burial mood systems, prestige/era progression, research tech tree,
+`inspect()` + iterator view API. Save format **v10**.
 
 ## Next Steps (B-6 PART 2 Swap + Beyond)
 
 **B-6 PART 2 — the live swap (still gated, NOT a "mechanical swap").**
-Reality check: `TownCore` (~430 lines) is *not* a drop-in for `Simulation` (~3,860 lines) +
+Reality check: `TownCore` (~2,060 lines) is *not* a drop-in for `Simulation` (~3,860 lines) +
 `region.ts` (~7,245 lines). The live `main.ts`/`render.ts`/`hud.ts`/`regionview.ts` are coupled to
 `sim.settlers`/`sim.world`/`buildings.json`/the region flip — none of which the SoA core has. A
 blind swap would *delete the playable game*. Do it incrementally, behind a flag, with a play-test.
 
-- **Behavior parity port — mostly done.** On the SoA columns now: traits/skills, wounds/medical,
-  relationships/thoughts, weather, market (buy/sell + daily price recovery), and **raids/combat**
+- **Behavior parity port — done (PR #134).** On the SoA columns now: traits/skills, wounds/medical,
+  relationships/thoughts, weather, market (buy/sell + daily price recovery), the **full random-event
+  deck + choice events**, seasonal farming/drought, food-variety/clothing/burial mood systems,
+  prestige/era progression, a **research tech tree** (`research.ts`), and **raids/combat**
   (`src/sim/raid.ts` — `RaidForce`/`raidSize()`; raiders converge, walls slow them, settlers rally
   as a militia, attackers flee on timeout; wired into `TownCore.tick` before the death pass).
   Tests: `tests/raid.test.ts` (15) + raid cases in `tests/parity.test.ts`.
@@ -352,7 +402,8 @@ blind swap would *delete the playable game*. Do it incrementally, behind a flag,
 | `src/ui/regionview.ts` | ~123K lines | Very high (will be deprecated) | 2026-06-15 |
 | `src/ui/render.ts` | ~23K lines | Very high (hot path) | 2026-06-15 |
 | `src/style.css` | ~3K lines | Moderate | 2026-06-15 |
-| `src/sim/towncore.ts` | ~400 lines | Moderate | Landed in B-6 PART 1 |
+| `src/sim/towncore.ts` | ~2,060 lines | High (feature-complete town sim) | 2026-06-15 (PR #134) |
+| `src/sim/research.ts` | ~190 lines | Simple | 2026-06-15 (PR #134) |
 
 **Editing rules:**
 - `WindowManager.ts` — can edit directly, small and isolated
