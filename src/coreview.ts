@@ -343,7 +343,7 @@ function draw(): void {
   const seasonIdx = Math.floor((core.day % DAYS_PER_YEAR) / DAYS_PER_SEASON);
   const year = START_YEAR + Math.floor(core.day / DAYS_PER_YEAR);
   const seasonLabel = `${SEASONS[seasonIdx]} ${year}`;
-  line(0, `${seasonLabel}  day ${core.day}  pop ${core.population}  mood ${core.averageMood().toFixed(0)}  gold ${core.gold.toFixed(0)}  era ${core.era}`);
+  line(0, `${core.townName}  ${seasonLabel}  day ${core.day}  pop ${core.population}  mood ${core.averageMood().toFixed(0)}  gold ${core.gold.toFixed(0)}  era ${core.era}  [${core.focus}]`);
   line(1, `meal ${core.stock.count('meal').toFixed(0)}  grain ${core.stock.count('grain').toFixed(0)}  flour ${core.stock.count('flour').toFixed(0)}  bread ${core.stock.count('bread').toFixed(0)}  ale ${core.stock.count('ale').toFixed(0)}`);
   line(2, `wood ${core.stock.count('wood').toFixed(0)}  stone ${core.stock.count('stone').toFixed(0)}  iron ${core.stock.count('iron').toFixed(0)}  ore ${core.stock.count('iron_ore').toFixed(0)}  tools ${core.stock.count('tools').toFixed(0)}`);
   line(3, `clothes ${core.stock.count('clothes').toFixed(0)}  weapons ${core.stock.count('weapons').toFixed(0)}  medicine ${core.stock.count('medicine').toFixed(0)}`);

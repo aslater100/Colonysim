@@ -40,7 +40,7 @@ import { Ledger, type LedgerSave, type BorrowResult, type RepayResult } from './
 import { ResearchBook, type ResearchBookSave } from './research';
 import { Rng } from './rng';
 import { BASE_PRICES } from './economy';
-import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, ROOM_DEF_BY_NUM, STATION_DEF_BY_NUM, STATION_TYPE_ID, TRAIT_DEFS, TUNING, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, type ResourceKind, type TradeOrder, type TradeRecord } from './defs';
+import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, ROOM_DEF_BY_NUM, STATION_DEF_BY_NUM, STATION_TYPE_ID, TRAIT_DEFS, TUNING, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, type ResourceKind, type TradeOrder, type TradeRecord, type TownFocus } from './defs';
 
 const TICKS_PER_DAY = MINUTES_PER_DAY / MINUTES_PER_TICK;
 // Grief on a death (mirrors the fat sim): friends mourn harder and longer.
@@ -205,6 +205,10 @@ export interface TownCoreSave {
   tradeHistory?: TradeRecord[];
   /** v8+: next auto-increment id for trade orders. */
   nextOrderId?: number;
+  /** v8+: colony display name (defaults to 'New Settlement' on old saves). */
+  townName?: string;
+  /** v8+: strategic focus (defaults to 'balanced' on old saves). */
+  focus?: TownFocus;
 }
 
 export interface TownCoreOpts {
@@ -247,18 +251,19 @@ export class TownCore {
   private readonly jobField: FlowField;
   private readonly rng: Rng;
   private readonly _rand: () => number;
-  /** Station-type speed multiplier from unlocked production techs. Called once per tick by tickProduction. */
+  /** Station-type speed multiplier from unlocked production techs + focus bonus. */
   private readonly _stationSpeedMult = (stationId: string): number => {
     const rb = this.researchBook;
+    const focusMult = this.focus === 'industrial' ? 1.20 : 1.0;
     switch (stationId) {
-      case 'loom': case 'rope_walk': return rb.hasTech('textile_farming') ? 1.25 : 1;
-      case 'herb_table': return rb.hasTech('herbalism') ? 1.30 : 1;
-      case 'saw_bench': return rb.hasTech('carpentry') ? 1.25 : 1;
-      case 'anvil': case 'weapon_bench': return rb.hasTech('blacksmithing') ? 1.25 : 1;
-      case 'millstone': return rb.hasTech('milling') ? 1.30 : 1;
-      case 'brew_vat': return rb.hasTech('fermentation') ? 1.30 : 1;
-      case 'smelter': return rb.hasTech('iron_smelting') ? 1.30 : 1;
-      default: return 1;
+      case 'loom': case 'rope_walk': return (rb.hasTech('textile_farming') ? 1.25 : 1) * focusMult;
+      case 'herb_table': return (rb.hasTech('herbalism') ? 1.30 : 1) * focusMult;
+      case 'saw_bench': return (rb.hasTech('carpentry') ? 1.25 : 1) * focusMult;
+      case 'anvil': case 'weapon_bench': return (rb.hasTech('blacksmithing') ? 1.25 : 1) * focusMult;
+      case 'millstone': return (rb.hasTech('milling') ? 1.30 : 1) * focusMult;
+      case 'brew_vat': return (rb.hasTech('fermentation') ? 1.30 : 1) * focusMult;
+      case 'smelter': return (rb.hasTech('iron_smelting') ? 1.30 : 1) * focusMult;
+      default: return focusMult;
     }
   };
 
@@ -275,6 +280,18 @@ export class TownCore {
   /** Current game era (1–4). Era 1→2 unlocks when iron_smelting + blacksmithing are
    *  researched and sufficient tools + iron bars are stockpiled (GDD §3.1). */
   era: 1 | 2 | 3 | 4 = 1;
+  /** Display name of the colony (cosmetic, surfaced to the HUD and region map). */
+  townName = 'New Settlement';
+  /**
+   * Colony strategic focus — biases harvests, crafting, trading, or mood.
+   *   agricultural: +25% field yield
+   *   industrial:   +20% station speed across all crafting
+   *   trade:        sell for 10% more, buy for 10% less (price mod on each trade)
+   *   military:     raid interval +30% (raids rescheduled later)
+   *   cultural:     recreation and mood bonuses regenerate 25% faster
+   *   balanced:     no bonus (default)
+   */
+  focus: TownFocus = 'balanced';
   /** Market price modifiers: track supply/demand shifts (recover daily toward 1.0). */
   priceModifiers = new Map<string, number>();
   /** Standing trade orders: auto-executed daily (sell surplus / buy when low). */
@@ -577,7 +594,9 @@ export class TownCore {
     this.armColony();
     const n = raidSize(this.wealth(), this.day, this.agents.count);
     this.raids.start(n, this.grid.width, this.grid.height, this.rng, this.tickNo);
-    this.nextRaidDay = this.day + TUNING.raidIntervalDays + this.rng.int(5);
+    // Military focus: raids arrive 30% later (stronger deterrent).
+    const raidInterval = Math.round(TUNING.raidIntervalDays * (this.focus === 'military' ? 1.30 : 1.0));
+    this.nextRaidDay = this.day + raidInterval + this.rng.int(5);
     this.addLog(`Raiders close on the colony — ${n} of them!`, 'bad');
   }
 
@@ -695,6 +714,14 @@ export class TownCore {
       }
     }
 
+    // Cultural focus: shared arts and festivities lift everyone's spirits daily.
+    if (this.focus === 'cultural') {
+      for (let i = 0; i < a.count; i++) {
+        a.recreation[i] = Math.min(100, a.recreation[i] + 2);
+        a.social[i] = Math.min(100, a.social[i] + 2);
+      }
+    }
+
     // Housing: settlers without a bed slept on the ground — apply a mood penalty
     // to those with low rest (a proxy for not having recovered in a proper bed).
     if (services.sleep < a.count) {
@@ -794,9 +821,11 @@ export class TownCore {
     const seasonIdx = Math.floor((this.day % DAYS_PER_YEAR) / DAYS_PER_SEASON);
     const growingSeason = seasonIdx < 3;
     // crop_rotation tech grants a 25% field yield bonus; crop_science stacks another 20%.
+    // Agricultural focus stacks another +25%.
     const techMult = 1
       + (this.researchBook.hasTech('crop_rotation') ? 0.25 : 0)
-      + (this.researchBook.hasTech('crop_science') ? 0.20 : 0);
+      + (this.researchBook.hasTech('crop_science') ? 0.20 : 0)
+      + (this.focus === 'agricultural' ? 0.25 : 0);
     // Drought suppresses field yields; good rain gives a small boost (growthMult: 0.35–1.1).
     const growthMult = this.weather.growthMult(this.day);
     const fieldMult = techMult * growthMult;
@@ -1230,9 +1259,12 @@ export class TownCore {
    * clamped to 0.5×–2.0×, times the inflation factor (1 + inflation). Inflation is
    * 0 for a debt-free, coin-poor colony, so this is exactly the supply/demand clamp
    * until the colony starts printing money via credit.
+   *
+   * `side` distinguishes sell (+10% revenue when trade-focused) from buy (−10% cost).
    */
-  private priceMult(mod: number): number {
-    return Math.max(0.5, Math.min(2.0, mod)) * (1 + this.inflation);
+  private priceMult(mod: number, side: 'sell' | 'buy' = 'buy'): number {
+    const tradeMult = this.focus === 'trade' ? (side === 'sell' ? 1.10 : 0.90) : 1.0;
+    return Math.max(0.5, Math.min(2.0, mod)) * (1 + this.inflation) * tradeMult;
   }
 
   /**
@@ -1247,7 +1279,7 @@ export class TownCore {
     let mod = this.priceModifiers.get(kind) ?? 1.0;
     let revenue = 0;
     for (let i = 0; i < qty; i++) {
-      revenue += base * this.priceMult(mod);
+      revenue += base * this.priceMult(mod, 'sell');
       mod -= e; // each unit sold depresses the next
     }
     this.priceModifiers.set(kind, mod);
@@ -1266,7 +1298,7 @@ export class TownCore {
     let mod = this.priceModifiers.get(kind) ?? 1.0;
     let cost = 0;
     for (let i = 0; i < qty; i++) {
-      cost += base * this.priceMult(mod);
+      cost += base * this.priceMult(mod, 'buy');
       mod += e; // each unit bought bids the price up
     }
     cost = Math.round(cost);
@@ -1417,6 +1449,8 @@ export class TownCore {
       tradeOrders: this.tradeOrders.length > 0 ? this.tradeOrders : undefined,
       tradeHistory: this.tradeHistory.length > 0 ? this.tradeHistory : undefined,
       nextOrderId: this._nextOrderId > 1 ? this._nextOrderId : undefined,
+      townName: this.townName !== 'New Settlement' ? this.townName : undefined,
+      focus: this.focus !== 'balanced' ? this.focus : undefined,
     };
   }
 
@@ -1469,6 +1503,8 @@ export class TownCore {
     if (data.tradeOrders) core.tradeOrders.push(...data.tradeOrders);
     if (data.tradeHistory) core.tradeHistory.push(...data.tradeHistory);
     (core as unknown as { _nextOrderId: number })._nextOrderId = data.nextOrderId ?? 1;
+    core.townName = data.townName ?? 'New Settlement';
+    core.focus = data.focus ?? 'balanced';
     return core;
   }
 }

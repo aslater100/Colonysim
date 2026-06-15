@@ -3,7 +3,7 @@ import { TownCore } from '../src/sim/towncore';
 import { BuildGrid, TERRAIN, ZONE } from '../src/sim/build';
 import { AgentStore, AState } from '../src/sim/agents';
 import { Stockpile } from '../src/sim/stockpile';
-import { ROOM_TYPE_ID } from '../src/sim/defs';
+import { ROOM_TYPE_ID, type TownFocus } from '../src/sim/defs';
 
 // Build-system B-6: the integrated room-based town core that composes every
 // scale-engine module (BuildGrid + AgentStore + Stockpile + JobBoard + needs +
@@ -725,6 +725,45 @@ describe('TownCore blueprint construction', () => {
     c.blueprintWall(4, 4);
     const r = TownCore.deserialize(c.serialize());
     expect(r.builds).toEqual(c.builds);
+  });
+});
+
+// --- town focus ---
+describe('TownCore town focus', () => {
+  it('agricultural focus yields more grain than balanced over the same days', () => {
+    function grainAfter(focus: TownFocus): number {
+      const core = new TownCore({ width: 32, height: 32, seed: 5 });
+      core.focus = focus;
+      core.stock.add('meal', 2000); // feed settlers so they don't consume grain
+      core.seedColony(16, 16, 4);
+      // Set up 10 field tiles (fields require SOIL terrain).
+      for (let i = 0; i < 10; i++) {
+        core.grid.setTerrain(i + 4, 16, TERRAIN.SOIL);
+        core.grid.setZone(i + 4, 16, ZONE.FIELD);
+      }
+      core.run(360 * 5); // 5 days of harvesting
+      return core.stock.count('grain');
+    }
+    expect(grainAfter('agricultural')).toBeGreaterThan(grainAfter('balanced'));
+  });
+
+  it('trade focus earns more gold per sell than balanced', () => {
+    function goldAfterSell(focus: 'balanced' | 'trade'): number {
+      const core = new TownCore({ width: 16, height: 16, seed: 5 });
+      core.focus = focus;
+      core.stock.add('grain', 100);
+      return core.sellToMarket('grain', 10);
+    }
+    expect(goldAfterSell('trade')).toBeGreaterThan(goldAfterSell('balanced'));
+  });
+
+  it('focus and townName survive a save/load round-trip', () => {
+    const core = colony({ ovens: 2, beds: 4, grain: 500, pop: 4, seed: 3 });
+    core.focus = 'military';
+    core.townName = 'Ironhold';
+    const twin = TownCore.deserialize(core.serialize());
+    expect(twin.focus).toBe('military');
+    expect(twin.townName).toBe('Ironhold');
   });
 });
 
