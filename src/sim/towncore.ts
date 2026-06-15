@@ -40,7 +40,7 @@ import { Ledger, type LedgerSave, type BorrowResult, type RepayResult } from './
 import { ResearchBook, type ResearchBookSave } from './research';
 import { Rng } from './rng';
 import { BASE_PRICES } from './economy';
-import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, ROOM_DEF_BY_NUM, STATION_DEF_BY_NUM, STATION_TYPE_ID, TRAIT_DEFS, TUNING, DAYS_PER_SEASON, DAYS_PER_YEAR, type ResourceKind } from './defs';
+import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, ROOM_DEF_BY_NUM, STATION_DEF_BY_NUM, STATION_TYPE_ID, TRAIT_DEFS, TUNING, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, type ResourceKind } from './defs';
 
 const TICKS_PER_DAY = MINUTES_PER_DAY / MINUTES_PER_TICK;
 // Grief on a death (mirrors the fat sim): friends mourn harder and longer.
@@ -180,6 +180,8 @@ export interface TownCoreSave {
   researchBook?: ResearchBookSave;
   /** v8+: next scheduled random-event day (old saves restart the timer from scratch). */
   nextEventDay?: number;
+  /** v8+: last logged season index — prevents duplicate season-change log lines on load. */
+  lastSeasonIdx?: number;
 }
 
 export interface TownCoreOpts {
@@ -252,6 +254,8 @@ export class TownCore {
   nextEventDay: number = FIRST_EVENT_DAY;
   /** Tracks current drought state to log transitions (drought start/end). */
   private _droughtActive = false;
+  /** Last logged season index, to detect season changes. */
+  private _lastSeasonIdx = -1;
 
   private readonly weatherSeed: number;
 
@@ -610,9 +614,15 @@ export class TownCore {
     // Random events: merchant visits, weather surprises, wanderers, etc.
     if (this.day >= this.nextEventDay) this.fireRandomEvent();
 
-    // Drought/flood transitions: log once when conditions change.
+    // Season change: log the start of each new season.
     const seasonIdx = Math.floor((this.day % DAYS_PER_YEAR) / DAYS_PER_SEASON);
     const growingSeason = seasonIdx < 3;
+    if (seasonIdx !== this._lastSeasonIdx) {
+      const year = START_YEAR + Math.floor(this.day / DAYS_PER_YEAR);
+      this.addLog(`${SEASONS[seasonIdx]} ${year} begins.`, 'info');
+      this._lastSeasonIdx = seasonIdx;
+    }
+    // Drought/flood transitions: log once when conditions change.
     const nowDrought = growingSeason && this.weather.isDrought(this.day);
     if (nowDrought && !this._droughtActive) this.addLog('Drought. The soil cracks and crops slow to a crawl.', 'bad');
     else if (!nowDrought && this._droughtActive) this.addLog('The drought breaks. Rain returns to the fields.', 'good');
@@ -1040,6 +1050,7 @@ export class TownCore {
       builds: this.builds.length > 0 ? this.builds : undefined,
       researchBook: this.researchBook.serialize(),
       nextEventDay: this.nextEventDay,
+      lastSeasonIdx: this._lastSeasonIdx,
     };
   }
 
@@ -1079,8 +1090,11 @@ export class TownCore {
     if (data.builds) core.builds.push(...data.builds);
     // v7+: restore the research book (old saves keep the default: crop_rotation free, 0 pts).
     if (data.researchBook) (core as { researchBook: ResearchBook }).researchBook = ResearchBook.deserialize(data.researchBook);
-    // v8+: restore the random-event schedule (old saves restart the timer from day 7).
+    // v8+: restore the random-event schedule and season tracker (old saves: default values).
     if (data.nextEventDay != null) core.nextEventDay = data.nextEventDay;
+    // Restore _lastSeasonIdx to avoid re-logging the current season on load.
+    (core as unknown as { _lastSeasonIdx: number })._lastSeasonIdx =
+      data.lastSeasonIdx ?? Math.floor((core.day % DAYS_PER_YEAR) / DAYS_PER_SEASON);
     return core;
   }
 }
