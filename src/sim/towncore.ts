@@ -39,7 +39,7 @@ import { WolfPack, type WolfPackSave } from './wolves';
 import { Ledger, type LedgerSave, type BorrowResult, type RepayResult } from './ledger';
 import { Rng } from './rng';
 import { BASE_PRICES } from './economy';
-import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, TUNING, type ResourceKind } from './defs';
+import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, TRAIT_DEFS, TUNING, type ResourceKind } from './defs';
 
 const TICKS_PER_DAY = MINUTES_PER_DAY / MINUTES_PER_TICK;
 // Grief on a death (mirrors the fat sim): friends mourn harder and longer.
@@ -81,6 +81,29 @@ export interface LogEntry {
   day: number;
   text: string;
   kind: 'info' | 'good' | 'bad';
+}
+
+/** A displayable snapshot of one settler, reconstructed from the SoA columns —
+ *  what a HUD inspector panel needs without reaching into the typed arrays. */
+export interface SettlerView {
+  id: number;
+  name: string;
+  x: number;
+  y: number;
+  state: 'idle' | 'moving' | 'sleeping' | 'working';
+  mood: number;
+  health: number;
+  food: number;
+  rest: number;
+  warmth: number;
+  recreation: number;
+  social: number;
+  skill: number;
+  traits: string[];
+  armed: 'unarmed' | 'spear' | 'weapon';
+  wounded: boolean;
+  infected: boolean;
+  sick: boolean;
 }
 
 export interface TownCoreSave {
@@ -201,6 +224,36 @@ export class TownCore {
   /** Append a dated line to the event feed (used by the HUD + audio cues). */
   private addLog(text: string, kind: LogEntry['kind'] = 'info'): void {
     this.log.push({ day: this.day, text, kind });
+  }
+
+  /** A displayable snapshot of settler `i` (SoA columns → a plain record for the
+   *  HUD inspector). Returns null for an out-of-range index. */
+  inspect(i: number): SettlerView | null {
+    const a = this.agents;
+    if (i < 0 || i >= a.count) return null;
+    const stateName = (['idle', 'moving', 'sleeping', 'working'] as const)[a.state[i]] ?? 'idle';
+    const traits: string[] = [];
+    for (const ti of [a.trait0[i], a.trait1[i]]) if (ti >= 0 && TRAIT_DEFS[ti]) traits.push(TRAIT_DEFS[ti].name);
+    return {
+      id: a.id[i],
+      name: a.name(i),
+      x: a.posX[i],
+      y: a.posY[i],
+      state: stateName,
+      mood: a.mood[i],
+      health: a.health[i],
+      food: a.food[i],
+      rest: a.rest[i],
+      warmth: a.warmth[i],
+      recreation: a.recreation[i],
+      social: a.social[i],
+      skill: a.skill[i],
+      traits,
+      armed: a.armed[i] === 2 ? 'weapon' : a.armed[i] === 1 ? 'spear' : 'unarmed',
+      wounded: a.woundUntreated[i] === 1,
+      infected: a.infection[i] === 1,
+      sick: a.sick[i] === 1,
+    };
   }
 
   /**

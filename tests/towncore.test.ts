@@ -252,3 +252,27 @@ describe('TownCore event log', () => {
     expect(r.log).toEqual(c.log);
   });
 });
+
+// --- B-6 PART 3: settler inspect view (SoA columns → HUD record) ---
+describe('TownCore.inspect', () => {
+  it('reconstructs a displayable settler record from the SoA columns', () => {
+    const c = new TownCore({ seed: 11 });
+    c.seedColony(48, 48, 1); // spawnPerson already rolls two distinct traits
+    const v = c.inspect(0)!;
+    expect(v).not.toBeNull();
+    expect(v.name).toBe(c.agents.name(0));
+    expect(v.id).toBe(c.agents.id[0]);
+    expect(v.state).toBe('idle');
+    expect(v.armed).toBe('unarmed');
+    expect(v.traits.length).toBe(2);
+    expect(typeof v.mood).toBe('number');
+    expect(v.wounded).toBe(false);
+  });
+
+  it('returns null for an out-of-range index', () => {
+    const c = new TownCore({ seed: 11 });
+    c.seedColony(48, 48, 2);
+    expect(c.inspect(5)).toBeNull();
+    expect(c.inspect(-1)).toBeNull();
+  });
+});
