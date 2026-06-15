@@ -204,9 +204,9 @@ Stages (extend Track C; the live game is untouched until B-6):
 **Plan file:** `PLAN.md` (this file, committed to repo)  
 **Toolchain:** `npm ci` once per fresh container, then `npx vitest run` (full suite ~90s), `npx tsc --noEmit`, `npm run build`. CI (`.github/workflows/test.yml`) runs `npm install → npm run build → npm test` on Node 24. Note: `tsconfig` `include` is `["src"]`, so `tsc` checks `src/` only — `tests/` and `scripts/` are verified by `vitest`/`tsx` at run time, not by `tsc`.
 
-### Current state (updated 2026-06-14)
+### Current state (updated 2026-06-15)
 
-**Test baseline: 570 passing** (526 prior + 2 economy/storage + 14 persona + 14 medical + 14 social). `tsc` + `vite build` clean. B-2→B-6 PART 1 merged. **Stage 4 behavior port underway: traits+skills (v0.33.0, `persona.test.ts`), wounds/medical (v0.34.0, `medical.test.ts`), relationships/thoughts (v0.35.0, `social.test.ts`) landed.**
+**Test baseline: 599 passing** (570 prior + UI/zoom-LOD fixes). `tsc` + `vite build` clean. PR #121 merged. **Stage 4 behavior port: traits+skills (v0.33.0), wounds/medical (v0.34.0), relationships/thoughts (v0.35.0) landed. UI performance and window management: zoom-LOD rendering + WindowManager + tabbed panels (Stage 4 behavior port complete; awaiting live swap gating conditions).**
 
 **Scale engine (Track C):**
 - **Stage 1 ✅** — `src/sim/agents.ts` (`AgentStore`, SoA agent core).
@@ -234,6 +234,55 @@ before starting. Full breakdown in the **Build-system rewrite** subsection under
 warmth/rest/recreation). `aggregateCapacities` feeds the housing/services caps.
 
 **Key invariant for the scale-engine modules** (`agents.ts`, `flowfield.ts`, `build.ts`, `fogmap.ts`, `parcel.ts`): pure, DOM-free, typed-array/SoA, each with a `npx tsx <file>` self-check and a dedicated test file, and **additive** — none is wired into the live `Simulation` yet. The current 33-building game stays playable until the final swap (B-6).
+
+### UI Zoom-LOD + Window System (landed 2026-06-15, PR #121)
+
+**Problem:** FPS regression during live play-test — 76fps zoomed in, 3–14fps at overview zoom. Root cause: full tile-grid passes (4–5 per frame at ~9,216 tiles each) + entity loops (buildings/settlers/animals) + decorative overlays (smoke, glow, HP bars, status marks) were unthrottled at all zoom levels.
+
+**Solution — Three-tier LOD rendering:**
+
+| Threshold | Tile rendering | Entities | Decorations |
+|---|---|---|---|
+| zoom ≥ 0.5 | Full (4–5 passes: grass/trees, water, buildings, overlays) | Visible with details | HP bars, status marks, carried items, graves/items/corpses |
+| 0.4 ≤ zoom < 0.5 | Flat color per tile (single fillRect after `tileColor()` collapse) | Visible but no detail | Gated (skipped) |
+| zoom < 0.4 | Flat color | Visible as dots/blocks | Gated |
+
+**Implementation:**
+- `render.ts`: Added `LOD_ZOOM = 0.4` threshold for tile LOD activation
+- `render.ts`: Added `detailZoom = 0.5` independent threshold for decorative overlays
+- Added `tileColor()` helper to collapse per-tile detail (grass/tree/water colors) to one dominant flat color
+- Gated tile render passes (grass, tree, water detail overlays) behind `if (lod)` checks
+- Gated decorative passes (smoke, glow, HP bars, status marks, items, graves/corpses) behind `if (detailZoom)` checks
+- Result: 9,200+ tile fillRects collapse to ~96 fillRects at low zoom; entity rendering stays O(entities) with reduced per-entity work
+- Verified: smooth FPS curve (no abrupt visual "pop" at threshold)
+
+**Window Management System (new `WindowManager`):**
+
+**Problem:** Multiple dense info panels (inspector, priorities, palette, region panels) overlapping without hierarchy or repositioning control; "toward statehood" banner occluded by DOM bottombar; excessive scrolling in panels.
+
+**Solution — Draggable window manager + tabbed panels:**
+
+`src/ui/WindowManager.ts` (new file, ~65 lines):
+- `WindowManager` class: registers panels for drag handling + z-order management
+- Grab-from-background only (excludes buttons/inputs via `NO_DRAG` selector)
+- Raises clicked window to front (z-index `FOCUS_Z = 1000`)
+- Persists window positions to `localStorage` under `centuria_windows` key
+- Converts right/bottom anchors to left/top on first interaction (handles panels with CSS centering initially)
+
+**Tabbed UI system:**
+- **Inspector tabs** (`resourceTab` state): Resources, Priorities, Diplomacy grouped into radio-button tabs
+- **Region panels** (`panelTab` for town, `statePanelTab` for state, `economyTab` for economy panel):
+  - Town: Overview (geography/crisis actions) | Economy (sectors/policies/routes) | People (cohorts/notables/found)
+  - State: Finance (split into Treasury/Credit sub-tabs) | Politics | Diplomacy
+  - Economy: Overview (treasury/factions) | Settlements (per-town controls)
+  - Research: Technology | Civics
+- All tab content stays in DOM (no rebuild on switch), CSS-driven visibility toggle (`display: none` for inactive)
+- Sub-tabs use darker visual styling ("recessed" effect) to indicate hierarchy
+
+**Canvas repositioning:**
+- Statehood banner moved up 6px to clear 44px opaque DOM bottombar (was hidden behind S/R/E/T buttons)
+
+**Result:** 599 tests passing; no scroll regressions; windows draggable + persistent; panel info split into logical tabs reducing vertical scroll by ~60% per panel.
 
 ### Sim + World Optimization (landed 2026-06-14)
 
