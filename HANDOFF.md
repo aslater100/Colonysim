@@ -9,6 +9,31 @@
 
 ## Session Snapshot — What Just Landed (2026-06-15)
 
+PRs #131–132 added AI sprite generation on top of the PNG override pipeline from PR #130:
+
+- **`scripts/hf-sprites.ts`** — CLI that calls the Hugging Face Inference API to generate pixel-art sprites and drops them into `public/sprites/`, updating `index.json`. Registered as `npm run hf-sprites`.
+- **Model:** `nerijs/pixel-art-xl` (SDXL LoRA trained on pixel art). Generates at 512px+, 25 steps, `guidance_scale 7`, with a `negative_prompt` that suppresses smooth/realistic output. The browser's `applyOverrides()` scales the result to each slot's canvas size.
+- **61 slots catalogued** with tuned prompts: terrain (grass, tree, water, rock, soil stages), build system (palisade, gate, floor, wall plans), creatures (settlers ×3 variants ×4 frames, raiders, wolves, deer), and items (wood, stone, grain, meal, tools, weapons, …).
+
+**Quick usage:**
+```bash
+# Preview what would be generated (no API call)
+npx tsx scripts/hf-sprites.ts --dry-run
+
+# Generate all sprites
+HF_TOKEN=hf_xxx npm run hf-sprites
+
+# Generate a subset
+HF_TOKEN=hf_xxx npm run hf-sprites -- --slots=tree,grass-0,rock
+
+# Use a different model
+HF_TOKEN=hf_xxx npm run hf-sprites -- --model=stabilityai/stable-diffusion-xl-base-1.0
+```
+
+Generated PNGs land in `public/sprites/<name>.png` and are registered in `public/sprites/index.json`. The game loads them automatically on next page refresh — no code change needed. See `public/sprites/README.md` for the full slot-naming convention.
+
+---
+
 PR #121 merged three major UI systems and fixed a critical FPS regression:
 
 1. **Zoom-LOD rendering** (`src/ui/render.ts`): tiles collapse to flat colors at zoom < 0.4; decorative overlays (HP bars, status marks, graves) gate at zoom < 0.5. No visual pop; smooth FPS curve from 76fps (zoomed in) to 30fps+ (overview).
