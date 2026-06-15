@@ -277,6 +277,71 @@ describe('TownCore.inspect', () => {
   });
 });
 
+// --- B-6 Stage 4 complete: view-adapter iterators ---
+describe('TownCore view iterators', () => {
+  it('settlers() yields one SettlerView per live agent', () => {
+    const core = colony({ pop: 3 });
+    const views = [...core.settlers()];
+    expect(views.length).toBe(3);
+    // Each view must match inspect() for the same slot
+    for (let i = 0; i < views.length; i++) {
+      const inspected = core.inspect(i)!;
+      expect(views[i].id).toBe(inspected.id);
+      expect(views[i].name).toBe(inspected.name);
+      expect(views[i].state).toBe(inspected.state);
+    }
+  });
+
+  it('settlers() is empty when no agents exist', () => {
+    const core = new TownCore({ seed: 7 });
+    expect([...core.settlers()].length).toBe(0);
+  });
+
+  it('stationViews() yields one view per placed station', () => {
+    const core = colony({ ovens: 2, beds: 2 });
+    const views = [...core.stationViews()];
+    expect(views.length).toBe(4); // 2 ovens + 2 beds
+    const ids = views.map(v => v.stationId).sort();
+    expect(ids.filter(id => id === 'oven').length).toBe(2);
+    expect(ids.filter(id => id === 'bed').length).toBe(2);
+    // typeId is always ≥ 1 (1-based)
+    for (const v of views) expect(v.typeId).toBeGreaterThan(0);
+  });
+
+  it('stationViews() is empty with no stations placed', () => {
+    const core = new TownCore({ seed: 7 });
+    expect([...core.stationViews()].length).toBe(0);
+  });
+
+  it('raiders() yields RaiderViews only during an active raid', () => {
+    const core = colony({ ovens: 2, beds: 2, grain: 1000, pop: 4 });
+    // Before raid: empty
+    expect([...core.raiders()].length).toBe(0);
+    // Muster a raid manually and tick once so raiders spawn
+    core.musterRaid();
+    core.run(1);
+    const raidViews = [...core.raiders()];
+    expect(raidViews.length).toBeGreaterThan(0);
+    for (const r of raidViews) {
+      expect(typeof r.x).toBe('number');
+      expect(typeof r.y).toBe('number');
+      expect(typeof r.health).toBe('number');
+      expect(typeof r.fleeing).toBe('boolean');
+    }
+  });
+
+  it('settlers() count tracks population after deaths', () => {
+    const core = colony({ ovens: 1, beds: 2, grain: 0, pop: 3 }); // no food → starvation
+    const before = [...core.settlers()].length;
+    expect(before).toBe(3);
+    core.run(200 * 10); // run long enough that at least one agent starves
+    const after = [...core.settlers()].length;
+    expect(after).toBeLessThan(before);
+    // settlers() and population must agree
+    expect(after).toBe(core.population);
+  });
+});
+
 // --- B-6 PART 3: harvest zones turn terrain into raw goods ---
 describe('TownCore harvest zones', () => {
   it('a worked field yields grain each day and renews', () => {

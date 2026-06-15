@@ -112,6 +112,25 @@ export interface SettlerView {
   sick: boolean;
 }
 
+/** A displayable snapshot of one craft station — what a renderer needs without
+ *  reaching into the BuildGrid arrays. */
+export interface StationView {
+  x: number;
+  y: number;
+  /** Numeric station-type id (1-based, matches BuildGrid.stations[].typeId). */
+  typeId: number;
+  /** String id from stations.json (e.g. 'oven', 'bed'). */
+  stationId: string;
+}
+
+/** A displayable snapshot of one active raider — position, health, and flee state. */
+export interface RaiderView {
+  x: number;
+  y: number;
+  health: number;
+  fleeing: boolean;
+}
+
 /** A pending construction: a painted blueprint awaiting materials + labour before
  *  it becomes a real wall / floor / station (Songs-of-Syx build flow). */
 export interface BuildOrder {
@@ -276,6 +295,32 @@ export class TownCore {
       infected: a.infection[i] === 1,
       sick: a.sick[i] === 1,
     };
+  }
+
+  /** Iterate all live settlers as `SettlerView` objects.
+   *  Preferred over reading SoA columns directly in renderers and HUD code. */
+  *settlers(): Generator<SettlerView, void, unknown> {
+    for (let i = 0; i < this.agents.count; i++) {
+      const v = this.inspect(i);
+      if (v) yield v;
+    }
+  }
+
+  /** Iterate all craft stations placed on the build grid.
+   *  Yields one `StationView` per station (same order as `BuildGrid.stations`). */
+  *stationViews(): Generator<StationView, void, unknown> {
+    for (const s of this.grid.stations) {
+      const def = STATION_DEF_BY_NUM[s.typeId];
+      if (!def) continue;
+      yield { x: s.x, y: s.y, typeId: s.typeId, stationId: def.id };
+    }
+  }
+
+  /** Iterate all active raiders as `RaiderView` objects. */
+  *raiders(): Generator<RaiderView, void, unknown> {
+    for (const r of this.raids.raiders) {
+      yield { x: r.x, y: r.y, health: r.health, fleeing: r.fleeing };
+    }
   }
 
   /**
