@@ -1,7 +1,7 @@
 # Handoff — Centuria Development Guide
 
 **Last updated:** 2026-06-15  
-**Current test count:** 637 passing  
+**Current test count:** 652 passing  
 **Branch pattern:** feature branches off `main` via `claude/...` naming; merge via draft PR  
 **Model guidance:** See PLAN.md § Model Assignment for context ceilings per task
 
@@ -235,6 +235,21 @@ blind swap would *delete the playable game*. Do it incrementally, behind a flag,
     strays, the bitten fight back, and a mauled/overstayed wolf flees. Wired into `TownCore.tick` +
     `summonWolves`, serialized at save v3. Tests: `tests/wolves.test.ts` (8) + weapon/trap cases in
     `tests/raid.test.ts`.
+- **Economy parity port (town tier) — done.** The town-tier slice of the fat sim's monetary stack now
+  lives on the SoA core (`src/sim/ledger.ts` — `Ledger`):
+  - **Lenders + loans**: three NPC lenders (`lenders.ts.createInitialLenders`); `TownCore.takeLoan`
+    credits the treasury and records an amortizing loan; `repayLoan` pays it down manually. Each month
+    (`day % 30`) interest accrues, the colony auto-services due installments from gold, and a loan
+    overdue past a 90-day grace defaults (dropping the lender's confidence). Mirrors `region.ts`'s
+    `requestLoan`/`repayLoan`/`updateLoans` — but with a deterministic loan-id counter, not the fat
+    sim's `Math.random`.
+  - **Inflation**: `TownCore.inflation` re-reckons monthly from the money supply (gold + outstanding
+    debt) over a GDP proxy (`wealth()`), and rides on top of every market price via `priceMult`. A
+    debt-free, coin-poor colony sits at 0% (so existing market tests are untouched); heavy borrowing
+    prints money and lifts prices.
+  - Save bumped to **v4** (ledger + inflation). Tests: `tests/ledger.test.ts` (15).
+  - **Out of scope (region tier, swap territory):** GDP/tax engine, monetary-policy rate, bonds, FX,
+    central bank, credit cycle — all welded to `region.ts`.
 - **Play-test fixes (found by running `/core.html`):**
   - `BuildGrid` now has a **gate** (`setGate`/`clearGate`, serialized): a passable opening that still
     seals a room for enclosure — without it a fully-walled room was unreachable, so doored rooms

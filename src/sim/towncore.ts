@@ -36,6 +36,7 @@ import { Relations, socialize } from './social';
 import { Weather } from './weather';
 import { RaidForce, raidSize, type RaidForceSave } from './raid';
 import { WolfPack, type WolfPackSave } from './wolves';
+import { Ledger, type LedgerSave, type BorrowResult, type RepayResult } from './ledger';
 import { Rng } from './rng';
 import { BASE_PRICES } from './economy';
 import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, TUNING, type ResourceKind } from './defs';
@@ -53,7 +54,18 @@ const RAID_FEAR_DELTA = -10, RAID_FEAR_TICKS = 2 * TICKS_PER_DAY;
 // Market price modifiers drift back toward 1.0 each day as supply/demand settles.
 const PRICE_RECOVERY = TUNING.marketRecoveryPerDay;
 
-const SAVE_VERSION = 3;
+// Town-tier inflation (economy parity port): credit + hoarded coin chase too few
+// goods, so prices drift up. Eases monthly toward a target set by the money supply
+// (gold + outstanding debt) over a GDP proxy (colony wealth). A debt-free,
+// coin-poor colony sits at ~0 — heavy borrowing or a gold glut nudges prices up.
+const INFLATION_GDP_FACTOR = 4;      // money-supply ÷ (wealth × this) that reads as balanced
+const INFLATION_SENSITIVITY = 0.5;   // how hard the imbalance pushes inflation
+const INFLATION_EASE = 0.25;         // fraction of the gap closed each month
+const INFLATION_MAX = 0.5;           // hard cap (50%) so it can't run away
+// The economy settles on a 30-day month, matching the ledger's payment cadence.
+const ECONOMY_MONTH_DAYS = 30;
+
+const SAVE_VERSION = 4;
 
 // Behavior thresholds for the integration loop (modest, deterministic — full
 // mood/skills/trait fidelity is the remaining parity work, not this stage).
@@ -84,6 +96,9 @@ export interface TownCoreSave {
   raids?: RaidForceSave;
   /** v3+: any in-progress wolf pack (schedule is a per-day roll, nothing to persist). */
   wolves?: WolfPackSave;
+  /** v4+: the credit book (lenders + loans) and the current inflation rate. */
+  ledger?: LedgerSave;
+  inflation?: number;
 }
 
 export interface TownCoreOpts {
@@ -106,6 +121,10 @@ export class TownCore {
   readonly raids = new RaidForce();
   /** Predator packs: wolves prowl in from the edge and pick off strays. */
   readonly wolves = new WolfPack();
+  /** Credit book: NPC lenders the colony can borrow gold from, serviced monthly. */
+  readonly ledger = new Ledger();
+  /** Town-tier inflation rate (0 = none); applied on top of market prices. */
+  inflation = 0;
   /** Game-day the next raid musters (rescheduled after each one). */
   nextRaidDay: number;
   private readonly jobField: FlowField;
@@ -371,6 +390,32 @@ export class TownCore {
     if (this.day >= TUNING.wolfFirstDay && !this.wolves.active && this.rng.chance(TUNING.wolfPackChancePerDay)) {
       this.summonWolves();
     }
+
+    // Economy: once a month, accrue loan interest, auto-service the debt from the
+    // treasury, and re-reckon inflation from the money supply.
+    if (this.day > 0 && this.day % ECONOMY_MONTH_DAYS === 0) this.monthlyEconomy();
+  }
+
+  /** Monthly credit + inflation update (loans accrue, get serviced, prices reckon). */
+  private monthlyEconomy(): void {
+    this.ledger.accrueInterest(this.day);
+    this.gold -= this.ledger.autoService(this.day, this.gold);
+    this.updateInflation();
+  }
+
+  /**
+   * Re-reckon town-tier inflation from the money supply (gold + outstanding debt)
+   * relative to a GDP proxy (colony wealth). Eases toward the target each month and
+   * decays back to 0 once the money/goods balance is restored. Mirrors the spirit
+   * of `economy.ts.updateInflation` at town altitude.
+   */
+  private updateInflation(): void {
+    const moneySupply = this.gold + this.ledger.totalDebt();
+    const gdp = Math.max(1, this.wealth());
+    const imbalance = moneySupply / (gdp * INFLATION_GDP_FACTOR) - 1;
+    const target = Math.min(INFLATION_MAX, Math.max(0, imbalance) * INFLATION_SENSITIVITY);
+    this.inflation += (target - this.inflation) * INFLATION_EASE;
+    if (this.inflation < 1e-4) this.inflation = 0;
   }
 
   // ── read-only views ──────────────────────────────────────────────────────────
@@ -400,7 +445,17 @@ export class TownCore {
   marketPrice(kind: ResourceKind): number {
     const base = BASE_PRICES[kind] ?? 10;
     const mod = this.priceModifiers.get(kind) ?? 1.0;
-    return base * Math.max(0.5, Math.min(2.0, mod)); // clamp 0.5×..2.0×
+    return base * this.priceMult(mod);
+  }
+
+  /**
+   * The live multiplier on a resource's base price: the supply/demand modifier
+   * clamped to 0.5×–2.0×, times the inflation factor (1 + inflation). Inflation is
+   * 0 for a debt-free, coin-poor colony, so this is exactly the supply/demand clamp
+   * until the colony starts printing money via credit.
+   */
+  private priceMult(mod: number): number {
+    return Math.max(0.5, Math.min(2.0, mod)) * (1 + this.inflation);
   }
 
   /**
@@ -415,7 +470,7 @@ export class TownCore {
     let mod = this.priceModifiers.get(kind) ?? 1.0;
     let revenue = 0;
     for (let i = 0; i < qty; i++) {
-      revenue += base * Math.max(0.5, Math.min(2.0, mod));
+      revenue += base * this.priceMult(mod);
       mod -= e; // each unit sold depresses the next
     }
     this.priceModifiers.set(kind, mod);
@@ -434,7 +489,7 @@ export class TownCore {
     let mod = this.priceModifiers.get(kind) ?? 1.0;
     let cost = 0;
     for (let i = 0; i < qty; i++) {
-      cost += base * Math.max(0.5, Math.min(2.0, mod));
+      cost += base * this.priceMult(mod);
       mod += e; // each unit bought bids the price up
     }
     cost = Math.round(cost);
@@ -443,6 +498,37 @@ export class TownCore {
     this.stock.add(kind, qty);
     this.priceModifiers.set(kind, mod);
     return true;
+  }
+
+  // ── credit: borrow / repay against the ledger ────────────────────────────
+
+  /**
+   * Borrow `amount` gold from lender `lenderId` over `termMonths`. On success the
+   * proceeds land in the treasury and the colony owes monthly installments (auto-
+   * serviced from gold; default if the coffers stay empty past the grace period).
+   */
+  takeLoan(lenderId: number, amount: number, termMonths: number): BorrowResult {
+    const res = this.ledger.borrow(lenderId, amount, termMonths, this.day);
+    if (res.ok) this.gold += amount;
+    return res;
+  }
+
+  /** Pay `amount` toward a loan from the treasury (manual paydown; UI/AI call). */
+  repayLoan(loanId: number, amount: number): RepayResult {
+    if (amount > this.gold) return { ok: false, reason: 'Insufficient gold' };
+    const res = this.ledger.repay(loanId, amount, this.day);
+    if (res.ok) this.gold -= amount;
+    return res;
+  }
+
+  /** Outstanding (non-defaulted) loan balance. */
+  totalDebt(): number {
+    return this.ledger.totalDebt();
+  }
+
+  /** Treasury net of outstanding debt — what the colony is really worth in coin. */
+  netWorth(): number {
+    return this.gold - this.totalDebt();
   }
 
   // ── serialization ────────────────────────────────────────────────────────────
@@ -468,6 +554,8 @@ export class TownCore {
       nextRaidDay: this.nextRaidDay,
       raids: this.raids.serialize(),
       wolves: this.wolves.serialize(),
+      ledger: this.ledger.serialize(),
+      inflation: this.inflation,
     };
   }
 
@@ -498,6 +586,9 @@ export class TownCore {
     if (data.raids) (core as { raids: RaidForce }).raids = RaidForce.deserialize(data.raids);
     // v3+: restore any in-progress wolf pack (old saves keep the empty pack).
     if (data.wolves) (core as { wolves: WolfPack }).wolves = WolfPack.deserialize(data.wolves);
+    // v4+: restore the credit book + inflation (old saves keep fresh lenders, 0%).
+    if (data.ledger) (core as { ledger: Ledger }).ledger = Ledger.deserialize(data.ledger);
+    core.inflation = data.inflation ?? 0;
     return core;
   }
 }
