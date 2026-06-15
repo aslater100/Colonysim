@@ -48,6 +48,8 @@ export interface RoomServices {
   well: number;
   /** Market stall capacity — each stall generates gold income each day. */
   trade: number;
+  /** Barracks drill capacity — each training post boosts militia effectiveness. */
+  drill: number;
 }
 
 // Per-hour need rates (aligned with TUNING.sleepRestPerHour.bed / recreationPerHour
@@ -64,7 +66,7 @@ const CLINIC_REGEN_MULT = TUNING.clinicRegenMult;       // ×regen resting in an
 const APOTHECARY_HEAL_MULT = TUNING.apothecaryHealMult; // extra ×regen when medicine is applied
 const MEDICINE_PER_TREAT = 1;                           // medicine consumed to cure one casualty
 
-const EMPTY_OUTPUT: RoomOutput = { sleep: 0, recreation: 0, education: 0, medical: 0, storage: 0, burial: 0, watch: 0, well: 0, trade: 0, flow: {} };
+const EMPTY_OUTPUT: RoomOutput = { sleep: 0, recreation: 0, education: 0, medical: 0, storage: 0, burial: 0, watch: 0, well: 0, trade: 0, drill: 0, flow: {} };
 
 /** Is this room currently usable (an enclosure-required type must be walled in)? */
 function roomUsable(room: Room): boolean {
@@ -81,7 +83,7 @@ export function roomAt(grid: BuildGrid, x: number, y: number): Room | null {
 
 /** Town-wide service capacities, summing only usable rooms. Call after rebuildRooms(). */
 export function aggregateCapacities(grid: BuildGrid): RoomServices {
-  const out: RoomServices = { sleep: 0, recreation: 0, education: 0, medical: 0, storage: 0, burial: 0, watch: 0, well: 0, trade: 0 };
+  const out: RoomServices = { sleep: 0, recreation: 0, education: 0, medical: 0, storage: 0, burial: 0, watch: 0, well: 0, trade: 0, drill: 0 };
   for (const room of grid.rooms) {
     if (!roomUsable(room)) continue;
     const o = grid.roomOutput(room);
@@ -94,6 +96,7 @@ export function aggregateCapacities(grid: BuildGrid): RoomServices {
     out.watch += o.watch;
     out.well += o.well;
     out.trade += o.trade ?? 0;
+    out.drill += o.drill ?? 0;
   }
   return out;
 }

@@ -605,7 +605,9 @@ export class TownCore {
     const wasRaiding = this.raids.active;
     const wasWolves = this.wolves.active;
     // militia_training tech grants a 30% defender damage bonus in raids and wolf attacks.
-    const militiaMult = this.researchBook.hasTech('militia_training') ? 1.3 : 1.0;
+    // Barracks training posts add 10% per drill slot (capped at 30% additional bonus).
+    const drillBonus = Math.min(0.3, aggregateCapacities(this.grid).drill * 0.1);
+    const militiaMult = (this.researchBook.hasTech('militia_training') ? 1.3 : 1.0) * (1 + drillBonus);
     if (this.day >= this.nextRaidDay && !this.raids.active) {
       this.musterRaid();
     }

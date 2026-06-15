@@ -35,6 +35,8 @@
 
     { "id": "well", "name": "Well", "roomTypes": ["yard", "storehouse"], "w": 1, "h": 1, "cost": { "stone": 6, "wood": 4 }, "buildWork": 120, "kind": "capacity", "capacity": { "kind": "well", "amount": 1 } },
 
-    { "id": "market_stall", "name": "Market Stall", "roomTypes": ["market"], "w": 2, "h": 1, "cost": { "wood": 8 }, "buildWork": 120, "kind": "capacity", "capacity": { "kind": "trade", "amount": 1 } }
+    { "id": "market_stall", "name": "Market Stall", "roomTypes": ["market"], "w": 2, "h": 1, "cost": { "wood": 8 }, "buildWork": 120, "kind": "capacity", "capacity": { "kind": "trade", "amount": 1 } },
+
+    { "id": "training_post", "name": "Training Post", "roomTypes": ["barracks"], "w": 2, "h": 2, "cost": { "wood": 10, "timber": 1 }, "buildWork": 200, "kind": "capacity", "capacity": { "kind": "drill", "amount": 1 } }
   ]
 }

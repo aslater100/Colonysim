@@ -32,7 +32,7 @@ import { TERRAIN, ZONE } from './sim/build';
 import {
   ROOM_TYPE_ID, ROOM_DEF_BY_NUM, ROOM_DEFS,
   STATION_DEF_BY_NUM, STATION_DEFS,
-  TICKS_PER_SECOND, SEASONS, START_YEAR, DAYS_PER_SEASON, DAYS_PER_YEAR,
+  TICKS_PER_SECOND, SEASONS, START_YEAR, DAYS_PER_SEASON, DAYS_PER_YEAR, MINUTES_PER_TICK, MINUTES_PER_DAY,
 } from './sim/defs';
 import { RESEARCH_PER_DESK_PER_DAY } from './sim/research';
 import { buildSprites } from './ui/sprites';
@@ -66,6 +66,7 @@ const ROOM_COLORS: Record<string, string> = {
   watchtower: '#506080',
   yard: '#507050',
   market: '#d4a020',
+  barracks: '#c05050',
 };
 
 // ── Starter town ──────────────────────────────────────────────────────────
@@ -419,6 +420,19 @@ function draw(): void {
   for (const o of core.builds) ctx.strokeRect(o.x * px + 1, o.y * px + 1, px - 2, px - 2);
   ctx.setLineDash([]);
 
+  // Day/night cycle: tickNo within the day drives a night darkness overlay.
+  // Night = roughly 10pm–5am (day fraction 0.77–1.0 + 0.0–0.21).
+  { const TICKS_PER_DAY = MINUTES_PER_DAY / MINUTES_PER_TICK;
+    const frac = (core.tickNo % TICKS_PER_DAY) / TICKS_PER_DAY;
+    // Ramp: 0 at 6am (0.25), peak at midnight (0.0/1.0), 0 at 6pm (0.75).
+    // Use a cosine to get a smooth bell (peak=1 at frac=0/1, zero at frac=0.5).
+    const nightAlpha = Math.max(0, Math.cos(frac * 2 * Math.PI)) * 0.35;
+    if (nightAlpha > 0.01) {
+      ctx.fillStyle = `rgba(10,15,40,${nightAlpha.toFixed(2)})`;
+      ctx.fillRect(0, 0, MAP * px, MAP * px);
+    }
+  }
+
   // Winter tint: subtle cold-blue overlay in the fallow season
   { const si = Math.floor((core.day % DAYS_PER_YEAR) / DAYS_PER_SEASON);
     if (si === 3) { ctx.fillStyle = '#4488bb16'; ctx.fillRect(0, 0, MAP * px, MAP * px); } }
@@ -473,7 +487,12 @@ function draw(): void {
   const droughtFlood = isDrought ? '  [DROUGHT]' : isFloodRisk ? '  [FLOOD RISK]' : '';
   const weatherColor = core.raidActive ? '#ff6b6b' : isDrought ? '#cc8833' : isFloodRisk ? '#44aacc' : skyColor;
   line(6, `${raidLine}  ${skyLabel}${droughtFlood}`, weatherColor);
-  line(7, `${paused ? 'PAUSED' : 'speed ' + speed + '×'}${core.builds.length > 0 ? `  blueprints: ${core.builds.length}` : ''}`);
+  { const TICKS_PER_DAY = MINUTES_PER_DAY / MINUTES_PER_TICK;
+    const frac = (core.tickNo % TICKS_PER_DAY) / TICKS_PER_DAY;
+    const hour = Math.floor(frac * 24);
+    const min = Math.floor((frac * 24 - hour) * 60);
+    const timeStr = `  ${hour.toString().padStart(2,'0')}:${min.toString().padStart(2,'0')}`;
+    line(7, `${paused ? 'PAUSED' : 'speed ' + speed + '×'}${timeStr}${core.builds.length > 0 ? `  blueprints: ${core.builds.length}` : ''}`); }
   { const svc = core.services();
     const parts: string[] = [`sleep ${svc.sleep}`];
     if (svc.watch > 0) parts.push(`watch ${svc.watch}`);
@@ -483,6 +502,7 @@ function draw(): void {
     if (svc.education > 0) parts.push(`edu ${svc.education}`);
     if (svc.medical > 0) parts.push(`med ${svc.medical}`);
     if (svc.trade > 0) parts.push(`trade ${svc.trade} (+${svc.trade * 2}g/day)`);
+    if (svc.drill > 0) parts.push(`drill ${svc.drill} (+${Math.min(30, svc.drill * 10)}% militia)`);
     line(8, parts.join('  '), '#aaa'); }
 
   // Tool info
@@ -521,7 +541,8 @@ function draw(): void {
   const done = rb.all().filter(id => id !== 'crop_rotation');
   const ptsPerDay = core.services().education * RESEARCH_PER_DESK_PER_DAY;
   const RPH = 16;
-  const RP_ROWS = 2 + Math.min(avail.length, 5) + Math.min(done.length, 3);
+  const queuedDescExtra = rb.queue && avail.some(t => t.id === rb.queue) ? 1 : 0;
+  const RP_ROWS = 2 + Math.min(avail.length, 5) + queuedDescExtra + Math.min(done.length, 3);
   const RPW = 300, RPH_TOTAL = RP_ROWS * RPH + 16;
   const rpx = canvas.width - RPW - 8, rpy = canvas.height - RPH_TOTAL - 8;
   ctx.fillStyle = '#000a'; ctx.fillRect(rpx, rpy, RPW, RPH_TOTAL);
@@ -541,8 +562,12 @@ function draw(): void {
       ctx.fillStyle = queued ? '#ffd700' : affordable ? '#88ff88' : '#aaaaff';
       const prefix = queued ? '> ' : '  ';
       const daysLeft = ptsPerDay > 0 && !affordable ? `~${Math.ceil((t.cost - rb.points) / ptsPerDay)}d` : affordable ? 'ready' : '?';
-      const label = `${prefix}${t.name} (${t.cost}pt ${daysLeft})`;
-      ctx.fillText(label, rpx + 6, rpy + 14 + row++ * RPH);
+      ctx.fillText(`${prefix}${t.name} (${t.cost}pt ${daysLeft})`, rpx + 6, rpy + 14 + row++ * RPH);
+      if (queued) { // show description only for the queued tech
+        ctx.fillStyle = '#888'; ctx.font = '10px monospace';
+        ctx.fillText(`    ${t.desc}`, rpx + 6, rpy + 14 + row++ * RPH);
+        ctx.font = '11px monospace';
+      }
     }
   }
   if (done.length > 0) {
