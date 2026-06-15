@@ -148,7 +148,7 @@ export const ZONE_DEFS: (ZoneDef | null)[] = [
   { id: 'field', terrain: TERRAIN.SOIL, resource: 'grain', renewable: true },
   { id: 'woodcutter', terrain: TERRAIN.TREE, resource: 'wood', renewable: false },
   { id: 'quarry', terrain: TERRAIN.ROCK, resource: 'stone', renewable: false },
-  { id: 'fishery', terrain: TERRAIN.WATER, resource: 'meal', renewable: true },
+  { id: 'fishery', terrain: TERRAIN.WATER, resource: 'fish_meal', renewable: true },
 ];
 
 // Portable base64 for the byte layers (no Buffer/btoa — runs in Node, browser, worker).

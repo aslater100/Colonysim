@@ -793,18 +793,26 @@ export class TownCore {
       else this.priceModifiers.set(kind, healed);
     }
 
-    // Feed: priority meal → bread → ale → raw grain (fallback; penalty thought added).
-    // Ale serves as food (same food value as a meal) and boosts recreation — an incentive
-    // to keep brew vats running. Mirrors the fat sim's consumeFood priority order. Count
-    // each food type consumed to drive the colony-wide food variety mood system.
+    // Feed: priority meal → game_meal → fish_meal → bread → ale → raw grain (fallback).
+    // game_meal (hunting) and fish_meal (fishing) are premium food types that boost
+    // diet variety; ale fills the stomach AND lifts recreation. Mirrors the fat sim's
+    // consumeFood priority order. Count each type for the colony food-variety mood system.
     const MEAL_VAL = TUNING.mealFoodValue;
     const GRAIN_VAL = TUNING.rawGrainFoodValue;
-    let eatMeal = 0, eatBread = 0, eatAle = 0, eatGrain = 0;
+    let eatMeal = 0, eatGameMeal = 0, eatFishMeal = 0, eatBread = 0, eatAle = 0, eatGrain = 0;
     for (let i = 0; i < a.count; i++) {
       if (a.food[i] >= 100) continue;
       if (this.stock.remove('meal', 1)) {
         a.food[i] = Math.min(100, a.food[i] + MEAL_VAL);
         eatMeal++;
+      } else if (this.stock.remove('game_meal', 1)) {
+        a.food[i] = Math.min(100, a.food[i] + MEAL_VAL);
+        a.addThought(i, this.tickNo, 3, TICKS_PER_DAY); // fresh game is a treat
+        eatGameMeal++;
+      } else if (this.stock.remove('fish_meal', 1)) {
+        a.food[i] = Math.min(100, a.food[i] + MEAL_VAL);
+        a.addThought(i, this.tickNo, 3, TICKS_PER_DAY); // fresh fish is a treat
+        eatFishMeal++;
       } else if (this.stock.remove('bread', 1)) {
         a.food[i] = Math.min(100, a.food[i] + MEAL_VAL);
         a.addThought(i, this.tickNo, 3, TICKS_PER_DAY); // bread is a slight mood boost
@@ -821,7 +829,13 @@ export class TownCore {
       }
     }
     // Food variety: rolling 7-day log drives mood bonuses/penalties.
-    const dayFood = eatMeal > 0 ? 'meal' : eatBread > 0 ? 'bread' : eatAle > 0 ? 'ale' : eatGrain > 0 ? 'grain' : null;
+    const dayFood = eatMeal > 0 ? 'meal'
+      : eatGameMeal > 0 ? 'game_meal'
+      : eatFishMeal > 0 ? 'fish_meal'
+      : eatBread > 0 ? 'bread'
+      : eatAle > 0 ? 'ale'
+      : eatGrain > 0 ? 'grain'
+      : null;
     if (dayFood) {
       this._foodVarietyLog.unshift(dayFood);
       if (this._foodVarietyLog.length > 7) this._foodVarietyLog.length = 7;

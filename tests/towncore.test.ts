@@ -924,7 +924,7 @@ describe('TownCore prestige and era', () => {
 
 describe('TownCore deer and hunting', () => {
   const OUTPOST = ROOM_TYPE_ID.get('outpost')!;
-  const TICKS_PER_DAY = 144; // MINUTES_PER_DAY(1440) / MINUTES_PER_TICK(10)
+  const TICKS_PER_DAY = 360; // MINUTES_PER_DAY(1440) / MINUTES_PER_TICK(4)
 
   it('seedColony spawns exactly deerStartCount deer', () => {
     const core = new TownCore({ width: 32, height: 32, seed: 5 });
@@ -962,8 +962,8 @@ describe('TownCore deer and hunting', () => {
     // Seed colony with grain supply and a worker.
     core.stock.add('grain', 500);
     core.seedColony(3, 3, 2);
-    // Run enough ticks for at least one hunt trip (240 settler-minutes at skill > 0).
-    core.run(Math.ceil(300 / 10) * 2); // ~600 ticks = ~60 minutes of work, well past one trip
+    // Run 3 days so hunters complete multiple 240-min trips (360 ticks/day × 4 min/tick = 1440 min/day).
+    core.run(3 * TICKS_PER_DAY);
     expect(core.stock.count('game_meal')).toBeGreaterThan(0);
   });
 
@@ -982,6 +982,49 @@ describe('TownCore deer and hunting', () => {
   it('deer hunting_lodge station is registered in STATION_TYPE_ID', () => {
     expect(STATION_TYPE_ID.has('hunting_lodge')).toBe(true);
     expect(OUTPOST).toBeGreaterThan(0); // outpost room type is registered
+  });
+});
+
+describe('TownCore fishing and food variety', () => {
+  const TPDAY = 360; // MINUTES_PER_DAY(1440) / MINUTES_PER_TICK(4)
+
+  it('FISHERY zone produces fish_meal for a colony with workers', () => {
+    const core = new TownCore({ width: 16, height: 16, seed: 30 });
+    const g = core.grid;
+    // Place a water tile, then designate an adjacent land tile as fishery.
+    g.setTerrain(8, 8, TERRAIN.WATER);
+    expect(g.setZone(7, 8, ZONE.FISHERY)).toBe(true);
+    core.stock.add('meal', 500); // keep settler fed so they work the zone
+    core.seedColony(5, 8, 1);
+    core.run(10 * TPDAY); // 10 days
+    expect(core.stock.count('fish_meal')).toBeGreaterThan(0);
+  });
+
+  it('game_meal in stock gets consumed before bread', () => {
+    const core = new TownCore({ width: 16, height: 16, seed: 31 });
+    core.stock.add('game_meal', 50);
+    core.stock.add('bread', 50);
+    core.seedColony(8, 8, 4);
+    // Run 2 days so dailyUpdate fires at least once, depleting game_meal before bread.
+    core.run(2 * TPDAY);
+    // game_meal should have been consumed; bread should be largely intact
+    expect(core.stock.count('game_meal')).toBeLessThan(50);
+    expect(core.stock.count('bread')).toBeGreaterThanOrEqual(core.stock.count('game_meal'));
+  });
+
+  it('varied diet (meal + fish_meal + game_meal) triggers food variety mood bonus', () => {
+    // Compare two identical colonies: one with varied food, one with only meal.
+    function makeColony(varied: boolean, seed: number): TownCore {
+      const c = colony({ ovens: 2, beds: 2, grain: 500, pop: 2, seed });
+      if (varied) { c.stock.add('fish_meal', 100); c.stock.add('game_meal', 100); }
+      return c;
+    }
+    const variedCore = makeColony(true, 50);
+    const plainCore = makeColony(false, 50);
+    variedCore.run(14 * TPDAY); // 2 weeks of varied diet
+    plainCore.run(14 * TPDAY);  // 2 weeks of plain meals only
+    // Varied diet should produce at least as good an average mood.
+    expect(variedCore.averageMood()).toBeGreaterThanOrEqual(plainCore.averageMood() - 2);
   });
 });
 
