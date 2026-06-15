@@ -284,9 +284,24 @@ need GUI verification, so they should not be landed blind from headless CI.
 **Plan file:** `PLAN.md` (this file, committed to repo)  
 **Toolchain:** `npm ci` once per fresh container, then `npx vitest run` (full suite ~90s), `npx tsc --noEmit`, `npm run build`. CI (`.github/workflows/test.yml`) runs `npm install → npm run build → npm test` on Node 24. Note: `tsconfig` `include` is `["src"]`, so `tsc` checks `src/` only — `tests/` and `scripts/` are verified by `vitest`/`tsx` at run time, not by `tsc`.
 
-### Current state (updated 2026-06-15, PR #134)
+### Current state (updated 2026-06-15, PR #134 merged)
 
-**Test baseline: 815+ passing** (↑ from 616). `tsc` + `vite build` clean. PR #121 merged. **Stage 4 behavior port: traits+skills, wounds/medical, relationships/thoughts, and raids/combat landed. B-6 PART 1 (TownCore) fully integrated.** All additive — the live game is untouched. **PR #134 adds:** comprehensive event tests (all choice/non-choice events tested), drought/flood HUD indicator, research ETA per tech, Y-key focus cycle, prestige for pop milestones and tiers (25/50/100/200), Scholar Traveller event, sick indicator on settlers, colony health warning in HUD. SAVE_VERSION is now 10. The B-6 PART 3 swap remains gated on GUI play-verify.
+**Test baseline: 825 passing** (↑ from 616). `tsc` + `vite build` clean. PR #134 merged to main. **Stage 4 behavior port: traits+skills, wounds/medical, relationships/thoughts, and raids/combat landed. B-6 PART 1 (TownCore) fully integrated.** All additive — the live game is untouched. SAVE_VERSION is 10. The B-6 PART 3 swap remains gated on GUI play-verify.
+
+**PR #134 (merged) adds — full feature list:**
+- Comprehensive event tests (all choice/non-choice events tested), drought/flood HUD indicator, research ETA per tech, Y-key focus cycle, prestige for pop milestones and tiers (25/50/100/200), Scholar Traveller event, sick indicator on settlers, colony health warning in HUD.
+- **Starter town improvements:** library + infirmary pre-built from day 1; initial `herbs: 4` in stock.
+- **New events:** `evtChoiceHealer` (Wandering Healer — pay 3 herbs to cure all sick/wounded settlers; falls back to wanderer if colony is healthy) and `evtMineralStrike` (auto: +8–15 iron_ore from lucky dig). Event dispatch probabilities updated to include both.
+- **New rooms + stations:** `market` room (open-air OK) with `market_stall` station (capacity kind `trade: 1`); `barracks` room (enclosed) with `training_post` station (capacity kind `drill: 1`). Both wired through `CapacityKind`, `RoomOutput`, `RoomServices`, and `aggregateCapacities`.
+- **Market gold income:** `dailyUpdate()` pays `trade × 2g/day`; weekly log entry. Visible in HUD services line as `trade N (+Ng/day)`.
+- **Barracks drill bonus:** militia power multiplied by `1 + min(0.3, drill × 0.1)` — each training post adds 10% militia effectiveness, capped at +30%.
+- **Carpentry bench:** added to `workshop` room; recipe `wood×4 → tools×1` (180 work). Makes the workshop a general early-game crafting hub before the smithy.
+- **Rope scaffolding bonus:** rope in stock adds +10% build speed (`ropeBuildSpeedBonus: 0.1` in TUNING), giving the rope_walk station a meaningful purpose without a dedicated rope consumer.
+- **Day/night cycle:** cosine-based navy overlay (`rgba(10,15,40,α)`) using `tickNo % TICKS_PER_DAY`; darkest at midnight (35% opacity), fully transparent at noon. Rendered after all game elements.
+- **Clock display:** HUD line 7 shows `HH:MM` derived from the day fraction.
+- **Food projection:** HUD line 1 appends `[Nd left]` when net meal flow is negative; text turns red when < 7 days remain.
+- **16× speed:** key `4` sets `speed = 16`.
+- **Tech descriptions in research panel:** queued tech now shows `.desc` in a smaller grey sub-line so the player knows what each tech unlocks before committing.
 
 **Scale engine (Track C):**
 - **Stage 1 ✅** — `src/sim/agents.ts` (`AgentStore`, SoA agent core).
