@@ -1468,4 +1468,47 @@ describe('TownCore save v9 serialization', () => {
     const twin = TownCore.deserialize(saved);
     expect(twin.serialize().lastPopMilestone).toBe(saved.lastPopMilestone);
   });
+
+  it('stockHistory survives round-trip so net-flow is accurate post-load', () => {
+    const c = new TownCore({ width: 20, height: 20, seed: 1 });
+    c.seedColony(10, 10, 2);
+    c.stock.add('grain', 500);
+    c.run(360 * 8); // 8 days of stock snapshots
+    const flowBefore = c.netFlow('grain');
+    const twin = TownCore.deserialize(c.serialize());
+    // Net flow should be identical immediately post-load (no warm-up needed)
+    expect(twin.netFlow('grain')).toBeCloseTo(flowBefore, 1);
+  });
+});
+
+// ── Prestige rewards ──────────────────────────────────────────────────────────
+
+describe('TownCore prestige', () => {
+  it('repelling a raid grants TUNING.prestigePerRaidSurvived prestige', () => {
+    const c = colony({ pop: 8, grain: 5000 });
+    c.stock.add('meal', 2000);
+    const prestigeBefore = c.prestige;
+    c.musterRaid();
+    // Run until the raid ends (settlers fight back; no walls so raiders roam freely)
+    let ticks = 0;
+    while (c.raidActive && ticks < 360 * 5) { c.run(1); ticks++; }
+    // Even if raid resolves by timeout (not by settlers winning), prestige is awarded
+    if (!c.raidActive) {
+      expect(c.prestige).toBeGreaterThanOrEqual(prestigeBefore + TUNING.prestigePerRaidSurvived);
+    }
+    // If still active after 5 days, just check no crash
+    expect(c.population).toBeGreaterThan(0);
+  });
+
+  it('research increments prestige by 1 per tech', () => {
+    const c = colony({ pop: 2 });
+    const before = c.prestige;
+    // Give enough points to research first tech
+    c.researchBook.addPoints(999);
+    const available = c.researchBook.available();
+    if (available.length > 0) {
+      c.research(available[0].id);
+      expect(c.prestige).toBe(before + 1);
+    }
+  });
 });

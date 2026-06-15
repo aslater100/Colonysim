@@ -231,6 +231,11 @@ export interface TownCoreSave {
   festivalCooldown?: number;
   /** v9+: last population milestone already logged (prevents milestone spam on load). */
   lastPopMilestone?: number;
+  /** v9+: rolling stock-level history for net-flow display (empty on old saves). */
+  stockHistory?: Record<string, number[]>;
+  /** v9+: drought/flood active state (prevents duplicate transition logs on load). */
+  droughtActive?: boolean;
+  floodActive?: boolean;
 }
 
 export interface TownCoreOpts {
@@ -628,7 +633,10 @@ export class TownCore {
     this._tickDeer();
 
     // A repelled raid / a pack that has slunk off: log the all-clear once.
-    if (wasRaiding && !this.raids.active) this.addLog('The raiders break and flee. The colony holds.', 'good');
+    if (wasRaiding && !this.raids.active) {
+      this.addLog('The raiders break and flee. The colony holds.', 'good');
+      this.prestige += TUNING.prestigePerRaidSurvived;
+    }
     if (wasWolves && !this.wolves.active) this.addLog('The wolves slink back into the wilds.', 'info');
 
     // 6. Deaths: swap-remove the starved (iterate backwards — splice-safe). Each
@@ -1817,6 +1825,9 @@ export class TownCore {
       clothingDay: this._clothingDay > 0 ? this._clothingDay : undefined,
       festivalCooldown: this._festivalCooldown > 0 ? this._festivalCooldown : undefined,
       lastPopMilestone: this._lastPopMilestone > 0 ? this._lastPopMilestone : undefined,
+      stockHistory: this._stockHistory.size > 0 ? Object.fromEntries(this._stockHistory) : undefined,
+      droughtActive: this._droughtActive || undefined,
+      floodActive: this._floodActive || undefined,
     };
   }
 
@@ -1879,6 +1890,14 @@ export class TownCore {
     if (data.clothingDay != null) (core as unknown as { _clothingDay: number })._clothingDay = data.clothingDay;
     if (data.festivalCooldown != null) (core as unknown as { _festivalCooldown: number })._festivalCooldown = data.festivalCooldown;
     if (data.lastPopMilestone != null) (core as unknown as { _lastPopMilestone: number })._lastPopMilestone = data.lastPopMilestone;
+    // v9+: restore 7-day stock history so net-flow display is live immediately post-load.
+    if (data.stockHistory) {
+      const hist = (core as unknown as { _stockHistory: Map<string, number[]> })._stockHistory;
+      for (const [k, arr] of Object.entries(data.stockHistory)) hist.set(k, arr);
+    }
+    // v9+: restore drought/flood active flags so season-transition logs don't re-fire.
+    if (data.droughtActive) (core as unknown as { _droughtActive: boolean })._droughtActive = true;
+    if (data.floodActive) (core as unknown as { _floodActive: boolean })._floodActive = true;
     return core;
   }
 }
