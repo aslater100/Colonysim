@@ -17,6 +17,9 @@ import { TitleScreen } from './ui/titlescreen';
 import { WindowManager } from './ui/WindowManager';
 import type { TownDesign } from './sim/defs';
 
+// Route to the standalone TownCore play-test harness when ?core is in the URL.
+if (new URLSearchParams(location.search).has('core')) location.replace('./core.html');
+
 const root = document.getElementById('app')!;
 const canvas = document.createElement('canvas');
 canvas.id = 'game';

@@ -81,6 +81,11 @@ export interface RoomOutput {
   education: number;
   medical: number;
   storage: number;
+  burial: number;
+  watch: number;
+  well: number;
+  trade: number;
+  drill: number;
   /** net resource flow per full work cycle of every craft station (inputs negative) */
   flow: Partial<Record<ResourceKind, number>>;
 }
@@ -101,6 +106,8 @@ export interface BuildGridSave {
   ore?: string;
   /** base64 of the harvest-zone layer (optional: absent in pre-zone saves). */
   zone?: string;
+  /** base64 of the sapling-age layer (optional: absent in pre-forester saves). Days growing; 0 = no sapling. */
+  saplingAge?: string;
   floor: string;
   roomType: string;
   stations: Array<{ id: number; typeId: number; x: number; y: number; w: number; h: number }>;
@@ -129,25 +136,28 @@ export const TERRAIN_NAMES = ['grass', 'tree', 'water', 'soil', 'rock'] as const
  * zone over matching terrain and the colony works it into raw goods: a FIELD on
  * soil grows grain, a WOODCUTTER fells forest for wood, a QUARRY cuts rock for
  * stone (or iron ore where it's flecked), a FISHERY by water lands meals.
+ * FLAX is a perennial fibre crop on soil — produces flax year-round for the loom.
  * WOODCUTTER/QUARRY are consuming — the tile reverts to grass once worked out —
- * while FIELD/FISHERY renew. Each id's `terrain` is the tile it may sit on
+ * while FIELD/FISHERY/FLAX renew. Each id's `terrain` is the tile it may sit on
  * (FISHERY is special-cased: any passable tile next to water).
  */
-export const ZONE = { NONE: 0, FIELD: 1, WOODCUTTER: 2, QUARRY: 3, FISHERY: 4 } as const;
+export const ZONE = { NONE: 0, FIELD: 1, WOODCUTTER: 2, QUARRY: 3, FISHERY: 4, FLAX: 5 } as const;
 export type ZoneCode = (typeof ZONE)[keyof typeof ZONE];
 export interface ZoneDef {
   id: string;
   terrain: number;        // required terrain under the zone (FISHERY ignores this)
   resource: ResourceKind; // what a worked tile yields
   renewable: boolean;     // false → the tile is consumed (terrain → grass) when worked
+  seasonal?: boolean;     // true → zone lies fallow in winter (default true for FIELD, false otherwise)
 }
 /** 1-based; index 0 = ZONE.NONE. */
 export const ZONE_DEFS: (ZoneDef | null)[] = [
   null,
-  { id: 'field', terrain: TERRAIN.SOIL, resource: 'grain', renewable: true },
+  { id: 'field', terrain: TERRAIN.SOIL, resource: 'grain', renewable: true, seasonal: true },
   { id: 'woodcutter', terrain: TERRAIN.TREE, resource: 'wood', renewable: false },
   { id: 'quarry', terrain: TERRAIN.ROCK, resource: 'stone', renewable: false },
-  { id: 'fishery', terrain: TERRAIN.WATER, resource: 'meal', renewable: true },
+  { id: 'fishery', terrain: TERRAIN.WATER, resource: 'fish_meal', renewable: true },
+  { id: 'flax', terrain: TERRAIN.SOIL, resource: 'flax', renewable: true },
 ];
 
 // Portable base64 for the byte layers (no Buffer/btoa — runs in Node, browser, worker).
@@ -209,6 +219,8 @@ export class BuildGrid {
   readonly ore: Uint8Array;
   /** Harvest-zone designation (see ZONE). 0 = none. Painted over matching terrain. */
   readonly zone: Uint8Array;
+  /** Days since the tile's tree was felled; 0 = no sapling. Advances in TownCore dailyUpdate. */
+  readonly saplingAge: Uint8Array;
 
   /** Placed stations, indexed by id. Compacted on remove (swap-remove). */
   readonly stations: Station[] = [];
@@ -234,6 +246,7 @@ export class BuildGrid {
     this.terrain = new Uint8Array(this.size); // all GRASS (0)
     this.ore = new Uint8Array(this.size);
     this.zone = new Uint8Array(this.size);
+    this.saplingAge = new Uint8Array(this.size);
     this._visited = new Uint8Array(this.size);
   }
 
@@ -617,7 +630,7 @@ export class BuildGrid {
    *
    * `AState.Working = 3`; agents in any other state are not counted as workers.
    */
-  tickProduction(agents: WorkerSource, stockpile: Stockpile, minutesPerTick: number): void {
+  tickProduction(agents: WorkerSource, stockpile: Stockpile, minutesPerTick: number, stationSpeedMult?: (stationId: string) => number): void {
     // Sum worker *effort* per station in one O(agents) pass. With no skill/trait
     // columns each worker is 1.0 effort (so progress = minutes × headcount, exactly
     // as before); with them, a skilled or industrious settler advances the recipe
@@ -641,7 +654,8 @@ export class BuildGrid {
       if (workers <= 0) continue;
 
       const recipe = def.recipe;
-      let progress = (this._progress.get(s.id) ?? 0) + minutesPerTick * workers;
+      const speedMult = stationSpeedMult ? stationSpeedMult(def.id) : 1;
+      let progress = (this._progress.get(s.id) ?? 0) + minutesPerTick * workers * speedMult;
 
       if (progress >= recipe.work) {
         if (stockpile.removeAll(recipe.inputs)) {
@@ -700,6 +714,7 @@ export class BuildGrid {
       terrain: bytesToB64(this.terrain),
       ore: bytesToB64(this.ore),
       zone: bytesToB64(this.zone),
+      saplingAge: bytesToB64(this.saplingAge),
       floor: bytesToB64(this.floor),
       roomType: bytesToB64(this.roomType),
       stations: this.stations.map((s) => ({ id: s.id, typeId: s.typeId, x: s.x, y: s.y, w: s.w, h: s.h })),
@@ -716,6 +731,7 @@ export class BuildGrid {
     if (data.terrain) g.terrain.set(b64ToBytes(data.terrain, g.size)); // backfill: old saves are all grass
     if (data.ore) g.ore.set(b64ToBytes(data.ore, g.size));
     if (data.zone) g.zone.set(b64ToBytes(data.zone, g.size)); // backfill: old saves have no zones
+    if (data.saplingAge) g.saplingAge.set(b64ToBytes(data.saplingAge, g.size));
     g.floor.set(b64ToBytes(data.floor, g.size));
     g.roomType.set(b64ToBytes(data.roomType, g.size));
     for (const s of data.stations) {
@@ -734,7 +750,7 @@ export class BuildGrid {
 
   /** Aggregate everything a room delivers, summed over its valid stations. */
   roomOutput(room: Room): RoomOutput {
-    const out: RoomOutput = { sleep: 0, recreation: 0, education: 0, medical: 0, storage: 0, flow: {} };
+    const out: RoomOutput = { sleep: 0, recreation: 0, education: 0, medical: 0, storage: 0, burial: 0, watch: 0, well: 0, trade: 0, drill: 0, flow: {} };
     for (const sid of room.stationIds) {
       const s = this.stationById(sid);
       if (!s) continue;

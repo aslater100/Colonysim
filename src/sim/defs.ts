@@ -154,6 +154,8 @@ export interface TradeOrder {
   thresholdMin?: number;
   thresholdMax?: number;
   enabled: boolean;
+  /** Game-day the order last executed (for periodic throttling). */
+  lastFiredDay?: number;
 }
 
 export interface TradeRecord {
@@ -354,7 +356,7 @@ export interface RoomTypeDef {
 }
 
 /** Passive capacity a `capacity` station contributes to its room. */
-export type CapacityKind = 'sleep' | 'recreation' | 'education' | 'medical' | 'storage';
+export type CapacityKind = 'sleep' | 'recreation' | 'education' | 'medical' | 'storage' | 'burial' | 'watch' | 'well' | 'trade' | 'drill';
 
 /** A recipe a `craft` station runs: inputs → outputs over `work` settler-minutes. */
 export interface StationRecipe {
@@ -620,6 +622,7 @@ export const TUNING = {
   smeltCokePerIron: 1,        // coke consumed per iron bar
   smithIronPerTools: 2,       // 2 iron → 1 tools
   toolsBuildSpeedBonus: 0.2,  // 20% faster build work while tools in stock
+  ropeBuildSpeedBonus: 0.1,   // 10% faster build work from rope scaffolding (stacks with tools)
   millGrainPerFlour: 1,       // 1 grain → 1.2 flour equivalent (ratio applied in cook)
   brewGrainPerAle: 2,         // 2 grain → 1 ale
   herbsHealBonus: 0.5,        // apothecary adds 50% regen on top of clinic base
@@ -699,6 +702,8 @@ export const TUNING = {
   wagnerExp: 1.15, // upkeep outpaces build cost (public-sector share rises)
   researchBaseRate: 2, // ≈ a young state's raw RP/day, with headroom so early game is unscaled
   researchScaleExp: 0.6, // RP-cost growth vs. nation size (<1: net speedup remains)
+  // Market stalls: each stall generates passive gold income from passing trade
+  goldPerMarketStallPerDay: 2,
 };
 
 // ---- Parcel / land-expansion tuning (Track B Phase 2–3) ----

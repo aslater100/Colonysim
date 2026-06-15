@@ -15,6 +15,7 @@
     { "id": "saw_bench", "name": "Saw Bench", "roomTypes": ["sawmill"], "w": 2, "h": 1, "cost": { "wood": 12 }, "buildWork": 200, "kind": "craft", "recipe": { "inputs": { "wood": 3 }, "outputs": { "timber": 2 }, "work": 60 } },
     { "id": "loom", "name": "Loom", "roomTypes": ["workshop"], "w": 2, "h": 1, "cost": { "wood": 10, "timber": 2 }, "buildWork": 240, "kind": "craft", "recipe": { "inputs": { "flax": 3 }, "outputs": { "clothes": 1 }, "work": 120 } },
     { "id": "rope_walk", "name": "Rope Walk", "roomTypes": ["workshop"], "w": 3, "h": 1, "cost": { "wood": 8 }, "buildWork": 180, "kind": "craft", "recipe": { "inputs": { "flax": 2 }, "outputs": { "rope": 2 }, "work": 80 } },
+    { "id": "carpentry_bench", "name": "Carpentry Bench", "roomTypes": ["workshop"], "w": 2, "h": 1, "cost": { "wood": 12 }, "buildWork": 160, "kind": "craft", "recipe": { "inputs": { "wood": 4 }, "outputs": { "tools": 1 }, "work": 180 } },
 
     { "id": "kiln", "name": "Kiln", "roomTypes": ["kilnhouse"], "w": 2, "h": 2, "cost": { "stone": 12, "clay": 6 }, "buildWork": 300, "kind": "craft", "recipe": { "inputs": { "clay": 3 }, "outputs": { "brick": 3 }, "work": 90 } },
     { "id": "coke_oven", "name": "Coke Oven", "roomTypes": ["kilnhouse"], "w": 2, "h": 2, "cost": { "brick": 10, "stone": 8 }, "buildWork": 360, "kind": "craft", "recipe": { "inputs": { "coal": 2 }, "outputs": { "coke": 2 }, "work": 100 } },
@@ -25,6 +26,17 @@
     { "id": "desk", "name": "Study Desk", "roomTypes": ["library"], "w": 1, "h": 1, "cost": { "wood": 6 }, "buildWork": 120, "kind": "capacity", "capacity": { "kind": "education", "amount": 1 } },
     { "id": "table", "name": "Table", "roomTypes": ["tavern"], "w": 2, "h": 1, "cost": { "wood": 6 }, "buildWork": 100, "kind": "capacity", "capacity": { "kind": "recreation", "amount": 2 } },
     { "id": "sickbed", "name": "Sickbed", "roomTypes": ["infirmary"], "w": 1, "h": 2, "cost": { "wood": 8, "clothes": 1 }, "buildWork": 140, "kind": "capacity", "capacity": { "kind": "medical", "amount": 1 } },
-    { "id": "shelf", "name": "Shelf", "roomTypes": ["storehouse", "library"], "w": 1, "h": 1, "cost": { "wood": 5 }, "buildWork": 80, "kind": "capacity", "capacity": { "kind": "storage", "amount": 50 } }
+    { "id": "shelf", "name": "Shelf", "roomTypes": ["storehouse", "library"], "w": 1, "h": 1, "cost": { "wood": 5 }, "buildWork": 80, "kind": "capacity", "capacity": { "kind": "storage", "amount": 50 } },
+    { "id": "grave_marker", "name": "Grave Marker", "roomTypes": ["burial_ground"], "w": 1, "h": 1, "cost": { "wood": 3 }, "buildWork": 60, "kind": "capacity", "capacity": { "kind": "burial", "amount": 1 } },
+
+    { "id": "hunting_lodge", "name": "Hunting Lodge", "roomTypes": ["outpost"], "w": 2, "h": 2, "cost": { "wood": 10 }, "buildWork": 180, "kind": "craft", "recipe": { "inputs": {}, "outputs": { "game_meal": 3 }, "work": 240 } },
+
+    { "id": "watch_post", "name": "Watch Post", "roomTypes": ["watchtower"], "w": 1, "h": 1, "cost": { "wood": 4, "timber": 1 }, "buildWork": 100, "kind": "capacity", "capacity": { "kind": "watch", "amount": 1 } },
+
+    { "id": "well", "name": "Well", "roomTypes": ["yard", "storehouse"], "w": 1, "h": 1, "cost": { "stone": 6, "wood": 4 }, "buildWork": 120, "kind": "capacity", "capacity": { "kind": "well", "amount": 1 } },
+
+    { "id": "market_stall", "name": "Market Stall", "roomTypes": ["market"], "w": 2, "h": 1, "cost": { "wood": 8 }, "buildWork": 120, "kind": "capacity", "capacity": { "kind": "trade", "amount": 1 } },
+
+    { "id": "training_post", "name": "Training Post", "roomTypes": ["barracks"], "w": 2, "h": 2, "cost": { "wood": 10, "timber": 1 }, "buildWork": 200, "kind": "capacity", "capacity": { "kind": "drill", "amount": 1 } }
   ]
 }

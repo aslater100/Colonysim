@@ -121,8 +121,12 @@ export class RaidForce {
    * bashing through any wall in the way; awake settlers within reach fight back.
    * Mutates agent health/wounds and the grid's walls. Clears `active` when the
    * last raider falls or escapes. Returns the number of agents freshly wounded.
+   *
+   * `defenderDamageMult` scales settler melee damage (e.g. 1.3 for militia_training).
+   * `trapDamageMult` scales spike-trap hit damage (1.5 with fortification).
+   * `wallBashMult` scales how fast raiders damage walls (0.8 = 20% slower with fortification).
    */
-  tick(grid: BuildGrid, agents: AgentStore, tickNo: number): number {
+  tick(grid: BuildGrid, agents: AgentStore, tickNo: number, defenderDamageMult = 1.0, trapDamageMult = 1.0, wallBashMult = 1.0): number {
     if (!this.active) return 0;
     if (tickNo >= this.until) for (const r of this.raiders) r.fleeing = true;
 
@@ -132,7 +136,7 @@ export class RaidForce {
       if (r.health <= 0) { this.slain++; continue; }
 
       if (r.fleeing) {
-        this.stepToEdge(r, grid);
+        this.stepToEdge(r, grid, trapDamageMult, wallBashMult);
         // Off the edge → gone.
         if (r.x <= 0 || r.y <= 0 || r.x >= grid.width - 1 || r.y >= grid.height - 1) continue;
         surviving.push(r);
@@ -152,7 +156,7 @@ export class RaidForce {
         agents.inflictWound(target, tickNo);
         if (fresh) wounded++;
       } else {
-        this.advance(r, dx / dist, dy / dist, ADVANCE_SPEED, grid);
+        this.advance(r, dx / dist, dy / dist, ADVANCE_SPEED, grid, trapDamageMult, wallBashMult);
       }
       surviving.push(r);
     }
@@ -163,7 +167,7 @@ export class RaidForce {
       if (agents.state[i] === AState.Sleeping || agents.health[i] <= 0) continue;
       const r = nearestRaider(this.raiders, agents.posX[i], agents.posY[i], DEFEND_REACH);
       if (!r) continue;
-      r.health -= settlerMeleeDamagePerHour(agents, i) * HOURS_PER_TICK;
+      r.health -= settlerMeleeDamagePerHour(agents, i) * HOURS_PER_TICK * defenderDamageMult;
     }
 
     // Cull the freshly killed so a slain raider can't deal a parting blow next tick.
@@ -174,14 +178,14 @@ export class RaidForce {
   }
 
   /** Step one move toward (ux,uy), bashing through a wall tile if one blocks it. */
-  private advance(r: Raider, ux: number, uy: number, speed: number, grid: BuildGrid): void {
+  private advance(r: Raider, ux: number, uy: number, speed: number, grid: BuildGrid, trapDamageMult = 1.0, wallBashMult = 1.0): void {
     const nx = r.x + ux * speed;
     const ny = r.y + uy * speed;
     const tx = Math.round(nx);
     const ty = Math.round(ny);
     if (grid.inBounds(tx, ty) && !grid.passable(tx, ty)) {
       const idx = ty * grid.width + tx;
-      const hp = (this.wallHp.get(idx) ?? WALL_HP) - TUNING.wallDamagePerHour * HOURS_PER_TICK;
+      const hp = (this.wallHp.get(idx) ?? WALL_HP) - TUNING.wallDamagePerHour * HOURS_PER_TICK * wallBashMult;
       if (hp <= 0) { grid.clearWall(tx, ty); this.wallHp.delete(idx); }
       else this.wallHp.set(idx, hp);
       return; // bashing costs the move
@@ -189,18 +193,18 @@ export class RaidForce {
     r.x = nx;
     r.y = ny;
     // Spike trap: the first raider onto an armed tile takes a heavy one-shot hit.
-    if (grid.tripTrap(Math.round(r.x), Math.round(r.y))) r.health -= TUNING.trapDamage;
+    if (grid.tripTrap(Math.round(r.x), Math.round(r.y))) r.health -= TUNING.trapDamage * trapDamageMult;
   }
 
   /** Fleeing: walk straight toward the nearest map edge, bashing out if walled. */
-  private stepToEdge(r: Raider, grid: BuildGrid): void {
+  private stepToEdge(r: Raider, grid: BuildGrid, trapDamageMult = 1.0, wallBashMult = 1.0): void {
     const distLeft = r.x, distRight = grid.width - 1 - r.x;
     const distTop = r.y, distBottom = grid.height - 1 - r.y;
     const minH = Math.min(distLeft, distRight), minV = Math.min(distTop, distBottom);
     let ux = 0, uy = 0;
     if (minH < minV) ux = distLeft < distRight ? -1 : 1;
     else uy = distTop < distBottom ? -1 : 1;
-    this.advance(r, ux, uy, FLEE_SPEED, grid);
+    this.advance(r, ux, uy, FLEE_SPEED, grid, trapDamageMult, wallBashMult);
   }
 
   serialize(): RaidForceSave {

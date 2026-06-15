@@ -284,9 +284,9 @@ need GUI verification, so they should not be landed blind from headless CI.
 **Plan file:** `PLAN.md` (this file, committed to repo)  
 **Toolchain:** `npm ci` once per fresh container, then `npx vitest run` (full suite ~90s), `npx tsc --noEmit`, `npm run build`. CI (`.github/workflows/test.yml`) runs `npm install → npm run build → npm test` on Node 24. Note: `tsconfig` `include` is `["src"]`, so `tsc` checks `src/` only — `tests/` and `scripts/` are verified by `vitest`/`tsx` at run time, not by `tsc`.
 
-### Current state (updated 2026-06-15)
+### Current state (updated 2026-06-15, PR #134)
 
-**Test baseline: 616 passing** (599 prior + raids/combat parity port). `tsc` + `vite build` clean. PR #121 merged. **Stage 4 behavior port: traits+skills (v0.33.0), wounds/medical (v0.34.0), relationships/thoughts (v0.35.0), and raids/combat (`src/sim/raid.ts`) landed. UI performance and window management: zoom-LOD rendering + WindowManager + tabbed panels.** All additive — the live game is still untouched; the swap (B-6 PART 2) remains gated on a GUI play-test.
+**Test baseline: 815+ passing** (↑ from 616). `tsc` + `vite build` clean. PR #121 merged. **Stage 4 behavior port: traits+skills, wounds/medical, relationships/thoughts, and raids/combat landed. B-6 PART 1 (TownCore) fully integrated.** All additive — the live game is untouched. **PR #134 adds:** comprehensive event tests (all choice/non-choice events tested), drought/flood HUD indicator, research ETA per tech, Y-key focus cycle, prestige for pop milestones and tiers (25/50/100/200), Scholar Traveller event, sick indicator on settlers, colony health warning in HUD. SAVE_VERSION is now 10. The B-6 PART 3 swap remains gated on GUI play-verify.
 
 **Scale engine (Track C):**
 - **Stage 1 ✅** — `src/sim/agents.ts` (`AgentStore`, SoA agent core).

@@ -43,6 +43,13 @@ export interface RoomServices {
   education: number;
   medical: number;
   storage: number;
+  burial: number;
+  watch: number;
+  well: number;
+  /** Market stall capacity — each stall generates gold income each day. */
+  trade: number;
+  /** Barracks drill capacity — each training post boosts militia effectiveness. */
+  drill: number;
 }
 
 // Per-hour need rates (aligned with TUNING.sleepRestPerHour.bed / recreationPerHour
@@ -59,7 +66,7 @@ const CLINIC_REGEN_MULT = TUNING.clinicRegenMult;       // ×regen resting in an
 const APOTHECARY_HEAL_MULT = TUNING.apothecaryHealMult; // extra ×regen when medicine is applied
 const MEDICINE_PER_TREAT = 1;                           // medicine consumed to cure one casualty
 
-const EMPTY_OUTPUT: RoomOutput = { sleep: 0, recreation: 0, education: 0, medical: 0, storage: 0, flow: {} };
+const EMPTY_OUTPUT: RoomOutput = { sleep: 0, recreation: 0, education: 0, medical: 0, storage: 0, burial: 0, watch: 0, well: 0, trade: 0, drill: 0, flow: {} };
 
 /** Is this room currently usable (an enclosure-required type must be walled in)? */
 function roomUsable(room: Room): boolean {
@@ -76,7 +83,7 @@ export function roomAt(grid: BuildGrid, x: number, y: number): Room | null {
 
 /** Town-wide service capacities, summing only usable rooms. Call after rebuildRooms(). */
 export function aggregateCapacities(grid: BuildGrid): RoomServices {
-  const out: RoomServices = { sleep: 0, recreation: 0, education: 0, medical: 0, storage: 0 };
+  const out: RoomServices = { sleep: 0, recreation: 0, education: 0, medical: 0, storage: 0, burial: 0, watch: 0, well: 0, trade: 0, drill: 0 };
   for (const room of grid.rooms) {
     if (!roomUsable(room)) continue;
     const o = grid.roomOutput(room);
@@ -85,6 +92,11 @@ export function aggregateCapacities(grid: BuildGrid): RoomServices {
     out.education += o.education;
     out.medical += o.medical;
     out.storage += o.storage;
+    out.burial += o.burial;
+    out.watch += o.watch;
+    out.well += o.well;
+    out.trade += o.trade ?? 0;
+    out.drill += o.drill ?? 0;
   }
   return out;
 }
@@ -102,7 +114,7 @@ export function aggregateCapacities(grid: BuildGrid): RoomServices {
  *   agent must be standing in a usable room with a free slot. Warmth is always
  *   enclosure-local. Off by default so existing callers/tests are unchanged.
  */
-export function serveNeeds(grid: BuildGrid, agents: AgentStore, minutesPerTick: number, tempAnomalyC: number = 0, colonyWide = false): void {
+export function serveNeeds(grid: BuildGrid, agents: AgentStore, minutesPerTick: number, tempAnomalyC: number = 0, colonyWide = false, clothingDecayMult = 1.0): void {
   const hours = minutesPerTick / 60;
   // Warmth ambient floor driven by temperature: ±4°C scales ±10 warmth, clamped 20..80.
   const ambientFloor = Math.max(20, Math.min(80, WARMTH_AMBIENT_FLOOR + tempAnomalyC * 2.5));
@@ -125,12 +137,12 @@ export function serveNeeds(grid: BuildGrid, agents: AgentStore, minutesPerTick: 
     const room = rid >= 0 ? grid.rooms[rid] : null;
 
     // Warmth: enclosure shelters all occupants; otherwise drift to the temperature-scaled floor.
+    // Clothing (clothingDecayMult < 1) slows warmth loss for exposed settlers.
     if (room && room.enclosed) {
       const w = agents.warmth[i] + WARMTH_REGEN_ENCLOSED * hours;
       agents.warmth[i] = w < 100 ? w : 100;
     } else {
-      // Hardy settlers (warmthDecayMult < 1) shrug off the cold; the floor is temperature-driven.
-      const w = agents.warmth[i] - WARMTH_DECAY_EXPOSED * hours * agents.warmthDecayMult[i];
+      const w = agents.warmth[i] - WARMTH_DECAY_EXPOSED * hours * agents.warmthDecayMult[i] * clothingDecayMult;
       agents.warmth[i] = w > ambientFloor ? w : ambientFloor;
     }
 
@@ -188,7 +200,7 @@ export function serveNeeds(grid: BuildGrid, agents: AgentStore, minutesPerTick: 
  * Like `serveNeeds`: one small Map per call (room count), O(1) per agent. Runs
  * before `AgentStore.tick` so a cure lands before that tick's bleed is charged.
  */
-export function serveMedical(grid: BuildGrid, agents: AgentStore, stock: Stockpile): void {
+export function serveMedical(grid: BuildGrid, agents: AgentStore, stock: Stockpile, medicineHealMult = 1.0): void {
   for (let i = 0; i < agents.count; i++) agents.healMult[i] = 1;
 
   // Cache each room's medical capacity once (rooms ≪ agents).
@@ -215,7 +227,7 @@ export function serveMedical(grid: BuildGrid, agents: AgentStore, stock: Stockpi
     if (injured && stock.count('medicine') >= MEDICINE_PER_TREAT) {
       stock.remove('medicine', MEDICINE_PER_TREAT);
       agents.treat(i); // apothecary clears the wound + infection
-      agents.healMult[i] *= APOTHECARY_HEAL_MULT;
+      agents.healMult[i] *= APOTHECARY_HEAL_MULT * medicineHealMult;
     }
   }
 }
