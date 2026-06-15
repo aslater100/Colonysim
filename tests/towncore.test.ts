@@ -728,6 +728,37 @@ describe('TownCore blueprint construction', () => {
   });
 });
 
+// --- net flow tracking ---
+describe('TownCore netFlow', () => {
+  it('returns 0 before any days pass', () => {
+    const core = colony({ ovens: 2, beds: 4, grain: 500, pop: 4, seed: 3 });
+    expect(core.netFlow('grain')).toBe(0);
+  });
+
+  it('returns positive when production exceeds consumption', () => {
+    // Bare colony (no ovens to consume grain), only field zones producing it.
+    const core = new TownCore({ width: 32, height: 32, seed: 3 });
+    core.seedColony(16, 16, 2);
+    core.stock.add('meal', 2000); // settlers eat meals, not grain
+    // 16 field tiles → well above settler count so production dominates.
+    for (let i = 0; i < 16; i++) {
+      core.grid.setTerrain(i + 2, 16, TERRAIN.SOIL);
+      core.grid.setZone(i + 2, 16, ZONE.FIELD);
+    }
+    core.run(360 * 8); // 8 days of field production
+    expect(core.netFlow('grain')).toBeGreaterThan(0);
+  });
+
+  it('returns negative when a resource is consumed daily', () => {
+    const core = new TownCore({ width: 16, height: 16, seed: 3 });
+    core.seedColony(8, 8, 4);
+    core.stock.add('grain', 200); // only grain, no meals
+    core.run(360 * 8); // settlers eat grain each day
+    // Grain should be declining.
+    expect(core.netFlow('grain')).toBeLessThan(0);
+  });
+});
+
 // --- difficulty system ---
 describe('TownCore difficulty', () => {
   it('easy starts with more grain and gold than normal', () => {

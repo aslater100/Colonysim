@@ -304,6 +304,8 @@ export class TownCore {
   tradeHistory: TradeRecord[] = [];
   /** Auto-increment counter for trade order IDs. */
   private _nextOrderId = 1;
+  /** Rolling 8-snapshot (7-delta) daily stock history for net-flow display. */
+  private _stockHistory = new Map<string, number[]>();
   /** Colony anchor — where newcomers appear and the camera first looks. */
   homeX: number;
   homeY: number;
@@ -654,6 +656,14 @@ export class TownCore {
 
   private dailyUpdate(): void {
     const a = this.agents;
+
+    // Snapshot stock levels for 7-day rolling net-flow display (same pattern as fat sim).
+    for (const [key, qty] of Object.entries(this.stock.snapshot())) {
+      let hist = this._stockHistory.get(key);
+      if (!hist) { hist = []; this._stockHistory.set(key, hist); }
+      hist.unshift(qty as number);
+      if (hist.length > 8) hist.length = 8; // keep 8 snapshots → 7 deltas
+    }
 
     // Primary production: the colony works its designated harvest zones into raw
     // goods (run before feeding so the day's grain/meals are on hand).
@@ -1258,6 +1268,18 @@ export class TownCore {
 
   services(): RoomServices {
     return aggregateCapacities(this.grid);
+  }
+
+  /**
+   * 7-day average net daily flow of a resource (positive = net production,
+   * negative = net consumption). Returns 0 if fewer than 2 snapshots exist.
+   * Mirrors `Simulation.netFlow()` for HUD sparkline compatibility.
+   */
+  netFlow(kind: ResourceKind): number {
+    const hist = this._stockHistory.get(kind);
+    if (!hist || hist.length < 2) return 0;
+    const days = Math.min(7, hist.length - 1);
+    return (hist[0] - hist[days]) / days;
   }
 
   averageMood(): number {
