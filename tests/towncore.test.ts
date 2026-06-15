@@ -573,6 +573,28 @@ describe('TownCore food variety', () => {
     expect(avg).toBeLessThan(60);
   });
 
+  it('ale counts as food and gives more recreation than no-ale on the same day', () => {
+    function aleColony(withAle: boolean): TownCore {
+      const core = new TownCore({ width: 16, height: 16, seed: 3 });
+      core.seedColony(8, 8, 2);
+      if (withAle) core.stock.add('ale', 10);
+      for (let i = 0; i < core.agents.count; i++) {
+        core.agents.food[i] = 50; // hungry so they'll eat
+        core.agents.recreation[i] = 50;
+      }
+      core.run(360);
+      return core;
+    }
+    const drunk = aleColony(true);
+    const sober = aleColony(false);
+    expect(drunk.stock.count('ale')).toBeLessThan(10); // ale consumed
+    const drunkRec = Array.from({ length: drunk.agents.count }, (_, i) => drunk.agents.recreation[i])
+      .reduce((a, b) => a + b, 0);
+    const soberRec = Array.from({ length: sober.agents.count }, (_, i) => sober.agents.recreation[i])
+      .reduce((a, b) => a + b, 0);
+    expect(drunkRec).toBeGreaterThan(soberRec); // ale boosts recreation
+  });
+
   it('eating three distinct foods in a week gives a variety bonus', () => {
     const core = new TownCore({ width: 16, height: 16, seed: 3 });
     core.seedColony(8, 8, 2);
