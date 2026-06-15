@@ -180,3 +180,30 @@ describe('scale-engine module serialization', () => {
     expect(r.roomOutput(r.rooms[0]).flow.meal).toBe(g.roomOutput(g.rooms[0]).flow.meal);
   });
 });
+
+// --- B-6 PART 3: opt-in terrain generation ---
+describe('TownCore terrain', () => {
+  it('is all grass by default (no behaviour change for existing cores)', () => {
+    const c = new TownCore({ seed: 5 });
+    let nonGrass = 0;
+    for (let i = 0; i < c.grid.size; i++) if (c.grid.terrain[i] !== 0) nonGrass++;
+    expect(nonGrass).toBe(0);
+  });
+
+  it('opts.terrain paints a landscape without perturbing the main rng stream', () => {
+    const plain = new TownCore({ seed: 5 });
+    const wild = new TownCore({ seed: 5, terrain: true });
+    // The terrain stream is independent, so schedule/raids are byte-identical.
+    expect(wild.nextRaidDay).toBe(plain.nextRaidDay);
+    let nonGrass = 0;
+    for (let i = 0; i < wild.grid.size; i++) if (wild.grid.terrain[i] !== 0) nonGrass++;
+    expect(nonGrass).toBeGreaterThan(0);
+  });
+
+  it('terrain survives a serialize/deserialize round-trip', () => {
+    const c = new TownCore({ seed: 8, terrain: true });
+    const r = TownCore.deserialize(c.serialize());
+    expect(Array.from(r.grid.terrain)).toEqual(Array.from(c.grid.terrain));
+    expect(Array.from(r.grid.ore)).toEqual(Array.from(c.grid.ore));
+  });
+});

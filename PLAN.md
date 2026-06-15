@@ -206,6 +206,51 @@ Stages (extend Track C; the live game is untouched until B-6):
   numbers are deliberately conservative). Land PART 2 once those are squared away and the user has
   play-verified the new core.
 
+### B-6 PART 3 — the live swap, re-scoped (2026-06-15)
+
+**Verification verdict (this session):** the repo is green (tsc + build clean, 652→663 tests) and
+every PART 2 parity port is real and tested (raids, wolves, traps, forged-weapon/spear bonuses,
+town-tier economy, gates, colony-wide rest). The user's GUI raid play-test cleared that gate. **But
+"ready to swap" was measured against the wrong gate.** A direct `TownCore`-for-`Simulation` swap is
+blocked structurally, not by tuning: the live UI (`main.ts`/`render.ts`/`hud.ts`/`regionview.ts`,
+≈5,600 lines) reads fat-sim shapes the SoA core does not have —
+- **no World/terrain layer** (`TownCore` only had a build grid; `render.ts` reads `sim.world.at()` at
+  ~31 sites),
+- **no building layer** (`sim.buildings[]`, `placeBuilding`, `buildings.json`),
+- **settlers are SoA columns, not fat objects** (every HUD panel + sprite pass reads fat `Settler`s),
+- **no event log** (`sim.log[]` drives the HUD feed + audio),
+- **no corpse/grave/item/animal arrays**, and **no player build verbs** (`planZone`/`planRoad`/
+  `markTree`/`bulldozeTile`).
+A blind swap would delete the playable game, exactly as the HANDOFF warns.
+
+**Design decision (user, this session):** the target is **Songs of Syx** — *painted blueprints* for
+buildings (the `BuildGrid` paint model wins; pre-placed `buildings.json` retires) **on complex
+terrain** (the world grows a real terrain layer). So the swap is genuinely a new sub-track, B-6
+PART 3, not a one-commit wire-up.
+
+**Staged roadmap (each additive + headlessly testable until the renderer/main stages):**
+1. **Terrain layer on `BuildGrid`** ✅ *(this session)* — `terrain` + `ore` Uint8 layers (grass/tree/
+   water/soil/rock), `passable()` now blocks on forest/water/rock, deterministic `generateTerrain()`
+   ported from `world.ts`'s blob generator, base64 serialized (back-compat: old saves = all grass),
+   opt-in via `new TownCore({ terrain: true })` (dedicated rng stream, so weather/raids are
+   byte-identical when off). Tests: `tests/build.test.ts` (terrain suite) + `tests/towncore.test.ts`.
+2. **Terrain-aware resources** — trees→wood (chop), rock/ore→stone/metal (mine), water→fishing +
+   soil fertility for farms. Wire into `JobBoard`/production so the painted world feeds the economy.
+3. **Event log on `TownCore`** — append-only `log: LogEntry[]` (raids/deaths/births/milestones) so a
+   HUD feed + audio have a source. Pure, additive, testable.
+4. **View adapter (`TownCoreView`)** — read-model exposing what a renderer needs (agents/stations/
+   rooms/terrain/raiders as plain iterables) so the renderer never reaches into SoA internals.
+5. **SoA renderer** — a render path that draws a `TownCore` via the adapter (terrain + painted
+   walls/floors/rooms/stations + agents + raiders). Large; **GUI-verify required** (not headless).
+6. **Live wiring behind a flag** — boot `TownCore` in `main.ts` parallel to `Simulation` behind a
+   flag, with the SoA renderer + paint/blueprint input verbs. Non-destructive; the play-test surface.
+7. **Blueprint build flow** — painted blueprints get hauled + built by settlers (construction jobs).
+8. **The destructive swap** — `TownCore` becomes default; retire `buildings.json` + fat `Simulation`
+   + the `region.fromTown` flip; save v-bump. Final, gated on play-verify.
+
+Stages 1–3 are safe to land headless (additive, tested). Stages 4–8 touch the renderer/live loop and
+need GUI verification, so they should not be landed blind from headless CI.
+
 ---
 
 

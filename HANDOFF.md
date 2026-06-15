@@ -1,7 +1,7 @@
 # Handoff — Centuria Development Guide
 
 **Last updated:** 2026-06-15  
-**Current test count:** 652 passing  
+**Current test count:** 663 passing  
 **Branch pattern:** feature branches off `main` via `claude/...` naming; merge via draft PR  
 **Model guidance:** See PLAN.md § Model Assignment for context ceilings per task
 
@@ -209,6 +209,26 @@ if (detailZoom) {
 - Zoom in/out; watch FPS at each threshold (goal ≥ 30fps at zoom 0.1–0.3)
 
 ---
+
+## B-6 PART 3 — the swap, re-scoped (2026-06-15)
+
+**Verdict from this session's verification:** repo is green (tsc + build clean, now **663 tests**) and
+every PART 2 parity port is real. The raid GUI play-test is cleared. **But the swap is blocked
+*structurally*, not by tuning** — a direct `TownCore`-for-`Simulation` swap would delete the playable
+game because the live UI reads fat-sim shapes the SoA core lacks: a **World/terrain layer**, a
+**building layer** (`buildings.json`), **fat settler objects** (vs SoA columns), an **event log**
+(`sim.log`), **corpse/grave/item/animal arrays**, and **player build verbs**.
+
+**Design decision (user):** target is **Songs of Syx** — *painted blueprints* for buildings (the
+`BuildGrid` paint model wins; pre-placed buildings retire) **on complex terrain**. Full staged
+roadmap in `PLAN.md` § *B-6 PART 3*. Status:
+- **Stage 1 — terrain layer on `BuildGrid`** ✅ landed: `terrain`/`ore` Uint8 layers (grass/tree/
+  water/soil/rock), terrain-aware `passable()`, deterministic `generateTerrain()`, base64
+  serialization (old saves backfill to all-grass), opt-in `new TownCore({ terrain: true })`.
+- **Stages 2–3** (terrain-aware resources; event log) are additive + headlessly testable — safe to
+  land next.
+- **Stages 4–8** (view adapter, SoA renderer, flagged live wiring, blueprint build flow, the
+  destructive swap) touch the renderer/live loop and **need GUI verification** — don't land blind.
 
 ## Next Steps (B-6 PART 2 Swap + Beyond)
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { BuildGrid } from '../src/sim/build';
+import { BuildGrid, TERRAIN } from '../src/sim/build';
 import { ROOM_TYPE_ID, STATION_TYPE_ID, ROOM_DEFS, STATION_DEFS } from '../src/sim/defs';
+import { Rng } from '../src/sim/rng';
 
 // Songs-of-Syx build model on the scale engine: walls + floors + a designated room
 // whose output is the SUM of the workstations placed inside it. Rooms are derived
@@ -177,5 +178,93 @@ describe('BuildGrid — stations & output', () => {
     const r = BuildGrid.deserialize(g.serialize());
     expect(r.gate[r.index(3, 6)]).toBe(1);
     expect(r.rooms[0].enclosed).toBe(true);
+  });
+});
+
+// --- B-6 PART 3: terrain layer (forests/water/rock/ore under the build layers) ---
+describe('terrain layer', () => {
+  it('a fresh grid is all grass and fully passable', () => {
+    const g = new BuildGrid(16, 16);
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
+        expect(g.terrainAt(x, y)).toBe(TERRAIN.GRASS);
+        expect(g.passable(x, y)).toBe(true);
+        expect(g.terrainBlocks(x, y)).toBe(false);
+      }
+    }
+  });
+
+  it('forest, water and rock block movement; grass and soil do not', () => {
+    const g = new BuildGrid(8, 8);
+    g.setTerrain(1, 1, TERRAIN.TREE);
+    g.setTerrain(2, 2, TERRAIN.WATER);
+    g.setTerrain(3, 3, TERRAIN.ROCK);
+    g.setTerrain(4, 4, TERRAIN.SOIL);
+    expect(g.passable(1, 1)).toBe(false);
+    expect(g.passable(2, 2)).toBe(false);
+    expect(g.passable(3, 3)).toBe(false);
+    expect(g.passable(4, 4)).toBe(true); // soil is walkable farmland
+    expect(g.passable(5, 5)).toBe(true); // untouched grass
+  });
+
+  it('out-of-bounds reads as impassable water', () => {
+    const g = new BuildGrid(8, 8);
+    expect(g.terrainAt(-1, 0)).toBe(TERRAIN.WATER);
+    expect(g.terrainBlocks(99, 99)).toBe(false); // OOB is not "a blocking tile", just absent
+    expect(g.passable(-1, 0)).toBe(false);
+  });
+
+  it('ore only persists on rock; changing terrain clears it', () => {
+    const g = new BuildGrid(8, 8);
+    g.setTerrain(2, 2, TERRAIN.ROCK);
+    g.ore[g.index(2, 2)] = 1;
+    expect(g.hasOre(2, 2)).toBe(true);
+    g.setTerrain(2, 2, TERRAIN.GRASS); // dug out / cleared
+    expect(g.hasOre(2, 2)).toBe(false);
+  });
+
+  it('generateTerrain is deterministic for a seed and varies across seeds', () => {
+    const a = new BuildGrid(96, 96); a.generateTerrain(new Rng(42));
+    const b = new BuildGrid(96, 96); b.generateTerrain(new Rng(42));
+    const c = new BuildGrid(96, 96); c.generateTerrain(new Rng(7));
+    expect(Array.from(a.terrain)).toEqual(Array.from(b.terrain));
+    expect(Array.from(a.ore)).toEqual(Array.from(b.ore));
+    expect(Array.from(a.terrain)).not.toEqual(Array.from(c.terrain));
+  });
+
+  it('generates a mixed landscape with a buildable grass heart and ore only on rock', () => {
+    const g = new BuildGrid(96, 96); g.generateTerrain(new Rng(123));
+    const counts = [0, 0, 0, 0, 0];
+    for (let i = 0; i < g.size; i++) counts[g.terrain[i]]++;
+    expect(counts[TERRAIN.GRASS]).toBeGreaterThan(0);
+    expect(counts[TERRAIN.TREE]).toBeGreaterThan(0);
+    expect(counts[TERRAIN.WATER]).toBeGreaterThan(0);
+    expect(counts[TERRAIN.ROCK]).toBeGreaterThan(0);
+    // every ore tile sits on rock
+    for (let i = 0; i < g.size; i++) {
+      if (g.ore[i] === 1) expect(g.terrain[i]).toBe(TERRAIN.ROCK);
+    }
+    // the heart clearing is walkable grass
+    const cx = 48, cy = 48;
+    for (let y = cy - 8; y <= cy + 8; y++) {
+      for (let x = cx - 12; x <= cx + 12; x++) {
+        expect(g.terrainBlocks(x, y)).toBe(false);
+      }
+    }
+  });
+
+  it('round-trips terrain and ore through serialize/deserialize', () => {
+    const g = new BuildGrid(96, 96); g.generateTerrain(new Rng(99));
+    const r = BuildGrid.deserialize(g.serialize());
+    expect(Array.from(r.terrain)).toEqual(Array.from(g.terrain));
+    expect(Array.from(r.ore)).toEqual(Array.from(g.ore));
+  });
+
+  it('a pre-terrain save (no terrain field) loads as all grass', () => {
+    const g = new BuildGrid(8, 8);
+    const save = g.serialize();
+    delete save.terrain; delete save.ore; // simulate an old save
+    const r = BuildGrid.deserialize(save);
+    for (let i = 0; i < r.size; i++) expect(r.terrain[i]).toBe(TERRAIN.GRASS);
   });
 });

@@ -26,6 +26,7 @@
  * Run the self-check:  npx tsx src/sim/build.ts
  */
 import { MAP_W, MAP_H } from './world';
+import type { Rng } from './rng';
 import type { ResourceKind, CapacityKind, BlueprintDef } from './defs';
 import {
   ROOM_TYPE_ID, STATION_TYPE_ID, STATION_DEF_BY_NUM, ROOM_DEF_BY_NUM,
@@ -94,6 +95,10 @@ export interface BuildGridSave {
   gate?: string;
   /** base64 of the spike-trap layer (optional: absent in pre-trap saves). */
   trap?: string;
+  /** base64 of the terrain layer (optional: absent in pre-terrain saves → all grass). */
+  terrain?: string;
+  /** base64 of the ore-deposit layer (optional: absent in pre-terrain saves). */
+  ore?: string;
   floor: string;
   roomType: string;
   stations: Array<{ id: number; typeId: number; x: number; y: number; w: number; h: number }>;
@@ -103,6 +108,19 @@ export interface BuildGridSave {
 
 const NX4 = [1, -1, 0, 0];
 const NY4 = [0, 0, 1, -1];
+
+/**
+ * Terrain codes for the BuildGrid's base layer (B-6 PART 3, the Songs-of-Syx
+ * swap). The painted build layers (walls/floors/rooms) sit ON TOP of terrain,
+ * so the world the player paints over is no longer a featureless plane: forests
+ * give timber, rock gives stone (and ore where it's flecked), water blocks and
+ * irrigates. Order mirrors `world.ts`'s `TileKind` so a renderer can share a
+ * colour table. GRASS (0) is the default — an all-grass grid behaves exactly as
+ * a terrain-free one did, which keeps every pre-terrain test and save valid. */
+export const TERRAIN = { GRASS: 0, TREE: 1, WATER: 2, SOIL: 3, ROCK: 4 } as const;
+export type TerrainCode = (typeof TERRAIN)[keyof typeof TERRAIN];
+/** Index-aligned with TERRAIN values — for renderers/inspectors. */
+export const TERRAIN_NAMES = ['grass', 'tree', 'water', 'soil', 'rock'] as const;
 
 // Portable base64 for the byte layers (no Buffer/btoa — runs in Node, browser, worker).
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -157,6 +175,10 @@ export class BuildGrid {
   readonly roomId: Int32Array;
   /** -1 = no station, else the station id occupying this tile. */
   readonly station: Int32Array;
+  /** Base terrain layer (see TERRAIN). 0 = grass everywhere until generateTerrain(). */
+  readonly terrain: Uint8Array;
+  /** 1 = this rock tile carries an ore deposit (mineable for metal). Only on ROCK. */
+  readonly ore: Uint8Array;
 
   /** Placed stations, indexed by id. Compacted on remove (swap-remove). */
   readonly stations: Station[] = [];
@@ -179,6 +201,8 @@ export class BuildGrid {
     this.roomType = new Uint8Array(this.size);
     this.roomId = new Int32Array(this.size).fill(-1);
     this.station = new Int32Array(this.size).fill(-1);
+    this.terrain = new Uint8Array(this.size); // all GRASS (0)
+    this.ore = new Uint8Array(this.size);
     this._visited = new Uint8Array(this.size);
   }
 
@@ -190,9 +214,108 @@ export class BuildGrid {
     return x >= 0 && y >= 0 && x < this.width && y < this.height;
   }
 
-  /** Movement blocked iff a wall stands here. Feeds FlowField/world passability. */
+  /** Movement blocked by a wall OR by impassable terrain (forest/water/rock).
+   *  Feeds FlowField/world passability. An all-grass grid (the default, and every
+   *  pre-terrain save) blocks on walls alone, exactly as before. */
   passable(x: number, y: number): boolean {
-    return this.inBounds(x, y) && this.wall[this.index(x, y)] === 0;
+    if (!this.inBounds(x, y)) return false;
+    const i = this.index(x, y);
+    return this.wall[i] === 0 && !this._terrainBlocks(this.terrain[i]);
+  }
+
+  private _terrainBlocks(code: number): boolean {
+    return code === TERRAIN.TREE || code === TERRAIN.WATER || code === TERRAIN.ROCK;
+  }
+
+  // --- terrain layer (B-6 PART 3) ---
+
+  terrainAt(x: number, y: number): number {
+    return this.inBounds(x, y) ? this.terrain[this.index(x, y)] : TERRAIN.WATER;
+  }
+
+  setTerrain(x: number, y: number, code: number): boolean {
+    if (!this.inBounds(x, y)) return false;
+    const i = this.index(x, y);
+    this.terrain[i] = code;
+    if (code !== TERRAIN.ROCK) this.ore[i] = 0; // ore only sits on rock
+    return true;
+  }
+
+  /** True where terrain (not a wall) stops movement: forest, water, or rock. */
+  terrainBlocks(x: number, y: number): boolean {
+    return this.inBounds(x, y) && this._terrainBlocks(this.terrain[this.index(x, y)]);
+  }
+
+  hasOre(x: number, y: number): boolean {
+    return this.inBounds(x, y) && this.ore[this.index(x, y)] === 1;
+  }
+
+  /**
+   * Paint a natural landscape into the terrain layer: a body of water, scattered
+   * forests, rocky outcrops (some ore-bearing), fertile soil by the water, and a
+   * guaranteed grass clearing at the heart so the start is always buildable.
+   * Deterministic for a given Rng — ported from `world.ts`'s blob generator but
+   * writing flat terrain codes instead of fat Tile objects. Idempotent over the
+   * default all-grass grid; call once at construction.
+   */
+  generateTerrain(rng: Rng): void {
+    const blobMult = (this.width / 64) ** 1.5; // proportionally more features on bigger maps
+
+    // A lake, roughly south-west of centre, with a fertile soil rim.
+    const pondX = Math.round(this.width * 0.16) + rng.int(Math.max(1, Math.round(this.width * 0.16)));
+    const pondY = Math.round(this.height * 0.6) + rng.int(Math.max(1, Math.round(this.height * 0.18)));
+    this._terrainBlob(pondX, pondY, 5 + rng.int(3), TERRAIN.WATER, rng, TERRAIN.GRASS);
+    for (let i = 0; i < Math.round(4 * blobMult); i++) {
+      const sx = pondX + rng.int(14) - 7;
+      const sy = pondY + rng.int(14) - 7;
+      this._terrainBlob(sx, sy, 2 + rng.int(2), TERRAIN.SOIL, rng, TERRAIN.GRASS);
+    }
+
+    // Timber: scattered forests.
+    for (let i = 0; i < Math.round(14 * blobMult); i++) {
+      this._terrainBlob(rng.int(this.width), rng.int(this.height), 2 + rng.int(4), TERRAIN.TREE, rng, TERRAIN.GRASS);
+    }
+
+    // Stone: rocky outcrops; every third one bears ore (max 4 deposits).
+    let deposits = 0;
+    const rockBlobs = Math.round(4 * blobMult);
+    for (let i = 0; i < rockBlobs; i++) {
+      const bx = rng.int(this.width), by = rng.int(this.height), br = 1 + rng.int(2);
+      this._terrainBlob(bx, by, br, TERRAIN.ROCK, rng, TERRAIN.GRASS);
+      if (i % 3 === 1 && deposits < 4) {
+        deposits++;
+        for (let dy = -br - 1; dy <= br + 1; dy++) {
+          for (let dx = -br - 1; dx <= br + 1; dx++) {
+            const tx = bx + dx, ty = by + dy;
+            if (this.inBounds(tx, ty) && this.terrain[this.index(tx, ty)] === TERRAIN.ROCK) {
+              this.ore[this.index(tx, ty)] = 1;
+            }
+          }
+        }
+      }
+    }
+
+    // The heart clearing: a guaranteed buildable, walkable grass patch.
+    const cx0 = Math.floor(this.width / 2), cy0 = Math.floor(this.height / 2);
+    for (let y = cy0 - 10; y <= cy0 + 10; y++) {
+      for (let x = cx0 - 14; x <= cx0 + 14; x++) {
+        const t = this.terrainAt(x, y);
+        if (t === TERRAIN.TREE || t === TERRAIN.ROCK) this.setTerrain(x, y, TERRAIN.GRASS);
+      }
+    }
+  }
+
+  /** Stamp a rough disc of `code`, only overwriting tiles currently `over`. */
+  private _terrainBlob(cx: number, cy: number, r: number, code: number, rng: Rng, over: number): void {
+    for (let y = cy - r; y <= cy + r; y++) {
+      for (let x = cx - r; x <= cx + r; x++) {
+        if (!this.inBounds(x, y)) continue;
+        const d = Math.hypot(x - cx, y - cy);
+        if (d <= r * (0.7 + rng.next() * 0.5) && this.terrain[this.index(x, y)] === over) {
+          this.terrain[this.index(x, y)] = code;
+        }
+      }
+    }
   }
 
   // --- layer paint ops (each returns success; callers debit cost / mark dirty) ---
@@ -508,6 +631,8 @@ export class BuildGrid {
       wall: bytesToB64(this.wall),
       gate: bytesToB64(this.gate),
       trap: bytesToB64(this.trap),
+      terrain: bytesToB64(this.terrain),
+      ore: bytesToB64(this.ore),
       floor: bytesToB64(this.floor),
       roomType: bytesToB64(this.roomType),
       stations: this.stations.map((s) => ({ id: s.id, typeId: s.typeId, x: s.x, y: s.y, w: s.w, h: s.h })),
@@ -521,6 +646,8 @@ export class BuildGrid {
     g.wall.set(b64ToBytes(data.wall, g.size));
     if (data.gate) g.gate.set(b64ToBytes(data.gate, g.size)); // backfill: old saves have no gates
     if (data.trap) g.trap.set(b64ToBytes(data.trap, g.size)); // backfill: old saves have no traps
+    if (data.terrain) g.terrain.set(b64ToBytes(data.terrain, g.size)); // backfill: old saves are all grass
+    if (data.ore) g.ore.set(b64ToBytes(data.ore, g.size));
     g.floor.set(b64ToBytes(data.floor, g.size));
     g.roomType.set(b64ToBytes(data.roomType, g.size));
     for (const s of data.stations) {
