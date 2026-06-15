@@ -288,6 +288,9 @@ function draw(): void {
   ctx.fillStyle = '#15151a';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+  // drought/flood zone tint: +1 = flood (blue), -1 = drought (brown), 0 = normal
+  const droughtOrFlood = core.weather.isFloodRisk(core.day) ? 1 : core.weather.isDrought(core.day) ? -1 : 0;
+
   const anim = (performance.now() / 350 | 0) % sprites.water.length;
 
   for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) {
@@ -307,10 +310,14 @@ function draw(): void {
       ctx.fillRect(x * px, y * px, px, px);
     }
 
-    // Zone outline
+    // Zone outline + drought/flood tint on field/flax zones
     if (g.zone[i]) {
       ctx.strokeStyle = ZONE_OUTLINE[g.zone[i]];
       ctx.strokeRect(x * px + 0.5, y * px + 0.5, px - 1, px - 1);
+    }
+    if ((g.zone[i] === ZONE.FIELD || g.zone[i] === ZONE.FLAX) && droughtOrFlood !== 0) {
+      ctx.fillStyle = droughtOrFlood > 0 ? '#4488bb28' : '#8b451328';
+      ctx.fillRect(x * px, y * px, px, px);
     }
 
     // Floor with room tint
