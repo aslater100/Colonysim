@@ -686,6 +686,11 @@ function draw(): void {
       const sz = Math.max(4, Math.round(px * (0.35 + frac * 0.65)));
       const off = (px - sz) >> 1;
       ctx.drawImage(sprites.sapling, x * px + off, y * px + off, sz, sz);
+      // Winter: blue-white frost dusting on the sapling canopy
+      if (seasonIdx === 3) {
+        ctx.fillStyle = 'rgba(200,225,248,0.42)';
+        ctx.fillRect(x * px + off, y * px + off, sz, Math.round(sz * 0.6));
+      }
     }
 
     // Wild forage deposit: berry bush / mushroom cluster / herb patch sprite.
@@ -764,6 +769,22 @@ function draw(): void {
     ctx.fill();
   }
 
+  // Water shimmer pass — bright pixel flashes on water surface at tick-driven positions
+  if (seasonIdx !== 3) {
+    const shTick = core.tickNo;
+    ctx.beginPath();
+    for (let n = 0; n < 48; n++) {
+      const nx = ((n * 1013904223 + shTick * 3) ^ (n * 22695477)) >>> 0;
+      const ny = ((n * 1664525 + shTick * 7) ^ (n * 1013904223)) >>> 0;
+      const tx = nx % MAP, ty = ny % MAP;
+      if (g.terrain[ty * MAP + tx] !== TERRAIN.WATER) continue;
+      if (((shTick + n * 13) % 9) > 2) continue; // flash 3 of every 9 ticks
+      ctx.rect(tx * px + (nx & 0x1f), ty * px + (ny & 0x1f), 2, 1);
+    }
+    ctx.fillStyle = 'rgba(200,235,255,0.72)';
+    ctx.fill();
+  }
+
   // Spike traps (rendered as a red X over the tile)
   ctx.strokeStyle = '#cc2222';
   ctx.lineWidth = 1;
@@ -794,6 +815,14 @@ function draw(): void {
     else if (def) { // generic marker fallback
       ctx.fillStyle = '#6a5030'; ctx.fillRect(sv.x * px + 1, sv.y * px + 1, def.w * px - 2, def.h * px - 2);
       ctx.fillStyle = '#e8d8b0'; ctx.fillText(def.name[0], sv.x * px + px * 0.35, sv.y * px + px * 0.7);
+    }
+    // Winter: snow cap on building roof (top edge)
+    if (def && seasonIdx === 3) {
+      const bw = def.w * px;
+      ctx.fillStyle = 'rgba(205,228,250,0.70)';
+      ctx.fillRect(sv.x * px + 1, sv.y * px, bw - 2, 3);
+      ctx.fillStyle = 'rgba(240,248,255,0.52)';
+      ctx.fillRect(sv.x * px + 2, sv.y * px, bw - 4, 1);
     }
     // Production progress bar: tiny green strip at the bottom of the station
     if (sv.workMax > 0 && sv.progress > 0) {
