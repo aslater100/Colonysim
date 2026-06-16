@@ -577,9 +577,45 @@ function draw(): void {
     }
   }
 
-  // Winter tint: subtle cold-blue overlay in the fallow season
+  // Seasonal / weather overlays
   { const si = Math.floor((core.day % DAYS_PER_YEAR) / DAYS_PER_SEASON);
-    if (si === 3) { ctx.fillStyle = '#4488bb16'; ctx.fillRect(0, 0, MAP * px, MAP * px); } }
+    const sky = core.weather.forDay(core.day).sky;
+    const worldW = MAP * px, worldH = MAP * px;
+
+    // Winter: cold-blue tint + snow
+    if (si === 3) {
+      ctx.fillStyle = '#4488bb16'; ctx.fillRect(0, 0, worldW, worldH);
+      if (sky === 'snow') {
+        const tick = core.tickNo;
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        for (let n = 0; n < 220; n++) {
+          // Simple LCG seeded per particle+tick so snowflakes drift downward
+          const px2 = (((n * 1664525 + tick * 7) ^ (n * 22695477)) >>> 0) % worldW;
+          const py2 = (((n * 1013904223 + tick * 3) ^ (n * 1664525)) >>> 0) % worldH;
+          ctx.fillRect(px2, py2, 2, 2);
+        }
+      }
+    }
+    // Summer: warm golden tint
+    else if (si === 1) { ctx.fillStyle = '#ffdd0010'; ctx.fillRect(0, 0, worldW, worldH); }
+
+    // Rain or storm: diagonal rain streaks
+    if (sky === 'rain' || sky === 'storm') {
+      const count = sky === 'storm' ? 300 : 160;
+      const alpha = sky === 'storm' ? 0.3 : 0.18;
+      if (sky === 'storm') { ctx.fillStyle = `rgba(10,20,40,0.12)`; ctx.fillRect(0, 0, worldW, worldH); }
+      ctx.strokeStyle = `rgba(130,180,220,${alpha})`;
+      ctx.lineWidth = 1;
+      const tick = core.tickNo;
+      ctx.beginPath();
+      for (let n = 0; n < count; n++) {
+        const rx = (((n * 1664525 + tick * 5) ^ (n * 22695477)) >>> 0) % worldW;
+        const ry = (((n * 1013904223 + tick * 11) ^ (n * 1664525)) >>> 0) % worldH;
+        ctx.moveTo(rx, ry); ctx.lineTo(rx + 3, ry + 8);
+      }
+      ctx.stroke();
+    }
+  }
 
   ctx.restore(); // leave world space — HUD overlays below are screen-space
 
