@@ -1,61 +1,37 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-16
-**Branch**: `claude/keen-hypatia-2mj4dl` (ahead of main)
-**Current test count:** 863 passing  
+**Last updated:** 2026-06-16  
+**Branch**: `claude/keen-hypatia-2mj4dl` (merged to main)  
+**Current test count:** 874 passing  
 **Current version:** v0.41.1  
-**Default engine:** **SoA `TownCore`** — "New Colony" boots it; the fat `Simulation` is now "Classic Colony"  
+**Primary game vision:** **Seamless world** with click-to-view navigation (SoA `TownCore` + `ParcelManager`)  
+**Region/nation tier:** Planned for Phase 2 (multi-parcel economy + rivals)  
 **Branch pattern:** feature branches off `main` via `claude/...` naming; merge via draft PR  
 **Model guidance:** See PLAN.md § Model Assignment for context ceilings per task
 
 ---
 
-## Session Snapshot — AI fairness, era polish, default-engine harness (2026-06-16)
+## Session Snapshot — Seamless World Architecture Foundation (2026-06-16, latest)
 
-**Correcting a stale audit.** The "Audit findings" table below was written *before* PR #163
-("Factions, AI, phase gates, win conditions") landed and is **wrong** — re-verified this session:
-AI rivals expand/raid/research/scout/ally (`region.ts` `updateFactionAI` + `checkFactionGoalConflicts`);
-all four win paths are implemented (`checkWinConditions`/`checkCenturyWins`) **and** shown via a
-victory modal (`regionview.ts drawWinModal`); phase-gate checklists exist for town→region→nation;
-the era branch is decided in `decideBranch()`. The audit table is kept below with a ⚠️ correction note.
+**What landed (PR #168 — revised):**
+- **Phase 0 — ParcelManager integration:** Replaced bare `Simulation` with `ParcelManager(home)` throughout boot. The parcel grid (`64×64` cells) is now the world model; each parcel can host a town. Save format bumped to v3 (town + parcels, optional region). Backward compatible with v1/v2 saves via migration.
+- **Phase 1 — Click-to-world navigation:** New `world` mode accessible from town view by clicking the minimap. Escape returns to town. World view placeholder ready for rendering (Phase 1B).
+- **Reverted flip-dependent work:** Removed 3 commits that reinforced the hard mode switch (head-start at flip, rival activation timing). These contradicted the seamless-world vision and are no longer part of the architecture.
+- **Infrastructure:** ParcelManager wired into save/load, world-view mode switching complete. Ready for WorldCamera rendering and parcel grid display.
 
-**What landed (PRs #166–168):**
-- **SoA game loop closed** — Esc / "← Menu" in `coreview.ts` now auto-saves to the `centuria_save`
-  slot before returning to the title; Continue resumes it. (#166)
-- **AI rival head-start, done right** — #167 first tried running the whole region in parallel from
-  game boot; that desynced (region ticks `30 min` vs town `4 min` → 7.5× drift), diverged the
-  player's abstract settlement, and ran the full economy every frame. Replaced (#168) with a
-  deterministic seed at flip: `RegionSim.bootstrapRivalHeadStart(elapsedYears)` in `fromTown()`
-  gives rivals settlements/tech/treasury scaled by the years the player spent in the town tier.
-  No-op at year 0, so existing determinism/parity tests are untouched. 4 tests in `region-ai.test.ts`.
-- **Era-branch reveal modal** — the Garden/Neon/Drowned fork (GDD §3.2) now gets a one-shot modal
-  (`regionview.ts drawEraModal`) like Incorporation/Convention/win, not just a log line. Doesn't
-  replay on a loaded save whose branch was already decided.
-- **Default-engine balance harness** — `npm run sim:town` runs the SoA `TownCore` (the engine
-  players actually play; `npm run sim` only ever ran Classic). Starter town extracted to the shared
-  `src/sim/startertown.ts` (`buildStarterTown`) so harness and GUI build the identical colony;
-  pinned by `tests/startertown.test.ts`.
+**Why this direction:** The user's core vision is "I want the whole world always available (by clicking the map to view the world)" — a seamless, click-accessible world, not a hard flip. The architecture now supports this without sacrificing the live town gameplay.
 
-**Balance note (not a bug — left alone deliberately):** the harness shows unmanaged SoA starter
-colonies sit at mood ~35 (120d) and drift down through a full winter (~19 at 365d, occasional
-collapse), vs Classic's ~68. Root cause is by-design: warmth only recovers in *enclosed* rooms and
-the starter has no clothing chain, so outdoor workers cool in winter; recreation only serves
-off-duty settlers. A *managed* colony (build a loom, balance work/leisure) avoids this. Classic↔SoA
-mood is an independently-tuned divergence the parity tests never asserted — documented, not patched,
-since changing tuning risks the suite for a design judgment call. The harness now guards against
-genuine regressions from this baseline.
+**Balance note (SoA starter colonies):** Unmanaged SoA starter colonies sit at mood ~35 (120d), drifting down in winter. Root cause is by-design: warmth only recovers in *enclosed* rooms and the starter has no clothing chain. A *managed* colony (build a loom, balance work/leisure) avoids this. The harness (`npm run sim:town`) guards against regressions from this baseline.
 
 ---
 
-## Session Snapshot — What Just Landed (2026-06-16, SoA swap-to-default session)
+## Architecture History — How We Got Here
 
-**Headline: the swap happened — `TownCore` is now the default "New Colony."** Rather than the
-destructive render-path rewrite (which can't be GUI-verified from a headless agent), the swap was
-done *at the entry point* and the colony sim was fleshed out to Songs-of-Syx depth. ~16 PRs (#142–158),
-all merged. Test baseline **825 → 852**. The session ran as a live, user-verified loop (each PR
-play-tested in the browser, then merged within minutes).
+**Previous milestone (2026-06-15, SoA TownCore completion):** The SoA town engine reached feature parity with the fat `Simulation`. All behavior ported to deterministic SoA columns: traits/skills, wounds/medical, relationships/thoughts, weather, raid/combat, economy, event log. Save format v10. ~16 PRs (#142–158), all tested. Test baseline **825 → 852**.
 
-### The swap (PRs #145–158)
+**Decision (2026-06-16):** Rather than a destructive render-path rewrite (hard flip), pivot to **seamless-world architecture**: click-accessible parcels with active/dormant simulation. `ParcelManager` manages a 64×64 grid; each parcel can host a town. Player clicks minimap to toggle between town detail (active parcel, full fidelity) and world overview (parcel grid, dormant neighbors). This eliminates the hard mode switch entirely.
+
+### The SoA TownCore (PRs #145–158)
 - **#145 launcher** — title-screen entry that boots the SoA core (`coreview.ts` / `core.html`).
 - **#146 camera** — pan/zoom on the SoA renderer (scroll zoom, WASD/arrows/middle-drag pan, **O**
   overview). World drawn under a `translate+scale` transform; HUD stays screen-space.
@@ -98,65 +74,58 @@ tier (`RegionSim`) already matches Victoria 3 and needs none.
 
 ---
 
-## Next Priority (from 2026-06-16 session)
+## Next Priority — Seamless World Phases (2026-06-16)
 
-**Town→Region→Nation transitions** — structural + visual. All three phases should mesh with gated progress. AI competitors run from region-phase start, hidden in fog until discovered, with relations initiated on contact. **Multi-path win conditions.**
+**Roadmap:** Build the seamless-world game world by world by implementing click-accessible parcels with active/dormant simulation.
 
-### Audit findings
+### Phase 1B — World view rendering
+- Implement world rendering with `WorldCamera` (zoom-based LOD)
+- Display parcel grid with biome summaries (chunk canvases at zoom 0.3–1.0, biome pixels < 0.3)
+- Click parcel to switch to town view (town-detail ↔ world-overview toggle)
 
-> ⚠️ **STALE — corrected 2026-06-16 (see session snapshot at top).** The ❌ rows below were written
-> before PR #163 and are no longer accurate. Re-verified current state in the right-hand column.
+### Phase 2 — Parcel expansion & purchase UI
+- Right-click fog cell to show purchase cost + tile data
+- Parcel cost formula: `base × distance × terrain × holdings-premium × tech-discount`
+- Tech gating: `land_survey`, `road_building`, `cartography` unlock expansion mechanics
+- Rivals expand via same purchase system (Region/Nation phase)
 
-| System | State (original) | Re-verified 2026-06-16 |
-|--------|-------|------|
-| Town sim | ✅ Complete | ✅ |
-| Town→region flip (`canFoundSecondTown()`) | ✅ Complete | ✅ |
-| Regional economy (settlements, routes, trade) | ✅ Complete | ✅ |
-| Fog of war (`src/sim/fogmap.ts`, 100×100 grid) | ✅ Complete | ✅ |
-| Elections / laws / government | ✅ Complete | ✅ |
-| AI rivals: activation | ❌ Only after "State Proclaimed" | ✅ Run from region tick 1; **head-start at flip** so they reflect the player's town-phase years (`bootstrapRivalHeadStart`) |
-| AI rivals: behavior | ❌ Only earn gold | ✅ Expand, raid, research, scout, ally, retaliate (`updateFactionAI`, `checkFactionGoalConflicts`) |
-| Nation phase: rival nations | ❌ Never instantiated | ✅ `spawnRival` + diplomacy/war/treaties (`updateRivalAI`, `updateDiplomacy`) |
-| Era 3/4 transitions | ❌ Stubbed | ✅ `decideBranch()` at `BRANCH_YEAR` → Garden/Neon/Drowned + **reveal modal** |
-| Win condition | ❌ None | ✅ All 4 paths (`checkWinConditions`/`checkCenturyWins`) + victory modal |
+### Phase 3 — Dormant simulation (off-screen parcels)
+- Implement `tickDormant()` for non-active parcels (daily cheap tick)
+- Crops grow, population flows, rivals expand/trade off-screen
+- Active parcel (player's town) runs full `TownCore` fidelity
+- FogMap replacement: 64×64 grid with explored/scouted/fogged states
 
-**Key files**: `src/sim/sim.ts` (town), `src/sim/region.ts` (region/nation, ~7000 lines), `src/sim/fogmap.ts`, `src/sim/defs.ts`, `src/sim/towncore.ts` (default engine), `src/sim/startertown.ts` (shared starter colony)
+### Multi-path win conditions (existing, verified in place)
+All four are implemented in `region.ts`:
+- **Unification** — control X% of the map by a target era
+- **Legacy** — A grade in 3 of 4 century categories (prosperity / liberty / stewardship / standing)
+- **Domination** — last nation with sovereignty at 2100
+- **Solarpunk** — green branch achieved (warming < 2.3°C + democracy + satisfaction ≥ 42% + legitimacy ≥ 35%)
 
-**Critical line**: `region.ts` — `if (this.stateProclaimed) this.updateFactions();` — rivals are gated behind proclamation. Move this to run from region-phase tick 1.
-
-### Recommended work order
-
-1. **AI from region start** — at `RegionSim.fromTown()`, spawn rival factions at hidden map positions with a difficulty-scaled head start. Run `updateFactions()` from tick 1. Fire a "first contact" event when player fog lifts near a rival settlement and initiate relations.
-2. **AI actually does things** — wire settlement expansion, raiding, and tech progress into the existing framework stubs in `region.ts` (currently only `updateRegionalTrade()` runs).
-3. **Phase gate UI** — milestone checklist UI for town→region and region→nation transitions; nation proclamation as a proper modal ceremony with meaningful choices.
-4. **Multi-path win conditions** — implement all four paths; player wins when any one is achieved:
-   - **Unification** — control X% of the map by a target era
-   - **Legacy** — A grade in 3 of 4 century categories (prosperity / liberty / stewardship / standing)
-   - **Domination** — last nation with sovereignty at 2100
-   - **Solarpunk** — green branch achieved (warming < 2.3°C + democracy + satisfaction ≥ 42% + legitimacy ≥ 35%)
+### Key files
+- **SoA core:** `src/sim/towncore.ts` (~2,060 lines), `src/sim/startertown.ts`
+- **World layer:** `src/sim/parcel.ts` (ParcelManager, 64×64 grid), `src/sim/fogmap.ts`, `src/ui/worldcam.ts` (coordinate transforms)
+- **Rendering:** `src/ui/worldchunks.ts` (chunk-LOD foundation), `src/ui/render.ts` (town detail)
+- **Region/Nation:** `src/sim/region.ts` (~7,000 lines) — rivals, economy, diplomacy, war, climate
 
 ---
 
-### Ways ahead (identified, not yet started)
-1. **Close the SoA game loop** — the default still opens a *separate page* (`core.html`): add an
-   in-game **"← Menu"/Esc** and make **Continue** resume SoA saves (it currently resumes *Classic*
-   saves; SoA uses its own `centuria_save` slot). *Highest-value next step.*
-2. **Yearly Report** — annual in/out/net ledger per resource (+ population) in the economy panel
-   (the SoS report). Small, additive, accumulate flows over a year.
-3. **Deep render-path swap** — the long pole: drive the live `render.ts`/`hud.ts` from `TownCore`,
-   retire the fat `Simulation` + the region flip. Big, GUI-gated; only attempt in a watched session.
-4. **Region/nation on `TownCore`** — a Victoria-3-style flow tier above the colony (the macro engine
-   in `region.ts` already models this; the swap would point the colony→region flip at `TownCore`).
-5. **Polish:** dedicated `SAND` terrain (beaches reuse SOIL); river bridges/fords (water blocks
-   movement); forage depletion/regrow; bespoke sprites for `animal_pen`/`shrine`/`crate` (coreview
-   draws a labelled marker fallback today); per-settlement crisis tools (`cityHtml`) still gated
-   pre-statehood in the Classic region UI.
-6. **Macro tuning** is a draft baseline — `LEVERAGE_FRAGILE`/`FRAGILITY_GAIN` are the dials if the
-   business cycle should be busier/calmer.
+### Seamless-world checklist (Phases 1B–3)
+1. ✅ **Phase 0** — ParcelManager integration (merged)
+2. ✅ **Phase 1** — Click-to-world navigation (merged)
+3. 🔶 **Phase 1B** — World rendering with WorldCamera + parcel grid (in progress)
+4. ⬜ **Phase 2** — Parcel purchase UI + tech gating (identified)
+5. ⬜ **Phase 3** — Dormant tick for off-screen parcels (identified)
+
+### Polish & future (post-seamless-world)
+1. **Yearly Report** — annual in/out/net ledger per resource in the economy panel (the SoS report). Additive.
+2. **Terrain detail** — dedicated `SAND` terrain (beaches reuse SOIL); river bridges/fords (water blocks movement).
+3. **Sprite finish** — bespoke sprites for `animal_pen`/`shrine`/`crate` (fallback markers suffice for now).
+4. **Macro tuning** — `LEVERAGE_FRAGILE`/`FRAGILITY_GAIN` dials if the business cycle should be busier/calmer.
 
 ---
 
-## Session Snapshot — What Landed (2026-06-16, earlier — macro reconciliation)
+## Session History — Macro Engine & Credit Cycle (2026-06-16, earlier)
 
 ### Reconciliation + recovered macro work
 

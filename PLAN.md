@@ -1,8 +1,12 @@
-# Plan: Centuria — Pre-Req Fixes + Seamless World System
+# Plan: Centuria — Seamless World (SoA TownCore + ParcelManager)
+
+**Primary vision:** Click-accessible world of parcels (`64×64` grid); each can host a town. Player toggles between town detail (active parcel, full SoA TownCore fidelity) and world overview (parcel grid, rivals/dormant simulation). No hard mode flip.
+
+**Architecture:** `ParcelManager` (unified economy + parcel grid) + `TownCore` (active town) + dormant tick (off-screen parcels).
 
 ---
 
-## Track C — Scale Engine (Songs-of-Syx-scale town tier)
+## Track C — Scale Engine (Songs-of-Syx town tier, completed)
 
 **Decision (2026-06-14):** build a fresh data-oriented town engine alongside the
 current `Simulation`, prove each stage on the bench, swap when it beats the old
@@ -504,7 +508,7 @@ Track A is **substantially complete**; the bug fixes landed alongside the govern
 All root-caused with exact file/line evidence. Fix in order: worldgen → stockpile/cook/preemption → tech gating → building upgrade visuals → gate meshing → supply chains → treasury continuity. Each fix has its own verification step at the bottom of the file.
 
 **Track B — Seamless World** (7 phases; do after all Track A verifications pass):
-Replace the hard `mode: 'town' | 'region'` switch in `main.ts` with a single continuous `WorldCamera`. Zoom drives everything: zoom ≥1.0 = full tile rendering; 0.3–1.0 = chunk canvas icons; <0.3 = biome pixel blocks. Player starts zoomed into founding town; world expands as they explore and purchase parcels.
+Replace the hard `mode: 'town' | 'region'` flip with click-to-view navigation: player toggles between town detail (active parcel, full TownCore) and world overview (parcel grid, dormant rivals) by clicking the minimap. No mode switch; `ParcelManager` unifies the economy. World rendering uses LOD: zoom ≥1.0 = full tiles; 0.3–1.0 = chunk summaries; <0.3 = biome blocks.
 
 ### Validated codebase facts (confirmed against source — do not re-derive)
 
@@ -645,10 +649,19 @@ Changes (integrated with Track B Phase 2):
 
 Do after all Track A fixes pass verification.
 
-### Phase 1: Unified Camera + World Coordinate System
-**New file:** `src/ui/worldcam.ts`  
-**Modified:** `src/main.ts`
+### Phase 1: Click-to-World Navigation
+**Status:** ✅ **Phase 1 complete** (2026-06-16)
+**New file:** `src/ui/worldcam.ts` (coordinate transforms)
+**Modified:** `src/main.ts` (mode switching)
 
+**What was done:**
+- Added `world` mode: clicking the minimap toggles between `mode: 'town'` (active parcel detail) and `mode: 'world'` (parcel grid overview)
+- Escape key returns from world view to town
+- World view renders placeholder (full rendering in Phase 1B)
+- Coordinate system ready in `worldcam.ts`: `cellOf()`, `tileOf()`, `worldToCoord()`, etc.
+
+**Phase 1B (render pipeline):**
+Implement world rendering with `WorldCamera`:
 ```typescript
 export interface WorldCamera {
   x: number;    // world-space pixel (1 world-px = 1 tile-px at zoom 1.0)
@@ -663,26 +676,22 @@ tx = Math.floor((wx % (96 * 32)) / 32);
 ty = Math.floor((wy % (96 * 32)) / 32);
 ```
 
-Remove `mode: 'town' | 'region'` from `main.ts`. Replace two-branch loop with single `WorldRenderer` dispatching on `zoom`. Keep old mode button as dev fallback until Phase 4 is complete.
+Wire zoom-based LOD dispatch into `render.ts`. Keep old mode buttons as dev fallback until Phase 4 is complete.
 
 ### Phase 2: Parcel Data Model + Unified Economy
-**New file:** `src/sim/parcel.ts`  
-**Modified:** `src/sim/sim.ts`, `src/sim/region.ts`, `src/sim/worldgen.ts`
+**Status:** ✅ **Phase 0 complete** (2026-06-16) — ParcelManager wired into main.ts
+**New file:** `src/sim/parcel.ts` (foundation landed earlier)
+**Modified:** `src/main.ts` (boot, save/load, economy routing)
 
-```typescript
-interface Parcel {
-  cellX: number; cellY: number;
-  owned: boolean;
-  explored: boolean;
-  purchaseCost: number;
-  world: World | null; // null until purchased; lazily generated from seed
-}
-```
+**What was done:**
+- `ParcelManager` integration: boot creates `ParcelManager` instead of bare `Simulation`
+- Home parcel auto-owned with `world = sim.world` (the active town)
+- Serialization: v3 save format (town + parcels, optional region). Backward compatible with v1/v2 via migration.
+- Economy unification (Fix 7): all gold routes through home `Simulation.economy.cash`
+- `ParcelManager.serialize()/deserialize()` persists only ownership/exploration flags; terrain regenerates from seed on load
 
-- Home cell auto-owned at game start with `world = sim.world`
-- `worldgen.ts`: `RegionMap.siteAt(cellX, cellY)` already exists (confirmed) — use it directly as the per-parcel chunk generation hook; no changes to `worldgen.ts` for this step
-- Serialization: `Uint8Array` of owned flags + independent `Simulation.serialize()` per owned parcel
-- Economy unification (Fix 7): home sim stock is canonical
+**Phase 2B — Expansion UI:**
+Right-click fog cell → purchase panel with cost breakdown → deduct from canonical treasury → mark `owned: true`
 
 ### Phase 3: Parcel Purchase System
 **Modified:** `src/ui/hud.ts`, `src/ui/regionview.ts`, `src/sim/defs.ts`, `src/data/techtree.json`
