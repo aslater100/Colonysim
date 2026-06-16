@@ -739,9 +739,10 @@ function draw(): void {
     }
   }
 
-  // Deer
+  // Deer — 1.25× tile, centered horizontally, slightly taller
   const deerFrame = (performance.now() / 400 | 0) % sprites.deer.length;
-  for (const d of core.deerViews()) blit(sprites.deer[deerFrame], d.x | 0, d.y | 0);
+  { const dW = Math.round(px * 1.25), dH = Math.round(px * 1.15);
+    for (const d of core.deerViews()) ctx.drawImage(sprites.deer[deerFrame], (d.x | 0) * px - (dW - px) / 2, (d.y | 0) * px - (dH - px), dW, dH); }
 
   // Raiders — same oversized rendering as settlers
   for (const r of core.raids.raiders) {
@@ -750,11 +751,12 @@ function draw(): void {
     ctx.drawImage(rSpr, r.x * px, r.y * px - (rH - px), px, rH);
   }
 
-  // Wolves
+  // Wolves — 1.2× tile, centered, slightly taller
   if (core.wolves.active) {
     const wolfFrame = (performance.now() / 250 | 0) % sprites.wolf.length;
+    const wW = Math.round(px * 1.2), wH = Math.round(px * 1.2);
     for (const w of core.wolves.wolves) {
-      blit(sprites.wolf[w.leaving ? 0 : wolfFrame], w.x | 0, w.y | 0);
+      ctx.drawImage(sprites.wolf[w.leaving ? 0 : wolfFrame], (w.x | 0) * px - (wW - px) / 2, (w.y | 0) * px - (wH - px), wW, wH);
     }
   }
 
