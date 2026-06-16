@@ -40,7 +40,7 @@ import { Ledger, type LedgerSave, type BorrowResult, type RepayResult } from './
 import { ResearchBook, type ResearchBookSave } from './research';
 import { Rng } from './rng';
 import { BASE_PRICES } from './economy';
-import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, ROOM_DEF_BY_NUM, STATION_DEF_BY_NUM, STATION_TYPE_ID, TRAIT_DEFS, TUNING, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, DIFFICULTY_PRESETS, RESOURCE_KINDS, type ResourceKind, type TradeOrder, type TradeRecord, type TownFocus } from './defs';
+import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, ROOM_DEF_BY_NUM, STATION_DEF_BY_NUM, STATION_TYPE_ID, TRAIT_DEFS, TUNING, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, DIFFICULTY_PRESETS, RESOURCE_KINDS, BLUEPRINT_DEFS, type BlueprintDef, type ResourceKind, type TradeOrder, type TradeRecord, type TownFocus } from './defs';
 
 const TICKS_PER_DAY = MINUTES_PER_DAY / MINUTES_PER_TICK;
 // Colony storage cap (SoS model): non-food goods the colony can warehouse before
@@ -1332,6 +1332,33 @@ export class TownCore {
     const k = this.builds.findIndex((o) => o.x === x && o.y === y);
     if (k < 0) return false;
     this.builds.splice(k, 1);
+    return true;
+  }
+
+  /**
+   * Queue all walls, floors, and stations for a pre-defined building template.
+   * Accepts a BlueprintDef object or a blueprint id string. Returns false if the
+   * footprint is out of bounds. Individual tiles already built/queued are silently
+   * skipped so overlapping stamps don't hard-fail.
+   */
+  stampBlueprint(bp: BlueprintDef | string, ox: number, oy: number): boolean {
+    if (typeof bp === 'string') {
+      const found = BLUEPRINT_DEFS.find((b) => b.id === bp);
+      if (!found) return false;
+      bp = found;
+    }
+    if (!this.grid.inBounds(ox, oy) || !this.grid.inBounds(ox + bp.w - 1, oy + bp.h - 1)) return false;
+    const [fx0, fy0, fx1, fy1] = bp.floorRect;
+    const typeId = ROOM_TYPE_ID.get(bp.roomType) ?? 0;
+    for (let y = fy0; y <= fy1; y++)
+      for (let x = fx0; x <= fx1; x++)
+        this.blueprintFloor(ox + x, oy + y, typeId);
+    for (const [wx0, wy0, wx1, wy1] of bp.wallRects)
+      for (let y = wy0; y <= wy1; y++)
+        for (let x = wx0; x <= wx1; x++)
+          this.blueprintWall(ox + x, oy + y);
+    for (const st of bp.stations)
+      this.blueprintStation(st.type, ox + st.x, oy + st.y);
     return true;
   }
 

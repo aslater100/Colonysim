@@ -3,7 +3,7 @@ import { TownCore } from '../src/sim/towncore';
 import { BuildGrid, TERRAIN, ZONE, FORAGE } from '../src/sim/build';
 import { AgentStore, AState } from '../src/sim/agents';
 import { Stockpile } from '../src/sim/stockpile';
-import { ROOM_TYPE_ID, STATION_TYPE_ID, TUNING, type TownFocus } from '../src/sim/defs';
+import { ROOM_TYPE_ID, STATION_TYPE_ID, TUNING, BLUEPRINT_DEFS, type TownFocus } from '../src/sim/defs';
 
 // Build-system B-6: the integrated room-based town core that composes every
 // scale-engine module (BuildGrid + AgentStore + Stockpile + JobBoard + needs +
@@ -920,6 +920,39 @@ describe('TownCore blueprint construction', () => {
     c.blueprintWall(4, 4);
     const r = TownCore.deserialize(c.serialize());
     expect(r.builds).toEqual(c.builds);
+  });
+
+  it('stampBlueprint queues walls + floors + station for a hut template', () => {
+    const c = new TownCore({ width: 24, height: 24, seed: 7 });
+    c.seedColony(12, 12, 6);
+    c.stock.add('wood', 200); c.stock.add('stone', 200);
+    const hut = BLUEPRINT_DEFS.find(b => b.id === 'hut')!;
+    expect(hut).toBeDefined();
+    const ok = c.stampBlueprint('hut', 2, 2);
+    expect(ok).toBe(true);
+    // Should have queued wall + floor orders covering the blueprint footprint.
+    const hasWall = c.builds.some(o => o.kind === 'wall');
+    const hasFloor = c.builds.some(o => o.kind === 'floor');
+    expect(hasWall).toBe(true);
+    expect(hasFloor).toBe(true);
+    // Out-of-bounds stamp should fail.
+    expect(c.stampBlueprint('hut', 23, 23)).toBe(false);
+    // Unknown id should fail.
+    expect(c.stampBlueprint('no_such_blueprint', 2, 2)).toBe(false);
+  });
+
+  it('stampBlueprint builds the hut to completion with enough labour', () => {
+    const c = new TownCore({ width: 24, height: 24, seed: 7 });
+    c.seedColony(12, 12, 10);
+    c.stock.add('wood', 500); c.stock.add('stone', 500);
+    c.stampBlueprint('hut', 2, 2);
+    const queuedCount = c.builds.length;
+    expect(queuedCount).toBeGreaterThan(0);
+    c.run(360 * 20); // 20 days of labour
+    // All build orders should be completed.
+    expect(c.builds.length).toBe(0);
+    // At least one wall tile should exist in the hut footprint.
+    expect(c.grid.wall[c.grid.index(2, 2)]).toBe(1);
   });
 });
 

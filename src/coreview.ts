@@ -33,7 +33,7 @@ import {
   ROOM_TYPE_ID, ROOM_DEF_BY_NUM, ROOM_DEFS,
   STATION_DEF_BY_NUM, STATION_DEFS,
   TICKS_PER_SECOND, SEASONS, START_YEAR, DAYS_PER_SEASON, DAYS_PER_YEAR, MINUTES_PER_TICK, MINUTES_PER_DAY,
-  RESOURCE_KINDS,
+  RESOURCE_KINDS, BLUEPRINT_DEFS,
 } from './sim/defs';
 import { RESEARCH_PER_DESK_PER_DAY } from './sim/research';
 import { buildSprites } from './ui/sprites';
@@ -215,7 +215,7 @@ let flashUntil = 0; // timestamp when flash expires
 
 type Tool = 'wall' | 'erase' | 'gate' | 'floor' | 'room' | 'station'
            | 'field' | 'woodcutter' | 'quarry' | 'fishery' | 'flax' | 'forage'
-           | 'orchard' | 'veggarden' | 'trap' | 'bridge';
+           | 'orchard' | 'veggarden' | 'trap' | 'bridge' | 'blueprint';
 let tool: Tool = 'wall';
 
 // Room designation sub-tool: cycle through room type names.
@@ -225,6 +225,9 @@ let roomTypeIdx = 0; // index into ROOM_TYPE_NAMES
 // Station placement sub-tool: cycle through station type names.
 const STATION_TYPE_NAMES = STATION_DEFS.map(d => d.id);
 let stationTypeIdx = 0; // index into STATION_TYPE_NAMES
+
+// Blueprint stamp sub-tool: cycle through pre-defined building templates.
+let blueprintIdx = 0; // index into BLUEPRINT_DEFS
 
 // Settler inspector state.
 let inspected: SettlerView | null = null;
@@ -285,6 +288,7 @@ addEventListener('keydown', (e) => {
   if (k === 'f') { tool = 'field'; return; }
   if (k === 'c') { tool = 'woodcutter'; return; }
   if (k === 'q') { tool = 'quarry'; return; }
+  if (k === 'b' && e.shiftKey) { tool = 'bridge'; e.preventDefault(); return; }
   if (k === 'b') { tool = 'fishery'; return; }
   if (k === 'l' && !e.ctrlKey) { tool = 'flax'; return; }
   if (k === 'p') { tool = 'forage'; return; } // pick wild forage deposits
@@ -292,7 +296,7 @@ addEventListener('keydown', (e) => {
   if (k === 'v') { tool = 'veggarden'; return; } // vegetable garden (soil)
   if (k === 'i') { showEconomy = !showEconomy; return; } // inventory / economy panel
   if (k === 't' && !e.ctrlKey) { tool = 'trap'; return; }
-  if (k === 'b' && e.shiftKey) { tool = 'bridge'; e.preventDefault(); return; }
+  if (k === 'k' && e.shiftKey) { tool = 'blueprint'; e.preventDefault(); return; }
   // Save / Load via localStorage (Ctrl+S / Ctrl+L)
   if (e.ctrlKey && k === 's') {
     localStorage.setItem('centuria_save', JSON.stringify(core.serialize()));
@@ -308,8 +312,16 @@ addEventListener('keydown', (e) => {
     e.preventDefault(); return;
   }
   // Cycle room type
-  if (e.key === '[') { roomTypeIdx = (roomTypeIdx - 1 + ROOM_TYPE_NAMES.length) % ROOM_TYPE_NAMES.length; return; }
-  if (e.key === ']') { roomTypeIdx = (roomTypeIdx + 1) % ROOM_TYPE_NAMES.length; return; }
+  if (e.key === '[') {
+    if (tool === 'blueprint') blueprintIdx = (blueprintIdx - 1 + BLUEPRINT_DEFS.length) % BLUEPRINT_DEFS.length;
+    else roomTypeIdx = (roomTypeIdx - 1 + ROOM_TYPE_NAMES.length) % ROOM_TYPE_NAMES.length;
+    return;
+  }
+  if (e.key === ']') {
+    if (tool === 'blueprint') blueprintIdx = (blueprintIdx + 1) % BLUEPRINT_DEFS.length;
+    else roomTypeIdx = (roomTypeIdx + 1) % ROOM_TYPE_NAMES.length;
+    return;
+  }
   // Cycle station type
   if (e.key === ',') { stationTypeIdx = (stationTypeIdx - 1 + STATION_TYPE_NAMES.length) % STATION_TYPE_NAMES.length; return; }
   if (e.key === '.') { stationTypeIdx = (stationTypeIdx + 1) % STATION_TYPE_NAMES.length; return; }
@@ -419,6 +431,7 @@ function paintAt(e: MouseEvent): void {
     case 'veggarden':  g.setZone(t.x, t.y, ZONE.VEGGARDEN);   break;
     case 'trap':       core.paintTrap(t.x, t.y);               break;
     case 'bridge':     g.setRoad(t.x, t.y, 4);                break;
+    case 'blueprint':  core.stampBlueprint(BLUEPRINT_DEFS[blueprintIdx], t.x, t.y); break;
   }
 }
 
@@ -566,6 +579,17 @@ function draw(): void {
   for (const o of core.builds) ctx.strokeRect(o.x * px + 1, o.y * px + 1, px - 2, px - 2);
   ctx.setLineDash([]);
 
+  // Blueprint stamp preview: semi-transparent footprint at hover tile.
+  if (tool === 'blueprint' && hoverX >= 0 && hoverY >= 0) {
+    const bp = BLUEPRINT_DEFS[blueprintIdx];
+    ctx.fillStyle = 'rgba(100,160,255,0.18)';
+    ctx.strokeStyle = 'rgba(100,160,255,0.7)';
+    ctx.lineWidth = 1;
+    ctx.fillRect(hoverX * px, hoverY * px, bp.w * px, bp.h * px);
+    ctx.strokeRect(hoverX * px + 0.5, hoverY * px + 0.5, bp.w * px - 1, bp.h * px - 1);
+    ctx.lineWidth = 1;
+  }
+
   // Day/night cycle: tickNo within the day drives a night darkness overlay.
   // Night = roughly 10pm–5am (day fraction 0.77–1.0 + 0.0–0.21).
   { const TICKS_PER_DAY = MINUTES_PER_DAY / MINUTES_PER_TICK;
@@ -698,11 +722,12 @@ function draw(): void {
   let toolLabel: string = tool;
   if (tool === 'room') toolLabel = `room:${ROOM_TYPE_NAMES[roomTypeIdx]}`;
   if (tool === 'station') toolLabel = `station:${STATION_TYPE_NAMES[stationTypeIdx]}`;
+  if (tool === 'blueprint') toolLabel = `blueprint:${BLUEPRINT_DEFS[blueprintIdx].name}`;
   line(9, `tool: ${toolLabel}`);
 
   // Key hints
   ctx.fillStyle = '#888'; ctx.font = '11px monospace';
-  ctx.fillText('H wall  E erase  G gate  J floor  T trap  Z room([ ])  K station(, .)  Shift+B bridge', 8, 20 + 10 * 17);
+  ctx.fillText('H wall  E erase  G gate  J floor  T trap  Z room([ ])  K station(, .)  Shift+B bridge  Shift+K blueprint([ ])', 8, 20 + 10 * 17);
   ctx.fillText('F field  C chop  Q quarry  B fishery  L flax  P forage  U orchard  V veg  R raid  M wolves  N settler  X tech  Y focus  1-4 speed  space pause', 8, 20 + 11 * 17);
   ctx.fillText('camera: WASD / arrows pan · scroll zoom · middle-drag · O overview  ·  click settler to inspect · I economy · Ctrl+S save', 8, 20 + 12 * 17);
 
