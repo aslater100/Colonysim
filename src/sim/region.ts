@@ -3209,7 +3209,7 @@ export class RegionSim {
     // (otherwise the only pre-State income is trade tolls and the books can only
     // sink). Nation-tier machinery (factions/diplomacy/central bank) stays gated.
     this.monthlyEconomy();
-    if (this.stateProclaimed) this.updateFactions();
+    this.updateFactions(); // factions run from region-phase tick 1, not just at statehood
     this.updateDiplomacy();
     this.updateRivalAI(); // staggered AI updates for rivals (GDD §6.2)
     this.updateScouts(); // update faction scouts: movement, spawning, expiry (GDD §6.2)
