@@ -148,7 +148,7 @@ export interface SpriteSet {
   waterWinter: HTMLCanvasElement[];
   rock: HTMLCanvasElement[];
   rockMarked: HTMLCanvasElement[];
-  sand: HTMLCanvasElement;
+  sand: HTMLCanvasElement[];
   soil: HTMLCanvasElement;
   soilSown: HTMLCanvasElement;
   soilGrown: HTMLCanvasElement;
@@ -677,33 +677,60 @@ function rockSprite(marked: boolean, variant = 0): HTMLCanvasElement {
  * Sandy beach tile — warm gold with subtle ripple texture and the occasional
  * pebble, distinct from dark-brown soil (farmable earth).
  */
-function sandTile(): HTMLCanvasElement {
+function sandTile(variant = 0): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = TILE; c.height = TILE;
   const g = c.getContext('2d')!;
-  // Base sandy gold
-  g.fillStyle = '#c8a84c';
+  const rnd = mulberry(99 + variant * 173);
+  // Base sandy gold — slight hue shift per variant
+  const bases = ['#c8a84c', '#caa84e', '#c4a448', '#ccb050'];
+  g.fillStyle = bases[variant % 4];
   g.fillRect(0, 0, TILE, TILE);
-  // Subtle ripple lines (wave-dried patterns)
-  g.fillStyle = '#d4b45a';
-  for (let y = 3; y < TILE; y += 7) g.fillRect(0, y, TILE, 2);
-  g.fillStyle = '#b89640';
-  for (let y = 5; y < TILE; y += 7) g.fillRect(0, y, TILE, 1);
-  // Fine highlight flecks
-  const rnd = mulberry(99);
-  g.fillStyle = '#dfc070';
-  for (let i = 0; i < 8; i++) {
-    const fx = Math.floor(rnd() * (TILE - 2));
-    const fy = Math.floor(rnd() * (TILE - 2));
-    g.fillRect(fx, fy, 2, 1);
-  }
-  // Small pebbles
-  g.fillStyle = '#a08030';
-  for (let i = 0; i < 3; i++) {
-    const px = Math.floor(rnd() * (TILE - 3)) + 1;
-    const py = Math.floor(rnd() * (TILE - 3)) + 1;
-    g.fillRect(px, py, 2, 1);
-    g.fillRect(px + 1, py + 1, 1, 1);
+  if (variant === 2) {
+    // Coarser ripple — more compressed waves, rougher beach
+    g.fillStyle = '#b89640';
+    for (let y = 2; y < TILE; y += 5) g.fillRect(0, y, TILE, 1);
+    g.fillStyle = '#d4b048';
+    for (let y = 0; y < TILE; y += 5) g.fillRect(0, y, TILE, 1);
+    // More pebbles
+    g.fillStyle = '#9a7828';
+    for (let i = 0; i < 8; i++) {
+      const px2 = Math.floor(rnd() * (TILE - 3)) + 1;
+      const py2 = Math.floor(rnd() * (TILE - 3)) + 1;
+      g.fillRect(px2, py2, 2 + (rnd() < 0.3 ? 1 : 0), 1);
+      g.fillRect(px2, py2 + 1, 1, 1);
+    }
+  } else if (variant === 3) {
+    // Dry fine sand — less visible ripple, more uniform shimmer
+    g.fillStyle = '#d8bc5c';
+    for (let i = 0; i < 16; i++) {
+      const fx = Math.floor(rnd() * (TILE - 2));
+      const fy = Math.floor(rnd() * (TILE - 2));
+      g.fillRect(fx, fy, 1 + (rnd() < 0.3 ? 1 : 0), 1);
+    }
+    g.fillStyle = '#a89038';
+    for (let i = 0; i < 5; i++) {
+      g.fillRect(Math.floor(rnd() * (TILE - 3)), Math.floor(rnd() * (TILE - 3)), 2, 1);
+    }
+  } else {
+    // Original pattern (variants 0 and 1 with slight variation)
+    g.fillStyle = variant === 1 ? '#d0b452' : '#d4b45a';
+    for (let y = 3; y < TILE; y += 7) g.fillRect(0, y, TILE, 2);
+    g.fillStyle = '#b89640';
+    for (let y = 5; y < TILE; y += 7) g.fillRect(0, y, TILE, 1);
+    g.fillStyle = '#dfc070';
+    for (let i = 0; i < 8; i++) {
+      const fx = Math.floor(rnd() * (TILE - 2));
+      const fy = Math.floor(rnd() * (TILE - 2));
+      g.fillRect(fx, fy, 2, 1);
+    }
+    g.fillStyle = '#a08030';
+    for (let i = 0; i < 3 + variant; i++) {
+      const px2 = Math.floor(rnd() * (TILE - 3)) + 1;
+      const py2 = Math.floor(rnd() * (TILE - 3)) + 1;
+      g.fillRect(px2, py2, 2, 1);
+      g.fillRect(px2 + 1, py2 + 1, 1, 1);
+    }
   }
   return c;
 }
@@ -3101,7 +3128,7 @@ export function buildSprites(buildingDefs: { id: string; w: number; h: number; u
     waterWinter: [0, 1, 2, 3].map(waterWinterTile),
     rock: [0, 1, 2].map(v => rockSprite(false, v)),
     rockMarked: [0, 1, 2].map(v => rockSprite(true, v)),
-    sand: sandTile(),
+    sand: [0, 1, 2, 3].map(sandTile),
     soil: soilTile('bare'),
     soilSown: soilTile('sown'),
     soilGrown: soilTile('grown'),

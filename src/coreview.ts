@@ -517,7 +517,7 @@ function draw(): void {
       else blit(sprites.soil, x, y);
     }
     else if (t === TERRAIN.ROCK) { const rv = ((x * 1664525 ^ y * 22695477) >>> 29) % 3; blit((g.ore[i] ? sprites.rockMarked : sprites.rock)[rv], x, y); }
-    else if (t === TERRAIN.SAND) blit(sprites.sand, x, y);
+    else if (t === TERRAIN.SAND) blit(sprites.sand[((x * 1664525 ^ y * 22695477) >>> 29) % 4], x, y);
     else {
       const grassSet = seasonIdx === 3 ? sprites.grassWinter : seasonIdx === 2 ? sprites.grassAutumn : seasonIdx === 0 ? sprites.grassSpring : sprites.grass;
       blit(grassSet[((x * 1664525 ^ y * 22695477) >>> 30) % 4], x, y);
