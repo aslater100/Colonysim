@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TownCore } from '../src/sim/towncore';
-import { BuildGrid, TERRAIN, ZONE } from '../src/sim/build';
+import { BuildGrid, TERRAIN, ZONE, FORAGE } from '../src/sim/build';
 import { AgentStore, AState } from '../src/sim/agents';
 import { Stockpile } from '../src/sim/stockpile';
 import { ROOM_TYPE_ID, STATION_TYPE_ID, TUNING, type TownFocus } from '../src/sim/defs';
@@ -61,6 +61,17 @@ describe('TownCore production loop', () => {
     expect(core.population).toBeGreaterThanOrEqual(2); // didn't starve out
     expect(core.births).toBeGreaterThan(0);            // grew into its free beds
     expect(core.stock.count('meal')).toBeGreaterThan(0);
+  });
+
+  it('a forage zone gathers herbs from a wild deposit', () => {
+    const c = new TownCore({ width: 24, height: 24, seed: 4 });
+    const g = c.grid;
+    g.forage[g.index(6, 5)] = FORAGE.HERBS;
+    expect(g.setZone(6, 5, ZONE.FORAGE)).toBe(true);
+    c.seedColony(12, 12, 4); // labour to work the deposit
+    const herbs0 = c.stock.count('herbs');
+    for (let t = 0; t < 1100; t++) c.tick(); // ~3 days (360 ticks/day)
+    expect(c.stock.count('herbs')).toBeGreaterThan(herbs0); // herbs aren't eaten → clean signal
   });
 });
 

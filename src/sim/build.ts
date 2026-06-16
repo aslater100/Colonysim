@@ -106,6 +106,8 @@ export interface BuildGridSave {
   ore?: string;
   /** base64 of the harvest-zone layer (optional: absent in pre-zone saves). */
   zone?: string;
+  /** base64 of the wild-forage-deposit layer (optional: absent in pre-forage saves). */
+  forage?: string;
   /** base64 of the sapling-age layer (optional: absent in pre-forester saves). Days growing; 0 = no sapling. */
   saplingAge?: string;
   floor: string;
@@ -141,7 +143,9 @@ export const TERRAIN_NAMES = ['grass', 'tree', 'water', 'soil', 'rock'] as const
  * while FIELD/FISHERY/FLAX renew. Each id's `terrain` is the tile it may sit on
  * (FISHERY is special-cased: any passable tile next to water).
  */
-export const ZONE = { NONE: 0, FIELD: 1, WOODCUTTER: 2, QUARRY: 3, FISHERY: 4, FLAX: 5 } as const;
+export const ZONE = { NONE: 0, FIELD: 1, WOODCUTTER: 2, QUARRY: 3, FISHERY: 4, FLAX: 5, FORAGE: 6 } as const;
+/** Wild forage deposits scattered on grass (the `forage` layer). */
+export const FORAGE = { NONE: 0, BERRIES: 1, MUSHROOMS: 2, HERBS: 3 } as const;
 export type ZoneCode = (typeof ZONE)[keyof typeof ZONE];
 export interface ZoneDef {
   id: string;
@@ -158,6 +162,9 @@ export const ZONE_DEFS: (ZoneDef | null)[] = [
   { id: 'quarry', terrain: TERRAIN.ROCK, resource: 'stone', renewable: false },
   { id: 'fishery', terrain: TERRAIN.WATER, resource: 'fish_meal', renewable: true },
   { id: 'flax', terrain: TERRAIN.SOIL, resource: 'flax', renewable: true },
+  // Forage: gathered from wild deposits on grass. `resource` is overridden per
+  // deposit in harvestZones (berries/mushrooms → meal, herbs → herbs).
+  { id: 'forage', terrain: TERRAIN.GRASS, resource: 'meal', renewable: true },
 ];
 
 // Portable base64 for the byte layers (no Buffer/btoa — runs in Node, browser, worker).
@@ -219,6 +226,8 @@ export class BuildGrid {
   readonly ore: Uint8Array;
   /** Harvest-zone designation (see ZONE). 0 = none. Painted over matching terrain. */
   readonly zone: Uint8Array;
+  /** Wild forage deposit on this tile (see FORAGE). 0 = none. Only on GRASS. */
+  readonly forage: Uint8Array;
   /** Days since the tile's tree was felled; 0 = no sapling. Advances in TownCore dailyUpdate. */
   readonly saplingAge: Uint8Array;
 
@@ -246,6 +255,7 @@ export class BuildGrid {
     this.terrain = new Uint8Array(this.size); // all GRASS (0)
     this.ore = new Uint8Array(this.size);
     this.zone = new Uint8Array(this.size);
+    this.forage = new Uint8Array(this.size);
     this.saplingAge = new Uint8Array(this.size);
     this._visited = new Uint8Array(this.size);
   }
@@ -302,6 +312,8 @@ export class BuildGrid {
     const def = ZONE_DEFS[type];
     if (!def || !this.inBounds(x, y)) return false;
     if (type === ZONE.FISHERY) return this.terrainAt(x, y) !== TERRAIN.WATER && this._nextToWater(x, y);
+    // Forage only works an actual wild deposit (grass with a berry/mushroom/herb).
+    if (type === ZONE.FORAGE) return this.terrainAt(x, y) === TERRAIN.GRASS && this.forage[this.index(x, y)] !== FORAGE.NONE;
     return this.terrainAt(x, y) === def.terrain;
   }
 
@@ -464,6 +476,13 @@ export class BuildGrid {
         const ax = x + NX4[d], ay = y + NY4[d];
         if (ax >= 0 && ay >= 0 && ax < W && ay < H && land[ay * W + ax] === TERRAIN.WATER) { this.terrain[i] = TERRAIN.SOIL; break; }
       }
+    }
+    // Wild forage deposits scattered on grassland — berries/mushrooms/herbs you
+    // can designate a FORAGE zone over (SoS-style scattered resources).
+    for (let i = 0; i < W * H; i++) {
+      if (this.terrain[i] !== TERRAIN.GRASS) continue;
+      const r = rng.next();
+      if (r < 0.03) this.forage[i] = r < 0.012 ? FORAGE.BERRIES : r < 0.022 ? FORAGE.MUSHROOMS : FORAGE.HERBS;
     }
     // Heart clearing: a guaranteed buildable, walkable grass patch for the colony.
     const cx0 = Math.floor(W / 2), cy0 = Math.floor(H / 2);
@@ -802,6 +821,7 @@ export class BuildGrid {
       terrain: bytesToB64(this.terrain),
       ore: bytesToB64(this.ore),
       zone: bytesToB64(this.zone),
+      forage: bytesToB64(this.forage),
       saplingAge: bytesToB64(this.saplingAge),
       floor: bytesToB64(this.floor),
       roomType: bytesToB64(this.roomType),
@@ -819,6 +839,7 @@ export class BuildGrid {
     if (data.terrain) g.terrain.set(b64ToBytes(data.terrain, g.size)); // backfill: old saves are all grass
     if (data.ore) g.ore.set(b64ToBytes(data.ore, g.size));
     if (data.zone) g.zone.set(b64ToBytes(data.zone, g.size)); // backfill: old saves have no zones
+    if (data.forage) g.forage.set(b64ToBytes(data.forage, g.size)); // backfill: old saves have no deposits
     if (data.saplingAge) g.saplingAge.set(b64ToBytes(data.saplingAge, g.size));
     g.floor.set(b64ToBytes(data.floor, g.size));
     g.roomType.set(b64ToBytes(data.roomType, g.size));

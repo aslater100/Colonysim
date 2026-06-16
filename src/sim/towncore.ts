@@ -26,7 +26,7 @@
  * Run the self-check:  npx tsx src/sim/towncore.ts
  */
 import { MAP_W, MAP_H } from './world';
-import { BuildGrid, ZONE, ZONE_DEFS, TERRAIN, type BuildGridSave } from './build';
+import { BuildGrid, ZONE, ZONE_DEFS, FORAGE, TERRAIN, type BuildGridSave } from './build';
 import { AgentStore, AState, ThoughtKey, type AgentStoreSave } from './agents';
 import { Stockpile } from './stockpile';
 import { JobBoard } from './jobs';
@@ -1134,7 +1134,9 @@ export class TownCore {
       if (def.seasonal && !growingSeason) { budget--; continue; }
       const x = i % grid.width, y = (i / grid.width) | 0;
       if (!grid.canZone(x, y, z)) { grid.zone[i] = ZONE.NONE; continue; } // terrain changed under it
-      const res = z === ZONE.QUARRY && grid.ore[i] ? 'iron_ore' : def.resource;
+      const res = z === ZONE.QUARRY && grid.ore[i] ? 'iron_ore'
+        : z === ZONE.FORAGE ? (grid.forage[i] === FORAGE.HERBS ? 'herbs' : 'meal')
+        : def.resource;
       const yield_ = (z === ZONE.FIELD || z === ZONE.FLAX) ? HARVEST_YIELD * fieldMult : HARVEST_YIELD;
       this.stock.add(res, yield_);
       budget--;

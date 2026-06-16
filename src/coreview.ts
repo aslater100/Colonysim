@@ -114,6 +114,7 @@ const ROOM_COLORS: Record<string, string> = {
   autoZone(ZONE.WOODCUTTER, 12);
   autoZone(ZONE.QUARRY, 8);
   autoZone(ZONE.FISHERY, 6);
+  autoZone(ZONE.FORAGE, 8);
 }
 
 // ── Canvas ────────────────────────────────────────────────────────────────
@@ -173,7 +174,7 @@ let flashMsg = ''; // brief feedback message (e.g. "Saved", "Loaded")
 let flashUntil = 0; // timestamp when flash expires
 
 type Tool = 'wall' | 'erase' | 'gate' | 'floor' | 'room' | 'station'
-           | 'field' | 'woodcutter' | 'quarry' | 'fishery' | 'flax' | 'trap';
+           | 'field' | 'woodcutter' | 'quarry' | 'fishery' | 'flax' | 'forage' | 'trap';
 let tool: Tool = 'wall';
 
 // Room designation sub-tool: cycle through room type names.
@@ -242,6 +243,7 @@ addEventListener('keydown', (e) => {
   if (k === 'q') { tool = 'quarry'; return; }
   if (k === 'b') { tool = 'fishery'; return; }
   if (k === 'l' && !e.ctrlKey) { tool = 'flax'; return; }
+  if (k === 'p') { tool = 'forage'; return; } // pick wild forage deposits
   if (k === 't' && !e.ctrlKey) { tool = 'trap'; return; }
   // Save / Load via localStorage (Ctrl+S / Ctrl+L)
   if (e.ctrlKey && k === 's') {
@@ -360,12 +362,15 @@ function paintAt(e: MouseEvent): void {
     case 'quarry':     g.setZone(t.x, t.y, ZONE.QUARRY);      break;
     case 'fishery':    g.setZone(t.x, t.y, ZONE.FISHERY);     break;
     case 'flax':       g.setZone(t.x, t.y, ZONE.FLAX);        break;
+    case 'forage':     g.setZone(t.x, t.y, ZONE.FORAGE);      break;
     case 'trap':       core.paintTrap(t.x, t.y);               break;
   }
 }
 
 // ── Render ────────────────────────────────────────────────────────────────
-const ZONE_OUTLINE = ['', '#d4d46a', '#6ad48a', '#c8c8d8', '#6ad4d4', '#d4a06a']; // flax = warm amber
+const ZONE_OUTLINE = ['', '#d4d46a', '#6ad48a', '#c8c8d8', '#6ad4d4', '#d4a06a', '#c060d0']; // flax = amber, forage = violet
+// Wild forage deposit marker colours by FORAGE type (berries/mushrooms/herbs).
+const FORAGE_COLOR = ['', '#e0405a', '#c8a060', '#50c060'];
 
 function draw(): void {
   const px = TILE; // world is drawn in base px under the camera transform below
@@ -399,6 +404,13 @@ function draw(): void {
     if (g.saplingAge[i] > 0) {
       ctx.fillStyle = '#30a03040';
       ctx.fillRect(x * px, y * px, px, px);
+    }
+
+    // Wild forage deposit: a coloured dot in the tile centre (berries/mushrooms/herbs).
+    if (g.forage[i]) {
+      ctx.fillStyle = FORAGE_COLOR[g.forage[i]];
+      const c = px / 2, rdot = Math.max(1.5, px * 0.18);
+      ctx.beginPath(); ctx.arc(x * px + c, y * px + c, rdot, 0, Math.PI * 2); ctx.fill();
     }
 
     // Zone outline + drought/flood tint on field/flax zones
@@ -583,7 +595,7 @@ function draw(): void {
   // Key hints
   ctx.fillStyle = '#888'; ctx.font = '11px monospace';
   ctx.fillText('H wall  E erase  G gate  J floor  T trap  Z room([ ])  K station(, .)', 8, 20 + 10 * 17);
-  ctx.fillText('F field  C chop  Q quarry  B fishery  L flax  R raid  N settler  X queue  Y focus  1-4 speed  space pause', 8, 20 + 11 * 17);
+  ctx.fillText('F field  C chop  Q quarry  B fishery  L flax  P forage  R raid  N settler  X queue  Y focus  1-4 speed  space pause', 8, 20 + 11 * 17);
   ctx.fillText('camera: WASD / arrows pan · scroll zoom · middle-drag · O overview   ·   click a settler to inspect', 8, 20 + 12 * 17);
 
   // ── Settler inspector panel (top-right) ──────────────────────────────────
@@ -651,7 +663,9 @@ function draw(): void {
     const i = hoverY * MAP + hoverX;
     const parts: string[] = [];
     const terrainNames = ['', 'grass', 'tree', 'water', 'rock', 'soil'];
-    const zoneNames = ['', 'field', 'woodcutter', 'quarry', 'fishery', 'flax'];
+    const zoneNames = ['', 'field', 'woodcutter', 'quarry', 'fishery', 'flax', 'forage'];
+    const forageNames = ['', 'berries', 'mushrooms', 'herbs'];
+    if (g.forage[i]) parts.push(forageNames[g.forage[i]] ?? 'forage');
     const t = g.terrain[i];
     if (t) parts.push(terrainNames[t] ?? `terrain:${t}`);
     if (g.ore[i]) parts.push('ore');

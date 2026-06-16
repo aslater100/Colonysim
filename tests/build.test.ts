@@ -246,6 +246,23 @@ describe('terrain layer', () => {
     for (let i = 0; i < a.size; i++) if (a.ore[i]) expect(a.terrain[i]).toBe(TERRAIN.ROCK);
   });
 
+  it('scatters wild forage deposits on grass; FORAGE zone only works a deposit', () => {
+    const g = new BuildGrid(96, 96); g.generateTerrainHeightmap(new Rng(42));
+    let deposits = 0, offGrass = 0;
+    for (let i = 0; i < g.size; i++) {
+      if (!g.forage[i]) continue;
+      deposits++;
+      if (g.terrain[i] !== TERRAIN.GRASS) offGrass++;
+    }
+    expect(deposits).toBeGreaterThan(0);   // deposits exist
+    expect(offGrass).toBe(0);              // …only on grass
+    // FORAGE zone requires an actual deposit, not just any grass.
+    const dep = g.forage.findIndex((v, i) => v && g.terrain[i] === TERRAIN.GRASS);
+    const bare = g.terrain.findIndex((t, i) => t === TERRAIN.GRASS && !g.forage[i]);
+    expect(g.setZone(dep % 96, (dep / 96) | 0, ZONE.FORAGE)).toBe(true);
+    expect(g.setZone(bare % 96, (bare / 96) | 0, ZONE.FORAGE)).toBe(false);
+  });
+
   it('generates a mixed landscape with a buildable grass heart and ore only on rock', () => {
     const g = new BuildGrid(96, 96); g.generateTerrain(new Rng(123));
     const counts = [0, 0, 0, 0, 0];
