@@ -645,9 +645,19 @@ function draw(): void {
     }
   }
 
-  // Blueprint ghosts
+  // Blueprint ghosts — wall plan uses sprite; floors/stations get a dashed blue outline.
   ctx.strokeStyle = '#88aaff'; ctx.setLineDash([2, 2]);
-  for (const o of core.builds) ctx.strokeRect(o.x * px + 1, o.y * px + 1, px - 2, px - 2);
+  for (const o of core.builds) {
+    if (o.kind === 'wall') blit(sprites.wallPlan, o.x, o.y);
+    else if (o.kind === 'floor') {
+      ctx.fillStyle = 'rgba(160,200,255,0.15)';
+      ctx.fillRect(o.x * px, o.y * px, px, px);
+      ctx.strokeRect(o.x * px + 1, o.y * px + 1, px - 2, px - 2);
+    } else { // station
+      ctx.strokeStyle = '#ffcc44';
+      ctx.strokeRect(o.x * px + 1, o.y * px + 1, px - 2, px - 2);
+    }
+  }
   ctx.setLineDash([]);
 
   // Blueprint stamp preview: semi-transparent footprint at hover tile.
