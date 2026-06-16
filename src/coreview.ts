@@ -33,7 +33,7 @@ import {
   ROOM_TYPE_ID, ROOM_DEF_BY_NUM, ROOM_DEFS,
   STATION_DEF_BY_NUM, STATION_DEFS,
   TICKS_PER_SECOND, SEASONS, START_YEAR, DAYS_PER_SEASON, DAYS_PER_YEAR, MINUTES_PER_TICK, MINUTES_PER_DAY,
-  RESOURCE_KINDS, BLUEPRINT_DEFS,
+  RESOURCE_KINDS, BLUEPRINT_DEFS, TUNING,
 } from './sim/defs';
 import { RESEARCH_PER_DESK_PER_DAY } from './sim/research';
 import { buildSprites } from './ui/sprites';
@@ -497,8 +497,13 @@ function draw(): void {
     else blit(sprites.grass[(x * 3 + y) % 4], x, y);
     if (t === TERRAIN.TREE) blit(sprites.tree, x, y);
 
-    // Sapling: use the sapling sprite instead of just a green tint.
-    if (g.saplingAge[i] > 0) blit(sprites.sapling, x, y);
+    // Sapling: scale by age so young trees are tiny and nearly mature ones are full-size.
+    if (g.saplingAge[i] > 0) {
+      const frac = Math.min(1, g.saplingAge[i] / TUNING.saplingGrowDays);
+      const sz = Math.max(4, Math.round(px * (0.35 + frac * 0.65)));
+      const off = (px - sz) >> 1;
+      ctx.drawImage(sprites.sapling, x * px + off, y * px + off, sz, sz);
+    }
 
     // Wild forage deposit: a coloured dot in the tile centre (berries/mushrooms/herbs).
     if (g.forage[i]) {
@@ -722,7 +727,10 @@ function draw(): void {
   const SEASON_BASE_C = [10, 22, 8, -8]; // spring/summer/fall/winter base °C
   const tempC = Math.round(SEASON_BASE_C[seasonIdx] + core.weather.forDay(core.day).tempAnomalyC);
   const tempLabel = `${tempC > 0 ? '+' : ''}${tempC}°C`;
-  line(0, `${core.townName}  ${seasonLabel}  ${tempLabel}  pop ${core.population}  mood ${core.averageMood().toFixed(0)}  gold ${core.gold.toFixed(0)}  era ${core.era}  [${core.focus}]`);
+  const svc = core.services();
+  const houseCap = svc.sleep;
+  const popColor = core.population >= houseCap ? '#ff8844' : '#ddd';
+  line(0, `${core.townName}  ${seasonLabel}  ${tempLabel}  pop ${core.population}/${houseCap}  mood ${core.averageMood().toFixed(0)}  gold ${core.gold.toFixed(0)}  era ${core.era}  [${core.focus}]`, popColor);
   const flowStr = (kind: Parameters<typeof core.netFlow>[0]) => {
     const f = core.netFlow(kind);
     return f === 0 ? '' : (f > 0 ? `+${f.toFixed(1)}` : f.toFixed(1));
@@ -751,6 +759,8 @@ function draw(): void {
     const crisis = healthWarn || unburied;
     line(5, `births ${core.births}  deaths ${core.deaths}  prestige ${core.prestige}  inflation ${(core.inflation * 100).toFixed(1)}%${unburied}${healthWarn}`, crisis ? '#ff8844' : '#ddd');
   }
+  const wolfLine = core.wolves.active
+    ? `  WOLVES ${core.wolves.wolves.length} prowling` : '';
   const raidLine = core.raidActive
     ? `RAID — ${core.raids.raiders.length} raiders (slain ${core.raids.slain})`
     : `next raid day ${core.nextRaidDay}`;
@@ -759,8 +769,8 @@ function draw(): void {
   const skyColor = sky === 'storm' ? '#ff8844' : sky === 'snow' ? '#aaddff' : sky === 'rain' ? '#88bbff' : '#ddd';
   const isDrought = core.weather.isDrought(core.day), isFloodRisk = core.weather.isFloodRisk(core.day);
   const droughtFlood = isDrought ? '  [DROUGHT]' : isFloodRisk ? '  [FLOOD RISK]' : '';
-  const weatherColor = core.raidActive ? '#ff6b6b' : isDrought ? '#cc8833' : isFloodRisk ? '#44aacc' : skyColor;
-  line(6, `${raidLine}  ${skyLabel}${droughtFlood}`, weatherColor);
+  const weatherLineColor = core.raidActive ? '#ff6b6b' : core.wolves.active ? '#ffcc44' : isDrought ? '#cc8833' : isFloodRisk ? '#44aacc' : skyColor;
+  line(6, `${raidLine}${wolfLine}  ${skyLabel}${droughtFlood}`, weatherLineColor);
   { const TICKS_PER_DAY = MINUTES_PER_DAY / MINUTES_PER_TICK;
     const frac = (core.tickNo % TICKS_PER_DAY) / TICKS_PER_DAY;
     // frac: 0=midnight 0.25=dawn 0.5=noon 0.75=dusk
