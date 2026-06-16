@@ -46,6 +46,9 @@ const TICKS_PER_DAY = MINUTES_PER_DAY / MINUTES_PER_TICK;
 // Colony storage cap (SoS model): non-food goods the colony can warehouse before
 // overflow spoils. Base + per-head scaling + built shelves/crates (storageCap()).
 const STORAGE_BASE = 1200, STORAGE_PER_POP = 150;
+// Religion: each temple shrine holds services for this many settlers, lifting
+// their mood by FAITH_MOOD_BONUS while a shrine is built.
+const FAITH_PER_SHRINE = 12, FAITH_MOOD_BONUS = 4;
 // Foods are exempt — they ride their own freshness/larder cap, so the storage
 // limit can never starve the colony.
 const FOOD_KINDS: ReadonlySet<ResourceKind> = new Set<ResourceKind>([
@@ -1011,6 +1014,13 @@ export class TownCore {
       for (let i = 0; i < a.count; i++) {
         if (a.rest[i] < 60) a.addThought(i, this.tickNo, -6, TICKS_PER_DAY);
       }
+    }
+
+    // Religion: shrines hold services that lift worshippers' mood. Each shrine
+    // reaches FAITH_PER_SHRINE settlers (capped at the population).
+    if (services.faith > 0) {
+      const served = Math.min(a.count, services.faith * FAITH_PER_SHRINE);
+      for (let i = 0; i < served; i++) a.addThought(i, this.tickNo, FAITH_MOOD_BONUS, TICKS_PER_DAY, ThoughtKey.Faith);
     }
 
     // Wildlife: past the first prowl day, a wolf pack may slip in from the edge

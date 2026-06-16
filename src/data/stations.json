@@ -39,6 +39,7 @@
     { "id": "market_stall", "name": "Market Stall", "roomTypes": ["market"], "w": 2, "h": 1, "cost": { "wood": 8 }, "buildWork": 120, "kind": "capacity", "capacity": { "kind": "trade", "amount": 1 } },
 
     { "id": "training_post", "name": "Training Post", "roomTypes": ["barracks"], "w": 2, "h": 2, "cost": { "wood": 10, "timber": 1 }, "buildWork": 200, "kind": "capacity", "capacity": { "kind": "drill", "amount": 1 } },
-    { "id": "animal_pen", "name": "Animal Pen", "roomTypes": ["pasture"], "w": 2, "h": 2, "cost": { "wood": 12 }, "buildWork": 200, "kind": "craft", "recipe": { "inputs": { "grain": 1 }, "outputs": { "dairy": 2 }, "work": 90 } }
+    { "id": "animal_pen", "name": "Animal Pen", "roomTypes": ["pasture"], "w": 2, "h": 2, "cost": { "wood": 12 }, "buildWork": 200, "kind": "craft", "recipe": { "inputs": { "grain": 1 }, "outputs": { "dairy": 2 }, "work": 90 } },
+    { "id": "shrine", "name": "Shrine", "roomTypes": ["temple"], "w": 1, "h": 2, "cost": { "stone": 10, "wood": 4 }, "buildWork": 200, "kind": "capacity", "capacity": { "kind": "faith", "amount": 1 } }
   ]
 }

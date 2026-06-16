@@ -135,6 +135,29 @@ describe('TownCore production loop', () => {
     c.seedColony(8, 8, 6);
     expect(c.storageCap()).toBeGreaterThan(empty); // bigger colony stores more
   });
+
+  it('a temple shrine provides faith and lifts worshippers\' mood', () => {
+    const make = (withShrine: boolean) => {
+      const c = new TownCore({ width: 24, height: 24, seed: 9 });
+      const g = c.grid;
+      if (withShrine) {
+        g.designateRect(3, 3, 6, 6, ROOM_TYPE_ID.get('temple')!);
+        for (let x = 2; x <= 7; x++) { g.setWall(x, 2); g.setWall(x, 7); }
+        for (let y = 2; y <= 7; y++) { g.setWall(2, y); g.setWall(7, y); }
+        g.setGate(4, 7);
+        g.placeStation('shrine', 3, 3);
+      }
+      g.rebuildRooms();
+      c.stock.add('meal', 5000); // well-fed so mood reflects faith, not hunger
+      c.seedColony(12, 12, 4);
+      return c;
+    };
+    const faithful = make(true), godless = make(false);
+    expect(faithful.services().faith).toBe(1);
+    expect(godless.services().faith).toBe(0);
+    for (let t = 0; t < 1100; t++) { faithful.tick(); godless.tick(); }
+    expect(faithful.averageMood()).toBeGreaterThan(godless.averageMood());
+  });
 });
 
 describe('TownCore room services', () => {

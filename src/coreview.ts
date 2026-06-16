@@ -69,6 +69,7 @@ const ROOM_COLORS: Record<string, string> = {
   market: '#d4a020',
   barracks: '#c05050',
   pasture: '#7ba050',
+  temple: '#c8a8e0',
 };
 
 // ── Starter town ──────────────────────────────────────────────────────────
@@ -601,6 +602,7 @@ function draw(): void {
     if (svc.medical > 0) parts.push(`med ${svc.medical}`);
     if (svc.trade > 0) parts.push(`trade ${svc.trade} (+${svc.trade * 2}g/day)`);
     if (svc.drill > 0) parts.push(`drill ${svc.drill} (+${Math.min(30, svc.drill * 10)}% militia)`);
+    if (svc.faith > 0) parts.push(`faith ${svc.faith} (≈${svc.faith * 12} worshippers)`);
     line(8, parts.join('  '), '#aaa'); }
 
   // Tool info

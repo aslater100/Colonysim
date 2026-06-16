@@ -21,6 +21,7 @@
     { "id": "yard", "name": "Yard", "enclosedRequired": false, "desc": "An open courtyard. Place wells here to provide clean water, lowering the colony's infection risk." },
     { "id": "market", "name": "Market", "enclosedRequired": false, "desc": "A trading square. Each market stall inside generates gold income each day from commerce with passing merchants." },
     { "id": "barracks", "name": "Barracks", "enclosedRequired": true, "desc": "Military quarters. Training posts inside keep settlers drilled; settlers who sleep here arm first during raids." },
-    { "id": "pasture", "name": "Pasture", "enclosedRequired": false, "desc": "Grazing ground for livestock. Animal pens inside turn feed grain into dairy, a fresh food that broadens the diet." }
+    { "id": "pasture", "name": "Pasture", "enclosedRequired": false, "desc": "Grazing ground for livestock. Animal pens inside turn feed grain into dairy, a fresh food that broadens the diet." },
+    { "id": "temple", "name": "Temple", "enclosedRequired": true, "desc": "A house of worship. Shrines inside hold services that lift the spirits of the faithful." }
   ]
 }
