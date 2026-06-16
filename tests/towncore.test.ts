@@ -2185,3 +2185,52 @@ describe('TownCore region context', () => {
     expect(twin.site.cellY).toBe(before.y);
   });
 });
+
+describe('TownCore parcels (seamless world M2)', () => {
+  const home = (c: TownCore) => c.site;
+  const landNeighbour = (c: TownCore): [number, number] | null => {
+    const { cellX, cellY } = home(c);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const nx = cellX + dx, ny = cellY + dy;
+      if (nx >= 0 && ny >= 0 && !c.regionMap.isWater(nx, ny)) return [nx, ny];
+    }
+    return null;
+  };
+
+  it('starts owning exactly the home cell', () => {
+    const c = new TownCore({ width: 96, height: 96, seed: 7 });
+    expect(c.ownsParcel(c.site.cellX, c.site.cellY)).toBe(true);
+    expect(c.ownedCells.size).toBe(1);
+  });
+
+  it('buys an adjacent land parcel, deducting gold and taking title', () => {
+    const c = new TownCore({ width: 96, height: 96, seed: 7 });
+    c.gold = 100000;
+    const t = landNeighbour(c);
+    expect(t).not.toBeNull();
+    const [tx, ty] = t!;
+    const cost = c.parcelPrice(tx, ty);
+    const before = c.gold;
+    expect(c.buyParcel(tx, ty)).toBe(true);
+    expect(c.ownsParcel(tx, ty)).toBe(true);
+    expect(c.gold).toBeCloseTo(before - cost, 5);
+    expect(c.buyParcel(tx, ty)).toBe(false); // already owned
+  });
+
+  it('rejects non-adjacent and unaffordable claims', () => {
+    const c = new TownCore({ width: 96, height: 96, seed: 7 });
+    c.gold = 100000;
+    expect(c.canBuyParcel(c.site.cellX + 5, c.site.cellY)).toBe(false); // not adjacent
+    const t = landNeighbour(c);
+    if (t) { c.gold = 0; expect(c.canBuyParcel(t[0], t[1])).toBe(false); } // broke
+  });
+
+  it('holdings survive save/load', () => {
+    const c = new TownCore({ width: 96, height: 96, seed: 7 });
+    c.gold = 100000;
+    const t = landNeighbour(c);
+    if (t) c.buyParcel(t[0], t[1]);
+    const twin = TownCore.deserialize(c.serialize());
+    expect([...twin.ownedCells].sort()).toEqual([...c.ownedCells].sort());
+  });
+});

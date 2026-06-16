@@ -11,7 +11,30 @@
 
 ---
 
-## Session Snapshot — UX: bottom command bar + RTS hotkeys (2026-06-16, latest)
+## Session Snapshot — Backbone M2: claim parcels from the overview (2026-06-16, latest)
+
+**What landed (branch `claude/game-build-iteration-assets-2kd2z0`):** The world overview
+is now interactive — you can **buy land**. Rather than re-base the `Simulation`-coupled
+`ParcelManager` (deferred), the primary engine got a small native model:
+- `parcelCost(...)` extracted to `defs.ts` as a pure function; `ParcelManager.cost` now
+  calls it too, so classic + TownCore quote identical numbers from **one** formula
+  (classic parcel tests unchanged).
+- `TownCore` gains `ownedCells` (seeded with the home cell), `parcelPrice`, `canBuyParcel`
+  (in-region + land + orthogonally adjacent + affordable), `buyParcel` (deduct gold, take
+  title). Persisted via an additive optional `owned[]` save field (old saves backfill the
+  home cell).
+- CoreView overview: owned cells get a gold wash, buyable frontier cells a green outline,
+  a hovered-cell info line (biome · price · claim/why-not), a Treasury/Holdings header, and
+  **left-click claims**. Tech gating (`land_survey`/`road_building`) is region-tier and not
+  wired at town tier yet — adjacency is the only gate (noted).
+
+Tests 887→**891**. Browser-verifiable. Next: **M3** — dormant tick for owned-but-inactive
+parcels (crops grow / slow drift off-screen), and showing each holding's chunk summary
+(from the M0 `computeTownChunkSummary`) in the overview.
+
+---
+
+## Session Snapshot — UX: bottom command bar + RTS hotkeys (2026-06-16)
 
 **What landed (branch `claude/game-build-iteration-assets-2kd2z0`):** Reworked CoreView
 input toward RTS conventions (user ask: "way too many hotkeys; want a SoS-style central

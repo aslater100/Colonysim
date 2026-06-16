@@ -752,6 +752,25 @@ export const PARCEL_TUNING = {
   cartographyRevealRadius: 2,
 } as const;
 
+/** Pure parcel price — base × distance × terrain × holdings premium × discount.
+ *  Shared by ParcelManager (classic sim) and TownCore so both quote identical
+ *  numbers from one formula. */
+export function parcelCost(opts: {
+  cellX: number; cellY: number; homeCellX: number; homeCellY: number;
+  biome: string; ownedCount: number; roadDiscount?: boolean;
+}): number {
+  const d = Math.hypot(opts.cellX - opts.homeCellX, opts.cellY - opts.homeCellY);
+  const terrain = PARCEL_TUNING.terrainMult[opts.biome] ?? 1;
+  const discount = opts.roadDiscount ? PARCEL_TUNING.roadDiscount : 1;
+  return Math.round(
+    PARCEL_TUNING.baseCost *
+    (1 + d * PARCEL_TUNING.distanceScale) *
+    terrain *
+    (1 + opts.ownedCount * PARCEL_TUNING.expansionPremium) *
+    discount,
+  );
+}
+
 /** Region-tier tech ids that drive parcel expansion (kept in one place so the
  *  sim, the tech tree data, and the purchase UI never drift apart). */
 export const EXPANSION_TECHS = {

@@ -37,11 +37,11 @@ import { Weather } from './weather';
 import { RaidForce, raidSize, type RaidForceSave } from './raid';
 import { WolfPack, type WolfPackSave } from './wolves';
 import { Ledger, type LedgerSave, type BorrowResult, type RepayResult } from './ledger';
-import { RegionMap, type TownSite } from './worldgen';
+import { RegionMap, REGION_N, type TownSite } from './worldgen';
 import { ResearchBook, type ResearchBookSave } from './research';
 import { Rng } from './rng';
 import { BASE_PRICES } from './economy';
-import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, ROOM_DEF_BY_NUM, STATION_DEF_BY_NUM, STATION_TYPE_ID, TRAIT_DEFS, TUNING, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, DIFFICULTY_PRESETS, RESOURCE_KINDS, BLUEPRINT_DEFS, type BlueprintDef, type ResourceKind, type TradeOrder, type TradeRecord, type TownFocus } from './defs';
+import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, ROOM_DEF_BY_NUM, STATION_DEF_BY_NUM, STATION_TYPE_ID, TRAIT_DEFS, TUNING, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, DIFFICULTY_PRESETS, RESOURCE_KINDS, BLUEPRINT_DEFS, parcelCost, type BlueprintDef, type ResourceKind, type TradeOrder, type TradeRecord, type TownFocus } from './defs';
 
 const TICKS_PER_DAY = MINUTES_PER_DAY / MINUTES_PER_TICK;
 // Colony storage cap (SoS model): non-food goods the colony can warehouse before
@@ -197,6 +197,8 @@ export interface TownCoreSave {
   rngState: number;
   weatherSeed: number;
   gold: number;
+  /** Seamless-world parcels held (cell "x,y" keys); absent on pre-M2 saves. */
+  owned?: string[];
   homeX: number;
   homeY: number;
   deaths: number;
@@ -421,6 +423,36 @@ export class TownCore {
   get regionMap(): RegionMap { return this._regionMap ??= new RegionMap(this.weatherSeed); }
   /** This colony's cell within the region (cellX/cellY + biome/site detail). */
   get site(): TownSite { return this._site ??= this.regionMap.startSite(); }
+
+  // Seamless world (M2) — region cells this colony holds title to. Seeded with
+  // the home cell on first access; buying a neighbour adds it. Persisted so a
+  // realm's borders survive save/load (re-derived home cell backfills old saves).
+  private _owned: Set<string> | null = null;
+  get ownedCells(): Set<string> {
+    if (!this._owned) this._owned = new Set([`${this.site.cellX},${this.site.cellY}`]);
+    return this._owned;
+  }
+  ownsParcel(cx: number, cy: number): boolean { return this.ownedCells.has(`${cx},${cy}`); }
+  /** Gold price to acquire a cell at current holdings (no road discount at town tier). */
+  parcelPrice(cx: number, cy: number): number {
+    return parcelCost({ cellX: cx, cellY: cy, homeCellX: this.site.cellX, homeCellY: this.site.cellY,
+      biome: this.regionMap.at(cx, cy).biome, ownedCount: this.ownedCells.size });
+  }
+  /** Buyable = in-region, land, unowned, orthogonally adjacent to a holding, affordable. */
+  canBuyParcel(cx: number, cy: number): boolean {
+    if (cx < 0 || cy < 0 || cx >= REGION_N || cy >= REGION_N) return false;
+    if (this.ownsParcel(cx, cy) || this.regionMap.isWater(cx, cy)) return false;
+    const adj = this.ownsParcel(cx + 1, cy) || this.ownsParcel(cx - 1, cy)
+             || this.ownsParcel(cx, cy + 1) || this.ownsParcel(cx, cy - 1);
+    return adj && this.gold >= this.parcelPrice(cx, cy);
+  }
+  /** Acquire a cell: deduct gold and take title. Returns true on success. */
+  buyParcel(cx: number, cy: number): boolean {
+    if (!this.canBuyParcel(cx, cy)) return false;
+    this.gold -= this.parcelPrice(cx, cy);
+    this.ownedCells.add(`${cx},${cy}`);
+    return true;
+  }
 
   constructor(opts: TownCoreOpts = {}) {
     const width = opts.width ?? MAP_W;
@@ -2099,6 +2131,7 @@ export class TownCore {
       rngState: this.rng.getState(),
       weatherSeed: this.weatherSeed,
       gold: this.gold,
+      owned: this._owned ? [...this._owned] : undefined,
       homeX: this.homeX,
       homeY: this.homeY,
       deaths: this.deaths,
@@ -2151,6 +2184,7 @@ export class TownCore {
     (core as { agents: AgentStore }).agents = AgentStore.deserialize(data.agents);
     (core as { stock: Stockpile }).stock = Stockpile.deserialize(data.stock);
     (core as { relations: Relations }).relations = Relations.deserialize(data.relations);
+    if (data.owned) (core as unknown as { _owned: Set<string> | null })._owned = new Set(data.owned);
     core.rng.setState(data.rngState);
     core.tickNo = data.tickNo;
     core.minute = data.minute;
