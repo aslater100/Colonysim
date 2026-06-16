@@ -2364,6 +2364,32 @@ function stationSprite(id: string, w: number, h: number): HTMLCanvasElement {
       g.fillRect(m + 4, 15, 8, 10);
       break;
     }
+    case 'animal_pen': {
+      // Pen: fenced enclosure with dirt floor and a couple of cows.
+      shadow();
+      // Dirt floor
+      g.fillStyle = P.soilDark; g.fillRect(m, m + 4, W - 2 * m, H - m - 6);
+      g.fillStyle = P.soil; g.fillRect(m + 1, m + 5, W - 2 * m - 2, H - m - 8);
+      // Fence rails (top, bottom, left, right)
+      g.fillStyle = P.woodDark;
+      g.fillRect(m, m + 4, W - 2 * m, 2);
+      g.fillRect(m, H - m - 4, W - 2 * m, 2);
+      g.fillRect(m, m + 4, 2, H - 2 * m - 4);
+      g.fillRect(W - m - 2, m + 4, 2, H - 2 * m - 4);
+      // Mid-rail
+      g.fillStyle = P.wood;
+      g.fillRect(m, m + 8, W - 2 * m, 1);
+      // Two simple cows (blobs)
+      g.fillStyle = P.trunk; // brown
+      g.fillRect(m + 4, m + 10, 5, 4); // cow 1
+      g.fillRect(m + 3, m + 10, 1, 3); g.fillRect(m + 8, m + 10, 1, 3); // legs 1
+      g.fillRect(m + 12, m + 11, 5, 4); // cow 2
+      g.fillRect(m + 11, m + 11, 1, 3); g.fillRect(m + 16, m + 11, 1, 3); // legs 2
+      g.fillStyle = P.woodLight; // highlight
+      g.fillRect(m + 4, m + 10, 5, 1);
+      g.fillRect(m + 12, m + 11, 5, 1);
+      break;
+    }
     default: { // generic crate
       shadow();
       woodTop(m + 2, m + 3, W - 2 * m - 4, H - 2 * m - 5);
