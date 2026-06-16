@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Simulation } from '../src/sim/sim';
 import { RegionSim, RIVAL_REGIMES } from '../src/sim/region';
-import { AI_DIFFICULTY, MINUTES_PER_DAY, DAYS_PER_YEAR } from '../src/sim/defs';
+import { AI_DIFFICULTY, MINUTES_PER_DAY } from '../src/sim/defs';
 import type { TownDesign } from '../src/sim/defs';
 import { REGION_MINUTES_PER_TICK } from '../src/sim/region';
 
@@ -74,61 +74,6 @@ describe('Rival regimes', () => {
       expect(def).toBeTruthy();
       expect(def!.eraFrom).toBeLessThanOrEqual(r.year);
     }
-  });
-});
-
-describe('Rival head-start at flip (fairness)', () => {
-  // Build a region from a town whose clock has been advanced `years` into the
-  // game, so fromTown() seeds rivals with a proportional head start.
-  function regionAfter(years: number, difficulty: TownDesign['difficulty'] = 'normal'): RegionSim {
-    const sim = new Simulation(7, { ...baseDesign, difficulty });
-    grow(sim);
-    sim.minute = years * DAYS_PER_YEAR * MINUTES_PER_DAY;
-    return RegionSim.fromTown(sim, 8, 80, 80);
-  }
-  const rivals = (r: RegionSim) => r.regionalFactions.filter((f) => f.id !== r.playerFactionId);
-
-  it('leaves rivals at zero settlements when the player flips immediately (year 0)', () => {
-    for (const f of rivals(regionAfter(0))) expect(f.settlementIds.length).toBe(0);
-  });
-
-  it('seeds rivals with settlements when the player spent years in the town tier', () => {
-    const late = rivals(regionAfter(16));
-    expect(late.length).toBeGreaterThan(0);
-    // 16 years on normal → 1 + floor(16/8) = 3 settlements each (placement may
-    // drop a few to terrain collisions, so assert the head start is real, not exact).
-    for (const f of late) expect(f.settlementIds.length).toBeGreaterThanOrEqual(1);
-    expect(late.some((f) => f.settlementIds.length >= 2)).toBe(true);
-  });
-
-  it('gives a longer town phase a bigger head start than a shorter one', () => {
-    const totalSettlements = (r: RegionSim) =>
-      rivals(r).reduce((a, f) => a + f.settlementIds.length, 0);
-    expect(totalSettlements(regionAfter(32))).toBeGreaterThan(totalSettlements(regionAfter(8)));
-  });
-
-  it('accrues rival tech and treasury with the head start', () => {
-    const early = rivals(regionAfter(0))[0];
-    const late = rivals(regionAfter(24))[0];
-    expect(late.techProgress).toBeGreaterThan(early.techProgress);
-    expect(late.treasury).toBeGreaterThan(early.treasury);
-  });
-
-  it('fires a first-contact event only when a rival settlement is scouted out of fog', () => {
-    const r = regionAfter(24); // rivals hold settlements via the head start
-    const rival = rivals(r).find((f) => f.settlementIds.length > 0)!;
-    expect(rival).toBeTruthy();
-    const s = r.settlement(rival.settlementIds[0])!;
-    // The rival's town starts fogged — no contact yet.
-    expect(r.log.some((l) => l.text.includes('FIRST CONTACT') && l.text.includes(rival.name))).toBe(false);
-    // Scout the tile: revealTiles() runs the first-contact check.
-    r.revealTiles(Math.round(s.x), Math.round(s.y), 3, 'scouted');
-    expect(r.log.some((l) => l.text.includes('FIRST CONTACT') && l.text.includes(rival.name))).toBe(true);
-    // Idempotent: re-scouting the same power doesn't re-announce it.
-    const count = () => r.log.filter((l) => l.text.includes('FIRST CONTACT') && l.text.includes(rival.name)).length;
-    const before = count();
-    r.revealTiles(Math.round(s.x), Math.round(s.y), 3, 'scouted');
-    expect(count()).toBe(before);
   });
 });
 

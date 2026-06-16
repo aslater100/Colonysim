@@ -67,16 +67,24 @@ function bootSim(): { sim: Simulation; region: RegionSim | null; needsDesign: bo
     if (designJson) {
       sessionStorage.removeItem(DESIGN_KEY);
       const design = JSON.parse(designJson) as TownDesign;
-      return { sim: new Simulation(Date.now() % 100000, design), region: null, needsDesign: false };
+      const sim = new Simulation(Date.now() % 100000, design);
+      // AI rivals exist from game start, in a hidden region running in parallel
+      const region = RegionSim.fromTown(sim, 0, 0, 0);
+      return { sim, region, needsDesign: false };
     }
   } catch (err) {
     console.error('load failed, starting fresh:', err);
   }
-  return { sim: new Simulation(Date.now() % 100000), region: null, needsDesign: true };
+  const sim = new Simulation(Date.now() % 100000);
+  // AI rivals exist from game start, in a hidden region running in parallel
+  const region = RegionSim.fromTown(sim, 0, 0, 0);
+  return { sim, region, needsDesign: true };
 }
 
 const boot = bootSim();
 const sim = boot.sim;
+// AI rivals have been running since game start (in parallel with town phase)
+let region: RegionSim | null = boot.region;
 // Debug/automation hook (used by headless smoke tests; harmless in play)
 (window as unknown as { sim: Simulation }).sim = sim;
 const buildGrid = new BuildGrid();
@@ -165,7 +173,7 @@ function playLogSounds(): void {
 // ---- the flip: town → region (GDD §2.4) ----
 let mode: 'town' | 'region' = 'town';
 let dioramaOpen = false;
-let region: RegionSim | null = null;
+// region is initialized from boot above
 let regionView: RegionView | null = null;
 
 // ---- Title / Home Screen ----
@@ -233,15 +241,15 @@ function enterRegionMode(r: RegionSim): void {
 hud.onFoundTown = () => {
   if (!sim.canFoundSecondTown().ok) return;
   // The region flip is a moment of decision: the design screen asks how the
-  // new tier will be run before the wagons roll. Rivals are seeded with a
-  // head-start inside fromTown proportional to the years already played, so
-  // the player doesn't enter the region tier against frozen, zero-state AI.
+  // new tier will be run before the wagons roll. The region has been running
+  // in the background since game start, so we just apply the design and enter its view.
   hud.paused = true;
   new DesignScreen().showRegionDesign((design) => {
     sim.economy.cash -= TUNING.townFoundingCost;
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    r.applyRegionDesign(design);
-    enterRegionMode(r);
+    if (region) {
+      region.applyRegionDesign(design);
+      enterRegionMode(region);
+    }
     hud.paused = false;
   });
 };
@@ -591,8 +599,13 @@ function loop(now: number): void {
     acc += dt * TICKS_PER_SECOND * hud.speed;
     let guard = 0;
     while (acc >= 1 && guard++ < 64) {
-      if (mode === 'town') sim.tick();
-      else if (!regionView?.ceremonyOpen) region?.tick(); // history pauses for the ceremony
+      if (mode === 'town') {
+        sim.tick();
+        // AI rivals tick in the background during town phase so they're active from game start
+        region?.tick();
+      } else if (!regionView?.ceremonyOpen) {
+        region?.tick(); // history pauses for the ceremony
+      }
       acc -= 1;
     }
   }

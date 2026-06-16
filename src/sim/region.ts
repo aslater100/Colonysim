@@ -2115,40 +2115,6 @@ export class RegionSim {
     }
   }
 
-  /**
-   * Seed the rivals with the development they'd have accrued while the player
-   * spent years in the town tier — so the region tier doesn't open against
-   * frozen, zero-state AI (which gave the player an unfair head start). This is
-   * a one-shot approximation of "rivals were building all along": each rival
-   * founds settlements and gains tech/treasury scaled by the elapsed years and
-   * the difficulty knobs. Runs off the AI rng stream so the colony seed is
-   * untouched and the result is deterministic for a given seed + flip year.
-   */
-  private bootstrapRivalHeadStart(elapsedYears: number): void {
-    if (elapsedYears <= 0) return;
-    const knobs = this.aiKnobs();
-    for (const f of this.regionalFactions) {
-      if (f.id === this.playerFactionId) continue;
-      // A capital plus roughly one extra settlement per 8 elapsed years, capped
-      // by the difficulty ceiling — slower AI (easy) plants fewer.
-      const target = Math.min(
-        knobs.settlementCap,
-        1 + Math.floor(elapsedYears / 8 * knobs.expandChance / 0.10),
-      );
-      for (let n = 0; n < target; n++) {
-        const site = this.findBestExpansionSite(f, 8);
-        if (site && site.score > 0) {
-          const s = this.foundSettlement(f, site.x, site.y);
-          if (s && f.capital < 0) f.capital = s.id;
-        }
-      }
-      // Quiet years of development: tech and a war chest reflecting the head start.
-      f.techProgress += elapsedYears * 0.5 * knobs.techMult;
-      f.treasury += Math.round(elapsedYears * 18 * knobs.techMult);
-      f.militaryStrength = Math.max(f.militaryStrength, Math.round(elapsedYears * 0.3 * knobs.techMult));
-    }
-  }
-
   // ---- the route network (M6b: transportation.md §3) ----
   routeBetween(aId: number, bId: number): Route | undefined {
     return this.routes.find((r) => (r.a === aId && r.b === bId) || (r.a === bId && r.b === aId));
@@ -2970,10 +2936,6 @@ export class RegionSim {
 
     // Expedition en route: scouts have read the land for the best nearby site.
     region.launchExpedition(home, expeditionPop, expeditionFood, expeditionWood);
-
-    // Rivals get the development they'd have built while the player spent years
-    // in the town tier — fairness fix so the region doesn't open against frozen AI.
-    region.bootstrapRivalHeadStart(Math.max(0, sim.year - START_YEAR));
     return region;
   }
 
