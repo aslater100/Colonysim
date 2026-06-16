@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Simulation } from '../src/sim/sim';
-import { RegionSim, REGION_MINUTES_PER_TICK } from '../src/sim/region';
+import { RegionSim, REGION_MINUTES_PER_TICK, BRANCH_YEAR, CENTURY_YEAR } from '../src/sim/region';
 import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
 
 /**
@@ -85,5 +85,36 @@ describe('Region tier — long-horizon stability (integration)', () => {
     runYears(b, 50);
     // At least one compounding scalar should differ between distinct seeds.
     expect(snapshot(a)).not.toEqual(snapshot(b));
+  });
+});
+
+/** The late game (era fork at 2040, century report at 2100) was never exercised
+ *  by the longrun guard, which stopped at 2010 — yet the era-branch reveal modal
+ *  depends on `decideBranch()` firing. These pin the end-of-game milestones. */
+describe('Region tier — late-game milestones fire', () => {
+  it('decides an era branch once the run passes BRANCH_YEAR (2040)', () => {
+    const r = nation(1000);
+    expect(r.eraBranch).toBeNull();
+    runYears(r, BRANCH_YEAR - START_YEAR + 5); // → 2045
+    expect(r.eraBranch).not.toBeNull();
+    expect(['solarpunk', 'dystopia', 'drowned']).toContain(r.eraBranch);
+  });
+
+  it('builds a century report with four graded categories at 2100', () => {
+    const r = nation(1000);
+    runYears(r, CENTURY_YEAR - START_YEAR + 1); // → 2101
+    expect(r.centuryReport).not.toBeNull();
+    const g = r.centuryReport!.grades;
+    for (const cat of [g.stewardship, g.prosperity, g.liberty, g.standing]) {
+      expect(['A', 'B', 'C', 'D', 'F']).toContain(cat);
+    }
+  });
+
+  it('the era branch, once decided, is stable for the rest of the run', () => {
+    const r = nation(1000);
+    runYears(r, BRANCH_YEAR - START_YEAR + 2); // → 2042
+    const decided = r.eraBranch;
+    runYears(r, 20); // → 2062
+    expect(r.eraBranch).toBe(decided); // a fork is permanent, not re-rolled
   });
 });
