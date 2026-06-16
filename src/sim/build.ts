@@ -454,6 +454,17 @@ export class BuildGrid {
         x = nx; y = ny;
       }
     }
+    // Beaches: a sandy (soil) shore wherever grass/forest meets water. One pass
+    // over a snapshot so the ring doesn't grow into itself.
+    const land = this.terrain.slice();
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      if (land[i] !== TERRAIN.GRASS && land[i] !== TERRAIN.TREE) continue;
+      for (let d = 0; d < 4; d++) {
+        const ax = x + NX4[d], ay = y + NY4[d];
+        if (ax >= 0 && ay >= 0 && ax < W && ay < H && land[ay * W + ax] === TERRAIN.WATER) { this.terrain[i] = TERRAIN.SOIL; break; }
+      }
+    }
     // Heart clearing: a guaranteed buildable, walkable grass patch for the colony.
     const cx0 = Math.floor(W / 2), cy0 = Math.floor(H / 2);
     for (let y = cy0 - 10; y <= cy0 + 10; y++) for (let x = cx0 - 14; x <= cx0 + 14; x++) {
