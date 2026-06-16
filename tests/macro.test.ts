@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeCycles, policyRateFor, type MacroSample } from '../src/sim/macro-headless';
+import { analyzeCycles, policyRateFor, runOne, type MacroSample } from '../src/sim/macro-headless';
 
 /** Build a sample series from parallel confidence/gdp arrays (other fields fixed). */
 function series(confidence: number[], gdp: number[]): MacroSample[] {
@@ -84,4 +84,28 @@ describe('policyRateFor', () => {
   it('taylor policy clamps to a 1% floor when inflation is very low', () => {
     expect(policyRateFor('taylor', 0)).toBe(0.01);
   });
+});
+
+// End-to-end: pin the actual RegionSim credit cycle, not just the analyzer.
+// Guards the GDD §13.3 risk #3 fix — the Minsky leverage-fragility term that
+// makes the business cycle emerge under an active (dovish growth-mandate) banker
+// while staying dormant when the rate is pinned at neutral.
+describe('credit cycle emergence (RegionSim.tickMonetary)', () => {
+  it('emerges under an active dovish policy without running away', () => {
+    const { stats } = runOne(1000, 'taylor', 110);
+    // The cycle turns: leverage builds, fragility breaks confidence below 30.
+    expect(stats.busts).toBeGreaterThanOrEqual(1);
+    expect(stats.minConfidence).toBeLessThan(30);
+    // …but it does not run away into perpetual depression (GDD: <=1/century).
+    expect(stats.depressionsPerCentury).toBeLessThanOrEqual(1);
+    expect(stats.bustsPerCentury).toBeLessThanOrEqual(6);
+  }, 30_000);
+
+  it('stays dormant when the policy rate is pinned at neutral (control)', () => {
+    const { stats } = runOne(1000, 'passive', 110);
+    // Neutral rate => leverage never builds => no fragility => no credit busts.
+    expect(stats.busts).toBe(0);
+    expect(stats.maxLeverage).toBeLessThan(0.5);
+    expect(stats.minConfidence).toBeGreaterThanOrEqual(60);
+  }, 30_000);
 });

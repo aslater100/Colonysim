@@ -189,7 +189,7 @@ function setupNation(seed: number): RegionSim {
 const WARMUP_YEARS = 5;
 
 /** Run one seed for `years` game-years under `mode`, sampling each month. */
-function runOne(seed: number, mode: PolicyMode): { stats: CycleStats; samples: MacroSample[] } {
+export function runOne(seed: number, mode: PolicyMode, years = 110): { stats: CycleStats; samples: MacroSample[] } {
   const r = setupNation(seed);
   const samples: MacroSample[] = [];
   const totalDays = Math.round(years * DAYS_PER_YEAR);
@@ -227,7 +227,7 @@ function main(): void {
   const all: CycleStats[] = [];
   for (let i = 0; i < runs; i++) {
     const seed = 1000 + i;
-    const { stats } = runOne(seed, policy);
+    const { stats } = runOne(seed, policy, years);
     all.push(stats);
     console.log(
       `seed ${seed}: creditBusts ${stats.busts} (${stats.bustsPerCentury}/cy) · ` +

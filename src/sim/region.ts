@@ -652,6 +652,17 @@ export const DEAL_COUNTER_DAYS = 90;
 const NEUTRAL_RATE = 0.05;
 /** Debt-service/GDP above which the credit cycle becomes fragile. */
 const LEVERAGE_FRAGILITY = 0.18;
+/**
+ * Minsky financial-instability term (GDD §13.3 risk #3): a high *level* of private
+ * leverage is itself fragile, independent of current debt service. A dovish banker
+ * keeps rates — and therefore debt service — low, so without this the boom never
+ * ends and the credit cycle stays dormant (0 busts/century in the macro harness).
+ * Leverage above `LEVERAGE_FRAGILE` erodes confidence; once it breaks the
+ * deleveraging trigger the boom unwinds, confidence recovers, and the loop turns.
+ */
+const LEVERAGE_FRAGILE = 1.5;
+/** Confidence erosion per unit of private leverage above `LEVERAGE_FRAGILE`. */
+const FRAGILITY_GAIN = 140;
 export const MIN_POLICY_RATE = 0.01;
 export const MAX_POLICY_RATE = 0.15;
 /** Credit spreads over policy rate by rating tier. */
@@ -3460,11 +3471,13 @@ export class RegionSim {
     this.inflationRate += (inflTarget - this.inflationRate) * 0.15;
     this.inflationRate = Math.max(0, Math.min(0.50, this.inflationRate));
 
-    // 3. Confidence: mean-reverts to 70, falls when debt service or inflation is high
+    // 3. Confidence: mean-reverts to 70, falls when debt service, inflation, or the
+    //    leverage *level* (Minsky fragility) is high
     const debtService = this.privateLeverage * this.policyRate; // annual fraction
     const leveragePressure = Math.max(0, debtService - LEVERAGE_FRAGILITY) * 80;
     const inflPressure = Math.max(0, this.inflationRate - 0.08) * 40;
-    const confTarget = Math.max(5, 70 - leveragePressure - inflPressure);
+    const fragilityPressure = Math.max(0, this.privateLeverage - LEVERAGE_FRAGILE) * FRAGILITY_GAIN;
+    const confTarget = Math.max(5, 70 - leveragePressure - inflPressure - fragilityPressure);
     this.confidence += (confTarget - this.confidence) * 0.12;
     this.confidence = Math.max(0, Math.min(100, this.confidence));
 

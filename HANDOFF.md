@@ -27,12 +27,17 @@ cherry-picks the two feature commits back onto main (pure additive, no conflicts
 - **`tests/macro.test.ts`** (11 cases) CI-pins `analyzeCycles` + `policyRateFor`.
 - **`tests/region-longrun.test.ts`** (3 cases): 1900–2010 stays finite/in-clamp; 50-year run is
   byte-identical for a fixed seed; distinct seeds diverge.
-- **Key finding (open):** credit busts = **0/century** under current params — confidence never
-  moves off 70, the 1929-crash guard (conf < 55) never fires, leverage tops out ~2.0. The cycle
-  **under-emerges** (GDD §13.3 risk #3). The harness is the tuning instrument; fix levers are
-  stronger leverage→inflation pass-through or a leverage term in the confidence equation.
+- **Key finding (addressed in a follow-up PR):** credit busts were = **0/century** — confidence
+  never moved off 70, leverage topped out ~2.0, so the cycle **under-emerged** (GDD §13.3 risk #3).
+  Fixed by adding a **Minsky leverage-fragility term** to `RegionSim.tickMonetary`: a high *level*
+  of private leverage (above `LEVERAGE_FRAGILE = 1.6`… tuned to 1.5) erodes confidence at
+  `FRAGILITY_GAIN` per unit, independent of debt service. Under an active dovish banker the harness
+  now reports **~2.9 busts/century, 0 depressions** (on target); the `passive` (pinned-neutral)
+  control stays dormant (leverage never builds), confirming it's the credit cycle, not noise. Pinned
+  by two end-to-end cases in `tests/macro.test.ts`.
 
-Test baseline restored to **839** (825 on main + 14 recovered).
+Test baseline restored to **839** (825 on main + 14 recovered), then **841** with the cycle-emergence
+tests.
 
 ---
 
