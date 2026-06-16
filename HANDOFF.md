@@ -11,7 +11,18 @@
 
 ---
 
-## Session Snapshot — Content: TownCore production tech tree (2026-06-16, latest)
+## Session Snapshot — Content: extraction-zone yield techs (2026-06-16, latest)
+
+**What landed (branch `claude/game-build-iteration-assets-2kd2z0`):** Finished the
+harvest-yield story. Field/flax zones had tech multipliers but woodcutter/quarry/fishery
+were flat (the `towncore.ts` flat-yield stub). Added **Forestry** (wood ×1.25),
+**Mining** (stone/ore ×1.30), **Fishing** (fish food ×1.25) to `research.ts`, wired in
+`harvestZones()` mirroring the existing field-bonus pattern. TownCore tree 17→20.
+Tests 881→**882**; non-extraction zones unchanged (still ×1).
+
+---
+
+## Session Snapshot — Content: TownCore production tech tree (2026-06-16)
 
 **What landed (branch `claude/game-build-iteration-assets-2kd2z0`):** Content track,
 **primary engine** this time — the SoA TownCore research tree (`src/sim/research.ts`)

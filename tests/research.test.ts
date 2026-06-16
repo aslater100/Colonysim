@@ -182,6 +182,27 @@ describe('TownCore research integration', () => {
     expect(core.stock.count('grain')).toBeGreaterThan(before + 1 * core.weather.growthMult(0));
   });
 
+  it('forestry boosts woodcutter-zone wood yield', () => {
+    function woodColony(): TownCore {
+      const core = new TownCore({ width: 24, height: 24, seed: 7 });
+      core.seedColony(12, 12, 4);
+      // A row of trees worked by woodcutter zones.
+      for (let x = 2; x <= 6; x++) { core.grid.setTerrain(x, 2, TERRAIN.TREE); core.grid.setZone(x, 2, ZONE.WOODCUTTER); }
+      core.stock.add('meal', 100); // keep settlers fed so they don't starve mid-run
+      return core;
+    }
+    const base = woodColony();
+    base.run(360);
+    const baseWood = base.stock.count('wood');
+
+    const boosted = woodColony();
+    boosted.researchBook.points = 9999;
+    boosted.research('forestry');
+    boosted.run(360);
+
+    expect(boosted.stock.count('wood')).toBeGreaterThan(baseWood);
+  });
+
   it('crop_science stacks on top of crop_rotation for higher field yield', () => {
     const core = new TownCore({ width: 24, height: 24, seed: 7 });
     core.seedColony(12, 12, 4);
