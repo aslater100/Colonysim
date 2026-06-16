@@ -215,6 +215,8 @@ let tool: Tool = 'wall';
 // Seamless world (M1): the "🌐 World" button opens a zoomed-out overview of the
 // wider region this colony sits in; the button or Esc returns. Town keeps ticking.
 let worldView = false;
+let worldLayout = { ox: 0, oy: 0, px: 1 };       // overview map placement, for screen→cell
+let worldHover: { cx: number; cy: number } | null = null;
 
 // Room designation sub-tool: cycle through room type names.
 const ROOM_TYPE_NAMES = ROOM_DEFS.map(d => d.id);
@@ -338,7 +340,13 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 let panning = false;
 let panLast = { x: 0, y: 0 };
 canvas.addEventListener('mousedown', (e) => {
-  if (worldView) return; // overview is look-only
+  if (worldView) { // overview: left-click claims a buyable cell
+    if (e.button === 0) {
+      const c = worldCellAt(e);
+      if (c && core.buyParcel(c.cx, c.cy)) { flashMsg = `Claimed (${c.cx},${c.cy})`; flashUntil = Date.now() + 1200; }
+    }
+    return;
+  }
   if (e.button === 1) { panning = true; panLast = { x: e.clientX, y: e.clientY }; e.preventDefault(); return; }
   // Command bar takes the click before the map does.
   if (e.button === 0) {
@@ -359,6 +367,7 @@ addEventListener('mouseup', () => {
 });
 let hoverX = -1, hoverY = -1;
 canvas.addEventListener('mousemove', (e) => {
+  if (worldView) { worldHover = worldCellAt(e); return; }
   if (panning) { view.x -= e.clientX - panLast.x; view.y -= e.clientY - panLast.y; panLast = { x: e.clientX, y: e.clientY }; return; }
   const r = canvas.getBoundingClientRect();
   const t = tileAt(e.clientX - r.left, e.clientY - r.top);
@@ -502,22 +511,62 @@ function drawWorld(): void {
   const px = Math.max(1, Math.floor(span / REGION_N));
   const size = px * REGION_N;
   const ox = Math.floor((cw - size) / 2), oy = Math.floor((ch - size) / 2);
+  worldLayout = { ox, oy, px };
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(map, ox, oy, size, size);
+
+  // Owned parcels: gold wash. Buyable frontier: green (affordable) / amber outline.
+  for (const key of core.ownedCells) {
+    const [cx, cy] = key.split(',').map(Number);
+    ctx.fillStyle = 'rgba(255,210,74,0.30)';
+    ctx.fillRect(ox + cx * px, oy + cy * px, px, px);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const nx = cx + dx, ny = cy + dy;
+      if (!core.canBuyParcel(nx, ny)) continue;            // affordable + adjacent + land
+      ctx.strokeStyle = 'rgba(120,230,120,0.9)'; ctx.lineWidth = 1;
+      ctx.strokeRect(ox + nx * px + 0.5, oy + ny * px + 0.5, px - 1, px - 1);
+    }
+  }
+
   // Home colony marker: a pulsing ring on its cell.
   const site = core.site;
-  const hx = ox + site.cellX * px + px / 2, hy = oy + site.cellY * px + px / 2;
+  const hcx = ox + site.cellX * px + px / 2, hcy = oy + site.cellY * px + px / 2;
   const pulse = 4 + Math.sin(performance.now() / 300) * 1.5;
   ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.arc(hx, hy, pulse + 3, 0, Math.PI * 2); ctx.stroke();
-  ctx.fillStyle = '#ffd24a'; ctx.fillRect(hx - 1, hy - 1, 3, 3);
-  // Border + labels.
+  ctx.beginPath(); ctx.arc(hcx, hcy, pulse + 3, 0, Math.PI * 2); ctx.stroke();
+
+  // Hovered cell highlight.
+  if (worldHover) {
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1;
+    ctx.strokeRect(ox + worldHover.cx * px + 0.5, oy + worldHover.cy * px + 0.5, px - 1, px - 1);
+  }
+
   ctx.strokeStyle = '#3a4654'; ctx.lineWidth = 1;
   ctx.strokeRect(ox + 0.5, oy + 0.5, size - 1, size - 1);
+
+  // Header + hovered-cell info line.
   ctx.fillStyle = '#e8e0c8'; ctx.font = 'bold 18px monospace';
-  ctx.fillText('The Wider World', ox, oy - 14);
-  ctx.fillStyle = '#90a0b0'; ctx.font = '12px monospace';
-  ctx.fillText('Your colony sits where the gold marker pulses.  V or Esc to return.', ox, oy - 1);
+  ctx.fillText('The Wider World', ox, oy - 30);
+  ctx.fillStyle = '#c8b878'; ctx.font = '12px monospace';
+  ctx.fillText(`Treasury ${Math.floor(core.gold)}g · Holdings ${core.ownedCells.size} · click green-outlined land to claim it · Esc returns`, ox, oy - 14);
+  let info = '';
+  if (worldHover) {
+    const { cx, cy } = worldHover;
+    const biome = core.regionMap.at(cx, cy).biome;
+    if (core.ownsParcel(cx, cy)) info = `(${cx},${cy}) ${biome} — yours`;
+    else if (core.regionMap.isWater(cx, cy)) info = `(${cx},${cy}) ${biome} — water, can't settle`;
+    else { const cost = core.parcelPrice(cx, cy); const ok = core.canBuyParcel(cx, cy);
+      info = `(${cx},${cy}) ${biome} — ${cost}g ${ok ? '· click to claim' : core.gold < cost ? '· not enough gold' : '· not adjacent to your land'}`; }
+  }
+  ctx.fillStyle = '#90a0b0'; ctx.fillText(info, ox, oy - 1);
+}
+
+/** Overview screen-pixel → region cell, or null if outside the map. */
+function worldCellAt(e: MouseEvent): { cx: number; cy: number } | null {
+  const r = canvas.getBoundingClientRect();
+  const { ox, oy, px } = worldLayout;
+  const cx = Math.floor((e.clientX - r.left - ox) / px), cy = Math.floor((e.clientY - r.top - oy) / px);
+  return (cx >= 0 && cy >= 0 && cx < REGION_N && cy < REGION_N) ? { cx, cy } : null;
 }
 
 // ── Command bar (SoS-style bottom-centre build menu) ────────────────────────

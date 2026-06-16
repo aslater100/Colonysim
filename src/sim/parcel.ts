@@ -18,7 +18,7 @@
 import { Rng } from './rng';
 import { World } from './world';
 import { RegionMap, REGION_N } from './worldgen';
-import { PARCEL_TUNING, EXPANSION_TECHS } from './defs';
+import { PARCEL_TUNING, EXPANSION_TECHS, parcelCost } from './defs';
 import type { ResourceKind } from './defs';
 import type { Simulation } from './sim';
 
@@ -179,18 +179,12 @@ export class ParcelManager {
   /** Price to acquire a cell: base × distance × terrain × holdings premium,
    *  discounted once `road_building` is researched. */
   cost(cellX: number, cellY: number): number {
-    const d = Math.hypot(cellX - this.homeCellX, cellY - this.homeCellY);
-    const biome = this.regionMap.at(cellX, cellY).biome;
-    const terrain = PARCEL_TUNING.terrainMult[biome] ?? 1;
-    const owned = this.ownedCount();
-    const discount = this.hasTech(EXPANSION_TECHS.roadBuilding) ? PARCEL_TUNING.roadDiscount : 1;
-    const raw =
-      PARCEL_TUNING.baseCost *
-      (1 + d * PARCEL_TUNING.distanceScale) *
-      terrain *
-      (1 + owned * PARCEL_TUNING.expansionPremium) *
-      discount;
-    return Math.round(raw);
+    return parcelCost({
+      cellX, cellY, homeCellX: this.homeCellX, homeCellY: this.homeCellY,
+      biome: this.regionMap.at(cellX, cellY).biome,
+      ownedCount: this.ownedCount(),
+      roadDiscount: this.hasTech(EXPANSION_TECHS.roadBuilding),
+    });
   }
 
   /** Reveal a cell for purchase (scouting / owning a neighbour). */
