@@ -113,6 +113,23 @@ describe('Rival head-start at flip (fairness)', () => {
     expect(late.techProgress).toBeGreaterThan(early.techProgress);
     expect(late.treasury).toBeGreaterThan(early.treasury);
   });
+
+  it('fires a first-contact event only when a rival settlement is scouted out of fog', () => {
+    const r = regionAfter(24); // rivals hold settlements via the head start
+    const rival = rivals(r).find((f) => f.settlementIds.length > 0)!;
+    expect(rival).toBeTruthy();
+    const s = r.settlement(rival.settlementIds[0])!;
+    // The rival's town starts fogged — no contact yet.
+    expect(r.log.some((l) => l.text.includes('FIRST CONTACT') && l.text.includes(rival.name))).toBe(false);
+    // Scout the tile: revealTiles() runs the first-contact check.
+    r.revealTiles(Math.round(s.x), Math.round(s.y), 3, 'scouted');
+    expect(r.log.some((l) => l.text.includes('FIRST CONTACT') && l.text.includes(rival.name))).toBe(true);
+    // Idempotent: re-scouting the same power doesn't re-announce it.
+    const count = () => r.log.filter((l) => l.text.includes('FIRST CONTACT') && l.text.includes(rival.name)).length;
+    const before = count();
+    r.revealTiles(Math.round(s.x), Math.round(s.y), 3, 'scouted');
+    expect(count()).toBe(before);
+  });
 });
 
 describe('Goal generation is government-driven', () => {
