@@ -28,7 +28,7 @@ import './style.css';
 import { TownCore } from './sim/towncore';
 import type { SettlerView, PendingEventChoice, YearReport } from './sim/towncore';
 import { AState, THOUGHT_SLOTS } from './sim/agents';
-import { TERRAIN, ZONE } from './sim/build';
+import { TERRAIN, ZONE, ZONE_DEFS } from './sim/build';
 import {
   ROOM_TYPE_ID, ROOM_DEF_BY_NUM, ROOM_DEFS,
   STATION_DEF_BY_NUM, STATION_DEFS,
@@ -454,6 +454,8 @@ function draw(): void {
 
   // drought/flood zone tint: +1 = flood (blue), -1 = drought (brown), 0 = normal
   const droughtOrFlood = core.weather.isFloodRisk(core.day) ? 1 : core.weather.isDrought(core.day) ? -1 : 0;
+  // Season index: 0=spring, 1=summer, 2=autumn, 3=winter — drives crop stage sprites.
+  const seasonIdx = Math.floor((core.day % DAYS_PER_YEAR) / DAYS_PER_SEASON);
 
   const anim = (performance.now() / 350 | 0) % sprites.water.length;
 
@@ -461,19 +463,22 @@ function draw(): void {
     const i = y * MAP + x;
     const t = g.terrain[i];
 
-    // Ground layer
+    // Ground layer — field zones use a crop-stage soil sprite based on current season.
     if (t === TERRAIN.WATER) blit(sprites.water[anim], x, y);
-    else if (t === TERRAIN.SOIL) blit(sprites.soil, x, y);
+    else if (t === TERRAIN.SOIL) {
+      const fz = g.zone[i] === ZONE.FIELD || g.zone[i] === ZONE.VEGGARDEN;
+      if (fz && seasonIdx === 0) blit(sprites.soilSown, x, y);   // spring: sown
+      else if (fz && seasonIdx === 1) blit(sprites.soilGrown, x, y); // summer: green
+      else if (fz && seasonIdx === 2) blit(sprites.soilRipe, x, y);  // autumn: ripe
+      else blit(sprites.soil, x, y);
+    }
     else if (t === TERRAIN.ROCK) blit(g.ore[i] ? sprites.rockMarked : sprites.rock, x, y);
     else if (t === TERRAIN.SAND) blit(sprites.sand, x, y);
     else blit(sprites.grass[(x * 3 + y) % 4], x, y);
     if (t === TERRAIN.TREE) blit(sprites.tree, x, y);
 
-    // Sapling: green tint on tiles growing back to forest
-    if (g.saplingAge[i] > 0) {
-      ctx.fillStyle = '#30a03040';
-      ctx.fillRect(x * px, y * px, px, px);
-    }
+    // Sapling: use the sapling sprite instead of just a green tint.
+    if (g.saplingAge[i] > 0) blit(sprites.sapling, x, y);
 
     // Wild forage deposit: a coloured dot in the tile centre (berries/mushrooms/herbs).
     if (g.forage[i]) {
@@ -482,10 +487,19 @@ function draw(): void {
       ctx.beginPath(); ctx.arc(x * px + c, y * px + c, rdot, 0, Math.PI * 2); ctx.fill();
     }
 
-    // Zone outline + drought/flood tint on field/flax zones
+    // Zone outline + drought/flood tint + small resource icon in corner.
     if (g.zone[i]) {
       ctx.strokeStyle = ZONE_OUTLINE[g.zone[i]];
       ctx.strokeRect(x * px + 0.5, y * px + 0.5, px - 1, px - 1);
+      // Tiny resource icon: top-right corner at ~30% tile size.
+      const zdef = ZONE_DEFS[g.zone[i]];
+      const zicon = zdef && (sprites.items as Record<string, CanvasImageSource>)[zdef.resource];
+      if (zicon) {
+        const isz = Math.max(4, px * 0.3);
+        ctx.globalAlpha = 0.7;
+        ctx.drawImage(zicon, (x + 1) * px - isz - 1, y * px + 1, isz, isz);
+        ctx.globalAlpha = 1;
+      }
     }
     if ((g.zone[i] === ZONE.FIELD || g.zone[i] === ZONE.FLAX) && droughtOrFlood !== 0) {
       ctx.fillStyle = droughtOrFlood > 0 ? '#4488bb28' : '#8b451328';
@@ -650,7 +664,6 @@ function draw(): void {
   ctx.fillStyle = '#ddd'; ctx.font = '13px monospace';
   const line = (n: number, s: string, color = '#ddd') => { ctx.fillStyle = color; ctx.fillText(s, 8, 20 + n * 17); };
 
-  const seasonIdx = Math.floor((core.day % DAYS_PER_YEAR) / DAYS_PER_SEASON);
   const year = START_YEAR + Math.floor(core.day / DAYS_PER_YEAR);
   const dayOfSzn = (core.day % DAYS_PER_YEAR) % DAYS_PER_SEASON + 1;
   const seasonLabel = `${SEASONS[seasonIdx]} ${dayOfSzn}/${DAYS_PER_SEASON}, ${year}`;
