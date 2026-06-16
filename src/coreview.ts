@@ -830,8 +830,17 @@ function draw(): void {
         }
       }
     }
-    // Summer: warm golden tint
-    else if (si === 1) { ctx.fillStyle = '#ffdd0010'; ctx.fillRect(0, 0, worldW, worldH); }
+    // Summer: warm golden tint + drifting dust motes
+    else if (si === 1) {
+      ctx.fillStyle = '#ffdd0010'; ctx.fillRect(0, 0, worldW, worldH);
+      const tick = core.tickNo;
+      ctx.fillStyle = 'rgba(200,160,60,0.22)'; // warm amber dust
+      for (let n = 0; n < 35; n++) {
+        const dx = (((n * 1664525 + tick * 2) ^ (n * 22695477 + n * 3)) >>> 0) % worldW;
+        const dy = (((n * 1013904223 + tick * 3) ^ (n * 1664525 + n * 9)) >>> 0) % worldH;
+        ctx.fillRect(dx, dy, 1, 1);
+      }
+    }
     // Spring: fresh green-cool tint + drifting pollen and blossom petals
     else if (si === 0) {
       ctx.fillStyle = '#40c04010'; ctx.fillRect(0, 0, worldW, worldH);
