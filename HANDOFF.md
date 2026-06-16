@@ -1,12 +1,49 @@
 # Handoff — Centuria Development Guide
 
 **Last updated:** 2026-06-16
-**Branch**: `claude/game-dev-continue-nfudlp` (ahead of main — PR #161 merged)
-**Current test count:** 852 passing  
+**Branch**: `claude/keen-hypatia-2mj4dl` (ahead of main)
+**Current test count:** 863 passing  
 **Current version:** v0.41.1  
 **Default engine:** **SoA `TownCore`** — "New Colony" boots it; the fat `Simulation` is now "Classic Colony"  
 **Branch pattern:** feature branches off `main` via `claude/...` naming; merge via draft PR  
 **Model guidance:** See PLAN.md § Model Assignment for context ceilings per task
+
+---
+
+## Session Snapshot — AI fairness, era polish, default-engine harness (2026-06-16)
+
+**Correcting a stale audit.** The "Audit findings" table below was written *before* PR #163
+("Factions, AI, phase gates, win conditions") landed and is **wrong** — re-verified this session:
+AI rivals expand/raid/research/scout/ally (`region.ts` `updateFactionAI` + `checkFactionGoalConflicts`);
+all four win paths are implemented (`checkWinConditions`/`checkCenturyWins`) **and** shown via a
+victory modal (`regionview.ts drawWinModal`); phase-gate checklists exist for town→region→nation;
+the era branch is decided in `decideBranch()`. The audit table is kept below with a ⚠️ correction note.
+
+**What landed (PRs #166–168):**
+- **SoA game loop closed** — Esc / "← Menu" in `coreview.ts` now auto-saves to the `centuria_save`
+  slot before returning to the title; Continue resumes it. (#166)
+- **AI rival head-start, done right** — #167 first tried running the whole region in parallel from
+  game boot; that desynced (region ticks `30 min` vs town `4 min` → 7.5× drift), diverged the
+  player's abstract settlement, and ran the full economy every frame. Replaced (#168) with a
+  deterministic seed at flip: `RegionSim.bootstrapRivalHeadStart(elapsedYears)` in `fromTown()`
+  gives rivals settlements/tech/treasury scaled by the years the player spent in the town tier.
+  No-op at year 0, so existing determinism/parity tests are untouched. 4 tests in `region-ai.test.ts`.
+- **Era-branch reveal modal** — the Garden/Neon/Drowned fork (GDD §3.2) now gets a one-shot modal
+  (`regionview.ts drawEraModal`) like Incorporation/Convention/win, not just a log line. Doesn't
+  replay on a loaded save whose branch was already decided.
+- **Default-engine balance harness** — `npm run sim:town` runs the SoA `TownCore` (the engine
+  players actually play; `npm run sim` only ever ran Classic). Starter town extracted to the shared
+  `src/sim/startertown.ts` (`buildStarterTown`) so harness and GUI build the identical colony;
+  pinned by `tests/startertown.test.ts`.
+
+**Balance note (not a bug — left alone deliberately):** the harness shows unmanaged SoA starter
+colonies sit at mood ~35 (120d) and drift down through a full winter (~19 at 365d, occasional
+collapse), vs Classic's ~68. Root cause is by-design: warmth only recovers in *enclosed* rooms and
+the starter has no clothing chain, so outdoor workers cool in winter; recreation only serves
+off-duty settlers. A *managed* colony (build a loom, balance work/leisure) avoids this. Classic↔SoA
+mood is an independently-tuned divergence the parity tests never asserted — documented, not patched,
+since changing tuning risks the suite for a design judgment call. The harness now guards against
+genuine regressions from this baseline.
 
 ---
 
@@ -67,20 +104,23 @@ tier (`RegionSim`) already matches Victoria 3 and needs none.
 
 ### Audit findings
 
-| System | State |
-|--------|-------|
-| Town sim | ✅ Complete |
-| Town→region flip (`canFoundSecondTown()`) | ✅ Complete |
-| Regional economy (settlements, routes, trade) | ✅ Complete |
-| Fog of war (`src/sim/fogmap.ts`, 100×100 grid) | ✅ Complete |
-| Elections / laws / government | ✅ Complete |
-| AI rivals: activation | ❌ Only activate after "State Proclaimed" (~yr 1930) |
-| AI rivals: behavior | ❌ Only earn gold — never expand, raid, or research |
-| Nation phase: rival nations | ❌ Never instantiated; no inter-nation war |
-| Era 3/4 transitions | ❌ Stubbed, never trigger |
-| Win condition | ❌ None — only a graded 2100 century report |
+> ⚠️ **STALE — corrected 2026-06-16 (see session snapshot at top).** The ❌ rows below were written
+> before PR #163 and are no longer accurate. Re-verified current state in the right-hand column.
 
-**Key files**: `src/sim/sim.ts` (town), `src/sim/region.ts` (region/nation, ~6000 lines), `src/sim/fogmap.ts`, `src/sim/defs.ts`
+| System | State (original) | Re-verified 2026-06-16 |
+|--------|-------|------|
+| Town sim | ✅ Complete | ✅ |
+| Town→region flip (`canFoundSecondTown()`) | ✅ Complete | ✅ |
+| Regional economy (settlements, routes, trade) | ✅ Complete | ✅ |
+| Fog of war (`src/sim/fogmap.ts`, 100×100 grid) | ✅ Complete | ✅ |
+| Elections / laws / government | ✅ Complete | ✅ |
+| AI rivals: activation | ❌ Only after "State Proclaimed" | ✅ Run from region tick 1; **head-start at flip** so they reflect the player's town-phase years (`bootstrapRivalHeadStart`) |
+| AI rivals: behavior | ❌ Only earn gold | ✅ Expand, raid, research, scout, ally, retaliate (`updateFactionAI`, `checkFactionGoalConflicts`) |
+| Nation phase: rival nations | ❌ Never instantiated | ✅ `spawnRival` + diplomacy/war/treaties (`updateRivalAI`, `updateDiplomacy`) |
+| Era 3/4 transitions | ❌ Stubbed | ✅ `decideBranch()` at `BRANCH_YEAR` → Garden/Neon/Drowned + **reveal modal** |
+| Win condition | ❌ None | ✅ All 4 paths (`checkWinConditions`/`checkCenturyWins`) + victory modal |
+
+**Key files**: `src/sim/sim.ts` (town), `src/sim/region.ts` (region/nation, ~7000 lines), `src/sim/fogmap.ts`, `src/sim/defs.ts`, `src/sim/towncore.ts` (default engine), `src/sim/startertown.ts` (shared starter colony)
 
 **Critical line**: `region.ts` — `if (this.stateProclaimed) this.updateFactions();` — rivals are gated behind proclamation. Move this to run from region-phase tick 1.
 

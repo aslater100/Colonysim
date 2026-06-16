@@ -227,3 +227,29 @@ describe('medical — TownCore integration', () => {
     expect(core.agents.infection[0]).toBe(0);
   });
 });
+
+describe('exposure — freezing is lethal (warmth ≤ 0)', () => {
+  it('deep cold bleeds health where a warm settler holds steady', () => {
+    const a = new AgentStore(2);
+    const cold = a.spawn(0, 0);
+    const warm = a.spawn(1, 0);
+    a.food[cold] = a.food[warm] = 100; // well-fed isolates cold from starvation
+    a.warmth[cold] = 0;                 // frozen through (warmth isn't regened in tick())
+    a.warmth[warm] = 80;
+    const startCold = a.health[cold];
+    const ticks = ticksForHours(6);
+    for (let t = 0; t < ticks; t++) a.tick(t, always);
+    expect(a.health[cold]).toBeLessThan(startCold); // froze
+    expect(a.health[warm]).toBe(100);               // unharmed (regen-capped)
+  });
+
+  it('prolonged deep cold is fatal (health reaches zero)', () => {
+    const a = new AgentStore(1);
+    const i = a.spawn(0, 0);
+    a.food[i] = 100;     // not starvation — this is the cold alone
+    a.warmth[i] = 0;
+    const ticks = ticksForHours(150); // ~100 hp at the freeze bleed rate → dead well inside
+    for (let t = 0; t < ticks; t++) a.tick(t, always);
+    expect(a.health[i]).toBeLessThanOrEqual(0);
+  });
+});

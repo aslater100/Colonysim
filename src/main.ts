@@ -1,6 +1,7 @@
 import './style.css';
 import { Simulation } from './sim/sim';
 import { RegionSim } from './sim/region';
+import { ParcelManager } from './sim/parcel';
 import { TICKS_PER_SECOND, TUNING, BLUEPRINT_DEFS } from './sim/defs';
 import { MAP_W, MAP_H } from './sim/world';
 import { BuildGrid } from './sim/build';
@@ -42,10 +43,10 @@ const DESIGN_KEY = 'centuria-town-design';
 
 // Booting after "Load Game": the menu sets a one-shot flag and reloads, and
 // we resume from the snapshot instead of seeding a fresh colony. Saves are
-// either a bare town snapshot (v1) or a combined town+region one (v2).
+// either a bare town snapshot (v1), combined town+region (v2), or parcel system (v3).
 // A fresh game first shows the town design screen; the choice is stashed in
 // sessionStorage and the page reloads to build the world from it.
-function bootSim(): { sim: Simulation; region: RegionSim | null; needsDesign: boolean } {
+function bootSim(): { parcelManager: ParcelManager; region: RegionSim | null; needsDesign: boolean } {
   try {
     const pending = sessionStorage.getItem('centuria-load-on-boot');
     if (pending) {
@@ -53,14 +54,29 @@ function bootSim(): { sim: Simulation; region: RegionSim | null; needsDesign: bo
       const data = localStorage.getItem(SAVE_KEY);
       if (data) {
         const d = JSON.parse(data);
+        if (d.v === 3 && d.parcels) {
+          // v3: parcel system save with ParcelManager + optional region
+          const town = Simulation.deserialize(d.town);
+          const parcelMgr = ParcelManager.deserialize(d.parcels, town);
+          if (d.region) {
+            const reg = RegionSim.deserialize(d.region, town);
+            town.economy.cash = reg.treasury;
+            return { parcelManager: parcelMgr, region: reg, needsDesign: false };
+          }
+          return { parcelManager: parcelMgr, region: null, needsDesign: false };
+        }
         if (d.v === 2 && d.mode === 'region') {
+          // v2 → v3 migration: wrap the town in ParcelManager
           const town = Simulation.deserialize(d.town);
           const reg = RegionSim.deserialize(d.region, town);
-          // Keep town economy cash consistent with region treasury (Fix 7).
           town.economy.cash = reg.treasury;
-          return { sim: town, region: reg, needsDesign: false };
+          const parcelMgr = new ParcelManager(town);
+          return { parcelManager: parcelMgr, region: reg, needsDesign: false };
         }
-        return { sim: Simulation.deserialize(data), region: null, needsDesign: false };
+        // v1: bare town save → wrap in ParcelManager
+        const town = Simulation.deserialize(d);
+        const parcelMgr = new ParcelManager(town);
+        return { parcelManager: parcelMgr, region: null, needsDesign: false };
       }
     }
     const designJson = sessionStorage.getItem(DESIGN_KEY);
@@ -68,25 +84,21 @@ function bootSim(): { sim: Simulation; region: RegionSim | null; needsDesign: bo
       sessionStorage.removeItem(DESIGN_KEY);
       const design = JSON.parse(designJson) as TownDesign;
       const sim = new Simulation(Date.now() % 100000, design);
-      // AI rivals exist from game start, in a hidden region running in parallel
-      const region = RegionSim.fromTown(sim, 0, 0, 0);
-      return { sim, region, needsDesign: false };
+      return { parcelManager: new ParcelManager(sim), region: null, needsDesign: false };
     }
   } catch (err) {
     console.error('load failed, starting fresh:', err);
   }
   const sim = new Simulation(Date.now() % 100000);
-  // AI rivals exist from game start, in a hidden region running in parallel
-  const region = RegionSim.fromTown(sim, 0, 0, 0);
-  return { sim, region, needsDesign: true };
+  return { parcelManager: new ParcelManager(sim), region: null, needsDesign: true };
 }
 
 const boot = bootSim();
-const sim = boot.sim;
-// AI rivals have been running since game start (in parallel with town phase)
-let region: RegionSim | null = boot.region;
+const parcelManager = boot.parcelManager;
+const sim = parcelManager.home;
 // Debug/automation hook (used by headless smoke tests; harmless in play)
-(window as unknown as { sim: Simulation }).sim = sim;
+(window as unknown as { sim: Simulation; parcelManager: ParcelManager }).sim = sim;
+(window as unknown as { parcelManager: ParcelManager }).parcelManager = parcelManager;
 const buildGrid = new BuildGrid();
 const cam: Camera = {
   x: (MAP_W * TILE) / 2 - window.innerWidth / 2,
@@ -132,7 +144,11 @@ const windows = new WindowManager(hud.draggablePanels);
 
 hud.onSave = () => {
   try {
-    localStorage.setItem(SAVE_KEY, sim.serialize());
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      v: 3,
+      town: sim.serialize(),
+      parcels: parcelManager.serialize(),
+    }));
     return true;
   } catch (err) {
     console.error('save failed:', err);
@@ -171,10 +187,14 @@ function playLogSounds(): void {
 }
 
 // ---- the flip: town → region (GDD §2.4) ----
-let mode: 'town' | 'region' = 'town';
+let mode: 'town' | 'region' | 'world' = 'town';
 let dioramaOpen = false;
-// region is initialized from boot above
+let region: RegionSim | null = null;
 let regionView: RegionView | null = null;
+
+// ---- seamless world view (distinct from continuous zoom) ----
+// Clicking the minimap switches between town and world views (via mode: 'world').
+// World view frames the parcel grid; town view shows detail.
 
 // ---- Title / Home Screen ----
 const titleScreen = new TitleScreen(root, { sfx, music, soundscape });
@@ -223,11 +243,11 @@ function enterRegionMode(r: RegionSim): void {
   dioramaOpen = false;
   hud.resetLogLen(); // region log starts independently from town log
   hud.closeMenu();
-  // Region saves bundle the town snapshot too — the diorama keeps it alive.
+  // Region saves bundle the town and parcel state too — the diorama keeps them alive.
   hud.onSave = () => {
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
-        v: 2, mode: 'region', town: sim.serialize(), region: r.serialize(),
+        v: 3, town: sim.serialize(), parcels: parcelManager.serialize(), region: r.serialize(),
       }));
       return true;
     } catch (err) {
@@ -241,15 +261,13 @@ function enterRegionMode(r: RegionSim): void {
 hud.onFoundTown = () => {
   if (!sim.canFoundSecondTown().ok) return;
   // The region flip is a moment of decision: the design screen asks how the
-  // new tier will be run before the wagons roll. The region has been running
-  // in the background since game start, so we just apply the design and enter its view.
+  // new tier will be run before the wagons roll.
   hud.paused = true;
   new DesignScreen().showRegionDesign((design) => {
     sim.economy.cash -= TUNING.townFoundingCost;
-    if (region) {
-      region.applyRegionDesign(design);
-      enterRegionMode(region);
-    }
+    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    r.applyRegionDesign(design);
+    enterRegionMode(r);
     hud.paused = false;
   });
 };
@@ -273,6 +291,11 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (hud.menuOpen) {
       hud.closeMenu();
+      return;
+    }
+    if (mode === 'world') {
+      // Escape from world view returns to town
+      mode = 'town';
       return;
     }
     if (mode === 'region') {
@@ -299,12 +322,14 @@ window.addEventListener('keydown', (e) => {
     if (!anythingActive && mode === 'town') hud.openMenu();
     return;
   }
-  // R rotates placement ghost
+  // R rotates placement ghost (town mode only)
   if (mode === 'town' && (e.key === 'r' || e.key === 'R') && cam.placing) {
     cam.placingRotation = ((cam.placingRotation ?? 0) + 1) % 4;
     e.preventDefault();
     return;
   }
+  // World mode: Escape handled above; other keys ignored for now
+  if (mode === 'world') return;
   // In region mode, R/S/E/T toggle the quick-access panels (Phase A sidebar).
   if (mode === 'region' && regionView) {
     if (e.key === 'r' || e.key === 'R') {
@@ -451,6 +476,10 @@ canvas.addEventListener('mousedown', (e) => {
 window.addEventListener('mouseup', () => { regionDrag.active = false; });
 
 canvas.addEventListener('click', (e) => {
+  if (mode === 'world') {
+    // World view: click to return to town (or future parcel selection)
+    return;
+  }
   if (mode === 'region' && !dioramaOpen) {
     // A drag pans the map; only treat a near-stationary release as a select.
     if (regionDrag.moved < 5) regionView?.click(e.clientX, e.clientY);
@@ -529,15 +558,17 @@ canvas.addEventListener('click', (e) => {
   }
 });
 
-// Minimap click: switch to region view (or back to town if already in region)
+// Minimap click: switch to world view (seamless map) or region view if region exists
 minimapCanvas.addEventListener('click', () => {
-  if (mode === 'town' && region) {
-    // Flip has happened: switch to region
-    dioramaOpen = false;
-    mode = 'region';
-    hud.setRegionMode(true);
-  } else if (mode === 'region' && dioramaOpen) {
-    dioramaOpen = false;
+  if (mode === 'town') {
+    // Switch to world view: always available, shows parcel grid
+    mode = 'world';
+  } else if (mode === 'world') {
+    // Switch back to town view
+    mode = 'town';
+  } else if (mode === 'region' && region && !dioramaOpen) {
+    // Region flip is separate: toggle diorama in region
+    dioramaOpen = !dioramaOpen;
   }
 });
 
@@ -545,6 +576,8 @@ minimapCanvas.addEventListener('click', () => {
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   const p = canvasXY(e);
+  // World view: no zoom for now
+  if (mode === 'world') return;
   // Region map has its own camera; zoom it toward the cursor.
   if (mode === 'region' && !dioramaOpen && regionView) {
     regionView.zoomAt(p.x, p.y, e.deltaY < 0 ? 1 : -1);
@@ -558,7 +591,7 @@ canvas.addEventListener('wheel', (e) => {
   cam.zoom = newZoom;
 }, { passive: false });
 
-// Right-click to bulldoze/cancel zones
+// Right-click to bulldoze/cancel zones (town mode only)
 canvas.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   if (mode !== 'town') return;
@@ -578,7 +611,9 @@ function loop(now: number): void {
   // Exponential moving average so the counter is readable, not jittery.
   if (rawMs > 0 && rawMs < 1000) frameMsEma += (rawMs - frameMsEma) * 0.1;
   const panSpeed = 420 * dt;
-  if (mode === 'region' && !dioramaOpen && regionView) {
+  if (mode === 'world') {
+    // World view: no panning for now
+  } else if (mode === 'region' && !dioramaOpen && regionView) {
     // Arrow/WASD scroll the region map (screen-space pan, so invert the sign).
     let pdx = 0, pdy = 0;
     if (keys.has('ArrowLeft') || keys.has('a')) pdx += panSpeed;
@@ -599,13 +634,8 @@ function loop(now: number): void {
     acc += dt * TICKS_PER_SECOND * hud.speed;
     let guard = 0;
     while (acc >= 1 && guard++ < 64) {
-      if (mode === 'town') {
-        sim.tick();
-        // AI rivals tick in the background during town phase so they're active from game start
-        region?.tick();
-      } else if (!regionView?.ceremonyOpen) {
-        region?.tick(); // history pauses for the ceremony
-      }
+      if (mode === 'town' || mode === 'world') sim.tick(); // world view pauses the town too
+      else if (!regionView?.ceremonyOpen) region?.tick(); // history pauses for the ceremony
       acc -= 1;
     }
   }
@@ -616,6 +646,17 @@ function loop(now: number): void {
     // Minimap: always draw region preview during town play
     minimapCanvas.classList.remove('hidden');
     drawMinimap(minimapCtx, sim.regionMap, sim.site, MINIMAP_W, MINIMAP_H);
+  } else if (mode === 'world') {
+    // World view: for now, show placeholder in main canvas
+    // TODO: Phase 1B implement full world view with WorldCamera rendering
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#888';
+    ctx.font = '16px monospace';
+    ctx.fillText('World Map (Click minimap to return to town)', 20, 40);
+    minimapCanvas.classList.add('hidden');
+    hud.update();
   } else if (region) {
     if (dioramaOpen) {
       sim.tickDiorama(region.minute);
@@ -636,17 +677,17 @@ function loop(now: number): void {
   }
 
   // Soundtrack: era by year, ambient-only when paused, swelling with tension.
-  if (mode === 'town' && sim.raidActive) tension = 1;
+  if ((mode === 'town' || mode === 'world') && sim.raidActive) tension = 1;
   else tension = Math.max(0, tension - dt * 0.12); // ~8s to settle from a peak
   const year = mode === 'region' && region ? region.year : sim.year;
   music.update({ year, paused: hud.paused, tension });
 
   // Diegetic soundscape: ambient layers driven by live game signals (GDD §3.3).
   soundscape.update({
-    mode,
+    mode: mode === 'world' ? 'town' : mode, // world is a town-view submode
     paused: hud.paused,
     year,
-    activeBuildWorkers: mode === 'town'
+    activeBuildWorkers: (mode === 'town' || mode === 'world')
       ? sim.settlers.filter((s) => s.task?.kind === 'build').length
       : 0,
     activeRailRoutes: mode === 'region' && region

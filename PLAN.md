@@ -88,7 +88,9 @@ behavior. Add headless parity tests.
   `sick`/`healMult` recomputed each tick; old saves backfill healthy. Tests:
   `tests/medical.test.ts` (14). **Note:** injured-agents-path-to-a-sickbed AI is a
   later slice — recovery currently triggers when a casualty happens to rest in an
-  infirmary. Warmth→freezing death still pending the weather slice.
+  infirmary. **(Update 2026-06-16: warmth→freezing death has since landed —
+  `agents.tick` charges `FREEZE_BLEED` while `warmth ≤ 0`, pinned by
+  `tests/medical.test.ts` "exposure — freezing is lethal".)**
 - ✅ **Relationships + thoughts + grief (v0.35.0).** New `src/sim/social.ts`:
   `Relations` — a sparse pairwise opinion store keyed by a packed integer pair key
   (a flat N×N matrix would waste O(agents²); the social graph is sparse, so a Map is

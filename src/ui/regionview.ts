@@ -4,7 +4,7 @@
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
 import type { Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, TownFocus, WagePolicy, Route, SectorId } from '../sim/region';
-import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES } from '../sim/region';
+import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR } from '../sim/region';
 import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS } from '../sim/defs';
 import type { CurrencySymbol } from '../sim/defs';
 import { ANNOUNCE_LEAD_DAYS } from '../sim/currency';
@@ -74,6 +74,9 @@ export class RegionView {
   /** Win condition modal: shown once when any path is achieved. */
   private winModal: HTMLElement;
   private winDismissed = false;
+  /** Era-branch reveal modal: shown once when the century forks (GDD §3.2). */
+  private eraModal: HTMLElement;
+  private eraDismissed = false;
   private frame = 0;
   // ---- Static-map cache. Terrain + territory fills are O(N²) and barely change,
   //      so render them once into an offscreen canvas (base coords) and blit it
@@ -99,6 +102,9 @@ export class RegionView {
 
   constructor(private canvas: HTMLCanvasElement, private region: RegionSim, root: HTMLElement) {
     this.g = canvas.getContext('2d')!;
+    // If the era was already decided in a prior session (loaded save), treat the
+    // reveal as already dismissed — only fire for a fork that happens live here.
+    this.eraDismissed = region.eraBranch !== null;
     this.panel = document.createElement('div');
     this.panel.className = 'inspector region-panel hidden';
     root.appendChild(this.panel);
@@ -135,6 +141,9 @@ export class RegionView {
     this.winModal = document.createElement('div');
     this.winModal.className = 'win-modal hidden';
     root.appendChild(this.winModal);
+    this.eraModal = document.createElement('div');
+    this.eraModal.className = 'win-modal hidden';
+    root.appendChild(this.eraModal);
     this.rivalPanel = document.createElement('div');
     this.rivalPanel.className = 'inspector region-panel hidden';
     root.appendChild(this.rivalPanel);
@@ -166,6 +175,7 @@ export class RegionView {
     this.dealModal.remove();
     this.centuryModal.remove();
     this.winModal.remove();
+    this.eraModal.remove();
     this.rivalPanel.remove();
   }
 
@@ -576,6 +586,7 @@ export class RegionView {
     this.drawCeremony();
     this.drawConvention();
     this.drawCenturyReport();
+    this.drawEraModal();
     this.drawWinModal();
   }
 
@@ -1249,6 +1260,42 @@ export class RegionView {
   }
 
   /** Win condition achieved: show once, "Play On" closes it (sandbox continues). */
+  /** The century forks (GDD §3.2): when the era branch is first decided, give
+   *  that pivotal moment a modal — the same weight as Incorporation, the
+   *  Convention, and the win paths, instead of a single log line. */
+  private drawEraModal(): void {
+    const branch = this.region.eraBranch;
+    if (!branch || this.eraDismissed) { this.eraModal.classList.add('hidden'); return; }
+    if (!this.eraModal.classList.contains('hidden')) return; // already showing — leave it until dismissed
+    this.eraModal.classList.remove('hidden');
+    const titles: Record<string, string> = {
+      solarpunk: '☀ THE GARDEN CENTURY',
+      dystopia:  '▮ THE NEON CENTURY',
+      drowned:   '≈ THE DROWNED CENTURY',
+    };
+    const descs: Record<string, string> = {
+      solarpunk: 'The grid hums clean, the squares are planted, and the waterline stays on the chart, not in the streets. Your people built a century worth living in.',
+      dystopia:  'The economy roars behind checkpoints and billboards. The people queue in its light and grumble in its shadow — order bought at a price.',
+      drowned:   'The projection is now a tide table. The sea is coming for the coastal streets — wall them, move them, or mourn them. The reckoning of a warmer world.',
+    };
+    const subtitle: Record<string, string> = {
+      solarpunk: 'Democratic · content · the sky held clean',
+      dystopia:  'Prosperous · unfree or unhappy · the lights never dim',
+      drowned:   `Projected warming ≥ 2.3°C · the coast pays the bill`,
+    };
+    this.eraModal.innerHTML =
+      `<div class="win-modal-box">` +
+      `<h1>${titles[branch] ?? 'A NEW CENTURY'}</h1>` +
+      `<p class="win-path">${BRANCH_YEAR} · ${subtitle[branch] ?? ''}</p>` +
+      `<p class="win-details">${descs[branch] ?? ''}</p>` +
+      `<button class="win-modal-btn" id="era-face-on">Face the Century</button>` +
+      `</div>`;
+    this.eraModal.querySelector<HTMLButtonElement>('#era-face-on')!.onclick = () => {
+      this.eraDismissed = true;
+      this.eraModal.classList.add('hidden');
+    };
+  }
+
   private drawWinModal(): void {
     const wc = this.region.winCondition;
     if (!wc || this.winDismissed) {
