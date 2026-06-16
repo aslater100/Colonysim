@@ -1180,6 +1180,42 @@ describe('TownCore deer and hunting', () => {
   });
 });
 
+describe('TownCore wolf packs', () => {
+  const TPDAY = 360;
+
+  it('spawnWolfPack activates a wolf pack and logs the attack', () => {
+    const core = new TownCore({ width: 20, height: 20, seed: 77 });
+    core.seedColony(10, 10, 3);
+    expect(core.wolves.active).toBe(false);
+    core.summonWolves(2);
+    expect(core.wolves.active).toBe(true);
+    expect(core.log.some((l) => /wolf/i.test(l.text))).toBe(true);
+  });
+
+  it('wolf pack becomes inactive after wolfStayDays', () => {
+    const core = new TownCore({ width: 20, height: 20, seed: 78 });
+    core.seedColony(10, 10, 4);
+    core.summonWolves(2);
+    expect(core.wolves.active).toBe(true);
+    // Run well past wolfStayDays — wolves should leave even without being killed.
+    core.run((TUNING.wolfStayDays + 5) * TPDAY);
+    expect(core.wolves.active).toBe(false);
+  });
+
+  it('wolf pack state survives a save/load round-trip', () => {
+    const core = new TownCore({ width: 20, height: 20, seed: 79 });
+    core.seedColony(10, 10, 3);
+    core.summonWolves(3);
+    const snap = core.serialize();
+    const twin = TownCore.deserialize(snap);
+    expect(twin.wolves.active).toBe(core.wolves.active);
+    // Both should run forward identically.
+    core.run(10);
+    twin.run(10);
+    expect(twin.wolves.active).toBe(core.wolves.active);
+  });
+});
+
 describe('TownCore fishing and food variety', () => {
   const TPDAY = 360; // MINUTES_PER_DAY(1440) / MINUTES_PER_TICK(4)
 

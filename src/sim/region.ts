@@ -650,19 +650,11 @@ export const DEAL_COUNTER_DAYS = 90;
 // ---- Monetary system constants (GDD §5.1) ----
 /** Credit-neutral policy rate; below this leverage builds, above it contracts. */
 const NEUTRAL_RATE = 0.05;
-/** Debt-service/GDP above which the credit cycle becomes fragile. */
-const LEVERAGE_FRAGILITY = 0.18;
-/**
- * Minsky financial-instability term (GDD §13.3 risk #3): a high *level* of private
- * leverage is itself fragile, independent of current debt service. A dovish banker
- * keeps rates — and therefore debt service — low, so without this the boom never
- * ends and the credit cycle stays dormant (0 busts/century in the macro harness).
- * Leverage above `LEVERAGE_FRAGILE` erodes confidence; once it breaks the
- * deleveraging trigger the boom unwinds, confidence recovers, and the loop turns.
- */
-const LEVERAGE_FRAGILE = 1.5;
-/** Confidence erosion per unit of private leverage above `LEVERAGE_FRAGILE`. */
-const FRAGILITY_GAIN = 140;
+// Minsky instability dials — pulled from TUNING so they can be adjusted without
+// touching region.ts (see TUNING.leverageFragile / fragilityGain in defs.ts).
+const LEVERAGE_FRAGILITY = TUNING.leverageFragility;
+const LEVERAGE_FRAGILE   = TUNING.leverageFragile;
+const FRAGILITY_GAIN     = TUNING.fragilityGain;
 export const MIN_POLICY_RATE = 0.01;
 export const MAX_POLICY_RATE = 0.15;
 /** Credit spreads over policy rate by rating tier. */

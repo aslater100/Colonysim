@@ -704,6 +704,15 @@ export const TUNING = {
   researchScaleExp: 0.6, // RP-cost growth vs. nation size (<1: net speedup remains)
   // Market stalls: each stall generates passive gold income from passing trade
   goldPerMarketStallPerDay: 2,
+  // ---- Macro / region-economy dials (GDD §13.3) ----
+  // Minsky financial-instability parameters: control how quickly over-leverage
+  // destabilises the credit cycle. Tune these for campaign difficulty or testing.
+  /** Debt-service/GDP ratio above which the credit cycle becomes fragile. */
+  leverageFragility: 0.18,
+  /** Private leverage ratio above which confidence erodes (Minsky moment threshold). */
+  leverageFragile: 1.5,
+  /** Confidence erosion per unit of private leverage above leverageFragile. */
+  fragilityGain: 140,
 };
 
 // ---- Parcel / land-expansion tuning (Track B Phase 2–3) ----
