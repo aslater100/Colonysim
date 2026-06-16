@@ -1572,14 +1572,14 @@ describe('TownCore event variety', () => {
 
 // ── Save v10: serialization of clothing/festival/milestone/prestige state ─────
 
-describe('TownCore save v10 serialization', () => {
+describe('TownCore save v11 serialization', () => {
   it('clothingDay survives round-trip', () => {
     const c = new TownCore({ width: 20, height: 20, seed: 1 });
     c.seedColony(10, 10, 2);
     c.stock.add('grain', 2000);
     c.run(360 * 5); // accumulate some state
     const saved = c.serialize();
-    expect(saved.v).toBe(10);
+    expect(saved.v).toBe(11);
     const twin = TownCore.deserialize(saved);
     // Serialized state exists; twin won't re-fire clothing event on next tick
     expect(twin.serialize().clothingDay).toBe(saved.clothingDay);
