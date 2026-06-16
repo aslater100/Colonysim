@@ -663,7 +663,10 @@ function draw(): void {
   for (let i = 0; i < a.count; i++) {
     const variant = i % sprites.settler.length;
     const frame = a.state[i] === AState.Sleeping ? 0 : settlerFrame;
-    blit((a.armed[i] ? sprites.settlerArmed : sprites.settler)[variant][frame], a.posX[i], a.posY[i]);
+    // Draw settlers 35% taller than a tile, anchored to the tile bottom (head pokes up).
+    const spr = (a.armed[i] ? sprites.settlerArmed : sprites.settler)[variant][frame];
+    const sH = Math.round(px * 1.35);
+    ctx.drawImage(spr, a.posX[i] * px, a.posY[i] * px - (sH - px), px, sH);
     // Mood tint: miserable settlers have a subtle red overlay, very happy ones green.
     const mood = a.mood[i];
     if (mood < -10) {
@@ -706,9 +709,11 @@ function draw(): void {
   const deerFrame = (performance.now() / 400 | 0) % sprites.deer.length;
   for (const d of core.deerViews()) blit(sprites.deer[deerFrame], d.x | 0, d.y | 0);
 
-  // Raiders
+  // Raiders — same oversized rendering as settlers
   for (const r of core.raids.raiders) {
-    blit(sprites.raider[r.fleeing ? 0 : (performance.now() / 200 | 0) % sprites.raider.length], r.x, r.y);
+    const rSpr = sprites.raider[r.fleeing ? 0 : (performance.now() / 200 | 0) % sprites.raider.length];
+    const rH = Math.round(px * 1.35);
+    ctx.drawImage(rSpr, r.x * px, r.y * px - (rH - px), px, rH);
   }
 
   // Wolves
