@@ -193,9 +193,8 @@ let region: RegionSim | null = null;
 let regionView: RegionView | null = null;
 
 // ---- seamless world view (distinct from continuous zoom) ----
-// Clicking the minimap switches between town and world views.
+// Clicking the minimap switches between town and world views (via mode: 'world').
 // World view frames the parcel grid; town view shows detail.
-let worldViewOpen = false;
 
 // ---- Title / Home Screen ----
 const titleScreen = new TitleScreen(root, { sfx, music, soundscape });
@@ -296,7 +295,6 @@ window.addEventListener('keydown', (e) => {
     }
     if (mode === 'world') {
       // Escape from world view returns to town
-      worldViewOpen = false;
       mode = 'town';
       return;
     }
@@ -564,11 +562,9 @@ canvas.addEventListener('click', (e) => {
 minimapCanvas.addEventListener('click', () => {
   if (mode === 'town') {
     // Switch to world view: always available, shows parcel grid
-    worldViewOpen = true;
     mode = 'world';
   } else if (mode === 'world') {
     // Switch back to town view
-    worldViewOpen = false;
     mode = 'town';
   } else if (mode === 'region' && region && !dioramaOpen) {
     // Region flip is separate: toggle diorama in region
