@@ -1217,10 +1217,10 @@ export class RegionView {
 
   private drawStatePanel(): void {
     const r = this.region;
-    if (!r.stateProclaimed) {
-      this.statePanel.classList.add('hidden');
-      return;
-    }
+    // Pre-statehood the panel still shows — but trimmed to the core governance
+    // levers (tax / services / militia). The nation-tier machinery (Credit
+    // sub-tab, Politics, Diplomacy) only appears once the State is proclaimed.
+    const preState = !r.stateProclaimed;
     this.statePanel.classList.remove('hidden');
     // Same DOM-stability guard as the other panels: rebuild on a ~1s timer, not
     // every frame, so a button node survives between mousedown and click.
@@ -1234,8 +1234,9 @@ export class RegionView {
     // Tab strip: Finance / Politics / Diplomacy. Sections always render (so the
     // ~25 ID-bound handlers below still find their nodes) but only the active one
     // is shown — switching just toggles CSS, no rebuild.
-    const tabStrip =
-      `<div class="pal-tabs">` +
+    const tabStrip = preState
+      ? '' // pre-statehood there is only the (trimmed) Finance section — no tabs needed
+      : `<div class="pal-tabs">` +
       `<button class="pal-tab${tab === 'finance' ? ' active' : ''}" data-ptab="finance">Finance</button>` +
       `<button class="pal-tab${tab === 'politics' ? ' active' : ''}" data-ptab="politics">Politics</button>` +
       `<button class="pal-tab${tab === 'diplomacy' ? ' active' : ''}" data-ptab="diplomacy">Diplomacy</button>` +
@@ -1268,7 +1269,9 @@ export class RegionView {
       `<p>militia: <b>${lvl(r.militiaLevel)}</b> <button class="mini" id="mil-up">+</button><button class="mini" id="mil-dn">−</button></p>` +
       `<p class="insp-skills">high taxes breed strikes; services cost coin but save lives</p>`;
     // Credit sub-tab: the lengthy monetary / lenders / freight machinery.
-    const creditBody =
+    // Only built post-statehood — these read nation-tier state the pre-State
+    // region doesn't have, and the sub-tab isn't shown until then anyway.
+    const creditBody = preState ? '' :
       this.monetaryHtml() +
       this.lendersHtml() +
       `<p class="insp-skills">${r.maglevUnlocked()
@@ -1279,15 +1282,16 @@ export class RegionView {
             ? 'RAILWORKS chartered — lay rail from any town panel'
             : `railworks expected ~${RAIL_ERA_YEAR}`}</p>` +
       this.freightHtml();
-    const financeBody =
-      `<div class="pal-subtabs">` +
+    const financeBody = preState
+      ? treasuryBody // no Credit sub-tab before the central bank exists
+      : `<div class="pal-subtabs">` +
       `<button class="pal-subtab${ftab === 'treasury' ? ' active' : ''}" data-ptab="treasury">Treasury</button>` +
       `<button class="pal-subtab${ftab === 'credit' ? ' active' : ''}" data-ptab="credit">Credit</button>` +
       `</div>` +
       `<div class="pal-subsection${ftab === 'treasury' ? '' : ' hidden'}" data-psection="treasury">${treasuryBody}</div>` +
       `<div class="pal-subsection${ftab === 'credit' ? '' : ' hidden'}" data-psection="credit">${creditBody}</div>`;
 
-    const politicsBody =
+    const politicsBody = preState ? '' :
       (!r.nationProclaimed && r.stateProclaimed && !r.proclamationReady
         ? `<p style="color:#bfae86;font-size:10px">territory ${(r.playerTerritoryControl() * 100).toFixed(0)}% / 50% needed for nation gate</p>`
         : '') +
@@ -1298,8 +1302,13 @@ export class RegionView {
       this.politicsHtml() +
       this.factionIntelHtml();
 
+    const panelTitle = r.nationProclaimed
+      ? r.nationName.toUpperCase()
+      : r.stateProclaimed
+        ? r.stateName.toUpperCase()
+        : (r.stateName || 'REGION').toUpperCase();
     this.statePanel.innerHTML =
-      `<div class="pal-title">${r.nationProclaimed ? r.nationName.toUpperCase() : r.stateName.toUpperCase()}</div>` +
+      `<div class="pal-title">${panelTitle}</div>` +
       `<p class="insp-skills">${r.nationProclaimed && r.govType
         ? GOV_TYPES.find((g) => g.id === r.govType)!.name
         : r.govLean ? GOV_LEANS[r.govLean].name : ''}</p>` +
@@ -1312,9 +1321,14 @@ export class RegionView {
       `<button class="mini" id="economy-toggle" title="Economy panel (E)">${this.economyOpen ? '▲' : '▼'} E:econ</button>` +
       `</p>` +
       tabStrip +
-      sec('finance', financeBody) +
-      sec('politics', politicsBody) +
-      sec('diplomacy', this.diplomacyHtml());
+      // Pre-statehood the lone Finance section is always shown (no tabs to hide
+      // behind a stale statePanelTab); post-statehood it's a real tab.
+      (preState
+        ? `<div class="pal-section" data-psection="finance">${financeBody}</div>`
+        : sec('finance', financeBody)) +
+      // Politics & Diplomacy are nation-tier — only once the State is proclaimed.
+      (preState ? '' : sec('politics', politicsBody)) +
+      (preState ? '' : sec('diplomacy', this.diplomacyHtml()));
 
     this.wireTabs(this.statePanel, (t) => { this.statePanelTab = t as 'finance' | 'politics' | 'diplomacy'; });
     this.wireTabs(this.statePanel, (t) => { this.financeSubTab = t as 'treasury' | 'credit'; }, 'pal-subtab', 'pal-subsection');
@@ -2475,7 +2489,7 @@ export class RegionView {
    *  repair / upgrade / tear-up / cargo-priority controls in one place. */
   private drawRouteNetworkPanel(): void {
     const r = this.region;
-    if (!this.routeNetworkOpen || !r.stateProclaimed) {
+    if (!this.routeNetworkOpen) {
       this.routeNetworkPanel.classList.add('hidden');
       return;
     }
@@ -2596,7 +2610,7 @@ export class RegionView {
    *  and a one-click pan/select shortcut. Toggle with the S key. */
   private drawSettlementListPanel(): void {
     const r = this.region;
-    if (!this.settlementListOpen || !r.stateProclaimed) {
+    if (!this.settlementListOpen) {
       this.settlementListPanel.classList.add('hidden');
       return;
     }
@@ -2662,7 +2676,7 @@ export class RegionView {
    *  buttons, per-settlement tax controls. Toggle with the E key. */
   private drawEconomyPanel(): void {
     const r = this.region;
-    if (!this.economyOpen || !r.stateProclaimed) {
+    if (!this.economyOpen) {
       this.economyPanel.classList.add('hidden');
       return;
     }

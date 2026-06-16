@@ -171,6 +171,27 @@ describe('RegionSim (aggregate model)', () => {
     expect(r.treasury).toBeGreaterThan(0);
   });
 
+  it('pre-statehood: the monthly economy runs and the tax lever moves the books', () => {
+    // Regression for the soft-lock — before, monthlyEconomy() only ran after
+    // statehood, so a pre-State region bleeding money had no way to address the
+    // deficit on the way to the £8k Charter gate.
+    const r = flipped(7);
+    runDays(r, 120);
+    expect(r.stateProclaimed).toBe(false);
+    // The economy ticks pre-statehood now, so GDP is real, not a frozen 0.
+    expect(r.gdpLastMonth).toBeGreaterThan(0);
+
+    const monthDelta = (tax: number): number => {
+      r.taxRate = tax;
+      r.treasury = 5000; // a buffer so the result isn't clamped at the £0 floor
+      const before = r.treasury;
+      runDays(r, 30);
+      return r.treasury - before;
+    };
+    // Taxing the towns nets more than not taxing them — the deficit is a lever.
+    expect(monthDelta(0.3)).toBeGreaterThan(monthDelta(0.0));
+  });
+
   it('treasuryDeltaMonth reports the prior month net swing', () => {
     const r = flipped(42);
     toStatehood(r);

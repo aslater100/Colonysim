@@ -330,9 +330,16 @@ window.addEventListener('keyup', (e) => keys.delete(e.key));
 // Pointer position relative to the canvas, not the viewport. Using clientX/Y
 // directly drifts the zoom/placement anchor whenever the canvas isn't pinned to
 // (0,0) (HUD insets, future layouts, Electron frame), so always subtract the rect.
+// We also map CSS pixels → canvas-buffer pixels: when the canvas is displayed at
+// a different size than its backing buffer (HiDPI, OS/browser display scaling, a
+// fractional devicePixelRatio), CSS px ≠ buffer px and the camera works in buffer
+// px — so an unscaled delta makes zoom-toward-cursor drift (the map slides as you
+// zoom). Scaling by buffer/displayed keeps the point under the cursor fixed.
 function canvasXY(e: MouseEvent | WheelEvent): { x: number; y: number } {
   const r = canvas.getBoundingClientRect();
-  return { x: e.clientX - r.left, y: e.clientY - r.top };
+  const sx = r.width > 0 ? canvas.width / r.width : 1;
+  const sy = r.height > 0 ? canvas.height / r.height : 1;
+  return { x: (e.clientX - r.left) * sx, y: (e.clientY - r.top) * sy };
 }
 
 canvas.addEventListener('mousemove', (e) => {
