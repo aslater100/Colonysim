@@ -235,6 +235,9 @@ export class Simulation {
   private _tileTaskScan: TileTaskScan | null = null;
   // Soil tile cache; never invalidated (soil tiles are set at worldgen and don't change kind).
   private _soilTilesCache: Tile[] | null = null;
+  // Stockpile-zone tile indices; rebuilt lazily, invalidated when a zone is painted/cleared.
+  // Replaces a full MAP_W×MAP_H scan that ran on every addStock and task decision (~40% of tick time).
+  private _stockpileTiles: number[] | null = null;
   // Last tile index at which each settler triggered a fog reveal; skips re-reveal when stationary.
   private _settlerLastRevealIdx = new Map<number, number>();
 
@@ -761,17 +764,19 @@ export class Simulation {
       if (t.buildingId !== null || t.wall || t.wallPlan || t.gate || t.gatePlan) return false;
       t.farmZone = true;
       t.kind = 'soil';
-      t.stockpileZone = false;
+      if (t.stockpileZone) { t.stockpileZone = false; this._stockpileTiles = null; }
       return true;
     } else if (kind === 'stockpile') {
       if (t.stockpileZone) {
         t.stockpileZone = false;
+        this._stockpileTiles = null;
         return true;
       }
       if (t.kind === 'water' || t.kind === 'rock' || t.kind === 'tree') return false;
       if (t.buildingId !== null || t.wall || t.wallPlan || t.gate || t.gatePlan) return false;
       t.stockpileZone = true;
       t.farmZone = false;
+      this._stockpileTiles = null;
       return true;
     } else if (kind === 'wall') {
       if (t.wallPlan) {
@@ -860,6 +865,7 @@ export class Simulation {
     }
     if (t.stockpileZone) {
       t.stockpileZone = false;
+      this._stockpileTiles = null;
       return;
     }
     if (t.farmZone) {
@@ -916,8 +922,20 @@ export class Simulation {
     return (hist[0] - hist[Math.min(7, hist.length - 1)]) / Math.min(7, hist.length - 1);
   }
 
+  /** Stockpile-zone tile indices, cached. Zones change only on paint/clear, so a
+   *  full map scan per call (the old hot path) is wasted work — rebuild on demand. */
+  private stockpileTiles(): number[] {
+    if (this._stockpileTiles === null) {
+      const list: number[] = [];
+      const tiles = this.world.tiles;
+      for (let i = 0; i < tiles.length; i++) if (tiles[i].stockpileZone) list.push(i);
+      this._stockpileTiles = list;
+    }
+    return this._stockpileTiles;
+  }
+
   stockpileCapacity(): number {
-    const tiles = this.world.tiles.filter((t) => t.stockpileZone).length;
+    const tiles = this.stockpileTiles().length;
     const warehouseCap = this.builtOf('warehouse').reduce(
       (sum, b) => sum + TUNING.warehouseBaseCap + this.buildingEffectiveCapacity(b), 0);
     return tiles * CAPACITY_PER_TILE + warehouseCap;
@@ -3466,9 +3484,7 @@ export class Simulation {
   private nearestStockpileTile(pos: Vec): Vec | null {
     let best: Vec | null = null;
     let bd = Infinity;
-    for (let idx = 0; idx < this.world.tiles.length; idx++) {
-      const t = this.world.tiles[idx];
-      if (!t.stockpileZone) continue;
+    for (const idx of this.stockpileTiles()) {
       const x = idx % MAP_W;
       const y = Math.floor(idx / MAP_W);
       const d = Math.hypot(x - pos.x, y - pos.y);
