@@ -3149,7 +3149,12 @@ export class RegionSim {
     this.caravans();
     this.traders();
     this.ageNotables();
-    if (this.stateProclaimed) this.monthlyEconomy();
+    // The treasury runs even before the Charter: pre-statehood the Mayor still
+    // taxes the towns and pays for services/militia, so the player has real
+    // economic levers to climb out of a deficit toward the £8k Charter gate
+    // (otherwise the only pre-State income is trade tolls and the books can only
+    // sink). Nation-tier machinery (factions/diplomacy/central bank) stays gated.
+    this.monthlyEconomy();
     if (this.stateProclaimed) this.updateFactions();
     this.updateDiplomacy();
     this.updateRivalAI(); // staggered AI updates for rivals (GDD §6.2)
