@@ -540,14 +540,15 @@ function draw(): void {
       ctx.fillRect(x * px, y * px, px, px);
     }
 
-    // Floor with room tint
+    // Floor with room-specific tile + tint
     if (g.floor[i]) {
-      blit(sprites.interiorFloor, x, y);
       const roomDef = ROOM_DEF_BY_NUM[g.roomId[i]];
+      const floorSpr = (roomDef && sprites.roomFloors[roomDef.id]) ?? sprites.interiorFloor;
+      blit(floorSpr, x, y);
       if (roomDef) {
         const color = ROOM_COLORS[roomDef.id];
         if (color) {
-          ctx.fillStyle = color + '44'; // ~27% opacity tint
+          ctx.fillStyle = color + '33'; // ~20% tint (slightly reduced from 44 since floor is already distinctive)
           ctx.fillRect(x * px, y * px, px, px);
         }
       }

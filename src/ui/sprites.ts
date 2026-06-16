@@ -197,6 +197,8 @@ export interface SpriteSet {
   /** Room build-system art: plank floor, stone wall, and per-station furniture. */
   interiorFloor: HTMLCanvasElement;
   interiorWall: HTMLCanvasElement;
+  /** Per-room-type floor sprites. Keys match room ids; falls back to interiorFloor if absent. */
+  roomFloors: Record<string, HTMLCanvasElement>;
   stations: Record<string, HTMLCanvasElement>;
 }
 
@@ -2245,6 +2247,83 @@ function interiorFloorTile(): HTMLCanvasElement {
   return c;
 }
 
+/** Stone tile floor — grey flagstone with mortar seams. Used in kitchens, smithies, temples, etc. */
+function floorStoneTile(): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE; c.height = TILE;
+  const g = c.getContext('2d')!;
+  g.fillStyle = P.rockDark; g.fillRect(0, 0, TILE, TILE); // mortar
+  const stones: [number, number, number, number][] = [
+    [1, 1, 14, 7], [16, 1, 14, 7],
+    [1, 9, 8, 7],  [10, 9, 20, 7],
+    [1, 17, 20, 7],[22, 17, 8, 7],
+    [1, 25, 14, 6],[16, 25, 14, 6],
+  ];
+  for (const [x, y, w, h] of stones) {
+    g.fillStyle = P.rock; g.fillRect(x, y, w, h);
+    g.fillStyle = P.rockLight; g.fillRect(x, y, w, 1); // top bevel
+    g.fillStyle = P.rockDarker; g.fillRect(x, y + h - 1, w, 1); // bottom shadow
+  }
+  return c;
+}
+
+/** Packed earth / dirt floor — for pastures, outposts, burial grounds. */
+function floorDirtTile(): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE; c.height = TILE;
+  const g = c.getContext('2d')!;
+  const rnd = mulberry(9991);
+  g.fillStyle = P.dirtMid; g.fillRect(0, 0, TILE, TILE);
+  for (let i = 0; i < 22; i++) {
+    const x = Math.floor(rnd() * TILE), y = Math.floor(rnd() * TILE);
+    g.fillStyle = rnd() < 0.5 ? P.dirtPatch : P.soilDark;
+    g.fillRect(x, y, 1 + Math.floor(rnd() * 2), 1);
+  }
+  return c;
+}
+
+/** Fine herringbone plank floor — for libraries, taverns, temples. */
+function floorFineTile(): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE; c.height = TILE;
+  const g = c.getContext('2d')!;
+  g.fillStyle = P.plankDark; g.fillRect(0, 0, TILE, TILE);
+  // Herringbone: alternating horizontal and vertical plank pairs
+  const planks: [number, number, number, number][] = [];
+  for (let i = 0; i < 4; i++) {
+    for (let j = 0; j < 4; j++) {
+      const x = i * 8, y = j * 8;
+      if ((i + j) % 2 === 0) planks.push([x, y, 8, 3], [x, y + 4, 8, 3]); // horizontal
+      else                   planks.push([x, y, 3, 8], [x + 4, y, 3, 8]);  // vertical
+    }
+  }
+  for (const [x, y, w, h] of planks) {
+    g.fillStyle = P.plank; g.fillRect(x + 1, y + 1, w - 1, h - 1);
+    g.fillStyle = P.plankLight; g.fillRect(x + 1, y + 1, w - 1, 1);
+  }
+  return c;
+}
+
+/** Irregular flagstone — for storehourses, markets, apothecaries. */
+function floorFlagTile(): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TILE; c.height = TILE;
+  const g = c.getContext('2d')!;
+  g.fillStyle = P.rockDarker; g.fillRect(0, 0, TILE, TILE);
+  const flags: [number, number, number, number][] = [
+    [1, 1, 9, 6], [11, 1, 5, 6], [17, 1, 13, 6],
+    [1, 8, 7, 7],  [9, 8, 12, 7], [22, 8, 8, 7],
+    [1, 16, 14, 7],[16, 16, 9, 7], [26, 16, 4, 7],
+    [1, 24, 5, 7],  [7, 24, 14, 7],[22, 24, 8, 7],
+  ];
+  for (const [x, y, w, h] of flags) {
+    g.fillStyle = P.gravelA; g.fillRect(x, y, w, h);
+    g.fillStyle = P.gravelC; g.fillRect(x, y + h - 1, w, 1);
+    g.fillStyle = '#b0aba0'; g.fillRect(x, y, w, 1); // lit top
+  }
+  return c;
+}
+
 /** Mortared stone wall block (with a top bevel for a hint of height). */
 function interiorWallTile(): HTMLCanvasElement {
   const c = document.createElement('canvas');
@@ -2766,6 +2845,16 @@ export function buildSprites(buildingDefs: { id: string; w: number; h: number; u
     blueprints,
     interiorFloor: interiorFloorTile(),
     interiorWall: interiorWallTile(),
+    roomFloors: (() => {
+      const stone = floorStoneTile(), dirt = floorDirtTile(), fine = floorFineTile(), flag = floorFlagTile();
+      return {
+        kitchen: stone, bakery: stone, smithy: stone, foundry: stone, kilnhouse: stone,
+        yard: stone, watchtower: stone, infirmary: stone,
+        home: fine, library: fine, tavern: fine, barracks: fine, temple: fine,
+        pasture: dirt, burial_ground: dirt, outpost: dirt,
+        storehouse: flag, market: flag, apothecary: flag,
+      };
+    })(),
     stations,
   };
 }
