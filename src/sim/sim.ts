@@ -233,6 +233,9 @@ export class Simulation {
   private reserved = new Set<string>(); // task target keys
   // Per-tick tile scan; built once in tick() and consumed by findTask() for all idle settlers.
   private _tileTaskScan: TileTaskScan | null = null;
+  // Per-tick worker-assignment counts; assignments change only on player action (never mid-tick),
+  // so findTask shares one map instead of rebuilding it over all settlers for each idle settler.
+  private _assignedCounts: Map<number, number> | null = null;
   // Soil tile cache; never invalidated (soil tiles are set at worldgen and don't change kind).
   private _soilTilesCache: Tile[] | null = null;
   // Stockpile-zone tile indices; rebuilt lazily, invalidated when a zone is painted/cleared.
@@ -1148,6 +1151,7 @@ export class Simulation {
     // Iterate backwards: safe for in-place removal when kill() shrinks the array.
     for (let i = this.settlers.length - 1; i >= 0; i--) this.updateSettler(this.settlers[i]);
     this._tileTaskScan = null;
+    this._assignedCounts = null;
     // Reveal fog only when a settler has moved to a new tile.
     for (const s of this.settlers) {
       const fx = Math.floor(s.pos.x);
@@ -2368,14 +2372,19 @@ export class Simulation {
   // ---- task generation & execution ----
   private findTask(s: Settler): Task | null {
     const candidates: { task: Task; prio: number; dist: number }[] = [];
-    // Pre-compute assigned counts once; workerLimit checks are O(1) from this Map.
-    const assignedCounts = new Map<number, number>();
-    for (const w of this.settlers) {
-      if (w.assignedBuildingId !== null) {
-        assignedCounts.set(w.assignedBuildingId, (assignedCounts.get(w.assignedBuildingId) ?? 0) + 1);
+    // Assigned counts are constant within a tick (assignments change only on player action),
+    // so build the Map once and reuse it for every idle settler's findTask this tick.
+    let assignedCounts = this._assignedCounts;
+    if (assignedCounts === null) {
+      assignedCounts = new Map<number, number>();
+      for (const w of this.settlers) {
+        if (w.assignedBuildingId !== null) {
+          assignedCounts.set(w.assignedBuildingId, (assignedCounts.get(w.assignedBuildingId) ?? 0) + 1);
+        }
       }
+      this._assignedCounts = assignedCounts;
     }
-    const countAssigned = (bid: number): number => assignedCounts.get(bid) ?? 0;
+    const countAssigned = (bid: number): number => assignedCounts!.get(bid) ?? 0;
     const push = (task: Task, kind: WorkKind) => {
       const prio = s.priorities[kind];
       if (prio <= 0 || this.reserved.has(this.taskKey(task))) return;
