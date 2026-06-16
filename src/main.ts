@@ -176,19 +176,18 @@ function showTitleScreen(): void {
   titleScreen.show(localStorage.getItem(SAVE_KEY) !== null);
 }
 
+// New Colony now launches the SoA scale-engine (TownCore) by default — the swap.
+// The fat-Simulation game lives on as "Classic Colony" (onNewColonyClassic).
 titleScreen.onNewColony = () => {
+  location.assign('./core.html');
+};
+titleScreen.onNewColonyClassic = () => {
   titleScreen.hide();
   hud.paused = true;
   new DesignScreen().showTownDesign((design) => {
     sessionStorage.setItem(DESIGN_KEY, JSON.stringify(design));
     location.reload();
   });
-};
-// Launch the SoA scale-engine (TownCore) play-test. Non-destructive: the live
-// Simulation game is untouched; this routes to the standalone core harness,
-// which is the swap candidate we're growing toward the default engine.
-titleScreen.onNewColonyCore = () => {
-  location.assign('./core.html');
 };
 titleScreen.onContinue = () => {
   sessionStorage.setItem('centuria-load-on-boot', '1');
