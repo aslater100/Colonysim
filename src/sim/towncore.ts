@@ -828,7 +828,7 @@ export class TownCore {
     // consumeFood priority order. Count each type for the colony food-variety mood system.
     const MEAL_VAL = TUNING.mealFoodValue;
     const GRAIN_VAL = TUNING.rawGrainFoodValue;
-    let eatMeal = 0, eatGameMeal = 0, eatFishMeal = 0, eatProduce = 0, eatBread = 0, eatAle = 0, eatGrain = 0;
+    let eatMeal = 0, eatGameMeal = 0, eatFishMeal = 0, eatProduce = 0, eatDairy = 0, eatBread = 0, eatAle = 0, eatGrain = 0;
     for (let i = 0; i < a.count; i++) {
       if (a.food[i] >= 100) continue;
       if (this.stock.remove('meal', 1)) {
@@ -846,6 +846,10 @@ export class TownCore {
         a.food[i] = Math.min(100, a.food[i] + MEAL_VAL);
         a.addThought(i, this.tickNo, 3, TICKS_PER_DAY); // fresh fruit & veg is a treat
         eatProduce++;
+      } else if (this.stock.remove('dairy', 1)) {
+        a.food[i] = Math.min(100, a.food[i] + MEAL_VAL);
+        a.addThought(i, this.tickNo, 3, TICKS_PER_DAY); // dairy is a treat
+        eatDairy++;
       } else if (this.stock.remove('bread', 1)) {
         a.food[i] = Math.min(100, a.food[i] + MEAL_VAL);
         a.addThought(i, this.tickNo, 3, TICKS_PER_DAY); // bread is a slight mood boost
@@ -866,6 +870,7 @@ export class TownCore {
       : eatGameMeal > 0 ? 'game_meal'
       : eatFishMeal > 0 ? 'fish_meal'
       : eatProduce > 0 ? 'produce'
+      : eatDairy > 0 ? 'dairy'
       : eatBread > 0 ? 'bread'
       : eatAle > 0 ? 'ale'
       : eatGrain > 0 ? 'grain'

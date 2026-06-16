@@ -94,6 +94,29 @@ describe('TownCore production loop', () => {
     expect(c.population).toBeGreaterThanOrEqual(2);          // didn't starve
     expect(c.stock.count('produce')).toBeLessThan(600);     // ate some
   });
+
+  it('an animal pen turns feed grain into dairy', () => {
+    const c = new TownCore({ width: 24, height: 24, seed: 7 });
+    const g = c.grid;
+    g.designateRect(3, 3, 8, 8, ROOM_TYPE_ID.get('pasture')!);
+    g.placeStation('animal_pen', 3, 3);
+    g.rebuildRooms();
+    c.stock.add('grain', 500);
+    c.stock.add('meal', 2000); // settlers eat meal, so dairy piles up
+    c.seedColony(12, 12, 4);
+    const dairy0 = c.stock.count('dairy');
+    for (let t = 0; t < 1100; t++) c.tick();
+    expect(c.stock.count('dairy')).toBeGreaterThan(dairy0);
+  });
+
+  it('the colony can live on dairy alone (it counts as food)', () => {
+    const c = new TownCore({ width: 16, height: 16, seed: 4 });
+    c.seedColony(8, 8, 3);
+    c.stock.add('dairy', 600);
+    for (let t = 0; t < 1100; t++) c.tick();
+    expect(c.population).toBeGreaterThanOrEqual(2);
+    expect(c.stock.count('dairy')).toBeLessThan(600);
+  });
 });
 
 describe('TownCore room services', () => {

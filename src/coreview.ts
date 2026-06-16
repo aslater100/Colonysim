@@ -68,6 +68,7 @@ const ROOM_COLORS: Record<string, string> = {
   yard: '#507050',
   market: '#d4a020',
   barracks: '#c05050',
+  pasture: '#7ba050',
 };
 
 // ── Starter town ──────────────────────────────────────────────────────────
@@ -467,6 +468,10 @@ function draw(): void {
     const def = STATION_DEF_BY_NUM[s.typeId];
     const img = def && sprites.stations[def.id];
     if (img) blit(img, s.x, s.y);
+    else if (def) { // no bespoke sprite yet (e.g. animal pen) — draw a labelled marker
+      ctx.fillStyle = '#6a5030'; ctx.fillRect(s.x * px + 1, s.y * px + 1, def.w * px - 2, def.h * px - 2);
+      ctx.fillStyle = '#e8d8b0'; ctx.fillText(def.name[0], s.x * px + px * 0.35, s.y * px + px * 0.7);
+    }
   }
 
   // Agents
