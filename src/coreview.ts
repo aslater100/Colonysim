@@ -469,6 +469,7 @@ const ZONE_OUTLINE = ['', '#d4d46a', '#6ad48a', '#c8c8d8', '#6ad4d4', '#d4a06a',
 
 // Station ids that produce heat/smoke — rendered with rising smoke puffs while active.
 const SMOKE_STATIONS = new Set(['oven', 'baking_oven', 'smelter', 'kiln', 'coke_oven', 'brew_vat']);
+const SPARK_STATIONS = new Set(['anvil', 'weapon_bench', 'smelter']);
 
 function draw(): void {
   const px = TILE; // world is drawn in base px under the camera transform below
@@ -653,6 +654,22 @@ function draw(): void {
         ctx.fillStyle = `rgba(200,200,200,${alpha.toFixed(2)})`;
         const r = Math.max(1, px * (0.1 + phase * 0.12));
         ctx.beginPath(); ctx.arc(cx + ox, py, r, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    // Sparks — bright orange/yellow pixels flying up from forge stations
+    if (sv.progress > 0 && def && SPARK_STATIONS.has(def.id)) {
+      const tick = core.tickNo;
+      const cx = (sv.x + def.w / 2) * px;
+      const base = (sv.y + def.h) * px;
+      for (let p = 0; p < 6; p++) {
+        const phase = ((tick * 2 + p * 5) % 14) / 14;
+        if (phase > 0.7) continue; // only show early in arc
+        const ox = Math.sin((p * 1.7 + tick * 0.3)) * px * 0.55 * phase;
+        const oy = -phase * px * 0.9;
+        const a = 0.9 * (1 - phase / 0.7);
+        const col = phase < 0.3 ? `rgba(255,220,80,${a.toFixed(2)})` : `rgba(255,120,20,${a.toFixed(2)})`;
+        ctx.fillStyle = col;
+        ctx.fillRect(Math.round(cx + ox), Math.round(base + oy), 2, 2);
       }
     }
   }
