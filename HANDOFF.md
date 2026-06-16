@@ -11,7 +11,24 @@
 
 ---
 
-## Session Snapshot — CoreView render efficiency + HiDPI sharpness (2026-06-16, latest)
+## Session Snapshot — CoreView seam fix + station-view reuse (2026-06-16, latest)
+
+**What landed (branch `claude/game-build-iteration-assets-2kd2z0`):** Follow-up render
+polish on `src/coreview.ts`. No sim/balance changes (all 874 tests pass).
+
+- **Ground-tile seam fix.** Opaque base-terrain tiles (water/soil/sand/rock/grass)
+  now draw through a `blitG` helper that bleeds them 1px into the right/bottom
+  neighbour, closing the faint dark-grid seams that show through at fractional
+  zoom (the same technique `render.ts` already used). Overlays with transparency
+  (roads/walls/gates) keep the exact `blit` so connection art stays aligned.
+- **Station-view reuse.** `stationViews()` is a generator yielding a fresh object
+  per station; `draw()` consumed it three times per frame (glow collection, shadow
+  pass, sprite pass). It's now materialized once into `stationList`, cutting 2×
+  the per-frame object churn and `progressFor` lookups.
+
+---
+
+## Session Snapshot — CoreView render efficiency + HiDPI sharpness (2026-06-16)
 
 **What landed (branch `claude/game-build-iteration-assets-2kd2z0`):** Render-path
 work on the primary SoA `CoreView` (`src/coreview.ts`) — efficiency + fidelity, no

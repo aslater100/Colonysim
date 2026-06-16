@@ -449,6 +449,12 @@ function draw(): void {
   const px = TILE; // world is drawn in base px under the camera transform below
   const g = core.grid;
   const blit = (img: CanvasImageSource, x: number, y: number) => ctx.drawImage(img, x * px, y * px, px, px);
+  // Ground blit: bleeds opaque base-terrain tiles 1px into their right/bottom
+  // neighbour. At a fractional zoom the scaled context lands tile edges on
+  // sub-pixels and the dark backdrop shows through as a faint grid; the overlap
+  // closes every interior seam. Only for full-tile opaque ground — overlays
+  // (roads/walls/gates with transparency) keep the exact `blit` to stay aligned.
+  const blitG = (img: CanvasImageSource, x: number, y: number) => ctx.drawImage(img, x * px, y * px, px + 1, px + 1);
   // Base transform maps CSS px → device px at the display's pixel ratio. Set
   // fresh each frame (it also clears any stale transform); every coordinate
   // below is in CSS px, so positions are identical to before — just sharper.
@@ -461,10 +467,16 @@ function draw(): void {
   ctx.translate(-view.x, -view.y);
   ctx.scale(view.scale, view.scale);
 
+  // Materialize stations once per frame — stationViews() is a generator that
+  // yields a fresh object per station, and the draw uses it three times (glow
+  // collection, shadow pass, sprite pass). Iterating it once avoids 2× the
+  // object churn and progress lookups every frame.
+  const stationList = [...core.stationViews()];
+
   // Collect active station positions for night glow passes
   const fireGlowPositions: { cx: number; cy: number }[] = [];
   const windowGlowPositions: { cx: number; cy: number }[] = [];
-  for (const sv of core.stationViews()) {
+  for (const sv of stationList) {
     const def = STATION_DEF_BY_NUM[sv.typeId];
     if (!def) continue;
     const center = { cx: (sv.x + def.w / 2) * px, cy: (sv.y + def.h / 2) * px };
@@ -503,18 +515,18 @@ function draw(): void {
     const t = g.terrain[i];
 
     // Ground layer — field zones use a crop-stage soil sprite based on current season.
-    if (t === TERRAIN.WATER) blit(seasonIdx === 3 ? sprites.waterWinter[(x ^ y * 3) % 4] : sprites.water[anim], x, y);
+    if (t === TERRAIN.WATER) blitG(seasonIdx === 3 ? sprites.waterWinter[(x ^ y * 3) % 4] : sprites.water[anim], x, y);
     else if (t === TERRAIN.SOIL) {
       const fz = g.zone[i] === ZONE.FIELD || g.zone[i] === ZONE.VEGGARDEN;
       const fx = g.zone[i] === ZONE.FLAX;
-      if (fx && seasonIdx === 0) blit(sprites.flaxSown, x, y);
-      else if (fx && seasonIdx === 1) blit(sprites.flaxGrown, x, y);
-      else if (fx && seasonIdx === 2) blit(sprites.flaxRipe, x, y);
-      else if (fz && seasonIdx === 0) blit(sprites.soilSown, x, y);        // spring: sown
-      else if (fz && seasonIdx === 1) blit(sprites.soilGrown, x, y); // summer: green
-      else if (fz && seasonIdx === 2) blit(sprites.soilRipe, x, y);  // autumn: ripe
-      else if (seasonIdx === 3) blit(sprites.soilWinter, x, y);      // winter: frozen
-      else blit(sprites.soil, x, y);
+      if (fx && seasonIdx === 0) blitG(sprites.flaxSown, x, y);
+      else if (fx && seasonIdx === 1) blitG(sprites.flaxGrown, x, y);
+      else if (fx && seasonIdx === 2) blitG(sprites.flaxRipe, x, y);
+      else if (fz && seasonIdx === 0) blitG(sprites.soilSown, x, y);        // spring: sown
+      else if (fz && seasonIdx === 1) blitG(sprites.soilGrown, x, y); // summer: green
+      else if (fz && seasonIdx === 2) blitG(sprites.soilRipe, x, y);  // autumn: ripe
+      else if (seasonIdx === 3) blitG(sprites.soilWinter, x, y);      // winter: frozen
+      else blitG(sprites.soil, x, y);
       // Veggarden row markers: narrow bed dividers + small plant rounds distinguish from grain fields
       if (g.zone[i] === ZONE.VEGGARDEN && seasonIdx !== 3) {
         ctx.fillStyle = 'rgba(55,35,12,0.25)';
@@ -537,11 +549,11 @@ function draw(): void {
         }
       }
     }
-    else if (t === TERRAIN.ROCK) { const rv = ((x * 1664525 ^ y * 22695477) >>> 29) % 3; blit((g.ore[i] ? sprites.rockMarked : sprites.rock)[rv], x, y); }
-    else if (t === TERRAIN.SAND) blit(sprites.sand[((x * 1664525 ^ y * 22695477) >>> 29) % 4], x, y);
+    else if (t === TERRAIN.ROCK) { const rv = ((x * 1664525 ^ y * 22695477) >>> 29) % 3; blitG((g.ore[i] ? sprites.rockMarked : sprites.rock)[rv], x, y); }
+    else if (t === TERRAIN.SAND) blitG(sprites.sand[((x * 1664525 ^ y * 22695477) >>> 29) % 4], x, y);
     else {
       const grassSet = seasonIdx === 3 ? sprites.grassWinter : seasonIdx === 2 ? sprites.grassAutumn : seasonIdx === 0 ? sprites.grassSpring : sprites.grass;
-      blit(grassSet[((x * 1664525 ^ y * 22695477) >>> 30) % 4], x, y);
+      blitG(grassSet[((x * 1664525 ^ y * 22695477) >>> 30) % 4], x, y);
       // Orchard tile: small fruit-tree overlay that changes by season
       if (g.zone[i] === ZONE.ORCHARD) {
         const ocx = (x + 0.5) * px, ocy = (y + 0.42) * px;
@@ -819,7 +831,7 @@ function draw(): void {
 
   // Station cast shadows — ground shadow ellipses pass (drawn before sprites)
   ctx.fillStyle = 'rgba(28,22,15,0.18)';
-  for (const sv of core.stationViews()) {
+  for (const sv of stationList) {
     const def = STATION_DEF_BY_NUM[sv.typeId];
     if (!def) continue;
     const scx = (sv.x + def.w / 2 + 0.25) * px;
@@ -828,7 +840,7 @@ function draw(): void {
   }
 
   // Stations — blit at the full tile footprint (multi-tile stations span def.w × def.h tiles).
-  for (const sv of core.stationViews()) {
+  for (const sv of stationList) {
     const def = STATION_DEF_BY_NUM[sv.typeId];
     // Footprint-aware cull: keep the station if either corner is on screen, so
     // multi-tile stations straddling the viewport edge don't pop.
