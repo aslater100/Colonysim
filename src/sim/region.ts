@@ -2125,6 +2125,18 @@ export class RegionSim {
     return ROUTE_SPECS[r.kind].capacity * (r.condition / 100);
   }
 
+  /** Spare capacity on the tightest leg of a path — the bottleneck a caravan
+   *  must squeeze through. Loop, not Math.min(...legs.map()): no per-call array
+   *  and no spread (which overflows the stack on a very long corridor). */
+  private legCapacity(legs: Route[]): number {
+    let min = Infinity;
+    for (const r of legs) {
+      const spare = this.effectiveCapacity(r) - r.freight;
+      if (spare < min) min = spare;
+    }
+    return min;
+  }
+
   /** A trail is blazed automatically when a settlement is founded. */
   private blazeTrail(fromId: number, toId: number): void {
     const a = this.settlement(fromId);
@@ -3347,9 +3359,13 @@ export class RegionSim {
       // dearest market first: traders chase the widest margin
       const dear = [...this.settlements].sort((a, b) => b.prices[g] - a.prices[g]);
       for (const buyer of dear) {
-        const seller = [...this.settlements]
-          .filter((s) => s !== buyer)
-          .sort((a, b) => a.prices[g] - b.prices[g])[0];
+        // cheapest market that isn't the buyer — a linear scan, not a copy+sort per buyer
+        let seller: Settlement | undefined;
+        let sellerPrice = Infinity;
+        for (const s of this.settlements) {
+          if (s === buyer) continue;
+          if (s.prices[g] < sellerPrice) { sellerPrice = s.prices[g]; seller = s; }
+        }
         if (!seller) continue;
         const legs = this.routePath(seller.id, buyer.id);
         if (!legs || legs.length === 0) continue; // traders need a route
@@ -3357,7 +3373,7 @@ export class RegionSim {
         const margin = buyer.prices[g] - seller.prices[g];
         if (margin <= freightRate * 1.5) continue; // not worth the trip
         const surplus = this.stockOf(seller, g) - this.monthNeed(seller, g);
-        const capLeft = Math.min(...legs.map((r) => this.effectiveCapacity(r) - r.freight));
+        const capLeft = this.legCapacity(legs);
         const volume = Math.min(surplus * 0.25, capLeft, 80);
         if (volume < 1) continue;
         this.addStock(seller, g, -volume);
@@ -3391,14 +3407,19 @@ export class RegionSim {
     for (const needy of this.settlements) {
       const need = this.popOf(needy) * 0.75 * 20 - needy.food; // 20-day buffer target
       if (need <= 0) continue;
-      const donor = [...this.settlements]
-        .filter((t) => t !== needy && t.factionId === needy.factionId && t.food > this.popOf(t) * 0.75 * 60)
-        .sort((a, b) => b.food - a.food)[0];
+      // fullest larder in the same faction — a linear scan, not a copy+filter+sort per needy town
+      let donor: Settlement | undefined;
+      let donorFood = -Infinity;
+      for (const t of this.settlements) {
+        if (t === needy || t.factionId !== needy.factionId) continue;
+        if (t.food <= this.popOf(t) * 0.75 * 60) continue;
+        if (t.food > donorFood) { donorFood = t.food; donor = t; }
+      }
       if (!donor) continue;
       const surplus = donor.food - this.popOf(donor) * 0.75 * 60;
       const legs = this.routePath(donor.id, needy.id);
       if (legs && legs.length > 0) {
-        const cap = Math.min(...legs.map((r) => this.effectiveCapacity(r) - r.freight));
+        const cap = this.legCapacity(legs);
         const sent = Math.max(0, Math.min(need, surplus, cap));
         if (sent <= 0) continue;
         donor.food -= sent;
@@ -4114,12 +4135,18 @@ export class RegionSim {
     // pulls labor off poor farms even when life there is pleasant enough.
     const regionWage = this.settlements.reduce((s, t) => s + this.avgWageOf(t), 0) / this.settlements.length;
     const score = (t: Settlement) => t.satisfaction + (this.avgWageOf(t) - regionWage) * 30;
-    const ranked = [...this.settlements].sort((a, b) => score(b) - score(a));
-    const best = ranked[0];
-    const worst = ranked[ranked.length - 1];
+    // One pass for the magnet and the source — no full sort, and avgWageOf runs
+    // once per town instead of O(n log n) times through a comparator.
+    let best = this.settlements[0], worst = this.settlements[0];
+    let bestScore = score(best), worstScore = bestScore;
+    for (const t of this.settlements) {
+      const sc = score(t);
+      if (sc > bestScore) { bestScore = sc; best = t; }      // first max (matches stable sort [0])
+      if (sc <= worstScore) { worstScore = sc; worst = t; }  // last min (matches stable sort [last])
+    }
     // Don't feed an already-overcrowded destination; cap the capital magnet effect.
     const destFull = this.popOf(best) >= best.housing;
-    if (score(best) - score(worst) > 15 && this.popOf(worst) > 10 && !destFull) {
+    if (bestScore - worstScore > 15 && this.popOf(worst) > 10 && !destFull) {
       // movers ride the network too: without a route, only a trickle walks out
       const connected = this.routePath(worst.id, best.id) !== null;
       // 1% per month (was 2%): urbanization is gradual, not a mass exodus
@@ -6794,20 +6821,22 @@ export class RegionSim {
       const conflict = this.evaluateGoalConflict(faction.currentGoal, other.currentGoal);
       if (conflict < 30) continue; // No significant conflict
 
-      // Escalate tensions: rival raids friendly settlements or competes for resources
-      const settlementDist = Math.min(
-        ...faction.settlementIds.map(fid => {
-          const fs = this.settlement(fid);
-          if (!fs) return 999;
-          return Math.min(
-            ...other.settlementIds.map(oid => {
-              const os = this.settlement(oid);
-              if (!os) return 999;
-              return Math.hypot(fs.x - os.x, fs.y - os.y);
-            })
-          );
-        })
-      );
+      // Escalate tensions: rival raids friendly settlements or competes for resources.
+      // Nearest pair of settlements between the two factions — nested loops, not
+      // Math.min(...map(...map())): no temporary arrays and no spread (which would
+      // overflow the stack once a faction holds hundreds of towns).
+      let settlementDist = 999;
+      for (const fid of faction.settlementIds) {
+        const fs = this.settlement(fid);
+        if (!fs) continue;
+        for (const oid of other.settlementIds) {
+          const os = this.settlement(oid);
+          if (!os) continue;
+          const d = Math.hypot(fs.x - os.x, fs.y - os.y);
+          if (d < settlementDist) settlementDist = d;
+        }
+        if (settlementDist === 0) break;
+      }
 
       // Only escalate if factions are neighbors (within 40 map units)
       if (settlementDist > 40) continue;
@@ -6827,9 +6856,15 @@ export class RegionSim {
 
         // Occasional raids if conflict is severe
         if (conflict > 70 && this.aiRng.chance(0.1)) {
-          const targetSettlements = faction.settlementIds
-            .map(id => this.settlement(id))
-            .filter(s => s && settlementDist < 50); // only nearby settlements
+          // settlementDist is the overall nearest pair (≤40 to reach here), so the
+          // old per-settlement `settlementDist < 50` gate passed for all of them.
+          const targetSettlements: Settlement[] = [];
+          if (settlementDist < 50) {
+            for (const id of faction.settlementIds) {
+              const s = this.settlement(id);
+              if (s) targetSettlements.push(s);
+            }
+          }
           if (targetSettlements.length > 0) {
             const target = targetSettlements[this.aiRng.int(targetSettlements.length)];
             if (target) {
