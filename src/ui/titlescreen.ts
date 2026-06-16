@@ -15,6 +15,7 @@ export class TitleScreen {
   private clouds: Cloud[] = [];
 
   onNewColony: (() => void) | null = null;
+  onNewColonyCore: (() => void) | null = null;
   onContinue: (() => void) | null = null;
   onQuit: (() => void) | null = null;
 
@@ -384,6 +385,7 @@ export class TitleScreen {
         <div class="ts-panel">
           <nav class="ts-nav">
             <button class="ts-btn ts-btn-primary" id="ts-new">New Colony</button>
+            <button class="ts-btn" id="ts-new-core" title="Play the new scale-engine (SoA TownCore) colony sim — paint walls, rooms, and zones on terrain">New Colony · SoA engine <span class="ts-arrow">β</span></button>
             <button class="ts-btn" id="ts-continue" ${this.hasSave ? '' : 'disabled'}>Continue</button>
             <div class="ts-sep"></div>
             <button class="ts-btn" id="ts-options">Options &nbsp;<span class="ts-arrow">›</span></button>
@@ -436,6 +438,7 @@ export class TitleScreen {
     if (!btn || btn.disabled) return;
     switch (btn.id) {
       case 'ts-new':      this.onNewColony?.(); break;
+      case 'ts-new-core': this.onNewColonyCore?.(); break;
       case 'ts-continue': this.onContinue?.();  break;
       case 'ts-quit':     this.onQuit?.();       break;
       case 'ts-options':  this.view = 'options'; this.render(); break;

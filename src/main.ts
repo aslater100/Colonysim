@@ -184,6 +184,12 @@ titleScreen.onNewColony = () => {
     location.reload();
   });
 };
+// Launch the SoA scale-engine (TownCore) play-test. Non-destructive: the live
+// Simulation game is untouched; this routes to the standalone core harness,
+// which is the swap candidate we're growing toward the default engine.
+titleScreen.onNewColonyCore = () => {
+  location.assign('./core.html');
+};
 titleScreen.onContinue = () => {
   sessionStorage.setItem('centuria-load-on-boot', '1');
   location.reload();
