@@ -121,12 +121,42 @@ const app = document.getElementById('app')!;
 const canvas = document.createElement('canvas');
 app.appendChild(canvas);
 const ctx = canvas.getContext('2d')!;
+// ── Camera (pan + zoom) ─────────────────────────────────────────────────────
+// World is drawn at `TILE` base px/tile under a translate+scale transform, so
+// the SoA play-test pans and zooms like the real game. `view.x/y` are the
+// screen-space offset (px); `view.scale` is the zoom.
+const TILE = 14; // base px per tile at zoom 1
+const view = { x: 0, y: 0, scale: 1 };
+const MIN_SCALE = 0.4, MAX_SCALE = 4;
+
+/** Frame the whole map centered in the viewport (the default + reset view). */
+function fitView(): void {
+  view.scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Math.min(canvas.width, canvas.height) / (MAP * TILE)));
+  view.x = (MAP * TILE * view.scale - canvas.width) / 2;
+  view.y = (MAP * TILE * view.scale - canvas.height) / 2;
+}
 function resize(): void { canvas.width = innerWidth; canvas.height = innerHeight; ctx.imageSmoothingEnabled = false; }
 resize();
-addEventListener('resize', resize);
+fitView();
+addEventListener('resize', () => { resize(); fitView(); });
 
-const tilePx = () => Math.floor(Math.min(canvas.width, canvas.height) / MAP);
-const tileAt = (mx: number, my: number) => ({ x: Math.floor(mx / tilePx()), y: Math.floor(my / tilePx()) });
+/** Screen (canvas-local) px → tile coords, undoing the camera transform. */
+const tileAt = (mx: number, my: number) => ({
+  x: Math.floor((mx + view.x) / view.scale / TILE),
+  y: Math.floor((my + view.y) / view.scale / TILE),
+});
+
+/** Zoom toward a screen point, keeping the world point under it fixed. */
+function zoomAt(mx: number, my: number, dir: number): void {
+  const factor = dir > 0 ? 1.15 : 1 / 1.15;
+  const next = Math.max(MIN_SCALE, Math.min(MAX_SCALE, view.scale * factor));
+  if (next === view.scale) return;
+  const bx = (mx + view.x) / view.scale;
+  const by = (my + view.y) / view.scale;
+  view.scale = next;
+  view.x = bx * next - mx;
+  view.y = by * next - my;
+}
 
 // ── Tool state ────────────────────────────────────────────────────────────
 let paused = false;
@@ -161,6 +191,13 @@ addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === ' ') { paused = !paused; e.preventDefault(); return; }
+  // Camera: arrows pan, O frames the whole map.
+  const PAN = 60;
+  if (e.key === 'ArrowUp')    { view.y -= PAN; e.preventDefault(); return; }
+  if (e.key === 'ArrowDown')  { view.y += PAN; e.preventDefault(); return; }
+  if (e.key === 'ArrowLeft')  { view.x -= PAN; e.preventDefault(); return; }
+  if (e.key === 'ArrowRight') { view.x += PAN; e.preventDefault(); return; }
+  if (k === 'o') { fitView(); return; }
   if (e.key === '1') { speed = 1; return; }
   if (e.key === '2') { speed = 3; return; }
   if (e.key === '3') { speed = 8; return; }
@@ -220,12 +257,17 @@ addEventListener('keydown', (e) => {
 });
 
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+// Middle-button drag pans the camera (left/right are paint/erase/inspect).
+let panning = false;
+let panLast = { x: 0, y: 0 };
 canvas.addEventListener('mousedown', (e) => {
+  if (e.button === 1) { panning = true; panLast = { x: e.clientX, y: e.clientY }; e.preventDefault(); return; }
   painting = e.button === 2 ? 2 : 1;
   paintAt(e);
   if (e.button === 0 && tool === 'wall') maybeInspect(e); // click in non-paint = inspect
 });
 addEventListener('mouseup', () => {
+  panning = false;
   painting = 0;
   if (tool === 'room' || tool === 'wall' || tool === 'floor' || tool === 'station') {
     core.grid.rebuildRooms();
@@ -233,11 +275,18 @@ addEventListener('mouseup', () => {
 });
 let hoverX = -1, hoverY = -1;
 canvas.addEventListener('mousemove', (e) => {
+  if (panning) { view.x -= e.clientX - panLast.x; view.y -= e.clientY - panLast.y; panLast = { x: e.clientX, y: e.clientY }; return; }
   const r = canvas.getBoundingClientRect();
   const t = tileAt(e.clientX - r.left, e.clientY - r.top);
   hoverX = t.x; hoverY = t.y;
   if (painting) paintAt(e);
 });
+// Scroll wheel zooms toward the cursor.
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect();
+  zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1 : -1);
+}, { passive: false });
 
 /** Click near a settler to open the inspector. Used when no paint action fired. */
 function maybeInspect(e: MouseEvent): void {
@@ -306,11 +355,16 @@ function paintAt(e: MouseEvent): void {
 const ZONE_OUTLINE = ['', '#d4d46a', '#6ad48a', '#c8c8d8', '#6ad4d4', '#d4a06a']; // flax = warm amber
 
 function draw(): void {
-  const px = tilePx();
+  const px = TILE; // world is drawn in base px under the camera transform below
   const g = core.grid;
   const blit = (img: CanvasImageSource, x: number, y: number) => ctx.drawImage(img, x * px, y * px, px, px);
   ctx.fillStyle = '#15151a';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // Enter world space: pan (view.x/y) + zoom (view.scale). Restored before the
+  // screen-space HUD overlays below.
+  ctx.save();
+  ctx.translate(-view.x, -view.y);
+  ctx.scale(view.scale, view.scale);
 
   // drought/flood zone tint: +1 = flood (blue), -1 = drought (brown), 0 = normal
   const droughtOrFlood = core.weather.isFloodRisk(core.day) ? 1 : core.weather.isDrought(core.day) ? -1 : 0;
@@ -437,6 +491,8 @@ function draw(): void {
   { const si = Math.floor((core.day % DAYS_PER_YEAR) / DAYS_PER_SEASON);
     if (si === 3) { ctx.fillStyle = '#4488bb16'; ctx.fillRect(0, 0, MAP * px, MAP * px); } }
 
+  ctx.restore(); // leave world space — HUD overlays below are screen-space
+
   // ── Stats overlay (top-left) ────────────────────────────────────────────
   ctx.fillStyle = '#000a'; ctx.fillRect(0, 0, 340, 300);
   ctx.fillStyle = '#ddd'; ctx.font = '13px monospace';
@@ -515,6 +571,7 @@ function draw(): void {
   ctx.fillStyle = '#888'; ctx.font = '11px monospace';
   ctx.fillText('W wall  E erase  G gate  D floor  T trap  Z room([ ])  A station(, .)', 8, 20 + 10 * 17);
   ctx.fillText('F field  C chop  Q quarry  B fishery  L flax  R raid  N settler  X queue  Y focus  1-4 speed  space pause', 8, 20 + 11 * 17);
+  ctx.fillText('camera: scroll zoom · arrows / middle-drag pan · O overview', 8, 20 + 12 * 17);
 
   // ── Settler inspector panel (top-right) ──────────────────────────────────
   if (inspected) {
@@ -602,8 +659,11 @@ function draw(): void {
       const tip = `(${hoverX},${hoverY}) ${parts.join(' · ')}`;
       ctx.font = '11px monospace';
       const tw = ctx.measureText(tip).width;
-      const tx = Math.min(hoverX * px + px + 4, canvas.width - tw - 8);
-      const ty = Math.max(hoverY * px - 4, 20);
+      // Hover tile → screen px (the tooltip is drawn in screen space).
+      const sx = hoverX * TILE * view.scale - view.x;
+      const sy = hoverY * TILE * view.scale - view.y;
+      const tx = Math.min(sx + TILE * view.scale + 4, canvas.width - tw - 8);
+      const ty = Math.max(sy - 4, 20);
       ctx.fillStyle = '#000c'; ctx.fillRect(tx - 2, ty - 13, tw + 4, 16);
       ctx.fillStyle = '#ddd'; ctx.fillText(tip, tx, ty);
     }
