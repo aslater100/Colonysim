@@ -2158,3 +2158,30 @@ describe('TownCore market stalls gold income', () => {
     expect(c.gold).toBeGreaterThan(goldBefore + 7); // at least 1g/day from market
   });
 });
+
+// ── Region context for the seamless world view (lazy, seed-derived) ──────────
+import { REGION_N } from '../src/sim/worldgen';
+
+describe('TownCore region context', () => {
+  it('exposes a region map and a home site within the region, deterministic by seed', () => {
+    const a = new TownCore({ width: 96, height: 96, seed: 4242 });
+    expect(a.site.cellX).toBeGreaterThanOrEqual(0);
+    expect(a.site.cellX).toBeLessThan(REGION_N);
+    expect(a.site.cellY).toBeGreaterThanOrEqual(0);
+    expect(a.site.cellY).toBeLessThan(REGION_N);
+    expect(a.regionMap.at(a.site.cellX, a.site.cellY).biome).toBeDefined();
+
+    // Same seed → same site (deterministic, re-derived not stored).
+    const b = new TownCore({ width: 96, height: 96, seed: 4242 });
+    expect(b.site.cellX).toBe(a.site.cellX);
+    expect(b.site.cellY).toBe(a.site.cellY);
+  });
+
+  it('survives serialize/deserialize (re-derived from the saved seed)', () => {
+    const a = new TownCore({ width: 96, height: 96, seed: 99 });
+    const before = { x: a.site.cellX, y: a.site.cellY };
+    const twin = TownCore.deserialize(a.serialize());
+    expect(twin.site.cellX).toBe(before.x);
+    expect(twin.site.cellY).toBe(before.y);
+  });
+});

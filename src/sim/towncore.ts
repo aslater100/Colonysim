@@ -37,6 +37,7 @@ import { Weather } from './weather';
 import { RaidForce, raidSize, type RaidForceSave } from './raid';
 import { WolfPack, type WolfPackSave } from './wolves';
 import { Ledger, type LedgerSave, type BorrowResult, type RepayResult } from './ledger';
+import { RegionMap, type TownSite } from './worldgen';
 import { ResearchBook, type ResearchBookSave } from './research';
 import { Rng } from './rng';
 import { BASE_PRICES } from './economy';
@@ -410,6 +411,16 @@ export class TownCore {
   lastYearReport: YearReport | null = null;
 
   private readonly weatherSeed: number;
+
+  // Region context for the seamless world view — the wider map this colony sits
+  // in. Lazy + derived from the seed (deterministic), so it costs nothing until
+  // the world view is opened and needs no save fields (re-derived on load).
+  private _regionMap: RegionMap | null = null;
+  private _site: TownSite | null = null;
+  /** The 128×128 region this colony occupies one cell of. */
+  get regionMap(): RegionMap { return this._regionMap ??= new RegionMap(this.weatherSeed); }
+  /** This colony's cell within the region (cellX/cellY + biome/site detail). */
+  get site(): TownSite { return this._site ??= this.regionMap.startSite(); }
 
   constructor(opts: TownCoreOpts = {}) {
     const width = opts.width ?? MAP_W;

@@ -37,6 +37,7 @@ import {
   RESOURCE_KINDS, BLUEPRINT_DEFS, TUNING,
 } from './sim/defs';
 import { RESEARCH_PER_DESK_PER_DAY } from './sim/research';
+import { REGION_N, type Biome } from './sim/worldgen';
 import { buildSprites } from './ui/sprites';
 import { applyOverrides } from './ui/spriteOverrides';
 
@@ -138,6 +139,14 @@ const goToMenu = () => {
 };
 menuBtn.addEventListener('click', goToMenu);
 app.appendChild(menuBtn);
+
+// "World" DOM button — toggles the zoomed-out region overview (seamless world M1).
+const worldBtn = document.createElement('button');
+worldBtn.textContent = '🌐 World';
+worldBtn.style.cssText = 'position:fixed;top:8px;right:74px;padding:4px 10px;background:#111c;color:#90a8c0;border:1px solid #30485a;border-radius:3px;font:12px monospace;cursor:pointer;z-index:999;';
+worldBtn.title = 'View the wider world your colony sits in';
+worldBtn.addEventListener('click', () => { worldView = !worldView; });
+app.appendChild(worldBtn);
 // ── Camera (pan + zoom) ─────────────────────────────────────────────────────
 // World is drawn at `TILE` base px/tile under a translate+scale transform, so
 // the SoA play-test pans and zooms like the real game. `view.x/y` are the
@@ -206,6 +215,9 @@ type Tool = 'wall' | 'erase' | 'gate' | 'floor' | 'room' | 'station'
            | 'field' | 'woodcutter' | 'quarry' | 'fishery' | 'flax' | 'forage'
            | 'orchard' | 'veggarden' | 'trap' | 'bridge' | 'blueprint';
 let tool: Tool = 'wall';
+// Seamless world (M1): the "🌐 World" button opens a zoomed-out overview of the
+// wider region this colony sits in; the button or Esc returns. Town keeps ticking.
+let worldView = false;
 
 // Room designation sub-tool: cycle through room type names.
 const ROOM_TYPE_NAMES = ROOM_DEFS.map(d => d.id);
@@ -230,6 +242,13 @@ addEventListener('keydown', (e) => {
     if (e.key === '1') { core.resolveEventChoice(0); e.preventDefault(); return; }
     if (e.key === '2') { core.resolveEventChoice(1); e.preventDefault(); return; }
     e.preventDefault(); // block other keys while dialog is open
+    return;
+  }
+  // World overview (open by clicking the minimap): Esc closes it back to the
+  // colony rather than quitting to the menu; it's look-only until the M2 purchase UI.
+  if (worldView) {
+    if (e.key === 'Escape') { worldView = false; e.preventDefault(); return; }
+    e.preventDefault();
     return;
   }
   if (e.key === 'Escape') { goToMenu(); return; }
@@ -321,6 +340,7 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 let panning = false;
 let panLast = { x: 0, y: 0 };
 canvas.addEventListener('mousedown', (e) => {
+  if (worldView) return; // overview is look-only
   if (e.button === 1) { panning = true; panLast = { x: e.clientX, y: e.clientY }; e.preventDefault(); return; }
   // Left-click on a settler inspects it (any tool) instead of painting.
   if (e.button === 0 && maybeInspect(e)) return;
@@ -344,6 +364,7 @@ canvas.addEventListener('mousemove', (e) => {
 });
 // Scroll wheel zooms toward the cursor.
 canvas.addEventListener('wheel', (e) => {
+  if (worldView) return;
   e.preventDefault();
   const r = canvas.getBoundingClientRect();
   zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1 : -1);
@@ -351,6 +372,7 @@ canvas.addEventListener('wheel', (e) => {
 
 // Minimap click → pan main view to that tile.
 canvas.addEventListener('click', (e) => {
+  if (worldView) return;
   const r = canvas.getBoundingClientRect();
   const cx = e.clientX - r.left, cy = e.clientY - r.top;
   const mmSize = MAP * MINI_PX, mmX = cw - mmSize - 4, mmY = ch - mmSize - 4;
@@ -445,7 +467,58 @@ const ZONE_OUTLINE = ['', '#d4d46a', '#6ad48a', '#c8c8d8', '#6ad4d4', '#d4a06a',
 const SMOKE_STATIONS = new Set(['oven', 'baking_oven', 'smelter', 'kiln', 'coke_oven', 'brew_vat']);
 const SPARK_STATIONS = new Set(['anvil', 'weapon_bench', 'smelter']);
 
+// ── World overview (seamless world, M1) ─────────────────────────────────────
+const BIOME_COLORS: Record<Biome, string> = {
+  sea: '#243d52', lake: '#2e4a5c', river: '#36586e', marsh: '#39503e',
+  plains: '#46563a', forest: '#33502c', hills: '#5a5742', mountains: '#6a6358',
+};
+// The region is static per seed, so rasterise it once (1px/cell) and blit it
+// scaled with smoothing off — crisp blocks, no 128² fills per frame.
+let _regionCanvas: HTMLCanvasElement | null = null;
+function regionCanvas(): HTMLCanvasElement {
+  if (_regionCanvas) return _regionCanvas;
+  const rm = core.regionMap;
+  const c = document.createElement('canvas');
+  c.width = REGION_N; c.height = REGION_N;
+  const rg = c.getContext('2d')!;
+  for (let y = 0; y < REGION_N; y++) for (let x = 0; x < REGION_N; x++) {
+    const cell = rm.at(x, y);
+    rg.fillStyle = cell.biome === 'mountains' && cell.elevation > 0.85 ? '#9a978f' : BIOME_COLORS[cell.biome];
+    rg.fillRect(x, y, 1, 1);
+  }
+  _regionCanvas = c;
+  return c;
+}
+
+function drawWorld(): void {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.fillStyle = '#0d1014';
+  ctx.fillRect(0, 0, cw, ch);
+  const map = regionCanvas();
+  const span = Math.min(cw, ch) * 0.9;
+  const px = Math.max(1, Math.floor(span / REGION_N));
+  const size = px * REGION_N;
+  const ox = Math.floor((cw - size) / 2), oy = Math.floor((ch - size) / 2);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(map, ox, oy, size, size);
+  // Home colony marker: a pulsing ring on its cell.
+  const site = core.site;
+  const hx = ox + site.cellX * px + px / 2, hy = oy + site.cellY * px + px / 2;
+  const pulse = 4 + Math.sin(performance.now() / 300) * 1.5;
+  ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(hx, hy, pulse + 3, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = '#ffd24a'; ctx.fillRect(hx - 1, hy - 1, 3, 3);
+  // Border + labels.
+  ctx.strokeStyle = '#3a4654'; ctx.lineWidth = 1;
+  ctx.strokeRect(ox + 0.5, oy + 0.5, size - 1, size - 1);
+  ctx.fillStyle = '#e8e0c8'; ctx.font = 'bold 18px monospace';
+  ctx.fillText('The Wider World', ox, oy - 14);
+  ctx.fillStyle = '#90a0b0'; ctx.font = '12px monospace';
+  ctx.fillText('Your colony sits where the gold marker pulses.  V or Esc to return.', ox, oy - 1);
+}
+
 function draw(): void {
+  if (worldView) { drawWorld(); return; }
   const px = TILE; // world is drawn in base px under the camera transform below
   const g = core.grid;
   const blit = (img: CanvasImageSource, x: number, y: number) => ctx.drawImage(img, x * px, y * px, px, px);

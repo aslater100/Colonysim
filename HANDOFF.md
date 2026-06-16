@@ -11,7 +11,28 @@
 
 ---
 
-## Session Snapshot — Backbone M0 slice: TownCore chunk summary (2026-06-16, latest)
+## Session Snapshot — Backbone M1: world overview in CoreView (2026-06-16, latest)
+
+**What landed (branch `claude/game-build-iteration-assets-2kd2z0`):** First *visible*
+seamless-world step. `TownCore` now exposes a **lazy** `regionMap` + `site` (a
+`RegionMap(seed)` + `startSite()`, computed on first access, re-derived on load — no
+save fields, no cost until opened). CoreView gained a **"🌐 World" button** that toggles
+a zoomed-out overview of the 128² region the colony occupies: biomes rasterised once to
+an offscreen canvas (seed-static) and blitted scaled, a pulsing gold marker on the home
+cell, Esc/button to return. Look-only for now (parcel **purchase = M2**); the town keeps
+ticking behind it; canvas input is inert while open.
+
+Browser-verified by the user. Tests 885→**887** (region context: in-range + deterministic
++ save round-trip). DPR/cull-friendly: the overview is a single cached blit, not 128² fills/frame.
+
+**Next:** M2 — right-click a frontier cell in the overview → purchase cost panel (needs
+`ParcelManager` re-based on TownCore: it's still `Simulation`-coupled — `home.economy.cash`,
+`home.world`, `home.site`; TownCore has `gold`/`grid`/`site` getter, so an adapter or a
+`ParcelHost` interface is the remaining M0 work).
+
+---
+
+## Session Snapshot — Backbone M0 slice: TownCore chunk summary (2026-06-16)
 
 **What landed (branch `claude/game-build-iteration-assets-2kd2z0`):** First step of the
 seamless-world reconciliation (M0). `worldchunks.computeChunkSummary` only understood
