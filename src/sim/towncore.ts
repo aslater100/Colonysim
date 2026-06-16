@@ -1237,6 +1237,10 @@ export class TownCore {
     // Drought suppresses field yields; good rain gives a small boost (growthMult: 0.35–1.1).
     const growthMult = this.weather.growthMult(this.day);
     const fieldMult = techMult * growthMult;
+    // Extraction-zone yield techs (mirror the field bonus, no weather term).
+    const woodMult = this.researchBook.hasTech('forestry') ? 1.25 : 1;
+    const stoneMult = this.researchBook.hasTech('mining') ? 1.30 : 1;
+    const fishMult = this.researchBook.hasTech('fishing') ? 1.25 : 1;
     for (let i = 0; i < grid.size && budget > 0; i++) {
       const z = grid.zone[i];
       if (z === ZONE.NONE) continue;
@@ -1251,7 +1255,12 @@ export class TownCore {
       const res = z === ZONE.QUARRY && grid.ore[i] ? 'iron_ore'
         : z === ZONE.FORAGE ? (grid.forage[i] === FORAGE.HERBS ? 'herbs' : 'meal')
         : def.resource;
-      const yield_ = (z === ZONE.FIELD || z === ZONE.FLAX) ? HARVEST_YIELD * fieldMult : HARVEST_YIELD;
+      const yield_ = HARVEST_YIELD * (
+        (z === ZONE.FIELD || z === ZONE.FLAX) ? fieldMult
+        : z === ZONE.WOODCUTTER ? woodMult
+        : z === ZONE.QUARRY ? stoneMult
+        : z === ZONE.FISHERY ? fishMult
+        : 1);
       this.stock.add(res, yield_);
       budget--;
       if (!def.renewable) {

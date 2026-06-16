@@ -54,6 +54,18 @@ export const CORE_TECHS: CoreTechDef[] = [
     desc: 'Saw benches and carpentry benches run 25% faster',
   },
   {
+    id: 'forestry', name: 'Forestry', cost: 60, prereqs: [],
+    desc: 'Woodcutter zones yield 25% more wood',
+  },
+  {
+    id: 'mining', name: 'Mining', cost: 80, prereqs: [],
+    desc: 'Quarry zones yield 30% more stone and ore',
+  },
+  {
+    id: 'fishing', name: 'Fishing', cost: 60, prereqs: [],
+    desc: 'Fishery zones land 25% more food',
+  },
+  {
     id: 'animal_husbandry', name: 'Animal Husbandry', cost: 80, prereqs: [],
     desc: 'Animal pens produce 30% more dairy',
   },
