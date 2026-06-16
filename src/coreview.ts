@@ -33,6 +33,7 @@ import {
   ROOM_TYPE_ID, ROOM_DEF_BY_NUM, ROOM_DEFS,
   STATION_DEF_BY_NUM, STATION_DEFS,
   TICKS_PER_SECOND, SEASONS, START_YEAR, DAYS_PER_SEASON, DAYS_PER_YEAR, MINUTES_PER_TICK, MINUTES_PER_DAY,
+  RESOURCE_KINDS,
 } from './sim/defs';
 import { RESEARCH_PER_DESK_PER_DAY } from './sim/research';
 import { buildSprites } from './ui/sprites';
@@ -169,6 +170,7 @@ function zoomAt(mx: number, my: number, dir: number): void {
 // ── Tool state ────────────────────────────────────────────────────────────
 let paused = false;
 let speed = 3;
+let showEconomy = false; // toggle the full inventory/economy panel (I)
 let painting: 0 | 1 | 2 = 0; // 0=none, 1=apply, 2=erase
 let flashMsg = ''; // brief feedback message (e.g. "Saved", "Loaded")
 let flashUntil = 0; // timestamp when flash expires
@@ -244,6 +246,7 @@ addEventListener('keydown', (e) => {
   if (k === 'b') { tool = 'fishery'; return; }
   if (k === 'l' && !e.ctrlKey) { tool = 'flax'; return; }
   if (k === 'p') { tool = 'forage'; return; } // pick wild forage deposits
+  if (k === 'i') { showEconomy = !showEconomy; return; } // inventory / economy panel
   if (k === 't' && !e.ctrlKey) { tool = 'trap'; return; }
   // Save / Load via localStorage (Ctrl+S / Ctrl+L)
   if (e.ctrlKey && k === 's') {
@@ -596,7 +599,27 @@ function draw(): void {
   ctx.fillStyle = '#888'; ctx.font = '11px monospace';
   ctx.fillText('H wall  E erase  G gate  J floor  T trap  Z room([ ])  K station(, .)', 8, 20 + 10 * 17);
   ctx.fillText('F field  C chop  Q quarry  B fishery  L flax  P forage  R raid  N settler  X queue  Y focus  1-4 speed  space pause', 8, 20 + 11 * 17);
-  ctx.fillText('camera: WASD / arrows pan · scroll zoom · middle-drag · O overview   ·   click a settler to inspect', 8, 20 + 12 * 17);
+  ctx.fillText('camera: WASD / arrows pan · scroll zoom · middle-drag · O overview   ·   click settler to inspect · I economy', 8, 20 + 12 * 17);
+
+  // ── Economy / storage panel (toggle I): every stored resource with its
+  //    net flow and market price — the SoS per-resource economy readout. ──
+  if (showEconomy) {
+    const items = RESOURCE_KINDS.filter((kRes) => core.stock.count(kRes) > 0.05);
+    const rowH = 15, ox = 352, oy = 8, PW = 250, PH = 30 + Math.max(1, items.length) * rowH;
+    ctx.fillStyle = '#000c'; ctx.fillRect(ox, oy, PW, PH);
+    ctx.fillStyle = '#ffd700'; ctx.font = 'bold 12px monospace';
+    ctx.fillText(`Economy · gold ${core.gold.toFixed(0)} · infl ${(core.inflation * 100).toFixed(1)}%`, ox + 8, oy + 16);
+    ctx.font = '11px monospace';
+    items.forEach((kRes, n) => {
+      const cnt = core.stock.count(kRes), flow = core.netFlow(kRes), price = core.marketPrice(kRes);
+      const arrow = flow > 0.05 ? '▲' : flow < -0.05 ? '▼' : ' ';
+      ctx.fillStyle = flow < -0.05 ? '#ff9999' : flow > 0.05 ? '#99ff99' : '#cccccc';
+      ctx.fillText(
+        `${kRes.padEnd(10)}${cnt.toFixed(0).padStart(5)}  ${arrow}${Math.abs(flow).toFixed(1).padStart(4)}/d  ${price.toFixed(1)}g`,
+        ox + 8, oy + 30 + n * rowH);
+    });
+    if (items.length === 0) { ctx.fillStyle = '#888'; ctx.fillText('(stores empty)', ox + 8, oy + 30); }
+  }
 
   // ── Settler inspector panel (top-right) ──────────────────────────────────
   if (inspected) {
