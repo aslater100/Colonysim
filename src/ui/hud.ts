@@ -214,6 +214,7 @@ export class Hud {
   private activeCat: string | null = null;
   private lastLogLen = 0;
   private foundBtn: HTMLButtonElement | null = null;
+  private foundGatesEl: HTMLElement | null = null;
   private htmlCache = new Map<HTMLElement, string>();
   private techPanel!: TechPanel;
   private resourceTab = 0; // active group in the resources panel
@@ -439,6 +440,11 @@ export class Hud {
     menuBtn.title = 'Menu [M]';
     menuBtn.addEventListener('mousedown', () => { this.sfx?.click(); this.toggleMenu(); });
     this.buildTabs.appendChild(menuBtn);
+
+    // Milestone checklist: appears above the tab bar while prerequisites unmet
+    this.foundGatesEl = document.createElement('div');
+    this.foundGatesEl.className = 'found-gates hidden';
+    this.buildBar.insertBefore(this.foundGatesEl, this.buildTabs);
 
     // Found Town button (hidden by default)
     this.foundBtn = document.createElement('button');
@@ -799,9 +805,18 @@ export class Hud {
     if (this.showPriorities) this.drawPriorities();
     this.techPanel.update();
     if (this.foundBtn) {
-      const can = this.sim.canFoundSecondTown();
-      this.foundBtn.disabled = !can.ok;
-      this.foundBtn.title = can.ok ? 'Send an expedition — step up to the region map' : can.reason;
+      const gates = this.sim.canFoundSecondTownGates();
+      const allMet = gates.every(g => g.met);
+      this.foundBtn.disabled = !allMet;
+      this.foundBtn.title = allMet ? 'Send an expedition — step up to the region map' : 'Prerequisites not yet met';
+      if (this.foundGatesEl) {
+        this.foundGatesEl.classList.toggle('hidden', allMet);
+        if (!allMet) {
+          this.foundGatesEl.innerHTML = gates.map(g =>
+            `<span class="${g.met ? 'found-gate-met' : 'found-gate-unmet'}">${g.met ? '✓' : '✗'} ${g.label}${g.detail ? ' ' + g.detail : ''}</span>`
+          ).join('');
+        }
+      }
     }
   }
 

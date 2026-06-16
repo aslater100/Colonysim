@@ -166,13 +166,13 @@ describe('Rival AI integration', () => {
     expect(r.log.some((e) => e.text.includes(rival.name))).toBe(true);
   });
 
-  it('rivals stay idle before the state is proclaimed', () => {
+  it('rivals bootstrap their first settlement in month 1 regardless of proclamation', () => {
     const r = region('hard');
     const rival = r.regionalFactions.find((f) => f.id !== r.playerFactionId)!;
     rival.treasury = 500;
-    const before = rival.settlementIds.length;
+    // AI runs from tick 1; first monthly update (day 30) triggers bootstrap expansion
     runDays(r, 365);
-    expect(r.faction(rival.id)!.settlementIds.length).toBe(before);
+    expect(r.faction(rival.id)!.settlementIds.length).toBeGreaterThanOrEqual(1);
   });
 
   it('techFocus tracks the active goal rather than sitting as dead data', () => {

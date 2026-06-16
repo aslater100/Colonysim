@@ -71,6 +71,9 @@ export class RegionView {
   /** The Century Report (GDD §8.4): shown once at 2100, dismissible. */
   private centuryModal: HTMLElement;
   private centuryDismissed = false;
+  /** Win condition modal: shown once when any path is achieved. */
+  private winModal: HTMLElement;
+  private winDismissed = false;
   private frame = 0;
   // ---- Static-map cache. Terrain + territory fills are O(N²) and barely change,
   //      so render them once into an offscreen canvas (base coords) and blit it
@@ -129,6 +132,9 @@ export class RegionView {
     this.centuryModal = document.createElement('div');
     this.centuryModal.className = 'ceremony hidden';
     root.appendChild(this.centuryModal);
+    this.winModal = document.createElement('div');
+    this.winModal.className = 'win-modal hidden';
+    root.appendChild(this.winModal);
     this.rivalPanel = document.createElement('div');
     this.rivalPanel.className = 'inspector region-panel hidden';
     root.appendChild(this.rivalPanel);
@@ -159,6 +165,7 @@ export class RegionView {
     this.policyModal.remove();
     this.dealModal.remove();
     this.centuryModal.remove();
+    this.winModal.remove();
     this.rivalPanel.remove();
   }
 
@@ -506,13 +513,54 @@ export class RegionView {
           x += g.measureText(segs[i].text).width;
         }
       }
+    } else if (!region.nationProclaimed) {
+      // State proclaimed but nation not yet: show convention gate chips
+      const gates = region.canCallConventionGates();
+      const allMet = gates.every(gt => gt.met);
+      if (allMet) {
+        g.fillStyle = 'rgba(110,74,47,0.94)';
+        g.fillRect(W / 2 - 260, barTop - 30, 520, 30);
+        g.fillStyle = '#e8d27a';
+        g.font = 'bold 13px monospace';
+        g.textAlign = 'center';
+        g.fillText(`★ ${region.stateName.toUpperCase()} — Convention ready. Open the State panel. ★`, W / 2, barTop - 10);
+        g.textAlign = 'left';
+      } else {
+        g.font = 'bold 13px monospace';
+        const head = `${region.stateName} — Toward Nationhood: `;
+        const segs = gates.filter(gt => !gt.met).map((gt) => ({
+          text: `✗ ${gt.label}${gt.detail ? ' ' + gt.detail : ''}`,
+          color: '#f0a868',
+        }));
+        const sep = '   ';
+        const totalW = g.measureText(head).width +
+          segs.reduce((w, s, i) => w + g.measureText(s.text).width + (i ? g.measureText(sep).width : 0), 0);
+        const bw = Math.max(460, totalW + 28);
+        g.fillStyle = 'rgba(12,10,7,0.94)';
+        g.fillRect(W / 2 - bw / 2, barTop - 32, bw, 32);
+        g.strokeStyle = 'rgba(232,210,122,0.35)';
+        g.strokeRect(W / 2 - bw / 2 + 0.5, barTop - 32 + 0.5, bw - 1, 31);
+        let x = W / 2 - totalW / 2;
+        const y = barTop - 11;
+        g.textAlign = 'left';
+        g.fillStyle = '#e8d27a';
+        g.fillText(head, x, y);
+        x += g.measureText(head).width;
+        for (let i = 0; i < segs.length; i++) {
+          if (i) { g.fillStyle = '#7a7060'; g.fillText(sep, x, y); x += g.measureText(sep).width; }
+          g.fillStyle = segs[i].color;
+          g.fillText(segs[i].text, x, y);
+          x += g.measureText(segs[i].text).width;
+        }
+      }
     } else {
+      // Nation proclaimed: show nation name banner
       g.fillStyle = 'rgba(110,74,47,0.92)';
       g.fillRect(W / 2 - 200, barTop - 30, 400, 30);
       g.fillStyle = '#e8d27a';
       g.font = 'bold 14px monospace';
       g.textAlign = 'center';
-      g.fillText(`★ ${region.stateName.toUpperCase()} ★`, W / 2, barTop - 10);
+      g.fillText(`★ ${region.nationName.toUpperCase()} ★`, W / 2, barTop - 10);
       g.textAlign = 'left';
     }
 
@@ -528,6 +576,7 @@ export class RegionView {
     this.drawCeremony();
     this.drawConvention();
     this.drawCenturyReport();
+    this.drawWinModal();
   }
 
   /** Cheap fingerprint of everything the cached terrain+territory layer depends
@@ -1118,11 +1167,20 @@ export class RegionView {
 
     const suggestedName = r.stateName ? `Republic of ${r.stateName}` : 'New Republic';
     this.convention.classList.remove('hidden');
+    const govFlavour: Record<string, string> = {
+      democracy:  'The people\'s delegates take their seats. The ayes have it — sovereignty rests in the assembly.',
+      republic:   'The republic assembles its citizens. Rome did not fall in a day; neither is it built in one.',
+      junta:      'The generals enter the hall. Order before liberty — for now.',
+      monarchy:   'The heir is presented to the gathered lords. Long may they reign.',
+    };
+    const chosenGov = (this.convention.querySelector<HTMLInputElement>('input[name=gov-type]:checked')?.value) ?? 'democracy';
+    const flavourLine = govFlavour[chosenGov] ?? 'The convention convenes.';
     this.convention.innerHTML =
       `<div class="ceremony-box">` +
       `<h2>★ THE CONSTITUTIONAL CONVENTION ★</h2>` +
-      `<p>${Math.round(r.totalPop())} citizens, ${r.settlements.length} towns, ${r.researched.length} research nodes complete.<br>` +
-      `The time has come to proclaim the Nation.</p>` +
+      `<p style="font-size:11px;color:#9ab0c4;letter-spacing:2px;text-transform:uppercase">` +
+      `${Math.round(r.totalPop()).toLocaleString()} citizens · ${r.settlements.length} towns · ${r.researched.length} discoveries</p>` +
+      `<p>${flavourLine}</p>` +
       `<p><b>Nation name:</b></p>` +
       `<input id="nation-name" type="text" maxlength="36" placeholder="Name the nation…" value="${suggestedName}">` +
       `<p><b>Form of government:</b></p>` +
@@ -1190,7 +1248,40 @@ export class RegionView {
     };
   }
 
-  /** Tier-2 dashboard: treasury, taxes, funded services — visible once proclaimed. */
+  /** Win condition achieved: show once, "Play On" closes it (sandbox continues). */
+  private drawWinModal(): void {
+    const wc = this.region.winCondition;
+    if (!wc || this.winDismissed) {
+      this.winModal.classList.add('hidden');
+      return;
+    }
+    if (!this.winModal.classList.contains('hidden')) return;
+    this.winModal.classList.remove('hidden');
+    const pathLabels: Record<string, string> = {
+      unification: '★ UNIFICATION ★',
+      legacy:      '★ LEGACY ★',
+      domination:  '★ DOMINATION ★',
+      solarpunk:   '★ THE GARDEN PATH ★',
+    };
+    const pathDescs: Record<string, string> = {
+      unification: 'One nation, one flag, one future. The region bends to your will.',
+      legacy:      'History will speak your name. Three of four century grades are A — a dynasty built to last.',
+      domination:  'The century closes and only your nation stands sovereign, unchallenged.',
+      solarpunk:   'The grid hums clean. The gardens hold. A better century begins here.',
+    };
+    this.winModal.innerHTML =
+      `<div class="win-modal-box">` +
+      `<h1>${pathLabels[wc.path] ?? '★ VICTORY ★'}</h1>` +
+      `<p class="win-path">${wc.path} · ${wc.year}</p>` +
+      `<p class="win-details">${pathDescs[wc.path] ?? ''}<br><em>${wc.details}</em></p>` +
+      `<button class="win-modal-btn" id="win-play-on">Play On</button>` +
+      `</div>`;
+    this.winModal.querySelector<HTMLButtonElement>('#win-play-on')!.onclick = () => {
+      this.winDismissed = true;
+      this.winModal.classList.add('hidden');
+    };
+  }
+
   /** Wire a panel's tab buttons to show the matching section. Sections all stay
    *  in the DOM (so ID-bound handlers survive); switching is pure CSS, no
    *  rebuild. `set` records the choice so the next rebuild matches. The class

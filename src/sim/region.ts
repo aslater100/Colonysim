@@ -733,6 +733,7 @@ export interface RegionalFaction {
   techFocus: string;
   aiGoal: string; // current strategic goal (for logging/UI)
   lastScoutDay: number; // day the AI last sent out scouts
+  lastRaidDay: number; // day of last raid against player (cooldown gate)
   // ---- Faction AI scheduling (GDD §6.2 optimization: staggered updates) ----
   lastUpdateDay: number; // day of last AI update (settlement expansion, goal generation, etc.)
   updateFrequency: number; // days between updates (scaled by difficulty)
@@ -1506,6 +1507,14 @@ export const ACCORD_EMISSION_CUT = 0.28;
  *  and regime outcomes — not the calendar. */
 export type EraBranch = 'solarpunk' | 'dystopia' | 'drowned';
 
+/** The four paths to victory — player wins when any one is achieved. */
+export type WinPath = 'unification' | 'legacy' | 'domination' | 'solarpunk';
+export interface WinCondition {
+  path: WinPath;
+  year: number;
+  details: string;
+}
+
 /** The verdict at 1 Jan 2100 (GDD §8.4): graded, not won. */
 export interface CenturyReport {
   branch: EraBranch | null;
@@ -1699,7 +1708,11 @@ export class RegionSim {
   /** Global trade volume: used to calculate currency dominance */
   globalTradeVolume = 0;
   /** Next scout id for creating new scouts */
-  private nextScoutId = 5000; // TODO: use when implementing scout creation
+  private nextScoutId = 5000;
+  /** Faction IDs whose settlement has been revealed through fog (first-contact tracking). */
+  private contactedFactionIds = new Set<number>();
+  /** Set when any win condition is achieved; sandbox continues but result is displayed. */
+  winCondition: WinCondition | null = null;
   private seaRiseAnnounced = false;
   private lastTidalLogDay = -999;
   private droughtAnnounced = false;
@@ -1776,15 +1789,43 @@ export class RegionSim {
   /** Reveal tiles in a circular radius around a point. */
   revealTiles(centerX: number, centerY: number, radius: number, type: TileVisibility = 'explored'): void {
     const radiusSq = radius * radius;
-    for (let x = 0; x < 100; x++) {
-      for (let y = 0; y < 100; y++) {
+    // ponytail: clamp to bounding box — avoids 10,000 iterations for small radii
+    const x0 = Math.max(0, Math.floor(centerX - radius));
+    const x1 = Math.min(99, Math.ceil(centerX + radius));
+    const y0 = Math.max(0, Math.floor(centerY - radius));
+    const y1 = Math.min(99, Math.ceil(centerY + radius));
+    for (let x = x0; x <= x1; x++) {
+      for (let y = y0; y <= y1; y++) {
         const dx = x - centerX;
         const dy = y - centerY;
         if (dx * dx + dy * dy <= radiusSq) {
-          // Only upgrade visibility, never downgrade
           if (type === 'scouted' || this.explorationMap[x][y] === 'fogged') {
             this.explorationMap[x][y] = type;
           }
+        }
+      }
+    }
+    this.checkFirstContact();
+  }
+
+  /** Fire a first-contact event when a rival's settlement is revealed through fog. */
+  private checkFirstContact(): void {
+    for (const faction of this.regionalFactions) {
+      if (faction.id === this.playerFactionId) continue;
+      if (this.contactedFactionIds.has(faction.id)) continue;
+      for (const sid of faction.settlementIds) {
+        const s = this.settlement(sid);
+        if (!s) continue;
+        const sx = Math.round(s.x), sy = Math.round(s.y);
+        if (sx >= 0 && sx < 100 && sy >= 0 && sy < 100 && this.explorationMap[sx][sy] !== 'fogged') {
+          this.contactedFactionIds.add(faction.id);
+          const disp = faction.aggressiveness > 60 ? 'hostile' : faction.aggressiveness < 30 ? 'cautious' : 'watchful';
+          this.addLog(
+            `FIRST CONTACT: ${faction.name} — a ${faction.regime.replace(/_/g, ' ')} power ` +
+            `has been scouted. Garrison: ${faction.militaryStrength}. Initial disposition: ${disp}.`,
+            'info',
+          );
+          break;
         }
       }
     }
@@ -2006,6 +2047,7 @@ export class RegionSim {
       lastGoalCheckDay: this.day,
       overlordId: null,
       vassals: [],
+      lastRaidDay: -999,
     };
 
     this.regionalFactions.push(playerFaction);
@@ -2016,9 +2058,6 @@ export class RegionSim {
 
     // Initialize exchange rates (will be expanded with rival factions)
     this.exchangeRates['0:0'] = 1.0; // player currency to itself
-
-    // TODO: Initialize starting scout (use nextScoutId for scout creation)
-    void this.nextScoutId; // mark as used to suppress warning
 
     // Initialize rival factions (simplified: 2-3 rivals spawn on the map)
     this.initializeRivalFactions();
@@ -2056,6 +2095,7 @@ export class RegionSim {
         techFocus: ['mining', 'forestry', 'farming'][this.rng.int(3)],
         aiGoal: 'expand territory',
         lastScoutDay: -1,
+        lastRaidDay: -999,
         lastUpdateDay: this.day,
         updateFrequency: knobs.updateFreq, // difficulty-scaled cadence (GDD §6.2)
         currentGoal: null, // will be generated on first AI update
@@ -2064,16 +2104,14 @@ export class RegionSim {
         vassals: [],
       };
 
+      faction.treasury = 120 + this.aiRng.int(60); // enough to found immediately
+      // ponytail: mark as immediately due so the first monthly tick (day 30) bootstraps their settlement
+      faction.lastUpdateDay = this.day - faction.updateFrequency;
       this.regionalFactions.push(faction);
 
       // Initialize exchange rates for this rival
       this.exchangeRates[`0:${rivalId}`] = 1.0; // start at parity
       this.exchangeRates[`${rivalId}:0`] = 1.0;
-
-      // Note: first settlements are planted via updateFactionAI once the AI
-      // scheduler first fires; we give them extra starting gold so they can
-      // afford to expand immediately rather than saving up.
-      faction.treasury = 120 + this.aiRng.int(60); // enough to found on first update
     }
   }
 
@@ -2580,6 +2618,7 @@ export class RegionSim {
     };
     this.addLog(`1 JANUARY 2100 — THE CENTURY REPORT. ${verdict}`, 'info');
     this.addLog('The century is over; the country is not. The sandbox runs on.', 'info');
+    this.checkCenturyWins();
   }
 
   /** Built links are State works, paid from the treasury; links only upgrade. */
@@ -3167,6 +3206,73 @@ export class RegionSim {
     this.updateLoans(); // process loan interest and check for defaults
     if (this.stateProclaimed) this.collectVassalTribute();
     this.checkProclamationGate();
+    this.checkWinConditions();
+  }
+
+  /** Check all four victory paths; set winCondition on the first achieved.
+   *  Sandbox continues after any win — the modal is informational, not a forced stop. */
+  private checkWinConditions(): void {
+    if (this.winCondition) return; // already won — don't overwrite
+
+    // Solarpunk: democratic + warm satisfaction + clean sky — can win from 2040 onward
+    if (this.eraBranch === 'solarpunk') {
+      this.winCondition = {
+        path: 'solarpunk',
+        year: this.year,
+        details: `The grid hums clean. ${Math.round(this.warmingC * 10) / 10}°C above baseline — the gardens hold.`,
+      };
+      this.addLog('VICTORY — THE GARDEN PATH: solarpunk conditions achieved. The century belongs to you.', 'good');
+      return;
+    }
+
+    // Unification: control 75%+ of region by 2070, or 90%+ at any point
+    if (this.nationProclaimed) {
+      const terr = this.playerTerritoryControl();
+      if ((terr >= 0.75 && this.year <= 2070) || terr >= 0.9) {
+        this.winCondition = {
+          path: 'unification',
+          year: this.year,
+          details: `${Math.round(terr * 100)}% of the region under one banner.`,
+        };
+        this.addLog('VICTORY — UNIFICATION: the region bends to your flag. The era of division is over.', 'good');
+        return;
+      }
+    }
+  }
+
+  /** Check legacy and domination wins at century end; called from buildCenturyReport(). */
+  private checkCenturyWins(): void {
+    if (this.winCondition) return;
+    const g = this.centuryReport?.grades;
+    if (!g) return;
+
+    // Legacy: A grade in 3 of 4 century categories
+    const aCount = [g.stewardship, g.prosperity, g.liberty, g.standing].filter(x => x === 'A').length;
+    if (aCount >= 3) {
+      this.winCondition = {
+        path: 'legacy',
+        year: this.year,
+        details: `${aCount}/4 century grades are A — a dynasty remembered well.`,
+      };
+      this.addLog('VICTORY — LEGACY: three A-grades in the century report. History will speak your name.', 'good');
+      return;
+    }
+
+    // Domination: nation proclaimed, holds majority territory, no rivals stronger
+    if (this.nationProclaimed && this.playerTerritoryControl() >= 0.5) {
+      const playerStrength = this.faction(this.playerFactionId)?.militaryStrength ?? 0;
+      const dominates = this.regionalFactions.every(
+        f => f.id === this.playerFactionId || f.militaryStrength <= playerStrength,
+      );
+      if (dominates) {
+        this.winCondition = {
+          path: 'domination',
+          year: this.year,
+          details: "The last nation standing at the century's end — sovereignty unchallenged.",
+        };
+        this.addLog('VICTORY — DOMINATION: your nation stands alone at 2100, unchallenged and sovereign.', 'good');
+      }
+    }
   }
 
   /** Vassals pay 5% of their treasury each month as tribute to the player. */
@@ -4481,8 +4587,8 @@ export class RegionSim {
       'good',
     );
     if (mayor) mayor.bio.push(`Signed the Regional Charter of ${this.stateName}, ${this.year}.`);
-    // Bootstrap any rival factions that haven't founded yet — they appear on
-    // the map the same moment the player's charter is signed.
+    // Rivals bootstrapped their first settlements in initializeRivalFactions() at region start;
+    // any faction still landless (edge case) gets one last chance here.
     for (const faction of this.regionalFactions) {
       if (faction.id === this.playerFactionId) continue;
       if (faction.settlementIds.length === 0 && faction.treasury >= 50) {
@@ -4804,21 +4910,25 @@ export class RegionSim {
 
   /** True when the player may call the Constitutional Convention. */
   canCallConvention(): boolean {
-    if (
-      !this.stateProclaimed ||
-      this.nationProclaimed ||
-      !this.has('statecraft') ||
-      this.totalPop() < 1500
-    ) return false;
-    // Territory gate (Phase C): must control ≥50% of region (own + vassal territory)
-    if (!this.proclamationReady) return false;
-    // Economic gate: £35k net (after loans) — ~15 months of state-level surplus
-    if (this.getNetTreasury() < 35000) return false;
-    // Military gate: must have 15+ combined garrison + militia
+    return this.canCallConventionGates().every(g => g.met);
+  }
+
+  /** Per-requirement breakdown for the Constitutional Convention, so the UI
+   *  can show exactly which conditions are met and which still block the call. */
+  canCallConventionGates(): { label: string; met: boolean; detail: string }[] {
     const totalGarrison = this.settlements.reduce((sum, s) => sum + (s.garrisonStrength || 0), 0);
-    const combinedMilitary = totalGarrison + (this.militiaLevel || 0) * 3;
-    if (combinedMilitary < 15) return false;
-    return true;
+    const combined = totalGarrison + (this.militiaLevel || 0) * 3;
+    const net = this.getNetTreasury();
+    const pop = this.totalPop();
+    const terr = Math.round(this.playerTerritoryControl() * 100);
+    return [
+      { label: 'State proclaimed',  met: this.stateProclaimed,         detail: '' },
+      { label: 'Statecraft tech',   met: this.has('statecraft'),        detail: '' },
+      { label: 'Population 1,500',  met: pop >= 1500,                   detail: `${Math.round(pop)}` },
+      { label: 'Territory ≥50%',    met: this.proclamationReady,        detail: `${terr}%` },
+      { label: 'Treasury £35k',     met: net >= 35000,                  detail: formatCurrency(Math.round(net)) },
+      { label: 'Military ≥15',      met: combined >= 15,                detail: `${combined}` },
+    ];
   }
 
   /** Confirm the Constitutional Convention — names the nation, sets gov type, assigns ministers. */
@@ -6219,6 +6329,8 @@ export class RegionSim {
         // Older saves predate vassalage — backfill as independent.
         f.vassals = (f as unknown as { vassals?: number[] }).vassals ?? [];
         f.overlordId = (f as unknown as { overlordId?: number | null }).overlordId ?? null;
+        // Functions don't survive JSON round-trips; null out the goal so it regenerates.
+        if (f.currentGoal && typeof f.currentGoal.successCondition !== 'function') f.currentGoal = null;
       }
       r.playerFactionId = d.playerFactionId ?? 0;
       r.aiDifficulty = d.aiDifficulty ?? 'normal';
@@ -6661,6 +6773,11 @@ export class RegionSim {
     // Military scaling: garrison = pop * 0.01 * tech_mult
     faction.militaryStrength = Math.round(factionPop * 0.01 * (1 + faction.techProgress * 0.05));
 
+    // Tech → treasury income: high-tech factions earn passive revenue from efficiency gains
+    if (faction.techProgress > 0) {
+      faction.treasury += Math.round(factionPop * 0.002 * faction.techProgress * knobs.techMult);
+    }
+
     // Check for goal conflicts with other factions (Phase 3a)
     this.checkFactionGoalConflicts(faction);
   }
@@ -6723,10 +6840,30 @@ export class RegionSim {
                 `RAID: ${other.name} raiding parties strike ${target.name} — ${losses} workers lost.`,
                 'bad'
               );
-
-              // Allies may retaliate (Phase 3b)
               this.trigerAllyRetaliationForRaid(other.id, faction.id, target.id);
             }
+          }
+        }
+
+        // Aggressive factions also threaten player settlements — with a cooldown
+        if (
+          conflict > 60 &&
+          other.aggressiveness > 55 &&
+          this.day - other.lastRaidDay > 180 &&
+          this.aiRng.chance(0.05 * this.aiKnobs().raidMult)
+        ) {
+          const playerSettlements = this.settlements.filter(s => s.factionId === this.playerFactionId);
+          const target = playerSettlements[this.aiRng.int(playerSettlements.length)];
+          if (target) {
+            other.lastRaidDay = this.day;
+            const losses = 1 + this.aiRng.int(3);
+            target.cohorts.bands[1] = Math.max(0, target.cohorts.bands[1] - losses);
+            target.grievance = Math.min(100, target.grievance + 12);
+            this.addLog(
+              `ALERT: ${other.name} raiders strike ${target.name} — ${losses} workers lost. ` +
+              `Their garrison: ${other.militaryStrength}.`,
+              'bad',
+            );
           }
         }
       }
@@ -6955,12 +7092,9 @@ export class RegionSim {
     }
 
     // Regional factions: staggered AI so not every faction acts each month.
-    // Full faction AI only runs after statehood; rivals are bootstrapped
-    // immediately in completeIncorporation() so they appear the moment the
-    // player's charter ceremony fires.
+    // Runs from tick 1 — rivals expand and scout regardless of player statehood.
     for (const faction of this.regionalFactions) {
       if (faction.id === this.playerFactionId) continue;
-      if (!this.stateProclaimed) continue;
       if (this.day - faction.lastUpdateDay >= faction.updateFrequency) {
         this.updateFactionAI(faction);
         faction.lastUpdateDay = this.day;
@@ -7086,36 +7220,57 @@ export class RegionSim {
     return types;
   }
 
-  /** Find best settlement expansion site using Monte Carlo sampling (5 random sites). */
+  /** Find best settlement expansion site using Monte Carlo sampling. */
   private findBestExpansionSite(faction: RegionalFaction, samples: number = 5): { x: number; y: number; score: number } | null {
     let bestSite: { x: number; y: number; score: number } | null = null;
     const bias = faction.currentGoal?.settlementBias ?? [];
+    // Compass-direction preference: factions spread from their map-edge compass position
+    // so each rival occupies a distinct quadrant rather than piling on top of the player.
+    const compassBias: Record<string, (x: number, y: number) => number> = {
+      north: (_x, y) => y < 40 ? 15 : 0,
+      south: (_x, y) => y > 60 ? 15 : 0,
+      east:  (x, _y) => x > 60 ? 15 : 0,
+      west:  (x, _y) => x < 40 ? 15 : 0,
+    };
+    // Bootstrap uses 8 samples for better initial placement; established factions use 5
+    const effectiveSamples = faction.settlementIds.length === 0 ? Math.max(samples, 8) : samples;
 
-    for (let i = 0; i < samples; i++) {
+    for (let i = 0; i < effectiveSamples; i++) {
       const x = this.aiRng.int(100), y = this.aiRng.int(100);
-      const siteTypes = this.siteType(x, y);
+      const site = this.map.siteAt(x, y);
+      if (!site) continue;
 
-      // Score calculation
+      // Score using direct field checks — avoids allocating a siteTypes array per sample
       let score = 50;
 
-      // Penalty: too close to existing settlement
+      const isRiver = site.river || this.map.siteAt(Math.max(0, x - 1), y)?.river === true;
+      const isCoastal = site.coastal || x < 5 || x > 95 || y < 5 || y > 95;
+      const isMountain = site.roughness > 0.4;
+      const isPlains = site.fertility > 0.9 && site.roughness < 0.2;
+      const isForest = site.forest > 0.5;
+
+      // Penalty: too close to any existing settlement
       for (const settlementId of faction.settlementIds) {
         const s = this.settlement(settlementId);
-        if (s && Math.abs(s.x - x) < 4 && Math.abs(s.y - y) < 4) {
-          score -= 100; // too close
-          break;
-        }
+        if (s && Math.abs(s.x - x) < 4 && Math.abs(s.y - y) < 4) { score -= 100; break; }
       }
 
-      // Bias matching: +20 per matching type
-      for (const b of bias) {
-        if (siteTypes.includes(b)) score += 20;
-      }
+      // Bias matching (goal-driven)
+      if (bias.includes('river') && isRiver) score += 20;
+      if (bias.includes('coastal') && isCoastal) score += 20;
+      if (bias.includes('mountain') && isMountain) score += 20;
+      if (bias.includes('plains') && isPlains) score += 20;
+      if (bias.includes('forest') && isForest) score += 20;
 
       // Terrain bonuses
-      if (siteTypes.includes('coastal')) score += 5;
-      if (siteTypes.includes('river')) score += 3;
-      if (siteTypes.includes('mountain')) score += 2;
+      if (isCoastal) score += 5;
+      if (isRiver) score += 3;
+      if (isMountain) score += 2;
+
+      // Compass-direction pull keeps rival factions in distinct map quadrants
+      const aig = faction.aiGoal ?? '';
+      const compassKey = ['north', 'south', 'east', 'west'].find(d => aig.includes(d) || faction.name.toLowerCase().includes(d));
+      if (compassKey) score += compassBias[compassKey](x, y);
 
       // Noise for variety
       score += this.aiRng.int(11) - 5;
@@ -7126,6 +7281,27 @@ export class RegionSim {
     }
 
     return bestSite;
+  }
+
+  /** Procedurally name a new AI settlement based on resource focus and faction index. */
+  private factionSettlementName(faction: RegionalFaction, focus: string): string {
+    const byFocus: Record<string, string[]> = {
+      wool:    ['Portside', 'Woolhaven', 'Harbourgate', 'Tidemark'],
+      grain:   ['Millford', 'Grangehaven', 'Harvestfield', 'Barleybury'],
+      iron:    ['Ironpass', 'Forgepeak', 'Oremont', 'Hammerhead'],
+      wood:    ['Timberfall', 'Sawmill Crossing', 'Woodstock', 'Ashwood'],
+      diverse: ['New Haven', 'Crossroads', 'Outpost', 'Settlement'],
+    };
+    const pool = byFocus[focus] ?? byFocus.diverse;
+    const idx = faction.settlementIds.length % pool.length;
+    // Avoid name collisions with existing settlements
+    let name = pool[idx];
+    const usedNames = new Set(this.settlements.map(s => s.name));
+    if (usedNames.has(name)) {
+      const prefix = faction.name.split(' ')[0] ?? faction.name;
+      name = `${prefix}'s ${pool[idx]}`;
+    }
+    return name;
   }
 
   /** Found a new settlement for a faction at the given coordinates. */
@@ -7152,7 +7328,7 @@ export class RegionSim {
 
     const settlement: Settlement = {
       id: this.nextId++,
-      name: `${faction.name}'s Outpost`, // TODO: better naming
+      name: this.factionSettlementName(faction, resourceFocus),
       x: Math.round(x),
       y: Math.round(y),
       foundedDay: this.day,

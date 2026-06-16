@@ -992,17 +992,24 @@ export class Simulation {
 
   // ---- the flip trigger (GDD §2.3): outgrow the valley, found town #2 ----
   canFoundSecondTown(): { ok: boolean; reason: string } {
-    const t = TUNING;
-    if (this.settlers.length < 20) return { ok: false, reason: `needs 20 settlers (has ${this.settlers.length})` };
-    if (this.stock.wood < 100) return { ok: false, reason: `needs 100 wood (has ${this.stock.wood})` };
-    if (this.stock.meal + this.stock.grain < 120) {
-      return { ok: false, reason: `needs 120 food (has ${this.stock.meal + this.stock.grain})` };
-    }
-    if (this.economy.cash < t.townFoundingMinCash) {
-      return { ok: false, reason: `needs ${formatCurrency(t.townFoundingMinCash)} cash (has ${formatCurrency(this.economy.cash)})` };
-    }
-    if (this.raidActive) return { ok: false, reason: 'not during a raid' };
+    const fail = this.canFoundSecondTownGates().find(g => !g.met);
+    if (fail) return { ok: false, reason: fail.label + ' — ' + fail.detail };
     return { ok: true, reason: '' };
+  }
+
+  /** Per-requirement breakdown for the UI milestone checklist. */
+  canFoundSecondTownGates(): { label: string; met: boolean; detail: string }[] {
+    const t = TUNING;
+    const food = this.stock.meal + this.stock.grain;
+    return [
+      { label: '20 settlers',           met: this.settlers.length >= 20,          detail: `${this.settlers.length}` },
+      { label: '100 wood',              met: this.stock.wood >= 100,               detail: `${Math.floor(this.stock.wood)}` },
+      { label: '120 food',              met: food >= 120,                          detail: `${Math.floor(food)}` },
+      { label: formatCurrency(t.townFoundingMinCash) + ' cash',
+                                         met: this.economy.cash >= t.townFoundingMinCash,
+                                                                                   detail: formatCurrency(Math.floor(this.economy.cash)) },
+      { label: 'No active raid',        met: !this.raidActive,                     detail: '' },
+    ];
   }
 
   changeCurrency(newSymbol: CurrencySymbol): { ok: boolean; reason: string } {

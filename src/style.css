@@ -332,6 +332,46 @@ body {
   color: #e8d27a !important;
 }
 
+.found-gates {
+  display: flex;
+  gap: 8px;
+  padding: 4px 10px;
+  background: rgba(12, 10, 8, 0.94);
+  border: 1px solid #6e4a2f;
+  font-family: inherit;
+  font-size: 11px;
+  flex-wrap: wrap;
+  justify-content: center;
+  pointer-events: none;
+}
+.found-gates.hidden { display: none; }
+.found-gate-met   { color: #a8e06a; }
+.found-gate-unmet { color: #f0a868; }
+
+.win-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 8, 12, 0.88);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+.win-modal.hidden { display: none; }
+.win-modal-box {
+  width: 600px;
+  background: #12100c;
+  border: 3px solid #e8d27a;
+  padding: 28px 30px;
+  text-align: center;
+  font-family: inherit;
+}
+.win-modal-box h1 { font-size: 22px; color: #e8d27a; margin-bottom: 8px; letter-spacing: 3px; }
+.win-modal-box .win-path { font-size: 13px; color: #9ab0c4; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 2px; }
+.win-modal-box .win-details { font-size: 13px; color: #dfe6ee; margin-bottom: 20px; line-height: 1.6; }
+.win-modal-btn { background: #6e4a2f; color: #e8d27a; border: 2px solid #e8d27a; font-family: inherit; font-size: 14px; padding: 8px 22px; cursor: pointer; margin: 0 6px; }
+.win-modal-btn:hover { background: #8a5c3a; }
+
 /* ---- Inspector panel (right side) ---- */
 .inspector {
   position: fixed;
