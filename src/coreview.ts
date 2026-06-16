@@ -483,12 +483,15 @@ function draw(): void {
   ctx.translate(-view.x, -view.y);
   ctx.scale(view.scale, view.scale);
 
-  // Collect active fire station positions for night glow
+  // Collect active station positions for night glow passes
   const fireGlowPositions: { cx: number; cy: number }[] = [];
+  const windowGlowPositions: { cx: number; cy: number }[] = [];
   for (const sv of core.stationViews()) {
     const def = STATION_DEF_BY_NUM[sv.typeId];
-    if (def && sv.progress > 0 && SMOKE_STATIONS.has(def.id))
-      fireGlowPositions.push({ cx: (sv.x + def.w / 2) * px, cy: (sv.y + def.h / 2) * px });
+    if (!def) continue;
+    const center = { cx: (sv.x + def.w / 2) * px, cy: (sv.y + def.h / 2) * px };
+    if (sv.progress > 0 && SMOKE_STATIONS.has(def.id)) fireGlowPositions.push(center);
+    else if (sv.progress > 0) windowGlowPositions.push(center);
   }
 
   // drought/flood zone tint: +1 = flood (blue), -1 = drought (brown), 0 = normal
@@ -714,7 +717,14 @@ function draw(): void {
     // Draw settlers 35% taller than a tile, anchored to the tile bottom (head pokes up).
     const spr = (a.armed[i] ? sprites.settlerArmed : sprites.settler)[variant][frame];
     const sH = Math.round(px * 1.35);
-    ctx.drawImage(spr, a.posX[i] * px, a.posY[i] * px - (sH - px), px, sH);
+    const sax = a.posX[i] * px, say = a.posY[i] * px - (sH - px);
+    // Flip sprite horizontally when moving left
+    if (!isNaN(a.destX[i]) && a.destX[i] < a.posX[i] - 0.1) {
+      ctx.save(); ctx.translate(sax + px, say); ctx.scale(-1, 1);
+      ctx.drawImage(spr, 0, 0, px, sH); ctx.restore();
+    } else {
+      ctx.drawImage(spr, sax, say, px, sH);
+    }
     // Mood tint: miserable settlers have a subtle red overlay, very happy ones green.
     const mood = a.mood[i];
     if (mood < -10) {
@@ -762,7 +772,15 @@ function draw(): void {
   for (const r of core.raids.raiders) {
     const rSpr = sprites.raider[r.fleeing ? 0 : (performance.now() / 200 | 0) % sprites.raider.length];
     const rH = Math.round(px * 1.35);
-    ctx.drawImage(rSpr, r.x * px, r.y * px - (rH - px), px, rH);
+    const rax = r.x * px, ray = r.y * px - (rH - px);
+    // Flip when raider is to the right of center (approaching from east, moving west)
+    const facingLeft = r.fleeing ? r.x < MAP / 2 : r.x > MAP / 2;
+    if (facingLeft) {
+      ctx.save(); ctx.translate(rax + px, ray); ctx.scale(-1, 1);
+      ctx.drawImage(rSpr, 0, 0, px, rH); ctx.restore();
+    } else {
+      ctx.drawImage(rSpr, rax, ray, px, rH);
+    }
   }
 
   // Wolves — 1.2× tile, centered, slightly taller
@@ -903,6 +921,33 @@ function draw(): void {
       }
       ctx.stroke();
     }
+
+    // Clouds: drifting across the world at varying speeds. Count & colour by sky.
+    { const cloudCount = sky === 'clear' ? 3 : sky === 'overcast' ? 9 : sky === 'snow' ? 7 : 6;
+      const cloudAlpha = sky === 'storm' ? 0.38 : sky === 'rain' ? 0.30 : sky === 'overcast' ? 0.28 : 0.20;
+      const cloudColor = (sky === 'storm' || sky === 'rain') ? '80,85,100' : sky === 'snow' ? '210,218,228' : '240,244,250';
+      ctx.save();
+      ctx.globalAlpha = cloudAlpha;
+      const tick2 = core.tickNo;
+      for (let n = 0; n < cloudCount; n++) {
+        const seed = n * 1013904223 + 99999;
+        const baseX = ((seed >>> 0) % worldW);
+        const cy2   = ((n * 1664525 + 5555) >>> 0) % worldH;
+        const speed = 0.06 + (n % 3) * 0.04;
+        const cx2   = ((baseX + Math.floor(tick2 * speed)) % worldW + worldW) % worldW;
+        const rx2 = px * (3 + (n % 3));
+        const ry2 = px * (1.4 + (n % 2) * 0.6);
+        // Shadow underneath
+        ctx.fillStyle = `rgba(40,50,80,0.15)`;
+        ctx.beginPath(); ctx.ellipse(cx2 + px * 0.8, cy2 + px * 0.8, rx2 * 0.9, ry2 * 0.7, 0, 0, Math.PI * 2); ctx.fill();
+        // Main body
+        ctx.fillStyle = `rgba(${cloudColor},1)`;
+        ctx.beginPath(); ctx.ellipse(cx2, cy2, rx2, ry2, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(cx2 - rx2 * 0.5, cy2 + ry2 * 0.2, rx2 * 0.65, ry2 * 0.75, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(cx2 + rx2 * 0.45, cy2 + ry2 * 0.3, rx2 * 0.6, ry2 * 0.7, 0, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+    }
   }
 
   // Day/night cycle: 360 ticks per day. Dawn 0-45, day 45-270, dusk 270-315, night 315-360.
@@ -936,6 +981,22 @@ function draw(): void {
     if (dawnDusk > 0.01) {
       ctx.fillStyle = `rgba(255,160,40,${(dawnDusk * 0.35).toFixed(3)})`;
       ctx.fillRect(0, 0, MAP * px, MAP * px);
+    }
+    // Morning mist: ground fog that rises with the sun (spring & autumn strongest)
+    const mistPeak = tod > 0.18 && tod < 0.34 ? Math.max(0, 1 - Math.abs(tod - 0.25) / 0.09) : 0;
+    if (mistPeak > 0.01) {
+      const mistBase = mistPeak * (seasonIdx === 0 || seasonIdx === 2 ? 0.09 : 0.05);
+      const tick = core.tickNo;
+      const worldW = MAP * px, worldH = MAP * px;
+      ctx.fillStyle = `rgba(230,235,240,${(mistBase * 0.6).toFixed(3)})`;
+      ctx.fillRect(0, 0, worldW, worldH);
+      // Drifting mist wisps
+      ctx.fillStyle = `rgba(240,243,248,${(mistBase * 0.8).toFixed(3)})`;
+      for (let n = 0; n < 80; n++) {
+        const wx = (((n * 1664525 + tick) ^ (n * 22695477)) >>> 0) % worldW;
+        const wy = (((n * 1013904223 + tick * 2) ^ (n * 1664525)) >>> 0) % worldH;
+        ctx.fillRect(wx, wy, 3, 1);
+      }
     }
     // Summer fireflies at dusk and early night
     if (seasonIdx === 1 && (tod > 0.78 || tod < 0.14)) {
@@ -973,9 +1034,47 @@ function draw(): void {
       }
       ctx.globalCompositeOperation = 'source-over';
     }
+    // Soft amber window glow from active non-fire stations at night
+    if (nightAlpha > 0.08 && windowGlowPositions.length > 0) {
+      const ws = Math.min(1, nightAlpha * 4);
+      ctx.globalCompositeOperation = 'screen';
+      for (const { cx, cy } of windowGlowPositions) {
+        const r = px * 2.2;
+        ctx.fillStyle = `rgba(255,200,80,${(ws * 0.055).toFixed(3)})`;
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = `rgba(255,220,120,${(ws * 0.03).toFixed(3)})`;
+        ctx.beginPath(); ctx.arc(cx, cy, r * 1.6, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
   }
 
   ctx.restore(); // leave world space — HUD overlays below are screen-space
+
+  // Moon — screen-space atmospheric HUD element
+  if (nightAlpha > 0.04) {
+    const TPDAY = MINUTES_PER_DAY / MINUTES_PER_TICK;
+    const frac2 = (core.tickNo % TPDAY) / TPDAY; // 0=midnight, 0.5=noon
+    // Moon rises at 6pm (0.75), transits midnight (0/1), sets at 6am (0.25)
+    const arc = frac2 > 0.75 ? (frac2 - 0.75) / 0.5 : (frac2 + 0.25) / 0.5;
+    const mx = canvas.width * 0.88 - arc * canvas.width * 0.76;
+    const my = 48 - Math.sin(arc * Math.PI) * 26;
+    const mr = 10;
+    const ma = Math.min(1, nightAlpha * 7);
+    ctx.save();
+    const mg = ctx.createRadialGradient(mx, my, 0, mx, my, mr * 3.5);
+    mg.addColorStop(0, `rgba(200,205,170,${(ma * 0.2).toFixed(3)})`);
+    mg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = mg; ctx.beginPath(); ctx.arc(mx, my, mr * 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = `rgba(238,234,205,${ma.toFixed(3)})`;
+    ctx.beginPath(); ctx.arc(mx, my, mr, 0, Math.PI * 2); ctx.fill();
+    // Mare (grey blotches) for surface detail
+    ctx.fillStyle = `rgba(185,182,158,${(ma * 0.38).toFixed(3)})`;
+    ctx.beginPath(); ctx.arc(mx - 3, my + 1, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(mx + 3, my - 2, 2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(mx + 2, my + 4, 1.5, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
 
   // ── Stats overlay (top-left) ────────────────────────────────────────────
   ctx.fillStyle = '#000a'; ctx.fillRect(0, 0, 340, 300);
@@ -1273,12 +1372,23 @@ function draw(): void {
       // Pick a colour for this tile: zones first, then terrain.
       let r = 0, gr = 0, b = 0;
       const t2 = g2.terrain[i];
-      if (t2 === TERRAIN.WATER) { r = 30; gr = 100; b = 180; }
-      else if (t2 === TERRAIN.TREE) { r = 30; gr = 100; b = 40; }
-      else if (t2 === TERRAIN.ROCK) { r = 110; gr = 100; b = 90; }
+      if (t2 === TERRAIN.WATER) {
+        if (seasonIdx === 3) { r = 160; gr = 190; b = 210; } // ice
+        else { r = 30; gr = 100; b = 180; }
+      } else if (t2 === TERRAIN.TREE) {
+        if (seasonIdx === 3) { r = 60; gr = 80; b = 90; }       // bare/snow
+        else if (seasonIdx === 2) { r = 80; gr = 90; b = 40; }  // autumn rust
+        else if (seasonIdx === 0) { r = 40; gr = 120; b = 50; } // spring bright
+        else { r = 30; gr = 100; b = 40; }
+      } else if (t2 === TERRAIN.ROCK) { r = 110; gr = 100; b = 90; }
       else if (t2 === TERRAIN.SOIL) { r = 140; gr = 100; b = 60; }
       else if (t2 === TERRAIN.SAND) { r = 200; gr = 190; b = 140; }
-      else { r = 60; gr = 140; b = 50; } // grass
+      else { // grass
+        if (seasonIdx === 3) { r = 180; gr = 195; b = 210; }      // snow-covered
+        else if (seasonIdx === 2) { r = 110; gr = 120; b = 55; }  // autumn amber
+        else if (seasonIdx === 0) { r = 55; gr = 155; b = 50; }   // spring vivid
+        else { r = 60; gr = 140; b = 50; }
+      }
       // Zone tint brightens the tile
       if (g2.zone[i]) { r = Math.min(255, r + 60); gr = Math.min(255, gr + 60); b = Math.min(255, b + 20); }
       // Floor = warm cream
