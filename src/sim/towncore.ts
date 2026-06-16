@@ -175,6 +175,14 @@ export interface BuildOrder {
   cost: Partial<Record<ResourceKind, number>>;
 }
 
+export interface YearReport {
+  year: number;
+  popStart: number;
+  popEnd: number;
+  inflow: Partial<Record<ResourceKind, number>>;
+  outflow: Partial<Record<ResourceKind, number>>;
+}
+
 export interface TownCoreSave {
   v: number;
   tickNo: number;
@@ -249,6 +257,8 @@ export interface TownCoreSave {
   floodActive?: boolean;
   /** v10+: last prestige tier already logged (prevents duplicate tier logs on load). */
   lastPrestigeMilestone?: number;
+  /** v11+: last completed year's resource ledger (null on old saves). */
+  lastYearReport?: YearReport | null;
 }
 
 export interface TownCoreOpts {
@@ -378,6 +388,15 @@ export class TownCore {
   private _clothingDay = 0;
   /** True when at least one well station is operational — cached daily to avoid per-tick room scan. */
   private _hasWell = false;
+
+  // Yearly resource ledger: accumulate gross inflow / outflow since year start.
+  private _yearIn = new Float32Array(RESOURCE_KINDS.length);
+  private _yearOut = new Float32Array(RESOURCE_KINDS.length);
+  private _yearStartPop = 0;
+  /** End-of-previous-day stock snapshot, for computing daily deltas. */
+  private _prevDayStock = new Float32Array(RESOURCE_KINDS.length);
+  /** Last completed year's resource + population summary. Shown in the economy panel. */
+  lastYearReport: YearReport | null = null;
 
   private readonly weatherSeed: number;
 
@@ -512,6 +531,7 @@ export class TownCore {
       if (this.spawnPerson(cx + dx, cy + dy) >= 0) placed++;
     }
     if (placed > 0) this.addLog(`${placed} settlers step off the wagon and make camp.`, 'good');
+    this._yearStartPop = this.population;
     // Spawn the starting deer herd via the dedicated deer rng stream so the main
     // rng (raids, births, weather) stays byte-for-byte identical regardless of deer count.
     const W = this.grid.width, H = this.grid.height;
@@ -808,6 +828,14 @@ export class TownCore {
 
   private dailyUpdate(): void {
     const a = this.agents;
+
+    // Yearly ledger: compare today's opening stock to yesterday's closing snapshot.
+    // (On day 1 _prevDayStock is all-zero; starting goods count as inflow — acceptable.)
+    for (let ri = 0; ri < RESOURCE_KINDS.length; ri++) {
+      const delta = this.stock.buf[ri] - this._prevDayStock[ri];
+      if (delta > 0.05) this._yearIn[ri] += delta;
+      else if (delta < -0.05) this._yearOut[ri] -= delta;
+    }
 
     // Snapshot stock levels for 7-day rolling net-flow display (same pattern as fat sim).
     for (const [key, qty] of Object.entries(this.stock.snapshot())) {
@@ -1110,6 +1138,20 @@ export class TownCore {
       const year = START_YEAR + Math.floor(this.day / DAYS_PER_YEAR);
       this.addLog(`${SEASONS[seasonIdx]} ${year} begins.`, 'info');
       this._lastSeasonIdx = seasonIdx;
+      // Year rollover: Spring of a new year → finalize the prior year's ledger.
+      if (seasonIdx === 0 && this.day >= DAYS_PER_YEAR) {
+        const inflow: Partial<Record<ResourceKind, number>> = {};
+        const outflow: Partial<Record<ResourceKind, number>> = {};
+        for (let ri = 0; ri < RESOURCE_KINDS.length; ri++) {
+          if (this._yearIn[ri] > 0.5) inflow[RESOURCE_KINDS[ri]] = Math.round(this._yearIn[ri]);
+          if (this._yearOut[ri] > 0.5) outflow[RESOURCE_KINDS[ri]] = Math.round(this._yearOut[ri]);
+        }
+        const prevPop = this._yearStartPop;
+        this.lastYearReport = { year: year - 1, popStart: prevPop, popEnd: this.population, inflow, outflow };
+        this._yearIn.fill(0);
+        this._yearOut.fill(0);
+        this._yearStartPop = this.population;
+      }
     }
     // Drought/flood transitions: log once when conditions change.
     const nowDrought = growingSeason && this.weather.isDrought(this.day);
@@ -1144,6 +1186,9 @@ export class TownCore {
         this.addLog(`Colony reaches ${m} settlers — a growing community. (+${pts} prestige)`, 'good');
       }
     }
+
+    // Yearly ledger: snapshot stock at end of day so tomorrow's delta is accurate.
+    this._prevDayStock.set(this.stock.buf);
   }
 
   /**
@@ -2002,6 +2047,7 @@ export class TownCore {
       droughtActive: this._droughtActive || undefined,
       floodActive: this._floodActive || undefined,
       lastPrestigeMilestone: this._lastPrestigeMilestone > 0 ? this._lastPrestigeMilestone : undefined,
+      lastYearReport: this.lastYearReport ?? undefined,
     };
   }
 
@@ -2073,6 +2119,10 @@ export class TownCore {
     if (data.droughtActive) (core as unknown as { _droughtActive: boolean })._droughtActive = true;
     if (data.floodActive) (core as unknown as { _floodActive: boolean })._floodActive = true;
     if (data.lastPrestigeMilestone != null) (core as unknown as { _lastPrestigeMilestone: number })._lastPrestigeMilestone = data.lastPrestigeMilestone;
+    // v11+: restore the last year's ledger summary so the economy panel shows it immediately.
+    if (data.lastYearReport != null) core.lastYearReport = data.lastYearReport;
+    // Seed the stock snapshot so the first day's delta is relative to the loaded state.
+    (core as unknown as { _prevDayStock: Float32Array })._prevDayStock.set(core.stock.buf);
     return core;
   }
 }

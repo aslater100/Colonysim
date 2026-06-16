@@ -26,7 +26,7 @@
  */
 import './style.css';
 import { TownCore } from './sim/towncore';
-import type { SettlerView, PendingEventChoice } from './sim/towncore';
+import type { SettlerView, PendingEventChoice, YearReport } from './sim/towncore';
 import { AState } from './sim/agents';
 import { TERRAIN, ZONE } from './sim/build';
 import {
@@ -654,7 +654,12 @@ function draw(): void {
   //    net flow and market price — the SoS per-resource economy readout. ──
   if (showEconomy) {
     const items = RESOURCE_KINDS.filter((kRes) => core.stock.count(kRes) > 0.05);
-    const rowH = 15, ox = 352, oy = 8, PW = 250, PH = 30 + Math.max(1, items.length) * rowH;
+    const yr: YearReport | null = core.lastYearReport;
+    // Yearly report adds rows: header + 1 pop row + resources with nonzero in OR out.
+    const yrResources = yr ? RESOURCE_KINDS.filter((k) => (yr.inflow[k] ?? 0) > 0.5 || (yr.outflow[k] ?? 0) > 0.5) : [];
+    const yrRows = yr ? 2 + yrResources.length : 1;
+    const rowH = 15, ox = 352, oy = 8, PW = 310;
+    const PH = 30 + Math.max(1, items.length) * rowH + yrRows * rowH + (yr ? 8 : 0);
     ctx.fillStyle = '#000c'; ctx.fillRect(ox, oy, PW, PH);
     let stored = 0;
     for (const kRes of RESOURCE_KINDS) if (!FOOD_KINDS_VIEW.has(kRes)) stored += core.stock.count(kRes);
@@ -662,15 +667,34 @@ function draw(): void {
     ctx.fillStyle = '#ffd700'; ctx.font = 'bold 12px monospace';
     ctx.fillText(`Economy · gold ${core.gold.toFixed(0)} · infl ${(core.inflation * 100).toFixed(1)}% · storage ${stored.toFixed(0)}/${cap}`, ox + 8, oy + 16);
     ctx.font = '11px monospace';
-    items.forEach((kRes, n) => {
+    let row = 0;
+    items.forEach((kRes) => {
       const cnt = core.stock.count(kRes), flow = core.netFlow(kRes), price = core.marketPrice(kRes);
       const arrow = flow > 0.05 ? '▲' : flow < -0.05 ? '▼' : ' ';
       ctx.fillStyle = flow < -0.05 ? '#ff9999' : flow > 0.05 ? '#99ff99' : '#cccccc';
       ctx.fillText(
         `${kRes.padEnd(10)}${cnt.toFixed(0).padStart(5)}  ${arrow}${Math.abs(flow).toFixed(1).padStart(4)}/d  ${price.toFixed(1)}g`,
-        ox + 8, oy + 30 + n * rowH);
+        ox + 8, oy + 30 + row++ * rowH);
     });
-    if (items.length === 0) { ctx.fillStyle = '#888'; ctx.fillText('(stores empty)', ox + 8, oy + 30); }
+    if (items.length === 0) { ctx.fillStyle = '#888'; ctx.fillText('(stores empty)', ox + 8, oy + 30); row++; }
+    // ── Yearly ledger ──────────────────────────────────────────────────────
+    const yrY = oy + 30 + row * rowH + 6;
+    if (yr) {
+      ctx.fillStyle = '#88ccff'; ctx.font = 'bold 11px monospace';
+      ctx.fillText(`── Year ${yr.year} Report ──  pop ${yr.popStart}→${yr.popEnd}`, ox + 8, yrY + 6);
+      ctx.font = '11px monospace';
+      yrResources.forEach((k, n) => {
+        const inn = yr.inflow[k] ?? 0, out = yr.outflow[k] ?? 0, net = inn - out;
+        ctx.fillStyle = net >= 0 ? '#99ff99' : '#ff9999';
+        ctx.fillText(
+          `${k.padEnd(10)}  +${inn.toFixed(0).padStart(5)} -${out.toFixed(0).padStart(5)}  net ${net > 0 ? '+' : ''}${net.toFixed(0)}`,
+          ox + 8, yrY + 6 + (n + 1) * rowH);
+      });
+      if (yrResources.length === 0) { ctx.fillStyle = '#888'; ctx.fillText('(no activity recorded)', ox + 8, yrY + 6 + rowH); }
+    } else {
+      ctx.fillStyle = '#666'; ctx.font = '11px monospace';
+      ctx.fillText('── Yearly report available after year 1 ──', ox + 8, yrY + 6);
+    }
   }
 
   // ── Settler inspector panel (top-right) ──────────────────────────────────
