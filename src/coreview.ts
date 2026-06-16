@@ -546,8 +546,21 @@ function draw(): void {
       if (rImg) blit(rImg, x, y);
     }
 
-    if (g.gate[i]) blit(sprites.gate, x, y);
-    else if (g.wall[i]) blit(sprites.interiorWall, x, y);
+    if (g.gate[i]) {
+      // Connected gate: use gateVariants with N/E/S/W wall-or-gate bitmask
+      const gm = (g.inBounds(x, y-1) && (g.wall[g.index(x,y-1)] || g.gate[g.index(x,y-1)]) ? 1 : 0)
+               | (g.inBounds(x+1,y) && (g.wall[g.index(x+1,y)] || g.gate[g.index(x+1,y)]) ? 2 : 0)
+               | (g.inBounds(x, y+1) && (g.wall[g.index(x,y+1)] || g.gate[g.index(x,y+1)]) ? 4 : 0)
+               | (g.inBounds(x-1,y) && (g.wall[g.index(x-1,y)] || g.gate[g.index(x-1,y)]) ? 8 : 0);
+      blit(sprites.gateVariants[gm] ?? sprites.gate, x, y);
+    } else if (g.wall[i]) {
+      // Connected palisade: bitmask encodes which cardinal neighbors are also walls/gates
+      const wm = (g.inBounds(x, y-1) && (g.wall[g.index(x,y-1)] || g.gate[g.index(x,y-1)]) ? 1 : 0)
+               | (g.inBounds(x+1,y) && (g.wall[g.index(x+1,y)] || g.gate[g.index(x+1,y)]) ? 2 : 0)
+               | (g.inBounds(x, y+1) && (g.wall[g.index(x,y+1)] || g.gate[g.index(x,y+1)]) ? 4 : 0)
+               | (g.inBounds(x-1,y) && (g.wall[g.index(x-1,y)] || g.gate[g.index(x-1,y)]) ? 8 : 0);
+      blit(sprites.palisadeVariants[wm] ?? sprites.palisade, x, y);
+    }
   }
 
   // Spike traps (rendered as a red X over the tile)
