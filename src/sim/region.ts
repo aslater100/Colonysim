@@ -2255,6 +2255,7 @@ export class RegionSim {
     if (this.has('public_education')) mult *= 1.5;
     if (this.has('electrical_grid')) mult *= 1.25;
     if (this.has('computing')) mult *= 1.25;
+    if (this.has('artificial_intelligence')) mult *= 1.25;
     if (this.passedLaws.includes('national_education_act')) mult *= 1.3;
     // Phase 2: every university adds its laboratories to the effort
     for (const t of this.settlements) {
@@ -2372,6 +2373,7 @@ export class RegionSim {
     if (this.has('mass_production')) intensity += 0.3;
     if (this.has('renewables')) intensity *= 0.6;
     if (this.has('fusion_power')) intensity *= 0.15;
+    if (this.has('carbon_capture')) intensity *= 0.4;
     if (this.passedLaws.includes('carbon_levy')) intensity *= 0.7;
     if (this.eraBranch === 'solarpunk') intensity *= 0.8;
     return (this.totalPop() / 1000) * intensity * 0.04;
@@ -2390,6 +2392,7 @@ export class RegionSim {
     let diffusion = 1;
     if (this.has('renewables')) diffusion *= 0.8;
     if (this.has('fusion_power')) diffusion *= 0.5;
+    if (this.has('carbon_capture')) diffusion *= 0.7;
     // Climate accords: each compliant signatory drags their share down
     let accordFactor = 1;
     if (this.rivals.length > 0) {
@@ -2814,9 +2817,10 @@ export class RegionSim {
   }
 
   /** What a link's road gangs (or drone crews) bill per month — Automated
-   *  Freight research swaps the work crews for machines at 60% the cost. */
+   *  Freight research swaps the work crews for machines at 60% the cost, and
+   *  Robotics cuts the remaining crews by a further 30%. */
   maintBill(r: Route): number {
-    const automation = this.has('automated_logistics') ? 0.6 : 1;
+    const automation = (this.has('automated_logistics') ? 0.6 : 1) * (this.has('robotics') ? 0.7 : 1);
     // Normalized to the base grid so a finer map doesn't inflate upkeep.
     return (r.path.length / CELL_SCALE) * ROUTE_SPECS[r.kind].maintPerCell * automation;
   }
@@ -3039,13 +3043,14 @@ export class RegionSim {
         (this.day - t.lastRaidDay < 10 ? 10 : 0) +
         5 * this.roleMult(t, 'Mayor') +
         (this.has('universal_suffrage') ? 3 : 0) +
+        (this.has('participatory_democracy') ? 3 : 0) +
         this.buildingSatisfaction(t) + // Phase 2: waterworks and wards make town life kinder
         stateTerms;
       t.satisfaction += (Math.max(0, Math.min(100, target)) - t.satisfaction) * 0.08;
       // Grievance: heavy taxes build pressure daily; services and contentment vent it.
       // Labor Standards research slows buildup 30%; Border Constabulary policy adds another 25%.
       if (this.stateProclaimed) {
-        const laborFactor = this.has('labor_law') ? 0.7 : 1;
+        const laborFactor = (this.has('labor_law') ? 0.7 : 1) * (this.has('welfare_state') ? 0.8 : 1);
         const constabFactor = this.policyActive('border_constabulary') ? 0.75 : 1;
         const pressure =
           (Math.max(0, this.taxRate - 0.15) * 35 - this.servicesLevel * 0.4 - Math.max(0, t.satisfaction - 55) * 0.05) * laborFactor * constabFactor +

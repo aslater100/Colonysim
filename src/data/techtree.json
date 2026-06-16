@@ -218,6 +218,80 @@
       "era": 2050,
       "requiresState": true,
       "desc": "Reflective particles injected high above the clouds arrest warming within two years — but the unilateral act is a diplomacy bomb. Unlocks the one-time Deploy action."
+    },
+    {
+      "id": "artificial_intelligence",
+      "name": "Artificial Intelligence",
+      "tree": "tech",
+      "cost": 360,
+      "prereqs": ["computing"],
+      "era": 2055,
+      "desc": "Machine minds read every ledger and lab notebook at once. Research rate +25%."
+    },
+    {
+      "id": "robotics",
+      "name": "Robotics",
+      "tree": "tech",
+      "cost": 400,
+      "prereqs": ["artificial_intelligence", "mass_production"],
+      "era": 2062,
+      "desc": "Automated plants and self-maintaining depots run the network. Route maintenance −30% on top of automated freight."
+    },
+    {
+      "id": "carbon_capture",
+      "name": "Carbon Capture",
+      "tree": "tech",
+      "cost": 440,
+      "prereqs": ["fusion_power", "environmentalism"],
+      "era": 2070,
+      "desc": "Direct-air scrubbers pull the century's soot back out of the sky. National emissions ×0.4, and the proven plants diffuse worldwide (world emissions −30%)."
+    },
+    {
+      "id": "advanced_materials",
+      "name": "Advanced Materials",
+      "tree": "tech",
+      "cost": 460,
+      "prereqs": ["robotics", "fusion_power"],
+      "era": 2076,
+      "desc": "Graphene, aerogels, and printed alloys. An era marker that opens the final tier of construction and orbital industry."
+    },
+    {
+      "id": "orbital_industry",
+      "name": "Orbital Industry",
+      "tree": "tech",
+      "cost": 520,
+      "prereqs": ["advanced_materials"],
+      "era": 2090,
+      "desc": "Factories in vacuum and power beamed from orbit — the post-scarcity capstone of the technological century."
+    },
+    {
+      "id": "welfare_state",
+      "name": "Welfare State",
+      "tree": "civics",
+      "cost": 200,
+      "prereqs": ["labor_law", "income_tax"],
+      "era": 2058,
+      "requiresState": true,
+      "desc": "Pensions, healthcare, and a floor under every citizen. Grievance builds 20% more slowly on top of Labor Standards."
+    },
+    {
+      "id": "participatory_democracy",
+      "name": "Participatory Democracy",
+      "tree": "civics",
+      "cost": 220,
+      "prereqs": ["universal_suffrage", "free_press"],
+      "era": 2066,
+      "desc": "Citizens' assemblies and live referenda fold the public straight into governing. Satisfaction +3."
+    },
+    {
+      "id": "world_federation",
+      "name": "World Federation",
+      "tree": "civics",
+      "cost": 300,
+      "prereqs": ["statecraft", "environmentalism"],
+      "era": 2088,
+      "requiresState": true,
+      "desc": "Shared institutions bind former rivals into one project — the civic capstone of a planet that chose cooperation."
     }
   ]
 }

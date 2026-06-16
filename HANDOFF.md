@@ -11,7 +11,35 @@
 
 ---
 
-## Session Snapshot — CoreView seam fix + station-view reuse (2026-06-16, latest)
+## Session Snapshot — Content: late-century tech tree (2050–2100) (2026-06-16, latest)
+
+**What landed (branch `claude/game-build-iteration-assets-2kd2z0`):** First content drop
+from the cross-facet roadmap (Content track). The region tech tree (`techtree.json`) had
+**zero nodes after ~2050** — a 50-year endgame void. Added **8 late-century nodes**
+(24→32), data-driven so they surface in the research UI automatically:
+
+- **Tech:** Artificial Intelligence (2055), Robotics (2062), Carbon Capture (2070),
+  Advanced Materials (2076), Orbital Industry (2090).
+- **Civics:** Welfare State (2058), Participatory Democracy (2066), World Federation (2088).
+
+**Effects wired** (reusing existing `has('id')` idioms in `region.ts`): AI → research
+rate ×1.25; Carbon Capture → player emissions ×0.4 + world-emissions diffusion ×0.7
+(gives the near-impossible Stewardship A-grade an endgame lever); Robotics → route
+maintenance ×0.7 atop Automated Freight; Welfare State → grievance ×0.8 atop Labor
+Standards; Participatory Democracy → satisfaction +3. Advanced Materials / Orbital
+Industry / World Federation are honest era/capstone markers (no false numeric promises).
+
+Tests: 874→**879** (added late-century effect coverage + a century-span assertion;
+updated the node-count assertion). `npm run sim:macro` still **ON TARGET**; region
+long-run to 2100 green.
+
+**Roadmap note:** Plan approved (Seamless World backbone + co-equal Content & UX tracks).
+Next content steps: late-game buildings/stations, then mirror the gap-fill into
+`town_techs.json` (town tier stops at coal power, 1910).
+
+---
+
+## Session Snapshot — CoreView seam fix + station-view reuse (2026-06-16)
 
 **What landed (branch `claude/game-build-iteration-assets-2kd2z0`):** Follow-up render
 polish on `src/coreview.ts`. No sim/balance changes (all 874 tests pass).

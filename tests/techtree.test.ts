@@ -19,7 +19,14 @@ function runDays(r: RegionSim, days: number): void {
 
 describe('Tech tree: node definitions', () => {
   it('has the expected number of nodes', () => {
-    expect(TECH_TREE.length).toBe(24);
+    expect(TECH_TREE.length).toBe(32);
+  });
+
+  it('spans the late century — has tech and civics nodes past 2050', () => {
+    const late = TECH_TREE.filter((n) => n.era >= 2050);
+    expect(late.some((n) => n.tree === 'tech')).toBe(true);
+    expect(late.some((n) => n.tree === 'civics')).toBe(true);
+    expect(late.some((n) => n.era >= 2085)).toBe(true); // reaches the end of the century
   });
 
   it('start nodes have zero cost and no prereqs', () => {
@@ -176,6 +183,57 @@ describe('Tech tree: research completion', () => {
     // electrical_grid needs steel_industry — now available (era 1912 met)
     const available = r.availableToResearch().map((n) => n.id);
     expect(available).toContain('electrical_grid');
+  });
+});
+
+describe('Tech tree: late-century effects', () => {
+  it('artificial_intelligence multiplies research rate by 1.25', () => {
+    const r = makeRegion();
+    const before = r.researchRate();
+    r.researched.push('artificial_intelligence');
+    expect(r.researchRate()).toBeCloseTo(before * 1.25, 5);
+  });
+
+  it('carbon_capture cuts player emissions below fusion alone', () => {
+    const r = makeRegion();
+    r.researched.push('fusion_power');
+    const withFusion = r.playerEmissions();
+    r.researched.push('carbon_capture');
+    expect(r.playerEmissions()).toBeLessThan(withFusion);
+  });
+
+  it('robotics cuts route maintenance below automated freight alone', () => {
+    const r = makeRegion();
+    runDays(r, 12); // found town #2 so a route can exist
+    r.researched.push('automated_logistics');
+    const route = { kind: 'road' as const, path: new Array(40).fill(0).map((_, i) => i) } as any;
+    const autoOnly = r.maintBill(route);
+    r.researched.push('robotics');
+    expect(r.maintBill(route)).toBeLessThan(autoOnly);
+  });
+
+  it('welfare_state slows grievance buildup on top of labor_law', () => {
+    const r = makeRegion();
+    runDays(r, 12);
+    r.stateProclaimed = true;
+    r.stateName = 'Test State';
+    r.govLean = 'council';
+    r.taxRate = 0.25;
+    r.researched.push('labor_law');
+    const r2 = makeRegion();
+    runDays(r2, 12);
+    r2.stateProclaimed = true;
+    r2.stateName = 'Test State';
+    r2.govLean = 'council';
+    r2.taxRate = 0.25;
+    r2.researched.push('labor_law', 'welfare_state');
+    for (const t of r.settlements) t.grievance = 0;
+    for (const t of r2.settlements) t.grievance = 0;
+    runDays(r, 30);
+    runDays(r2, 30);
+    const g1 = r.settlements.reduce((s, t) => s + t.grievance, 0);
+    const g2 = r2.settlements.reduce((s, t) => s + t.grievance, 0);
+    expect(g2).toBeLessThan(g1);
   });
 });
 
