@@ -233,8 +233,19 @@ export class Simulation {
   private reserved = new Set<string>(); // task target keys
   // Per-tick tile scan; built once in tick() and consumed by findTask() for all idle settlers.
   private _tileTaskScan: TileTaskScan | null = null;
+  // Per-tick worker-assignment counts; assignments change only on player action (never mid-tick),
+  // so findTask shares one map instead of rebuilding it over all settlers for each idle settler.
+  private _assignedCounts: Map<number, number> | null = null;
   // Soil tile cache; never invalidated (soil tiles are set at worldgen and don't change kind).
   private _soilTilesCache: Tile[] | null = null;
+  // Stockpile-zone tile indices; rebuilt lazily, invalidated when a zone is painted/cleared.
+  // Replaces a full MAP_W×MAP_H scan that ran on every addStock and task decision (~40% of tick time).
+  private _stockpileTiles: number[] | null = null;
+  // Farm/flax/sapling tile lists; rebuilt lazily so updateFarms/updateSaplings touch only the
+  // sparse special tiles each tick instead of scanning the whole map (the next-biggest tick cost).
+  private _farmZoneTiles: Tile[] | null = null;
+  private _flaxZoneTiles: Tile[] | null = null;
+  private _saplingTiles: Tile[] | null = null;
   // Last tile index at which each settler triggered a fog reveal; skips re-reveal when stationary.
   private _settlerLastRevealIdx = new Map<number, number>();
 
@@ -751,6 +762,9 @@ export class Simulation {
   planZone(kind: import('./world').ZoneKind, x: number, y: number): boolean {
     if (!this.world.inBounds(x, y)) return false;
     const t = this.world.at(x, y);
+    // Any successful paint below changes a zone-tile set; drop the caches up front
+    // (a paint is a rare player action, so over-invalidating on a no-op is free).
+    this.invalidateZoneCaches();
     if (kind === 'farm') {
       if (t.farmZone) {
         t.farmZone = false;
@@ -761,7 +775,7 @@ export class Simulation {
       if (t.buildingId !== null || t.wall || t.wallPlan || t.gate || t.gatePlan) return false;
       t.farmZone = true;
       t.kind = 'soil';
-      t.stockpileZone = false;
+      if (t.stockpileZone) t.stockpileZone = false;
       return true;
     } else if (kind === 'stockpile') {
       if (t.stockpileZone) {
@@ -834,6 +848,7 @@ export class Simulation {
   bulldozeTile(x: number, y: number): void {
     if (!this.world.inBounds(x, y)) return;
     const t = this.world.at(x, y);
+    this.invalidateZoneCaches(); // a clear may drop a zone tile; rebuild lazily
     if (t.roadPlan) {
       t.roadPlan = null;
       return;
@@ -916,8 +931,37 @@ export class Simulation {
     return (hist[0] - hist[Math.min(7, hist.length - 1)]) / Math.min(7, hist.length - 1);
   }
 
+  /** Stockpile-zone tile indices, cached. Zones change only on paint/clear, so a
+   *  full map scan per call (the old hot path) is wasted work — rebuild on demand. */
+  private stockpileTiles(): number[] {
+    if (this._stockpileTiles === null) {
+      const list: number[] = [];
+      const tiles = this.world.tiles;
+      for (let i = 0; i < tiles.length; i++) if (tiles[i].stockpileZone) list.push(i);
+      this._stockpileTiles = list;
+    }
+    return this._stockpileTiles;
+  }
+
+  private farmZoneTiles(): Tile[] {
+    if (this._farmZoneTiles === null) this._farmZoneTiles = this.world.tiles.filter((t) => t.farmZone);
+    return this._farmZoneTiles;
+  }
+
+  private flaxZoneTiles(): Tile[] {
+    if (this._flaxZoneTiles === null) this._flaxZoneTiles = this.world.tiles.filter((t) => t.flaxZone);
+    return this._flaxZoneTiles;
+  }
+
+  /** Drop the zone-tile caches; called whenever any zone is painted or cleared. */
+  private invalidateZoneCaches(): void {
+    this._stockpileTiles = null;
+    this._farmZoneTiles = null;
+    this._flaxZoneTiles = null;
+  }
+
   stockpileCapacity(): number {
-    const tiles = this.world.tiles.filter((t) => t.stockpileZone).length;
+    const tiles = this.stockpileTiles().length;
     const warehouseCap = this.builtOf('warehouse').reduce(
       (sum, b) => sum + TUNING.warehouseBaseCap + this.buildingEffectiveCapacity(b), 0);
     return tiles * CAPACITY_PER_TILE + warehouseCap;
@@ -1062,25 +1106,26 @@ export class Simulation {
       farmReadyTiles: [], farmSowTiles: [], flaxReadyTiles: [], mineReadyTiles: [],
     };
     const inSeason = this.growingSeason;
-    for (let y = 0; y < MAP_H; y++) {
-      for (let x = 0; x < MAP_W; x++) {
-        const tile = this.world.at(x, y);
-        if (tile.wallPlan && !tile.wall) scan.wallPlanTiles.push({ x, y });
-        if (tile.gatePlan && !tile.gate) scan.gatePlanTiles.push({ x, y });
-        if ((tile.wall || tile.gate) && tile.wallHp > 0) {
-          const maxHp = tile.gate ? TUNING.gateMaxHp : TUNING.wallMaxHp;
-          if (tile.wallHp < maxHp) scan.damagedWallTiles.push({ x, y, isGate: tile.gate });
-        }
-        if (tile.kind === 'tree' && tile.marked) scan.markedTrees.push({ x, y });
-        else if (tile.kind === 'rock' && tile.marked) scan.markedRocks.push({ x, y });
-        if (tile.roadPlan) scan.roadPlanTiles.push({ x, y, road: tile.roadPlan });
-        if (tile.farmZone) {
-          if (tile.growth >= 100) scan.farmReadyTiles.push({ x, y });
-          else if (!tile.sown && inSeason) scan.farmSowTiles.push({ x, y });
-        }
-        if (tile.flaxZone && tile.growth >= 100) scan.flaxReadyTiles.push({ x, y });
-        if (tile.mineZone && tile.mineCharges > 0) scan.mineReadyTiles.push({ x, y });
+    // Iterate the flat tile array (idx = y*MAP_W + x, same x-fastest order as the
+    // nested loop) and derive x/y only on a match — skips a world.at() call per tile.
+    const tiles = this.world.tiles;
+    for (let idx = 0; idx < tiles.length; idx++) {
+      const tile = tiles[idx];
+      if (tile.wallPlan && !tile.wall) scan.wallPlanTiles.push({ x: idx % MAP_W, y: (idx / MAP_W) | 0 });
+      if (tile.gatePlan && !tile.gate) scan.gatePlanTiles.push({ x: idx % MAP_W, y: (idx / MAP_W) | 0 });
+      if ((tile.wall || tile.gate) && tile.wallHp > 0) {
+        const maxHp = tile.gate ? TUNING.gateMaxHp : TUNING.wallMaxHp;
+        if (tile.wallHp < maxHp) scan.damagedWallTiles.push({ x: idx % MAP_W, y: (idx / MAP_W) | 0, isGate: tile.gate });
       }
+      if (tile.kind === 'tree' && tile.marked) scan.markedTrees.push({ x: idx % MAP_W, y: (idx / MAP_W) | 0 });
+      else if (tile.kind === 'rock' && tile.marked) scan.markedRocks.push({ x: idx % MAP_W, y: (idx / MAP_W) | 0 });
+      if (tile.roadPlan) scan.roadPlanTiles.push({ x: idx % MAP_W, y: (idx / MAP_W) | 0, road: tile.roadPlan });
+      if (tile.farmZone) {
+        if (tile.growth >= 100) scan.farmReadyTiles.push({ x: idx % MAP_W, y: (idx / MAP_W) | 0 });
+        else if (!tile.sown && inSeason) scan.farmSowTiles.push({ x: idx % MAP_W, y: (idx / MAP_W) | 0 });
+      }
+      if (tile.flaxZone && tile.growth >= 100) scan.flaxReadyTiles.push({ x: idx % MAP_W, y: (idx / MAP_W) | 0 });
+      if (tile.mineZone && tile.mineCharges > 0) scan.mineReadyTiles.push({ x: idx % MAP_W, y: (idx / MAP_W) | 0 });
     }
     return scan;
   }
@@ -1096,10 +1141,17 @@ export class Simulation {
     this.updateRaiders();
     this.updateAnimals();
     // Build the tile-task scan once; findTask() reads it for every idle settler this tick.
-    this._tileTaskScan = this.buildTileTaskScan();
+    // Only idle settlers in daylight call findTask (see decide()), and a settler's state
+    // can't be flipped idle by another settler mid-loop — so the consumer set is fixed at
+    // tick start. Skip the full-map scan when nobody will read it (night, or all busy).
+    const night = this.hour >= 22 || this.hour < 6;
+    let anyIdle = false;
+    if (!night) for (const s of this.settlers) if (s.state === 'idle') { anyIdle = true; break; }
+    this._tileTaskScan = anyIdle ? this.buildTileTaskScan() : null;
     // Iterate backwards: safe for in-place removal when kill() shrinks the array.
     for (let i = this.settlers.length - 1; i >= 0; i--) this.updateSettler(this.settlers[i]);
     this._tileTaskScan = null;
+    this._assignedCounts = null;
     // Reveal fog only when a settler has moved to a new tile.
     for (const s of this.settlers) {
       const fx = Math.floor(s.pos.x);
@@ -2320,14 +2372,19 @@ export class Simulation {
   // ---- task generation & execution ----
   private findTask(s: Settler): Task | null {
     const candidates: { task: Task; prio: number; dist: number }[] = [];
-    // Pre-compute assigned counts once; workerLimit checks are O(1) from this Map.
-    const assignedCounts = new Map<number, number>();
-    for (const w of this.settlers) {
-      if (w.assignedBuildingId !== null) {
-        assignedCounts.set(w.assignedBuildingId, (assignedCounts.get(w.assignedBuildingId) ?? 0) + 1);
+    // Assigned counts are constant within a tick (assignments change only on player action),
+    // so build the Map once and reuse it for every idle settler's findTask this tick.
+    let assignedCounts = this._assignedCounts;
+    if (assignedCounts === null) {
+      assignedCounts = new Map<number, number>();
+      for (const w of this.settlers) {
+        if (w.assignedBuildingId !== null) {
+          assignedCounts.set(w.assignedBuildingId, (assignedCounts.get(w.assignedBuildingId) ?? 0) + 1);
+        }
       }
+      this._assignedCounts = assignedCounts;
     }
-    const countAssigned = (bid: number): number => assignedCounts.get(bid) ?? 0;
+    const countAssigned = (bid: number): number => assignedCounts!.get(bid) ?? 0;
     const push = (task: Task, kind: WorkKind) => {
       const prio = s.priorities[kind];
       if (prio <= 0 || this.reserved.has(this.taskKey(task))) return;
@@ -2980,6 +3037,8 @@ export class Simulation {
         if (task.workLeft <= 0) {
           tile.sapling = true;
           tile.growth = 0;
+          // updateSaplings ran earlier this tick, so the list is built; track the new sapling.
+          this._saplingTiles?.push(tile);
           this.finishTask(s);
         }
         return;
@@ -3466,9 +3525,7 @@ export class Simulation {
   private nearestStockpileTile(pos: Vec): Vec | null {
     let best: Vec | null = null;
     let bd = Infinity;
-    for (let idx = 0; idx < this.world.tiles.length; idx++) {
-      const t = this.world.tiles[idx];
-      if (!t.stockpileZone) continue;
+    for (const idx of this.stockpileTiles()) {
       const x = idx % MAP_W;
       const y = Math.floor(idx / MAP_W);
       const d = Math.hypot(x - pos.x, y - pos.y);
@@ -3645,42 +3702,53 @@ export class Simulation {
 
   private updateFarms(): void {
     const weatherMult = this.weather.growthMult(this.day);
-    // Crops only grow in season
+    // Crops only grow in season — iterate the cached farm-zone tiles, not the whole map.
     if (this.growingSeason) {
       const perTick = (100 / (TUNING.farmGrowDays * MINUTES_PER_DAY)) * MINUTES_PER_TICK * weatherMult;
-      for (const t of this.world.tiles) {
-        if (t.kind === 'soil' && t.farmZone && t.sown && t.growth < 100) {
+      for (const t of this.farmZoneTiles()) {
+        if (t.kind === 'soil' && t.sown && t.growth < 100) {
           t.growth = Math.min(100, t.growth + perTick * t.fertility);
         }
       }
     }
     // Flax grows year-round (perennial)
     const flaxPerTick = (100 / (TUNING.flaxGrowDays * MINUTES_PER_DAY)) * MINUTES_PER_TICK;
-    for (const t of this.world.tiles) {
-      if (t.kind === 'soil' && t.flaxZone && t.growth < 100) {
+    for (const t of this.flaxZoneTiles()) {
+      if (t.kind === 'soil' && t.growth < 100) {
         t.growth = Math.min(100, t.growth + flaxPerTick);
       }
     }
   }
 
-  /** Forester saplings creep toward full trees; anything built over one clears it. */
+  /** Forester saplings creep toward full trees; anything built over one clears it.
+   *  Tracks only the live sapling tiles (foresters push on planting) instead of
+   *  scanning the whole map — entries are swap-removed as saplings mature or clear.
+   *  Rebuilt from a full scan when null so loaded games pick up saved saplings. */
   private updateSaplings(): void {
     const perTick = (100 / (TUNING.saplingGrowDays * MINUTES_PER_DAY)) * MINUTES_PER_TICK;
-    for (const t of this.world.tiles) {
-      if (!t.sapling) continue;
-      if (t.kind !== 'grass' || t.buildingId !== null || t.road || t.roadPlan ||
+    if (this._saplingTiles === null) this._saplingTiles = this.world.tiles.filter((t) => t.sapling);
+    const list = this._saplingTiles;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const t = list[i];
+      let remove = false;
+      if (!t.sapling) {
+        remove = true;
+      } else if (t.kind !== 'grass' || t.buildingId !== null || t.road || t.roadPlan ||
           t.wall || t.wallPlan || t.gate || t.gatePlan || t.farmZone || t.stockpileZone) {
         t.sapling = false;
         t.growth = 0;
-        continue;
+        remove = true;
+      } else {
+        t.growth = Math.min(100, t.growth + perTick);
+        if (t.growth >= 100) {
+          t.sapling = false;
+          t.growth = 0;
+          t.kind = 'tree';
+          this.world.invalidatePathCache();
+          remove = true;
+        }
       }
-      t.growth = Math.min(100, t.growth + perTick);
-      if (t.growth >= 100) {
-        t.sapling = false;
-        t.growth = 0;
-        t.kind = 'tree';
-        this.world.invalidatePathCache();
-      }
+      if (remove) { list[i] = list[list.length - 1]; list.pop(); }
     }
   }
 
