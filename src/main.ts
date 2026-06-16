@@ -37,6 +37,7 @@ const minimapCtx = minimapCanvas.getContext('2d')!;
 minimapCtx.imageSmoothingEnabled = false;
 
 const SAVE_KEY = 'centuria-save';
+const SOA_SAVE_KEY = 'centuria_save'; // SoA TownCore save slot
 const DESIGN_KEY = 'centuria-town-design';
 
 // Booting after "Load Game": the menu sets a one-shot flag and reloads, and
@@ -173,7 +174,8 @@ const titleScreen = new TitleScreen(root, { sfx, music, soundscape });
 function showTitleScreen(): void {
   hud.closeMenu();
   hud.paused = true;
-  titleScreen.show(localStorage.getItem(SAVE_KEY) !== null);
+  const hasSave = localStorage.getItem(SAVE_KEY) !== null || localStorage.getItem(SOA_SAVE_KEY) !== null;
+  titleScreen.show(hasSave);
 }
 
 // New Colony now launches the SoA scale-engine (TownCore) by default — the swap.
@@ -190,8 +192,13 @@ titleScreen.onNewColonyClassic = () => {
   });
 };
 titleScreen.onContinue = () => {
-  sessionStorage.setItem('centuria-load-on-boot', '1');
-  location.reload();
+  // SoA save takes priority (it's the default engine). Fall back to Classic.
+  if (localStorage.getItem(SOA_SAVE_KEY) !== null) {
+    location.assign('./core.html?continue=1');
+  } else {
+    sessionStorage.setItem('centuria-load-on-boot', '1');
+    location.reload();
+  }
 };
 titleScreen.onQuit = () => window.close();
 

@@ -42,6 +42,7 @@ import { applyOverrides } from './ui/spriteOverrides';
 const sprites = buildSprites([]);
 void applyOverrides(sprites);
 
+const SOA_SAVE_KEY = 'centuria_save';
 const MAP = 96; // room to grow — the colony starts as a cluster in a wider world
 let core = new TownCore({ width: MAP, height: MAP, seed: Date.now() % 100000, terrain: 'heightmap' });
 (window as unknown as { core: TownCore }).core = core;
@@ -122,11 +123,42 @@ const ROOM_COLORS: Record<string, string> = {
   autoZone(ZONE.VEGGARDEN, 8);
 }
 
+// Continue: if the page was opened with ?continue (from the title screen's
+// Continue button) or Ctrl+L, restore the last SoA save immediately instead
+// of booting a fresh starter town.
+{
+  const urlContinue = new URLSearchParams(location.search).has('continue');
+  if (urlContinue) {
+    const raw = localStorage.getItem(SOA_SAVE_KEY);
+    if (raw) {
+      try {
+        const loaded = TownCore.deserialize(JSON.parse(raw));
+        core = loaded;
+        (window as unknown as { core: TownCore }).core = core;
+      } catch (err) {
+        console.warn('SoA save restore failed, starting fresh:', err);
+      }
+    }
+    // Strip the ?continue so Ctrl+R starts fresh rather than re-loading again
+    history.replaceState(null, '', location.pathname);
+  }
+}
+
 // ── Canvas ────────────────────────────────────────────────────────────────
 const app = document.getElementById('app')!;
 const canvas = document.createElement('canvas');
 app.appendChild(canvas);
 const ctx = canvas.getContext('2d')!;
+
+// "← Menu" DOM button — always-visible escape hatch back to the title screen.
+const menuBtn = document.createElement('button');
+menuBtn.textContent = '← Menu';
+menuBtn.style.cssText = 'position:fixed;top:8px;right:8px;padding:4px 10px;background:#111c;color:#90a8c0;border:1px solid #30485a;border-radius:3px;font:12px monospace;cursor:pointer;z-index:999;';
+menuBtn.title = 'Return to title screen (Esc)';
+menuBtn.addEventListener('mouseenter', () => { menuBtn.style.color = '#c0d8f0'; menuBtn.style.borderColor = '#5080a0'; });
+menuBtn.addEventListener('mouseleave', () => { menuBtn.style.color = '#90a8c0'; menuBtn.style.borderColor = '#30485a'; });
+menuBtn.addEventListener('click', () => location.assign('./'));
+app.appendChild(menuBtn);
 // ── Camera (pan + zoom) ─────────────────────────────────────────────────────
 // World is drawn at `TILE` base px/tile under a translate+scale transform, so
 // the SoA play-test pans and zooms like the real game. `view.x/y` are the
@@ -207,6 +239,7 @@ addEventListener('keydown', (e) => {
     e.preventDefault(); // block other keys while dialog is open
     return;
   }
+  if (e.key === 'Escape') { location.assign('./'); return; }
   if (e.key === ' ') { paused = !paused; e.preventDefault(); return; }
   // Camera: WASD / arrows pan, O frames the whole map. (WASD skipped when a
   // modifier is held so Ctrl+S save etc. still work.)
