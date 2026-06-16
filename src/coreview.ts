@@ -529,11 +529,20 @@ function draw(): void {
 
     // Shore transitions: foam strip on water tiles touching land; wet-sand darkening on land tiles touching water.
     if (t === TERRAIN.WATER) {
-      ctx.fillStyle = 'rgba(200,225,245,0.40)'; // surf foam
-      if (y > 0     && g.terrain[(y-1)*MAP+x] !== TERRAIN.WATER) ctx.fillRect(x*px, y*px, px, 2);
-      if (y < MAP-1 && g.terrain[(y+1)*MAP+x] !== TERRAIN.WATER) ctx.fillRect(x*px, (y+1)*px-2, px, 2);
-      if (x < MAP-1 && g.terrain[y*MAP+(x+1)] !== TERRAIN.WATER) ctx.fillRect((x+1)*px-2, y*px, 2, px);
-      if (x > 0     && g.terrain[y*MAP+(x-1)] !== TERRAIN.WATER) ctx.fillRect(x*px, y*px, 2, px);
+      // In winter: shore ice instead of foam
+      if (seasonIdx === 3) {
+        ctx.fillStyle = 'rgba(220,235,248,0.65)'; // ice rim
+        if (y > 0     && g.terrain[(y-1)*MAP+x] !== TERRAIN.WATER) { ctx.fillRect(x*px, y*px, px, 3); ctx.fillStyle='rgba(240,248,255,0.55)'; ctx.fillRect(x*px, y*px, px, 1); ctx.fillStyle='rgba(220,235,248,0.65)'; }
+        if (y < MAP-1 && g.terrain[(y+1)*MAP+x] !== TERRAIN.WATER) { ctx.fillRect(x*px, (y+1)*px-3, px, 3); ctx.fillStyle='rgba(240,248,255,0.55)'; ctx.fillRect(x*px, (y+1)*px-1, px, 1); ctx.fillStyle='rgba(220,235,248,0.65)'; }
+        if (x < MAP-1 && g.terrain[y*MAP+(x+1)] !== TERRAIN.WATER) { ctx.fillRect((x+1)*px-3, y*px, 3, px); }
+        if (x > 0     && g.terrain[y*MAP+(x-1)] !== TERRAIN.WATER) { ctx.fillRect(x*px, y*px, 3, px); }
+      } else {
+        ctx.fillStyle = 'rgba(200,225,245,0.40)'; // surf foam
+        if (y > 0     && g.terrain[(y-1)*MAP+x] !== TERRAIN.WATER) ctx.fillRect(x*px, y*px, px, 2);
+        if (y < MAP-1 && g.terrain[(y+1)*MAP+x] !== TERRAIN.WATER) ctx.fillRect(x*px, (y+1)*px-2, px, 2);
+        if (x < MAP-1 && g.terrain[y*MAP+(x+1)] !== TERRAIN.WATER) ctx.fillRect((x+1)*px-2, y*px, 2, px);
+        if (x > 0     && g.terrain[y*MAP+(x-1)] !== TERRAIN.WATER) ctx.fillRect(x*px, y*px, 2, px);
+      }
     } else {
       const wN = y > 0     && g.terrain[(y-1)*MAP+x] === TERRAIN.WATER;
       const wS = y < MAP-1 && g.terrain[(y+1)*MAP+x] === TERRAIN.WATER;
@@ -821,15 +830,23 @@ function draw(): void {
     }
     // Summer: warm golden tint
     else if (si === 1) { ctx.fillStyle = '#ffdd0010'; ctx.fillRect(0, 0, worldW, worldH); }
-    // Spring: fresh green-cool tint + occasional flower specks
+    // Spring: fresh green-cool tint + drifting pollen and blossom petals
     else if (si === 0) {
       ctx.fillStyle = '#40c04010'; ctx.fillRect(0, 0, worldW, worldH);
       const tick = core.tickNo;
-      ctx.fillStyle = '#e8e0f8'; // pale blossom
-      for (let n = 0; n < 30; n++) {
-        const fx = (((n * 1013904223 + tick) ^ (n * 22695477)) >>> 0) % worldW;
-        const fy = (((n * 1664525 + tick * 2) ^ (n * 1013904223)) >>> 0) % worldH;
+      // Blossom petals — pale pink/lavender, drift slowly diagonally
+      ctx.fillStyle = '#e8d8f4';
+      for (let n = 0; n < 25; n++) {
+        const fx = (((n * 1013904223 + tick + n * 3) ^ (n * 22695477)) >>> 0) % worldW;
+        const fy = (((n * 1664525 + tick * 2 + n * 7) ^ (n * 1013904223)) >>> 0) % worldH;
         ctx.fillRect(fx, fy, 2, 2);
+      }
+      // Pollen — tiny yellow-white single pixels, more numerous, faster drift
+      ctx.fillStyle = '#f8f4c0';
+      for (let n = 0; n < 50; n++) {
+        const px2 = (((n * 1664525 + tick * 4) ^ (n * 1013904223 + n * 11)) >>> 0) % worldW;
+        const py2 = (((n * 22695477 + tick * 6) ^ (n * 1664525 + n * 3)) >>> 0) % worldH;
+        ctx.fillRect(px2, py2, 1, 1);
       }
     }
     // Autumn: warm amber haze + falling leaf flecks
