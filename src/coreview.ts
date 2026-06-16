@@ -548,7 +548,7 @@ function drawWorld(): void {
   ctx.fillStyle = '#e8e0c8'; ctx.font = 'bold 18px monospace';
   ctx.fillText('The Wider World', ox, oy - 30);
   ctx.fillStyle = '#c8b878'; ctx.font = '12px monospace';
-  ctx.fillText(`Treasury ${Math.floor(core.gold)}g · Holdings ${core.ownedCells.size} · click green-outlined land to claim it · Esc returns`, ox, oy - 14);
+  ctx.fillText(`Treasury ${Math.floor(core.gold)}g · Holdings ${core.ownedCells.size} (+${core.holdingsIncome()}g/day) · click green-outlined land to claim it · Esc returns`, ox, oy - 14);
   let info = '';
   if (worldHover) {
     const { cx, cy } = worldHover;

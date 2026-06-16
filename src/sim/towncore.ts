@@ -44,6 +44,16 @@ import { BASE_PRICES } from './economy';
 import { MINUTES_PER_TICK, MINUTES_PER_DAY, NEED_INTERRUPT_THRESHOLD, ROOM_TYPE_ID, ROOM_DEF_BY_NUM, STATION_DEF_BY_NUM, STATION_TYPE_ID, TRAIT_DEFS, TUNING, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, DIFFICULTY_PRESETS, RESOURCE_KINDS, BLUEPRINT_DEFS, parcelCost, type BlueprintDef, type ResourceKind, type TradeOrder, type TradeRecord, type TownFocus } from './defs';
 
 const TICKS_PER_DAY = MINUTES_PER_DAY / MINUTES_PER_TICK;
+// Seamless-world M3: daily tribute from each owned parcel beyond the capital.
+const HOLDING_TITHE = 2; // gold per holding per day
+const HOLDING_YIELD: Record<string, { res: ResourceKind; amt: number }> = {
+  plains: { res: 'grain', amt: 3 },
+  forest: { res: 'wood', amt: 3 },
+  hills: { res: 'stone', amt: 2 },
+  mountains: { res: 'stone', amt: 1.5 },
+  marsh: { res: 'herbs', amt: 1 },
+  river: { res: 'meal', amt: 2 }, // riverside fishing
+};
 // Colony storage cap (SoS model): non-food goods the colony can warehouse before
 // overflow spoils. Base + per-head scaling + built shelves/crates (storageCap()).
 const STORAGE_BASE = 1200, STORAGE_PER_POP = 150;
@@ -452,6 +462,22 @@ export class TownCore {
     this.gold -= this.parcelPrice(cx, cy);
     this.ownedCells.add(`${cx},${cy}`);
     return true;
+  }
+  /** Gold tribute each owned parcel (beyond the capital) sends per day. */
+  holdingsIncome(): number {
+    return this._owned ? Math.max(0, this._owned.size - 1) * HOLDING_TITHE : 0;
+  }
+  /** Daily tribute from off-screen holdings — biome staple + gold. */
+  private tickHoldings(): void {
+    if (!this._owned || this._owned.size <= 1) return;
+    const homeKey = `${this.site.cellX},${this.site.cellY}`;
+    for (const key of this._owned) {
+      if (key === homeKey) continue;
+      const [cx, cy] = key.split(',').map(Number);
+      const y = HOLDING_YIELD[this.regionMap.at(cx, cy).biome];
+      if (y) this.stock.add(y.res, y.amt);
+      this.gold += HOLDING_TITHE;
+    }
   }
 
   constructor(opts: TownCoreOpts = {}) {
@@ -905,6 +931,11 @@ export class TownCore {
     // Primary production: the colony works its designated harvest zones into raw
     // goods (run before feeding so the day's grain/meals are on hand).
     this.harvestZones();
+    // Off-screen holdings: each owned parcel beyond the capital sends a small
+    // daily tribute of its biome's staple + a little gold (the seamless-world M3
+    // payoff for expanding). ponytail: flat per-biome yield — upgrade to a real
+    // dormant per-parcel sim (crops/pop) when a holding can host its own grid.
+    this.tickHoldings();
     // Sapling regrowth: woodcutter-felled tiles grow back into forest over days.
     this._tickSaplings();
     // Forage regrowth: harvested deposits regenerate after FORAGE_REGROW_DAYS.

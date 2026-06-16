@@ -2234,3 +2234,34 @@ describe('TownCore parcels (seamless world M2)', () => {
     expect([...twin.ownedCells].sort()).toEqual([...c.ownedCells].sort());
   });
 });
+
+describe('TownCore holdings income (seamless world M3)', () => {
+  const landNeighbour = (c: TownCore): [number, number] | null => {
+    const { cellX, cellY } = c.site;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const nx = cellX + dx, ny = cellY + dy;
+      if (nx >= 0 && ny >= 0 && !c.regionMap.isWater(nx, ny)) return [nx, ny];
+    }
+    return null;
+  };
+  const YIELD: Record<string, string> = { plains: 'grain', forest: 'wood', hills: 'stone', mountains: 'stone', marsh: 'herbs', river: 'meal' };
+
+  it('a fresh capital-only colony earns no holdings income', () => {
+    const c = new TownCore({ width: 96, height: 96, seed: 7 });
+    expect(c.holdingsIncome()).toBe(0);
+  });
+
+  it('an owned parcel sends its biome staple + gold each day', () => {
+    const c = new TownCore({ width: 96, height: 96, seed: 7 });
+    c.gold = 100000;
+    const t = landNeighbour(c)!;
+    expect(c.buyParcel(t[0], t[1])).toBe(true);
+    expect(c.holdingsIncome()).toBe(2); // one holding × tithe
+    const res = YIELD[c.regionMap.at(t[0], t[1]).biome] as Parameters<typeof c.stock.count>[0];
+    const before = c.stock.count(res);
+    const goldBefore = c.gold;
+    c.run(360); // one full day → one dailyUpdate
+    expect(c.stock.count(res)).toBeGreaterThan(before);
+    expect(c.gold).toBeGreaterThan(goldBefore); // tithe (no daily gold sinks on a fresh colony)
+  });
+});

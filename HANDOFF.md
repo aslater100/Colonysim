@@ -11,7 +11,21 @@
 
 ---
 
-## Session Snapshot — Backbone M2: claim parcels from the overview (2026-06-16, latest)
+## Session Snapshot — Backbone M3 (lazy): holdings income (2026-06-16, latest)
+
+**What landed (branch `claude/game-build-iteration-assets-2kd2z0`):** Claiming land now
+**pays off**. Instead of a full dormant per-parcel sim (deferred — needs per-parcel
+grids), each owned parcel beyond the capital sends a small daily tribute in
+`TownCore.dailyUpdate` → `tickHoldings()`: a biome staple (plains→grain, forest→wood,
+hills/mountains→stone, marsh→herbs, river→meal) + `HOLDING_TITHE` gold. `holdingsIncome()`
+surfaces the gold/day in the overview header. Opt-in (only fires if you bought land), so
+`sim:town` baseline is unchanged (10/10, mood 35). Tests 891→**893**. ponytail: flat
+per-biome yield; the upgrade path is a real dormant sim (crops/pop) once a holding can
+host its own grid.
+
+---
+
+## Session Snapshot — Backbone M2: claim parcels from the overview (2026-06-16)
 
 **What landed (branch `claude/game-build-iteration-assets-2kd2z0`):** The world overview
 is now interactive — you can **buy land**. Rather than re-base the `Simulation`-coupled
