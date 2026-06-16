@@ -172,7 +172,11 @@ menuBtn.style.cssText = 'position:fixed;top:8px;right:8px;padding:4px 10px;backg
 menuBtn.title = 'Return to title screen (Esc)';
 menuBtn.addEventListener('mouseenter', () => { menuBtn.style.color = '#c0d8f0'; menuBtn.style.borderColor = '#5080a0'; });
 menuBtn.addEventListener('mouseleave', () => { menuBtn.style.color = '#90a8c0'; menuBtn.style.borderColor = '#30485a'; });
-menuBtn.addEventListener('click', () => location.assign('./'));
+const goToMenu = () => {
+  localStorage.setItem(SOA_SAVE_KEY, JSON.stringify(core.serialize()));
+  location.assign('./');
+};
+menuBtn.addEventListener('click', goToMenu);
 app.appendChild(menuBtn);
 // ── Camera (pan + zoom) ─────────────────────────────────────────────────────
 // World is drawn at `TILE` base px/tile under a translate+scale transform, so
@@ -258,7 +262,7 @@ addEventListener('keydown', (e) => {
     e.preventDefault(); // block other keys while dialog is open
     return;
   }
-  if (e.key === 'Escape') { location.assign('./'); return; }
+  if (e.key === 'Escape') { goToMenu(); return; }
   if (e.key === ' ') { paused = !paused; e.preventDefault(); return; }
   // Camera: WASD / arrows pan, O frames the whole map. (WASD skipped when a
   // modifier is held so Ctrl+S save etc. still work.)
