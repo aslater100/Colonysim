@@ -383,37 +383,42 @@ function treeSpringSprite(): HTMLCanvasElement {
   return c;
 }
 
-/** Autumn tree — orange/red canopy instead of green. */
+/** Autumn tree — orange/red/gold canopy, more clump variety than summer. */
 function treeAutumnSprite(): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = 40; c.height = 44;
   const g = c.getContext('2d')!;
   // shadow
   fillDisc(g, 22, 38, 13, 5, P.shadow);
-  // trunk — same warm brown as normal
+  // trunk
   g.fillStyle = P.trunkDark; g.fillRect(17, 28, 6, 14);
   g.fillStyle = P.trunk;     g.fillRect(18, 28, 4, 13);
   g.fillStyle = P.trunkLight; g.fillRect(18, 28, 2, 11);
   const cx = 19, cy = 16;
-  // deep canopy shadow (maroon)
-  fillDisc(g, cx + 1, cy + 3, 17, 14, '#5a2a10');
-  fillDisc(g, cx + 2, cy + 4, 14, 11, '#8a3820');
-  // main body (burnt orange)
-  fillDisc(g, cx, cy + 1, 16, 13, '#c05830');
-  fillDisc(g, cx - 6, cy - 2, 8, 7, '#b04c28');
-  fillDisc(g, cx + 7, cy + 1, 8, 7, '#8a3820');
-  fillDisc(g, cx - 1, cy - 6, 9, 7, '#c05830');
-  // warm lit highlights (golden/orange)
-  fillDisc(g, cx - 5, cy - 4, 7, 6, '#e07030');
-  fillDisc(g, cx - 3, cy - 5, 5, 4, '#f0a830');
-  // leaf flecks — yellow and red
-  g.fillStyle = '#e8c828'; g.fillRect(cx - 8, cy + 2, 2, 2); g.fillRect(cx + 2, cy - 7, 2, 2);
-  g.fillStyle = '#c83820'; g.fillRect(cx - 1, cy + 1, 2, 2); g.fillRect(cx + 4, cy + 9, 2, 2);
-  g.fillStyle = '#f0b830'; g.fillRect(cx + 9, cy + 6, 2, 2);
+  // deep shadow base (dark maroon)
+  fillDisc(g, cx + 1, cy + 3, 17, 14, '#4a200c');
+  fillDisc(g, cx + 2, cy + 4, 14, 11, '#7a2e18');
+  // main canopy (mixed orange/crimson clumps — more fragmented than summer)
+  fillDisc(g, cx, cy + 1,    15, 12, '#b84c28');
+  fillDisc(g, cx - 7, cy,     9,  7, '#c85c1c');
+  fillDisc(g, cx + 8, cy + 2, 8,  7, '#9c3818');
+  fillDisc(g, cx - 2, cy - 7, 9,  7, '#c04c20');
+  fillDisc(g, cx + 4, cy - 4, 7,  6, '#b83c10');
+  // gold/yellow clumps (patches of still-holding leaves)
+  fillDisc(g, cx - 5, cy - 3, 7, 6, '#d47818');
+  fillDisc(g, cx + 6, cy - 5, 5, 4, '#d89020');
+  // sun-lit highlights
+  fillDisc(g, cx - 4, cy - 5, 5, 4, '#f0a028');
+  fillDisc(g, cx - 2, cy - 7, 3, 3, '#f8c830');
+  // scattered leaf flecks — scarlet, crimson, gold
+  g.fillStyle = '#f0c820'; g.fillRect(cx - 9, cy + 1, 2, 2); g.fillRect(cx + 3, cy - 8, 2, 2);
+  g.fillStyle = '#d02818'; g.fillRect(cx - 1, cy + 2, 2, 2); g.fillRect(cx + 5, cy + 8, 2, 2);
+  g.fillStyle = '#e87020'; g.fillRect(cx + 10, cy + 5, 2, 2); g.fillRect(cx - 8, cy + 6, 2, 2);
+  g.fillStyle = '#a81808'; g.fillRect(cx + 2, cy + 10, 2, 2);
   return c;
 }
 
-/** Winter tree — bare trunk with thin branches and snow clumps. */
+/** Winter tree — bare trunk with detailed branching and snow clumps. */
 function treeWinterSprite(): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = 40; c.height = 44;
@@ -421,24 +426,41 @@ function treeWinterSprite(): HTMLCanvasElement {
   // shadow (smaller than leafy tree)
   fillDisc(g, 22, 38, 9, 4, P.shadow);
   // trunk
-  g.fillStyle = P.trunkDark; g.fillRect(17, 18, 6, 24);
-  g.fillStyle = P.trunk;     g.fillRect(18, 18, 4, 23);
-  g.fillStyle = P.trunkLight; g.fillRect(18, 18, 2, 20);
-  // bare branches (thin lines radiating from top of trunk)
+  g.fillStyle = P.trunkDark; g.fillRect(17, 20, 6, 22);
+  g.fillStyle = P.trunk;     g.fillRect(18, 20, 4, 21);
+  g.fillStyle = P.trunkLight; g.fillRect(18, 20, 2, 18);
+  // bark texture lines
   g.fillStyle = P.trunkDark;
-  // left branch
-  g.fillRect(11, 14, 7, 2); g.fillRect(9, 11, 4, 3); g.fillRect(8, 10, 2, 2);
-  // right branch
-  g.fillRect(22, 16, 7, 2); g.fillRect(27, 13, 4, 3); g.fillRect(30, 12, 2, 2);
-  // upper branch
-  g.fillRect(18, 10, 4, 8);
-  // small twigs
-  g.fillRect(13, 9, 2, 3); g.fillRect(26, 11, 2, 3);
-  // snow clumps on branch tips
-  g.fillStyle = '#dce8f4';
-  g.fillRect(7, 8, 4, 2); g.fillRect(29, 10, 4, 2); g.fillRect(17, 6, 5, 3);
-  g.fillStyle = '#eef4fc';
-  g.fillRect(8, 8, 2, 1); g.fillRect(30, 10, 2, 1); g.fillRect(18, 6, 3, 1);
+  g.fillRect(19, 26, 1, 4); g.fillRect(20, 32, 1, 5);
+  // main branches (radiating from trunk top)
+  g.fillStyle = P.trunkDark;
+  // left main branch
+  g.fillRect(9, 17, 9, 2); g.fillRect(6, 13, 5, 2);
+  // left sub-branches
+  g.fillRect(8, 11, 2, 3); g.fillRect(10, 12, 2, 1);
+  // right main branch
+  g.fillRect(22, 16, 10, 2); g.fillRect(30, 13, 5, 2);
+  // right sub-branches
+  g.fillRect(32, 11, 2, 3); g.fillRect(28, 12, 2, 1);
+  // upper central branches
+  g.fillRect(18, 8, 4, 12);
+  g.fillRect(14, 8, 4, 2); g.fillRect(12, 5, 3, 3);
+  g.fillRect(23, 10, 4, 2); g.fillRect(25, 7, 3, 3);
+  // fine twigs (1px)
+  g.fillStyle = '#6a5a48';
+  g.fillRect(5, 12, 2, 1); g.fillRect(33, 12, 2, 1);
+  g.fillRect(11, 4, 2, 2); g.fillRect(26, 6, 2, 2);
+  g.fillRect(18, 5, 1, 3); g.fillRect(21, 5, 1, 3);
+  // snow accumulation on branches (thick where branch is wide)
+  g.fillStyle = '#d0e4f2';
+  g.fillRect(5, 11, 6, 2); g.fillRect(29, 11, 6, 2);
+  g.fillRect(13, 7, 4, 2); g.fillRect(22, 7, 4, 2);
+  g.fillRect(17, 4, 5, 2);
+  // snow highlight
+  g.fillStyle = '#eaf4fc';
+  g.fillRect(6, 11, 4, 1); g.fillRect(30, 11, 4, 1);
+  g.fillRect(14, 7, 2, 1); g.fillRect(23, 7, 2, 1);
+  g.fillRect(18, 4, 3, 1);
   return c;
 }
 
@@ -578,6 +600,10 @@ function treeSprite(marked: boolean): HTMLCanvasElement {
   g.fillRect(18, 28, 4, 13);
   g.fillStyle = marked ? '#e07848' : P.trunkLight;
   g.fillRect(18, 28, 2, 11);
+  // bark texture lines
+  g.fillStyle = marked ? '#a04020' : P.trunkDark;
+  g.fillRect(19, 33, 1, 4);
+  g.fillRect(20, 38, 1, 4);
 
   const cx = 19, cy = 16;
   // base/deep canopy (cool, occluded underside)
@@ -846,21 +872,30 @@ function roadTile(kind: string, plan: boolean): HTMLCanvasElement {
     case 'dirt': {
       g.fillStyle = P.rutBrown;
       g.fillRect(0, 0, TILE, TILE);
-      // soft shoulder shading
+      // Soft grass shoulders with slight bleed
       g.fillStyle = P.rutLight;
       g.fillRect(0, 0, 3, TILE);
       g.fillRect(TILE - 3, 0, 3, TILE);
-      // ruts
+      g.fillStyle = P.grassC;
+      g.fillRect(0, 0, 1, TILE); g.fillRect(TILE - 1, 0, 1, TILE); // grass edge strip
+      // Wheel ruts — slightly uneven width to look worn
       g.fillStyle = P.rutDark;
-      g.fillRect(5, 0, 4, TILE);
-      g.fillRect(23, 0, 4, TILE);
+      g.fillRect(5, 0, 4, TILE); g.fillRect(23, 0, 4, TILE);
       g.fillStyle = P.rutBrown;
-      g.fillRect(6, 0, 2, TILE);
-      g.fillRect(24, 0, 2, TILE);
-      // stone pebbles
+      g.fillRect(6, 0, 2, TILE); g.fillRect(24, 0, 2, TILE);
+      // Rut depth variation: occasional deeper patch
+      g.fillStyle = P.rutDark;
+      for (let i = 0; i < 3; i++) {
+        const ry = (i * 11 + 5) % (TILE - 4);
+        g.fillRect(5, ry, 3, 2); g.fillRect(23, ry + 6, 3, 2);
+      }
+      // Center grass strip (barely used center of road)
+      g.fillStyle = P.grassD;
+      for (let y = 2; y < TILE - 2; y += 7) g.fillRect(14, y, 4, 3);
+      // Stone pebbles scattered across road
       g.fillStyle = P.gravelC;
-      for (let i = 0; i < 5; i++) {
-        g.fillRect((i * 7) % 28, (i * 11 + 3) % 28, 2, 1);
+      for (let i = 0; i < 10; i++) {
+        g.fillRect((i * 7 + 2) % 26, (i * 11 + 3) % 28, 2, 1);
       }
       break;
     }
@@ -880,15 +915,19 @@ function roadTile(kind: string, plan: boolean): HTMLCanvasElement {
     case 'gravel': {
       g.fillStyle = P.gravelB;
       g.fillRect(0, 0, TILE, TILE);
-      // dense random pebble pattern
+      // Shoulders slightly lighter (tamped edge)
       g.fillStyle = P.gravelA;
-      for (let i = 0; i < 28; i++) {
-        g.fillRect((i * 7) % 30, (i * 11) % 30, 2 + (i % 3 === 0 ? 1 : 0), 1);
-      }
+      g.fillRect(0, 0, 2, TILE); g.fillRect(TILE - 2, 0, 2, TILE);
+      // Dense pebble bed — 3 shades for depth
+      g.fillStyle = P.gravelA;
+      for (let i = 0; i < 28; i++) g.fillRect((i * 7) % 30, (i * 11) % 30, 2 + (i % 3 === 0 ? 1 : 0), 1);
       g.fillStyle = P.gravelC;
-      for (let i = 0; i < 14; i++) {
-        g.fillRect((i * 13 + 3) % 30, (i * 7 + 5) % 30, 1, 2);
-      }
+      for (let i = 0; i < 16; i++) g.fillRect((i * 13 + 3) % 30, (i * 7 + 5) % 30, 1, 2);
+      // Occasional larger stone
+      g.fillStyle = P.rock;
+      for (let i = 0; i < 4; i++) g.fillRect((i * 19 + 4) % 26, (i * 17 + 7) % 26, 3, 2);
+      g.fillStyle = P.rockLight;
+      for (let i = 0; i < 4; i++) g.fillRect((i * 19 + 4) % 26, (i * 17 + 7) % 26, 3, 1);
       break;
     }
     case 'bridge': {
@@ -2360,12 +2399,13 @@ function berryBushSprite(): HTMLCanvasElement {
   // warm lit highlight
   fillDisc(g, 11, 16, 5, 4, P.treeLeafLight);
   g.fillStyle = P.treeLeafTop; g.fillRect(10, 14, 3, 2);
-  // berry clusters — red+dark red
+  // berry clusters — 2×2 round dots with highlight + blossom-end pip
   const berries: [number, number][] = [[12,20],[15,22],[18,19],[21,21],[14,18],[20,23]];
   for (const [bx, by] of berries) {
-    g.fillStyle = '#8a2838'; g.fillRect(bx, by, 3, 2);
-    g.fillStyle = '#c03848'; g.fillRect(bx, by, 2, 1);
-    g.fillStyle = '#e05060'; g.fillRect(bx, by, 1, 1);
+    g.fillStyle = '#7a1e2c'; g.fillRect(bx, by, 2, 2);
+    g.fillStyle = '#c04050'; g.fillRect(bx, by, 2, 1);
+    g.fillStyle = '#e87080'; g.fillRect(bx, by, 1, 1);
+    g.fillStyle = '#280810'; g.fillRect(bx + 1, by + 1, 1, 1); // blossom end
   }
   return c;
 }
@@ -2468,17 +2508,30 @@ function interiorFloorTile(): HTMLCanvasElement {
   const g = c.getContext('2d')!;
   g.fillStyle = P.plankDark;
   g.fillRect(0, 0, TILE, TILE);
-  // Two courses of staggered planks.
+  // Staggered planks with grain variation and knots.
+  const rnd = mulberry(7711);
   for (let row = 0; row < TILE; row += 8) {
-    g.fillStyle = P.plank;
+    // Slight hue shift per plank row for wood grain variety
+    const rowLight = (row / 8) % 2 === 0 ? P.plank : P.woodLight;
+    g.fillStyle = rowLight === P.woodLight ? '#a07040' : P.plank;
     g.fillRect(0, row + 1, TILE, 6);
     g.fillStyle = P.plankLight;
     g.fillRect(0, row + 1, TILE, 1);
-    // board seams, offset every other row
+    // Board seams, offset every other row
     const off = (row / 8) % 2 === 0 ? 0 : 16;
     g.fillStyle = P.plankDark;
     g.fillRect((off) % TILE, row + 1, 1, 6);
     g.fillRect((off + 16) % TILE, row + 1, 1, 6);
+    // Grain lines (subtle dark streaks along plank length)
+    g.fillStyle = P.woodDark;
+    const gx = 3 + Math.floor(rnd() * (TILE - 6));
+    g.fillRect(gx, row + 2, 1, 4);
+    // Occasional knot
+    if (rnd() < 0.4) {
+      const kx = 5 + Math.floor(rnd() * (TILE - 10));
+      g.fillStyle = P.woodDark; g.fillRect(kx, row + 3, 2, 2);
+      g.fillStyle = P.plankDark; g.fillRect(kx + 1, row + 3, 1, 1);
+    }
   }
   return c;
 }
@@ -2495,10 +2548,13 @@ function floorStoneTile(): HTMLCanvasElement {
     [1, 17, 20, 7],[22, 17, 8, 7],
     [1, 25, 14, 6],[16, 25, 14, 6],
   ];
-  for (const [x, y, w, h] of stones) {
-    g.fillStyle = P.rock; g.fillRect(x, y, w, h);
-    g.fillStyle = P.rockLight; g.fillRect(x, y, w, 1); // top bevel
-    g.fillStyle = P.rockDarker; g.fillRect(x, y + h - 1, w, 1); // bottom shadow
+  // Varied stone shades: 3 alternating hues for natural flagstone look
+  const stoneShades = [P.rock, P.gravelA, '#6e6a60', P.rock, P.gravelA, P.rock, '#6e6a60', P.gravelA];
+  for (let si = 0; si < stones.length; si++) {
+    const [x, y, w, h] = stones[si];
+    g.fillStyle = stoneShades[si]; g.fillRect(x, y, w, h);
+    g.fillStyle = P.rockLight; g.fillRect(x, y, w, 1);
+    g.fillStyle = P.rockDarker; g.fillRect(x, y + h - 1, w, 1);
   }
   return c;
 }
@@ -2567,11 +2623,13 @@ function interiorWallTile(): HTMLCanvasElement {
   const g = c.getContext('2d')!;
   g.fillStyle = P.rockDark;
   g.fillRect(0, 0, TILE, TILE);
-  // Brick/stone courses.
+  // Brick/stone courses with subtle row-to-row color variation.
+  const rowShades = [P.rock, '#70686c', '#888278', P.rock];
   for (let row = 0; row < TILE; row += 8) {
     const off = (row / 8) % 2 === 0 ? 0 : 8;
+    const brickCol = rowShades[(row / 8) % rowShades.length];
     for (let x = -off; x < TILE; x += 16) {
-      g.fillStyle = P.rock;
+      g.fillStyle = brickCol;
       g.fillRect(x + 1, row + 1, 14, 6);
       g.fillStyle = P.rockLight;
       g.fillRect(x + 1, row + 1, 14, 1);
@@ -2764,20 +2822,30 @@ function stationSprite(id: string, w: number, h: number): HTMLCanvasElement {
       break;
     }
     case 'shrine': {
-      // Plinth base
-      g.fillStyle = P.rock; g.fillRect(m + 2, H - 10, W - 2 * m - 4, 8);
-      g.fillStyle = P.rockDark; g.fillRect(m + 2, H - 11, W - 2 * m - 4, 2); // top edge
-      g.fillStyle = P.rockLight; g.fillRect(m + 3, H - 9, 4, 2); // light catch
-      // Column
-      g.fillStyle = P.wallCream; g.fillRect(W / 2 - 3, 14, 6, H - 24);
-      g.fillStyle = P.wallCreamDk; g.fillRect(W / 2 - 3, 14, 1, H - 24); // shadow side
-      // Capital (top of column)
+      // Stepped plinth base (wider lower step for grandeur)
+      g.fillStyle = P.rockDarker; g.fillRect(m, H - 7, W - 2 * m, 5); // lower step shadow
+      g.fillStyle = P.rockDark; g.fillRect(m, H - 8, W - 2 * m, 2);
+      g.fillStyle = P.rockLight; g.fillRect(m, H - 8, W - 2 * m, 1); // top bevel
+      // Upper plinth
+      g.fillStyle = P.rock; g.fillRect(m + 2, H - 13, W - 2 * m - 4, 6);
+      g.fillStyle = P.rockDark; g.fillRect(m + 2, H - 14, W - 2 * m - 4, 2);
+      g.fillStyle = P.rockLight; g.fillRect(m + 3, H - 12, 4, 2);
+      // Candle offerings on plinth
+      g.fillStyle = '#e8d898'; g.fillRect(5, H - 14, 2, 4); g.fillRect(W - 7, H - 14, 2, 4);
+      g.fillStyle = '#f8c030'; g.fillRect(5, H - 15, 1, 1); g.fillRect(W - 7, H - 15, 1, 1);
+      // Column (fluted: left shadow, center groove, right lit edge)
+      g.fillStyle = P.wallCream; g.fillRect(W / 2 - 3, 14, 6, H - 27);
+      g.fillStyle = P.wallCreamDk; g.fillRect(W / 2 - 3, 14, 1, H - 27); // left shadow
+      g.fillStyle = P.wallCreamDk; g.fillRect(W / 2, 14, 1, H - 27);     // center groove
+      // Capital
       g.fillStyle = P.wallCreamDk; g.fillRect(W / 2 - 6, 10, 12, 5);
       g.fillStyle = P.wallCream; g.fillRect(W / 2 - 5, 11, 10, 3);
-      // Flame / holy symbol
-      g.fillStyle = '#f0b030'; g.fillRect(W / 2 - 2, 3, 4, 6);
-      g.fillStyle = '#f8d860'; g.fillRect(W / 2 - 1, 2, 2, 4);
-      g.fillStyle = '#ffffff'; g.fillRect(W / 2, 1, 1, 2);
+      g.fillStyle = P.rockHighlight; g.fillRect(W / 2 - 5, 11, 10, 1); // bright capital top
+      // Flame (tapered: wide base, narrow tip)
+      g.fillStyle = '#c86020'; g.fillRect(W / 2 - 2, 7, 4, 2); // ember base
+      g.fillStyle = '#f0a030'; g.fillRect(W / 2 - 2, 4, 4, 4); // main flame
+      g.fillStyle = '#f8d060'; g.fillRect(W / 2 - 1, 2, 2, 3); // bright core
+      g.fillStyle = '#fffff0'; g.fillRect(W / 2, 1, 1, 2);     // hot tip
       break;
     }
     case 'well': {
@@ -2785,17 +2853,28 @@ function stationSprite(id: string, w: number, h: number): HTMLCanvasElement {
       // Stone surround
       g.fillStyle = P.rockDark; g.fillRect(m + 2, m + 2, W - 2 * m - 4, H - 2 * m - 4);
       g.fillStyle = P.rock; g.fillRect(m + 4, m + 4, W - 2 * m - 8, H - 2 * m - 8);
+      // Individual stone highlights on top edge (top-left lit)
+      g.fillStyle = P.rockLight; g.fillRect(m + 4, m + 4, 6, 2); g.fillRect(m + 12, m + 4, 5, 2);
+      g.fillStyle = P.rockHighlight; g.fillRect(m + 4, m + 4, 2, 1);
       // Dark interior shaft
       g.fillStyle = '#0e1820'; g.fillRect(W / 2 - 5, m + 5, 10, H / 2 - 4);
-      g.fillStyle = P.water2; g.fillRect(W / 2 - 4, H / 2 - 2, 8, 4); // water glint
+      g.fillStyle = P.water2; g.fillRect(W / 2 - 4, H / 2 - 2, 8, 4);
       g.fillStyle = P.waterGlint; g.fillRect(W / 2 - 2, H / 2 - 1, 3, 1);
       // Crossbeam
       g.fillStyle = P.woodDark; g.fillRect(m, m + 2, W - 2 * m, 3);
       g.fillStyle = P.wood; g.fillRect(m + 1, m + 3, W - 2 * m - 2, 1);
-      // Rope/bucket
-      g.fillStyle = '#8a7050'; g.fillRect(W / 2 - 1, m + 5, 2, H / 2 - 8); // rope
-      g.fillStyle = P.woodDark; g.fillRect(W / 2 - 3, H / 2 - 7, 6, 4); // bucket top
+      // Windlass axle (right side of crossbeam)
+      g.fillStyle = P.woodDark; g.fillRect(W - m - 6, m - 1, 3, 4);
+      g.fillStyle = P.wood; g.fillRect(W - m - 5, m - 1, 1, 3);
+      // Rope with twist marks
+      g.fillStyle = '#8a7050'; g.fillRect(W / 2 - 1, m + 5, 2, H / 2 - 8);
+      g.fillStyle = '#6a5030';
+      for (let ry = m + 7; ry < H / 2 - 2; ry += 3) g.fillRect(W / 2, ry, 1, 1);
+      // Bucket with rim and barrel hoop
+      g.fillStyle = '#7a5030'; g.fillRect(W / 2 - 3, H / 2 - 8, 6, 1); // rim
+      g.fillStyle = P.woodDark; g.fillRect(W / 2 - 3, H / 2 - 7, 6, 4);
       g.fillStyle = P.wood; g.fillRect(W / 2 - 2, H / 2 - 6, 4, 3);
+      g.fillStyle = P.trunkDark; g.fillRect(W / 2 - 3, H / 2 - 5, 6, 1); // hoop
       break;
     }
     case 'watch_post': {
@@ -3093,7 +3172,7 @@ export function buildSprites(buildingDefs: { id: string; w: number; h: number; u
     roads[k]     = roadTile(k, false);
     roadPlans[k] = roadTile(k, true);
   }
-  // Four distinct settler looks: ochre/dark-hair, teal/auburn, mauve/grey, forest-green/dark.
+  // Six distinct settler looks for population variety.
   const pawnLooks: PawnLook[] = [
     { cloth: P.cloth1, clothDk: P.clothDark1, clothLt: P.clothLight1,
       skin: P.skin,  skinShad: P.skinShad,  skinLight: P.skinLight,
@@ -3107,6 +3186,14 @@ export function buildSprites(buildingDefs: { id: string; w: number; h: number; u
     { cloth: P.cloth4, clothDk: P.clothDark4, clothLt: P.clothLight4,
       skin: P.skinB, skinShad: P.skinBShad, skinLight: P.skinBLight,
       hair: '#1c1a18', hairDk: '#0e0c0a' },
+    // Russet-red tunic, silver-grey hair — elder look
+    { cloth: '#7a3c2c', clothDk: '#522818', clothLt: '#9a5040',
+      skin: P.skin,  skinShad: P.skinShad,  skinLight: P.skinLight,
+      hair: '#b0aca0', hairDk: P.hairC },
+    // Deep slate-blue tunic, warm sandy hair, dark skin
+    { cloth: '#405068', clothDk: '#2c3848', clothLt: '#5a6e88',
+      skin: P.skinB, skinShad: P.skinBShad, skinLight: P.skinBLight,
+      hair: '#c8a860', hairDk: '#9a7840' },
   ];
   const raiderLook: PawnLook = {
     cloth: P.clothRaider, clothDk: P.clothRaiderDk, clothLt: P.clothRaiderLt,

@@ -518,12 +518,66 @@ function draw(): void {
       else if (fz && seasonIdx === 2) blit(sprites.soilRipe, x, y);  // autumn: ripe
       else if (seasonIdx === 3) blit(sprites.soilWinter, x, y);      // winter: frozen
       else blit(sprites.soil, x, y);
+      // Veggarden row markers: narrow bed dividers + small plant rounds distinguish from grain fields
+      if (g.zone[i] === ZONE.VEGGARDEN && seasonIdx !== 3) {
+        ctx.fillStyle = 'rgba(55,35,12,0.25)';
+        ctx.fillRect(x*px + Math.round(px*0.33), y*px, 1, px);
+        ctx.fillRect(x*px + Math.round(px*0.66), y*px, 1, px);
+        if (seasonIdx === 1) { // summer: green cabbage/lettuce heads
+          ctx.fillStyle = 'rgba(40,118,35,0.88)';
+          ctx.beginPath(); ctx.arc(x*px + Math.round(px*0.17), y*px + Math.round(px*0.5), 3, 0, Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(x*px + Math.round(px*0.50), y*px + Math.round(px*0.5), 3, 0, Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(x*px + Math.round(px*0.83), y*px + Math.round(px*0.5), 3, 0, Math.PI*2); ctx.fill();
+        } else if (seasonIdx === 2) { // autumn: amber heads + ripe root veg
+          ctx.fillStyle = 'rgba(148,88,20,0.85)';
+          ctx.beginPath(); ctx.arc(x*px + Math.round(px*0.17), y*px + Math.round(px*0.5), 3, 0, Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(x*px + Math.round(px*0.50), y*px + Math.round(px*0.5), 3, 0, Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(x*px + Math.round(px*0.83), y*px + Math.round(px*0.5), 3, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = 'rgba(188,38,22,0.90)'; // red root vegetables
+          ctx.fillRect(x*px + Math.round(px*0.17) - 1, y*px + Math.round(px*0.68), 2, 2);
+          ctx.fillRect(x*px + Math.round(px*0.50) - 1, y*px + Math.round(px*0.68), 2, 2);
+          ctx.fillRect(x*px + Math.round(px*0.83) - 1, y*px + Math.round(px*0.68), 2, 2);
+        }
+      }
     }
     else if (t === TERRAIN.ROCK) { const rv = ((x * 1664525 ^ y * 22695477) >>> 29) % 3; blit((g.ore[i] ? sprites.rockMarked : sprites.rock)[rv], x, y); }
     else if (t === TERRAIN.SAND) blit(sprites.sand[((x * 1664525 ^ y * 22695477) >>> 29) % 4], x, y);
     else {
       const grassSet = seasonIdx === 3 ? sprites.grassWinter : seasonIdx === 2 ? sprites.grassAutumn : seasonIdx === 0 ? sprites.grassSpring : sprites.grass;
       blit(grassSet[((x * 1664525 ^ y * 22695477) >>> 30) % 4], x, y);
+      // Orchard tile: small fruit-tree overlay that changes by season
+      if (g.zone[i] === ZONE.ORCHARD) {
+        const ocx = (x + 0.5) * px, ocy = (y + 0.42) * px;
+        const or2 = px * 0.32;
+        if (seasonIdx === 0) { // spring: pink blossom canopy
+          ctx.fillStyle = 'rgba(220,120,160,0.75)';
+          ctx.beginPath(); ctx.arc(ocx, ocy, or2, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = 'rgba(255,210,230,0.55)';
+          ctx.beginPath(); ctx.arc(ocx - or2*0.3, ocy - or2*0.3, or2*0.55, 0, Math.PI * 2); ctx.fill();
+        } else if (seasonIdx === 1) { // summer: dense green canopy + fruit dots
+          ctx.fillStyle = 'rgba(40,120,30,0.80)';
+          ctx.beginPath(); ctx.arc(ocx, ocy, or2, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = 'rgba(70,160,50,0.60)';
+          ctx.beginPath(); ctx.arc(ocx - or2*0.3, ocy - or2*0.3, or2*0.55, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = 'rgba(210,50,30,0.90)'; // small fruit dots
+          ctx.fillRect(ocx - 2, ocy + 1, 2, 2); ctx.fillRect(ocx + 2, ocy - 1, 2, 2);
+        } else if (seasonIdx === 2) { // autumn: orange-amber, heavy with fruit
+          ctx.fillStyle = 'rgba(160,80,20,0.75)';
+          ctx.beginPath(); ctx.arc(ocx, ocy, or2, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = 'rgba(210,120,30,0.60)';
+          ctx.beginPath(); ctx.arc(ocx - or2*0.3, ocy - or2*0.3, or2*0.55, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = 'rgba(220,60,30,0.95)'; // ripe fruit
+          ctx.fillRect(ocx - 3, ocy, 2, 2); ctx.fillRect(ocx + 1, ocy - 2, 2, 2); ctx.fillRect(ocx, ocy + 2, 2, 2);
+        } else { // winter: bare mini-trunk + twig lines
+          ctx.fillStyle = 'rgba(90,60,30,0.80)';
+          ctx.fillRect(Math.round(ocx - 1), Math.round(ocy - or2 * 0.5), 2, Math.round(or2 * 1.5));
+          ctx.fillRect(Math.round(ocx - or2), Math.round(ocy - or2 * 0.1), Math.round(or2 * 2), 1);
+          ctx.fillRect(Math.round(ocx - or2 * 0.6), Math.round(ocy - or2 * 0.5), Math.round(or2 * 1.2), 1);
+        }
+        // Trunk stub (all seasons)
+        ctx.fillStyle = 'rgba(80,50,20,0.80)';
+        ctx.fillRect(Math.round(ocx - 1), Math.round(ocy + or2 * 0.6), 2, Math.round(px * 0.18));
+      }
     }
     if (t === TERRAIN.TREE) {
       const treeSpr = seasonIdx === 3 ? sprites.treeWinter : seasonIdx === 2 ? sprites.treeAutumn : seasonIdx === 0 ? sprites.treeSpring : sprites.tree;
@@ -549,6 +603,25 @@ function draw(): void {
         if (y < MAP-1 && g.terrain[(y+1)*MAP+x] !== TERRAIN.WATER) ctx.fillRect(x*px, (y+1)*px-2, px, 2);
         if (x < MAP-1 && g.terrain[y*MAP+(x+1)] !== TERRAIN.WATER) ctx.fillRect((x+1)*px-2, y*px, 2, px);
         if (x > 0     && g.terrain[y*MAP+(x-1)] !== TERRAIN.WATER) ctx.fillRect(x*px, y*px, 2, px);
+        // Reed stalks at shore: 2 thin vertical lines per edge (non-winter)
+        { const rh = ((x * 1664525) ^ (y * 22695477) ^ 7654321) >>> 0;
+          if (y > 0 && g.terrain[(y-1)*MAP+x] !== TERRAIN.WATER) {
+            for (let r = 0; r < 2; r++) { const sx = x*px + 4 + ((rh >>> (r*11)) & 0xf) % (px - 8); const sh = 4 + ((rh >>> (r*7+4)) & 3);
+              ctx.fillStyle = '#3a5820'; ctx.fillRect(sx, y*px + 2, 1, sh); ctx.fillStyle = '#5c3018'; ctx.fillRect(sx, y*px + 2, 1, 2); }
+          }
+          if (y < MAP-1 && g.terrain[(y+1)*MAP+x] !== TERRAIN.WATER) {
+            for (let r = 0; r < 2; r++) { const sx = x*px + 4 + ((rh >>> (r*11+3)) & 0xf) % (px - 8); const sh = 4 + ((rh >>> (r*7+8)) & 3);
+              ctx.fillStyle = '#3a5820'; ctx.fillRect(sx, (y+1)*px - sh - 2, 1, sh); ctx.fillStyle = '#5c3018'; ctx.fillRect(sx, (y+1)*px - sh - 2, 1, 2); }
+          }
+          if (x > 0 && g.terrain[y*MAP+(x-1)] !== TERRAIN.WATER) {
+            for (let r = 0; r < 2; r++) { const sy = y*px + 4 + ((rh >>> (r*11+6)) & 0xf) % (px - 8); const sh = 4 + ((rh >>> (r*7+12)) & 3);
+              ctx.fillStyle = '#3a5820'; ctx.fillRect(x*px + 2, sy, 1, sh); ctx.fillStyle = '#5c3018'; ctx.fillRect(x*px + 2, sy, 1, 2); }
+          }
+          if (x < MAP-1 && g.terrain[y*MAP+(x+1)] !== TERRAIN.WATER) {
+            for (let r = 0; r < 2; r++) { const sy = y*px + 4 + ((rh >>> (r*11+9)) & 0xf) % (px - 8); const sh = 4 + ((rh >>> (r*7+16)) & 3);
+              ctx.fillStyle = '#3a5820'; ctx.fillRect((x+1)*px - 4, sy, 1, sh); ctx.fillStyle = '#5c3018'; ctx.fillRect((x+1)*px - 4, sy, 1, 2); }
+          }
+        }
       }
     } else {
       const wN = y > 0     && g.terrain[(y-1)*MAP+x] === TERRAIN.WATER;
@@ -572,6 +645,39 @@ function draw(): void {
         if (x < MAP-1 && g.terrain[y*MAP+(x+1)] === other) ctx.fillRect((x+1)*px-3, y*px, 3, px);
         if (x > 0     && g.terrain[y*MAP+(x-1)] === other) ctx.fillRect(x*px, y*px, 3, px);
       }
+      // Grass↔soil edge blend: dark earth peek at ploughed field edges
+      if (t === TERRAIN.GRASS || t === TERRAIN.SOIL) {
+        const other2 = t === TERRAIN.GRASS ? TERRAIN.SOIL : TERRAIN.GRASS;
+        const col2 = t === TERRAIN.GRASS ? 'rgba(120,75,30,0.28)' : 'rgba(60,120,40,0.22)';
+        ctx.fillStyle = col2;
+        if (y > 0     && g.terrain[(y-1)*MAP+x] === other2) ctx.fillRect(x*px, y*px, px, 2);
+        if (y < MAP-1 && g.terrain[(y+1)*MAP+x] === other2) ctx.fillRect(x*px, (y+1)*px-2, px, 2);
+        if (x < MAP-1 && g.terrain[y*MAP+(x+1)] === other2) ctx.fillRect((x+1)*px-2, y*px, 2, px);
+        if (x > 0     && g.terrain[y*MAP+(x-1)] === other2) ctx.fillRect(x*px, y*px, 2, px);
+      }
+      // Rock↔grass edge: shadow fringe on grass side where rock looms
+      if (t === TERRAIN.GRASS && (
+        (y > 0     && g.terrain[(y-1)*MAP+x] === TERRAIN.ROCK) ||
+        (y < MAP-1 && g.terrain[(y+1)*MAP+x] === TERRAIN.ROCK) ||
+        (x > 0     && g.terrain[y*MAP+(x-1)] === TERRAIN.ROCK) ||
+        (x < MAP-1 && g.terrain[y*MAP+(x+1)] === TERRAIN.ROCK)
+      )) {
+        ctx.fillStyle = 'rgba(50,45,40,0.20)';
+        if (y > 0     && g.terrain[(y-1)*MAP+x] === TERRAIN.ROCK) ctx.fillRect(x*px, y*px, px, 3);
+        if (y < MAP-1 && g.terrain[(y+1)*MAP+x] === TERRAIN.ROCK) ctx.fillRect(x*px, (y+1)*px-3, px, 3);
+        if (x > 0     && g.terrain[y*MAP+(x-1)] === TERRAIN.ROCK) ctx.fillRect(x*px, y*px, 3, px);
+        if (x < MAP-1 && g.terrain[y*MAP+(x+1)] === TERRAIN.ROCK) ctx.fillRect((x+1)*px-3, y*px, 3, px);
+      }
+      // Palisade wall shadow on ground tiles to the south/east of a wall
+      if (!g.wall[i] && !g.gate[i]) {
+        const wallN = y > 0     && (g.wall[(y-1)*MAP+x] || g.gate[(y-1)*MAP+x]);
+        const wallW = x > 0     && (g.wall[y*MAP+(x-1)] || g.gate[y*MAP+(x-1)]);
+        if (wallN || wallW) {
+          ctx.fillStyle = 'rgba(30,25,15,0.22)';
+          if (wallN) ctx.fillRect(x*px, y*px, px, 4);
+          if (wallW) ctx.fillRect(x*px, y*px, 4, px);
+        }
+      }
     }
 
     // Sapling: scale by age so young trees are tiny and nearly mature ones are full-size.
@@ -580,12 +686,25 @@ function draw(): void {
       const sz = Math.max(4, Math.round(px * (0.35 + frac * 0.65)));
       const off = (px - sz) >> 1;
       ctx.drawImage(sprites.sapling, x * px + off, y * px + off, sz, sz);
+      // Winter: blue-white frost dusting on the sapling canopy
+      if (seasonIdx === 3) {
+        ctx.fillStyle = 'rgba(200,225,248,0.42)';
+        ctx.fillRect(x * px + off, y * px + off, sz, Math.round(sz * 0.6));
+      }
     }
 
     // Wild forage deposit: berry bush / mushroom cluster / herb patch sprite.
     if (g.forage[i]) {
       const fspr = sprites.forage[g.forage[i]];
-      if (fspr) ctx.drawImage(fspr, x * px, y * px, px, px);
+      if (fspr) {
+        if (seasonIdx === 3) ctx.globalAlpha = 0.62; // winter: dormant, sparse
+        ctx.drawImage(fspr, x * px, y * px, px, px);
+        ctx.globalAlpha = 1;
+        if (seasonIdx === 3) { // frost dusting over dormant forage
+          ctx.fillStyle = 'rgba(180,208,238,0.32)';
+          ctx.fillRect(x * px, y * px, px, px);
+        }
+      }
     }
 
     // Zone outline + drought/flood tint + small resource icon in corner.
@@ -621,11 +740,26 @@ function draw(): void {
       }
     }
 
-    // Road / bridge overlay
+    // Road / bridge overlay — rotate 90° for E-W dominant segments so ruts/planks align
     if (g.road[i]) {
+      const rt = g.road[i];
       const roadNames = ['', 'dirt', 'plank', 'gravel', 'bridge'];
-      const rImg = sprites.roads[roadNames[g.road[i]]];
-      if (rImg) blit(rImg, x, y);
+      const rImg = sprites.roads[roadNames[rt]];
+      if (rImg) {
+        const nsConn = ((y > 0     && g.road[(y-1)*MAP+x] === rt) ? 1 : 0)
+                     + ((y < MAP-1 && g.road[(y+1)*MAP+x] === rt) ? 1 : 0);
+        const ewConn = ((x > 0     && g.road[y*MAP+(x-1)] === rt) ? 1 : 0)
+                     + ((x < MAP-1 && g.road[y*MAP+(x+1)] === rt) ? 1 : 0);
+        if (ewConn > nsConn) {
+          ctx.save();
+          ctx.translate(x * px + px / 2, y * px + px / 2);
+          ctx.rotate(Math.PI / 2);
+          ctx.drawImage(rImg, -px / 2, -px / 2, px, px);
+          ctx.restore();
+        } else {
+          blit(rImg, x, y);
+        }
+      }
     }
 
     if (g.gate[i]) {
@@ -635,6 +769,7 @@ function draw(): void {
                | (g.inBounds(x, y+1) && (g.wall[g.index(x,y+1)] || g.gate[g.index(x,y+1)]) ? 4 : 0)
                | (g.inBounds(x-1,y) && (g.wall[g.index(x-1,y)] || g.gate[g.index(x-1,y)]) ? 8 : 0);
       blit(sprites.gateVariants[gm] ?? sprites.gate, x, y);
+      if (seasonIdx === 3) { ctx.fillStyle = 'rgba(210,230,250,0.72)'; ctx.fillRect(x*px+1, y*px, px-2, 3); ctx.fillStyle = 'rgba(240,248,255,0.50)'; ctx.fillRect(x*px+2, y*px, px-4, 1); }
     } else if (g.wall[i]) {
       // Connected palisade: bitmask encodes which cardinal neighbors are also walls/gates
       const wm = (g.inBounds(x, y-1) && (g.wall[g.index(x,y-1)] || g.gate[g.index(x,y-1)]) ? 1 : 0)
@@ -642,7 +777,35 @@ function draw(): void {
                | (g.inBounds(x, y+1) && (g.wall[g.index(x,y+1)] || g.gate[g.index(x,y+1)]) ? 4 : 0)
                | (g.inBounds(x-1,y) && (g.wall[g.index(x-1,y)] || g.gate[g.index(x-1,y)]) ? 8 : 0);
       blit(sprites.palisadeVariants[wm] ?? sprites.palisade, x, y);
+      if (seasonIdx === 3) { ctx.fillStyle = 'rgba(210,230,250,0.72)'; ctx.fillRect(x*px+1, y*px, px-2, 3); ctx.fillStyle = 'rgba(240,248,255,0.50)'; ctx.fillRect(x*px+2, y*px, px-4, 1); }
     }
+  }
+
+  // Tree cast shadow pass — batched after all terrain tiles so shadows land on top
+  { ctx.fillStyle = 'rgba(20,18,12,0.16)';
+    ctx.beginPath();
+    for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) {
+      if (g.terrain[y * MAP + x] === TERRAIN.TREE) {
+        ctx.ellipse((x + 0.58) * px, (y + 1) * px + px * 0.07, px * 0.60, px * 0.17, 0, 0, Math.PI * 2);
+      }
+    }
+    ctx.fill();
+  }
+
+  // Water shimmer pass — bright pixel flashes on water surface at tick-driven positions
+  if (seasonIdx !== 3) {
+    const shTick = core.tickNo;
+    ctx.beginPath();
+    for (let n = 0; n < 48; n++) {
+      const nx = ((n * 1013904223 + shTick * 3) ^ (n * 22695477)) >>> 0;
+      const ny = ((n * 1664525 + shTick * 7) ^ (n * 1013904223)) >>> 0;
+      const tx = nx % MAP, ty = ny % MAP;
+      if (g.terrain[ty * MAP + tx] !== TERRAIN.WATER) continue;
+      if (((shTick + n * 13) % 9) > 2) continue; // flash 3 of every 9 ticks
+      ctx.rect(tx * px + (nx & 0x1f), ty * px + (ny & 0x1f), 2, 1);
+    }
+    ctx.fillStyle = 'rgba(200,235,255,0.72)';
+    ctx.fill();
   }
 
   // Spike traps (rendered as a red X over the tile)
@@ -657,6 +820,16 @@ function draw(): void {
     }
   }
 
+  // Station cast shadows — ground shadow ellipses pass (drawn before sprites)
+  ctx.fillStyle = 'rgba(28,22,15,0.18)';
+  for (const sv of core.stationViews()) {
+    const def = STATION_DEF_BY_NUM[sv.typeId];
+    if (!def) continue;
+    const scx = (sv.x + def.w / 2 + 0.25) * px;
+    const scy = (sv.y + def.h + 0.12) * px;
+    ctx.beginPath(); ctx.ellipse(scx, scy, def.w * px * 0.52, def.h * px * 0.16, 0, 0, Math.PI * 2); ctx.fill();
+  }
+
   // Stations — blit at the full tile footprint (multi-tile stations span def.w × def.h tiles).
   for (const sv of core.stationViews()) {
     const def = STATION_DEF_BY_NUM[sv.typeId];
@@ -665,6 +838,14 @@ function draw(): void {
     else if (def) { // generic marker fallback
       ctx.fillStyle = '#6a5030'; ctx.fillRect(sv.x * px + 1, sv.y * px + 1, def.w * px - 2, def.h * px - 2);
       ctx.fillStyle = '#e8d8b0'; ctx.fillText(def.name[0], sv.x * px + px * 0.35, sv.y * px + px * 0.7);
+    }
+    // Winter: snow cap on building roof (top edge)
+    if (def && seasonIdx === 3) {
+      const bw = def.w * px;
+      ctx.fillStyle = 'rgba(205,228,250,0.70)';
+      ctx.fillRect(sv.x * px + 1, sv.y * px, bw - 2, 3);
+      ctx.fillStyle = 'rgba(240,248,255,0.52)';
+      ctx.fillRect(sv.x * px + 2, sv.y * px, bw - 4, 1);
     }
     // Production progress bar: tiny green strip at the bottom of the station
     if (sv.workMax > 0 && sv.progress > 0) {
@@ -711,13 +892,18 @@ function draw(): void {
   // Agents (animate: alternate walk frames every 6 ticks)
   const settlerFrame = (core.tickNo / 6 | 0) % 2;
   const a = core.agents;
-  for (let i = 0; i < a.count; i++) {
+  // Y-sort so units lower on screen draw over those above (painter's algorithm)
+  const sortedAgents = Array.from({length: a.count}, (_, i) => i).sort((ia, ib) => a.posY[ia] - a.posY[ib]);
+  for (const i of sortedAgents) {
     const variant = i % sprites.settler.length;
     const frame = a.state[i] === AState.Sleeping ? 0 : settlerFrame;
     // Draw settlers 35% taller than a tile, anchored to the tile bottom (head pokes up).
     const spr = (a.armed[i] ? sprites.settlerArmed : sprites.settler)[variant][frame];
     const sH = Math.round(px * 1.35);
     const sax = a.posX[i] * px, say = a.posY[i] * px - (sH - px);
+    // Ground shadow ellipse
+    ctx.fillStyle = 'rgba(28,20,12,0.22)';
+    ctx.beginPath(); ctx.ellipse(sax + px * 0.5, (a.posY[i] + 1) * px - 1, px * 0.38, px * 0.12, 0, 0, Math.PI * 2); ctx.fill();
     // Flip sprite horizontally when moving left
     if (!isNaN(a.destX[i]) && a.destX[i] < a.posX[i] - 0.1) {
       ctx.save(); ctx.translate(sax + px, say); ctx.scale(-1, 1);
@@ -766,13 +952,22 @@ function draw(): void {
   // Deer — 1.25× tile, centered horizontally, slightly taller
   const deerFrame = (performance.now() / 400 | 0) % sprites.deer.length;
   { const dW = Math.round(px * 1.25), dH = Math.round(px * 1.15);
-    for (const d of core.deerViews()) ctx.drawImage(sprites.deer[deerFrame], (d.x | 0) * px - (dW - px) / 2, (d.y | 0) * px - (dH - px), dW, dH); }
+    for (const d of core.deerViews()) {
+      const dx = (d.x | 0) * px - (dW - px) / 2, dy = (d.y | 0) * px - (dH - px);
+      ctx.fillStyle = 'rgba(28,20,12,0.18)';
+      ctx.beginPath(); ctx.ellipse((d.x | 0) * px + px * 0.5, (d.y | 0 + 1) * px - 1, px * 0.44, px * 0.11, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.drawImage(sprites.deer[deerFrame], dx, dy, dW, dH);
+    }
+  }
 
-  // Raiders — same oversized rendering as settlers
-  for (const r of core.raids.raiders) {
+  // Raiders — same oversized rendering as settlers, y-sorted
+  const sortedRaiders = [...core.raids.raiders].sort((a2, b2) => a2.y - b2.y);
+  for (const r of sortedRaiders) {
     const rSpr = sprites.raider[r.fleeing ? 0 : (performance.now() / 200 | 0) % sprites.raider.length];
     const rH = Math.round(px * 1.35);
     const rax = r.x * px, ray = r.y * px - (rH - px);
+    ctx.fillStyle = 'rgba(28,20,12,0.22)';
+    ctx.beginPath(); ctx.ellipse(rax + px * 0.5, r.y * px + px - 1, px * 0.38, px * 0.12, 0, 0, Math.PI * 2); ctx.fill();
     // Flip when raider is to the right of center (approaching from east, moving west)
     const facingLeft = r.fleeing ? r.x < MAP / 2 : r.x > MAP / 2;
     if (facingLeft) {
@@ -788,7 +983,10 @@ function draw(): void {
     const wolfFrame = (performance.now() / 250 | 0) % sprites.wolf.length;
     const wW = Math.round(px * 1.2), wH = Math.round(px * 1.2);
     for (const w of core.wolves.wolves) {
-      ctx.drawImage(sprites.wolf[w.leaving ? 0 : wolfFrame], (w.x | 0) * px - (wW - px) / 2, (w.y | 0) * px - (wH - px), wW, wH);
+      const wwx = (w.x | 0) * px - (wW - px) / 2, wwy = (w.y | 0) * px - (wH - px);
+      ctx.fillStyle = 'rgba(28,20,12,0.20)';
+      ctx.beginPath(); ctx.ellipse((w.x | 0) * px + px * 0.5, (w.y | 0 + 1) * px - 1, px * 0.40, px * 0.11, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.drawImage(sprites.wolf[w.leaving ? 0 : wolfFrame], wwx, wwy, wW, wH);
     }
   }
 
@@ -840,6 +1038,23 @@ function draw(): void {
         const roomDef = ROOM_DEF_BY_NUM[g.roomId[i]];
         if (roomDef?.enclosedRequired) ctx.fillRect(tx * px, ty * px, px, px);
       }
+    }
+  }
+
+  // Fish jumps — brief silvery arcs above non-winter water tiles
+  if (seasonIdx !== 3) {
+    const tick3 = core.tickNo;
+    const g3 = core.grid;
+    ctx.fillStyle = 'rgba(180,210,235,0.85)';
+    for (let n = 0; n < 12; n++) {
+      const cycle = 60 + (n % 4) * 20; // stagger jump cycles
+      const phase = (tick3 + n * 31) % cycle;
+      if (phase > 8) continue; // only 8 ticks of the cycle are "jump"
+      const fx = ((n * 1664525 + 33333) >>> 0) % MAP;
+      const fy = ((n * 1013904223 + 55555) >>> 0) % MAP;
+      if (g3.terrain[fy * MAP + fx] !== TERRAIN.WATER) continue;
+      const h = Math.sin(phase / 8 * Math.PI) * px * 0.45;
+      ctx.fillRect(fx * px + px * 0.45, fy * px + px * 0.5 - h, 2, 3);
     }
   }
 
