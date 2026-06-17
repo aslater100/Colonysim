@@ -3361,6 +3361,17 @@ export class RegionSim {
     // Record the prior month's net treasury swing before this month's books move.
     this.treasuryDeltaMonth = this.treasury - this.prevMonthTreasury;
     this.prevMonthTreasury = this.treasury;
+
+    // ponytail: cache policy/law checks that are constant across all settlements
+    const hasHealthcare = this.passedLaws.includes('healthcare_act');
+    const hasSanitation = this.passedLaws.includes('sanitation_act');
+    const hasAntibiotics = this.has('antibiotics');
+    const hasSocialInsurance = this.has('social_insurance');
+    const hasPublicHealth = this.policyActive('public_health_policy');
+    const hasOpenBorders = this.policyActive('open_borders');
+    const hasGuestWorkers = this.policyActive('guest_workers');
+    const interiorMinister = this.ministerFor('interior');
+
     for (const t of this.settlements) {
       const b = t.cohorts.bands;
       // Births from fertile bands
@@ -3375,20 +3386,20 @@ export class RegionSim {
       // Mortality: doctor, services, Public Health policy, and Healthcare Act law all help
       const doctor = this.roleMult(t, 'Doctor') ? 0.85 : 1;
       // Interior Minister makes services 15% more effective (GDD §8.7)
-      const interiorBonus = this.ministerFor('interior') ? 1.15 : 1;
+      const interiorBonus = interiorMinister ? 1.15 : 1;
       const services = this.stateProclaimed ? 1 - 0.05 * this.servicesLevel * interiorBonus : 1;
-      const healthPolicy = this.policyActive('public_health_policy') ? 0.8 : 1;
-      const healthcareLaw = this.passedLaws.includes('healthcare_act') ? 0.85 : 1;
-      const sanitationLaw = this.passedLaws.includes('sanitation_act') ? 0.9 : 1;
+      const healthPolicy = hasPublicHealth ? 0.8 : 1;
+      const healthcareLaw = hasHealthcare ? 0.85 : 1;
+      const sanitationLaw = hasSanitation ? 0.9 : 1;
       // Tech & civics that bend the death rate: antibiotics end lethal infection,
       // social insurance funds the clinics that keep people out of the grave.
-      const techHealth = (this.has('antibiotics') ? 0.85 : 1) * (this.has('social_insurance') ? 0.92 : 1);
+      const techHealth = (hasAntibiotics ? 0.85 : 1) * (hasSocialInsurance ? 0.92 : 1);
       for (let i = 0; i < b.length; i++) {
         b[i] -= b[i] * (BASE_MORTALITY_PER_YEAR[i] / 12) * doctor * services * healthPolicy * healthcareLaw * sanitationLaw * techHealth;
       }
       // Immigration: the frontier draws people to fed, content towns
       const reeve = 1 + 0.1 * this.roleMult(t, 'Reeve');
-      const openBorders = (this.policyActive('open_borders') ? 1.3 : 1) * (this.policyActive('guest_workers') ? 1.2 : 1);
+      const openBorders = (hasOpenBorders ? 1.3 : 1) * (hasGuestWorkers ? 1.2 : 1);
       // Drought suppresses immigration: news of failed harvests travels fast
       const agriEventMult = this.eventOutputMult(t, 'agriculture');
       // High taxes deter settlers: each tax band reduces immigration appeal by 10%
@@ -3404,8 +3415,9 @@ export class RegionSim {
       }
       // Population milestone events
       const popNow = Math.round(this.popOf(t));
+      const totalBands = Math.round(b.reduce((a, x) => a + x, 0) * 0.001);
       for (const milestone of [50, 100, 200, 500, 1000, 2000]) {
-        const popBefore = popNow - Math.round(b.reduce((a, x) => a + x, 0) * 0.001);
+        const popBefore = popNow - totalBands;
         if (popBefore < milestone && popNow >= milestone) {
           this.townEvent(t, `Population reaches ${milestone} — a true town now.`, 'good');
         }
