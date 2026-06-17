@@ -1,14 +1,54 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-17  
-**Branch**: `claude/game-build-iteration-assets-2kd2z0` (all work merged to main, through PR #182)  
-**Current test count:** 894 passing  
-**Current version:** v0.41.1  
-**Primary game vision:** **Seamless world** with click-to-view navigation (SoA `TownCore`)  
-**Seamless-world status:** **Backbone M0–M3 COMPLETE** on the primary engine — open the
-🌐 World overview, claim adjacent land, holdings pay daily tribute. (See latest snapshots below.)
-**Branch pattern:** feature branches off `main` via `claude/...` naming; merge via draft PR  
-**Model guidance:** See PLAN.md § Model Assignment for context ceilings per task
+> ## ⚑ CURRENT DIRECTION (2026-06-17) — TownCore dropped, the game is the **4X build**
+>
+> **TownCore is gone.** The town-detail / per-settler simulation track is retired. The
+> shipping game is the **standalone 4X campaign**: `core.html` → `src/coreview.ts` →
+> `RegionView` (`src/ui/regionview.ts`) over the deep `RegionSim` model (`src/sim/region.ts`,
+> ~7.5k lines: sectoral economy, monetary policy + credit cycle, diplomacy/treaties/war,
+> climate/emissions, tech + civics trees, factions/rivals, four win conditions, procedural
+> worldgen). **The depth is already in the model** — the work is surfacing it through a
+> beautiful, efficient UI and a stunning map, and adding new depth on top.
+>
+> **Visual direction (user, locked):** *both* a painterly era-evolving overworld **and** a
+> modern strategy UI — **terrain/atmosphere first**, then UI polish. Maximum scope.
+> **Start (user, locked):** **colony → nation arc** — begin as one founding settlement on a
+> fogged map, expand → Charter → Statehood → Nation across 1900–2100.
+>
+> ### Architecture of the 4X build
+> - **`src/coreview.ts`** — the campaign shell: boot, canvas (DPR-crisp), input, persistent
+>   top HUD + event log, fixed-timestep loop. **Owns no rendering** beyond the HUD; the map
+>   and every panel belong to `RegionView`.
+> - **`src/ui/regionview.ts`** — the 4X UI workhorse: map (terrain/territory cache, routes,
+>   settlements, rivals, weather) + DOM panels (State→Finance/Politics/Diplomacy, Research,
+>   Routes, Settlements, Economy) + modals (Charter, Convention, Century report, Win, Era).
+> - **`src/sim/region.ts`** — the model. Boot the campaign with **`RegionSim.foundColony(rng,
+>   map, weather, opts)`** (the replacement for the dropped `RegionSim.fromTown` flip).
+> - The classic town game (`index.html` → `main.ts` → `TownCore`/`Simulation`) still exists
+>   and is reachable as "Classic Colony" from the title screen, but is **not** the focus.
+>
+> ### Overnight 4X PR queue (stacked on `main`)
+> - **PR #189 — 4X foundation** (`claude/4x-foundation`): `foundColony` + clean shell. *Merge first.*
+> - (subsequent terrain / atmosphere / modern-UI / depth PRs branch off the previous, stacked)
+>
+> ### Gotchas learned this session
+> - `RegionView`'s camera works in **backing-store (device) pixels** (`canvas.width/height`,
+>   `MIN_SCALE = 1` = whole region fills the canvas). Feed it pointer coords in device px
+>   (multiply CSS delta by DPR, or use the `canvas.width / rect.width` ratio).
+> - `RegionView` already auto-renders the State panel + selected-settlement inspector every
+>   frame — don't hand-roll canvas panels over it.
+> - `PLAN.md` below is **largely stale** (it documents the retired TownCore/seamless-world
+>   track). Treat this banner + the dated snapshots as current; mine PLAN/old snapshots only
+>   for the still-relevant `RegionSim`/`RegionView` internals.
+> - Content that perturbs seeded balance must be checked against `npm run sim:macro` /
+>   `region-longrun`, not just unit tests.
+
+**Last updated:** 2026-06-17 (4X migration)  
+**Active branch family:** `claude/4x-*` (stacked draft PRs off `main`)  
+**Current test count:** 899 passing  
+**Current version:** v0.42.0  
+**Legacy note (pre-pivot):** the entries below describe the now-retired TownCore seamless-world
+track; kept for `RegionSim`/`RegionView` reference, not as current direction.
 
 ---
 
