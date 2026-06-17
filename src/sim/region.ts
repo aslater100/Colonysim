@@ -1788,6 +1788,8 @@ export class RegionSim {
   private contactedFactionIds = new Set<number>();
   /** Set when any win condition is achieved; sandbox continues but result is displayed. */
   winCondition: WinCondition | null = null;
+  /** Track triggered epilogue events (post-2100 flavor) to avoid repeats */
+  private triggeredEpilogueEvents = new Set<string>();
   private seaRiseAnnounced = false;
   private lastTidalLogDay = -999;
   private droughtAnnounced = false;
@@ -2543,6 +2545,7 @@ export class RegionSim {
     }
     if (this.eraBranch === null && this.year >= BRANCH_YEAR) this.decideBranch();
     if (!this.centuryReport && this.year >= CENTURY_YEAR) this.buildCenturyReport();
+    this.triggerEpilogueEvent(); // post-2100 flavor events
   }
 
   /** Monthly: drift accord compliance and detect free-riders (GDD §8.2).
@@ -3476,6 +3479,66 @@ export class RegionSim {
         this.addLog(`TRIBUTE: ${vassal.name} pays ${formatCurrency(tribute)} to your treasury.`, 'good');
       }
     }
+  }
+
+  /** Post-2100 epilogue flavor events: era-specific achievements and narrative beats. */
+  private triggerEpilogueEvent(): void {
+    if (this.year < CENTURY_YEAR) return;
+
+    const epilogueEvents = this.getEpilogueEventPool();
+    if (epilogueEvents.length === 0) return;
+
+    // 1% daily chance of an epilogue event
+    if (!this.rng.chance(0.01)) return;
+
+    const event = epilogueEvents[this.rng.int(epilogueEvents.length)];
+    if (this.triggeredEpilogueEvents.has(event.id)) return; // already triggered
+
+    this.triggeredEpilogueEvents.add(event.id);
+    this.addLog(event.text, event.kind);
+  }
+
+  /** Get era-specific epilogue events. */
+  private getEpilogueEventPool(): Array<{ id: string; text: string; kind: 'good' | 'info' | 'bad' }> {
+    const events: Array<{ id: string; text: string; kind: 'good' | 'info' | 'bad' }> = [];
+    const yearsSince = this.year - CENTURY_YEAR;
+
+    if (this.eraBranch === 'solarpunk') {
+      events.push(
+        { id: 'sol-greening', text: 'THE GREENING: Reforestation initiatives accelerate across the region. The land blooms anew.', kind: 'good' },
+        { id: 'sol-carbon', text: 'CARBON NEGATIVE: Your nation\'s collective efforts have finally driven CO₂ down. Skies clearing.', kind: 'good' },
+        { id: 'sol-commons', text: 'THE COMMONS: A network of shared gardens and parks weaves through your cities. Quality of life soars.', kind: 'good' },
+        { id: 'sol-migration', text: 'CLIMATE REFUGE: Thousands migrate to your stable, prosperous nation seeking asylum from chaos elsewhere.', kind: 'good' },
+      );
+    } else if (this.eraBranch === 'dystopia') {
+      events.push(
+        { id: 'dys-surveillance', text: 'PANOPTICON: Omnipresent sensors monitor every street, every transaction. Order is absolute.', kind: 'info' },
+        { id: 'dys-strikes', text: 'LABOR UNREST: Underground movements organize despite crackdowns. Whispers of rebellion in the factories.', kind: 'bad' },
+        { id: 'dys-wealth', text: 'WEALTH DISPARITY: The gap widens. The elite enclaves gleam while the outer rings seethe with discontent.', kind: 'bad' },
+        { id: 'dys-tech', text: 'MEGACORP DOMINANCE: Private megacorps rival the state in power. The economy hums, but at what cost?', kind: 'info' },
+      );
+    } else if (this.eraBranch === 'drowned') {
+      events.push(
+        { id: 'drown-walls', text: 'GREAT WALLS: Dykes and barriers hold back the rising sea. The coast is now a fortress.', kind: 'info' },
+        { id: 'drown-migration', text: 'INLAND FLIGHT: Coastal populations abandon their ancestral homes, migrating inland. Entire regions depopulate.', kind: 'bad' },
+        { id: 'drown-refugees', text: 'CLIMATE REFUGEES: Neighboring nations collapse under tidal pressures. Refugee camps swell at your borders.', kind: 'bad' },
+        { id: 'drown-adaptation', text: 'ADAPTATION: Your people, resilient, build floating settlements and amphibious farms. Life finds a way.', kind: 'info' },
+      );
+    }
+
+    // All eras can have these universal post-2100 events
+    if (yearsSince >= 10) {
+      events.push(
+        { id: 'legacy-monument', text: 'MONUMENTS: Historians and architects immortalize the 21st century in grand public works.', kind: 'good' },
+      );
+    }
+    if (yearsSince >= 20) {
+      events.push(
+        { id: 'long-peace', text: 'LONG PEACE: A generation has now grown up knowing only stability. The old conflicts fade to memory.', kind: 'good' },
+      );
+    }
+
+    return events;
   }
 
   /** One-time latch: set proclamationReady once player territory ≥50%, log the milestone. */
@@ -6466,6 +6529,7 @@ export class RegionSim {
       economicSystem: this.economicSystem,
       militaryDoctrine: this.militaryDoctrine,
       allianceStance: this.allianceStance,
+      triggeredEpilogueEvents: [...this.triggeredEpilogueEvents],
     });
   }
 
@@ -6626,6 +6690,8 @@ export class RegionSim {
     r.rng.setState(d.rng);
     // restore the AI stream too (older saves predate it — derive from main seed)
     if (typeof d.aiRng === 'number') r.aiRng.setState(d.aiRng);
+    // restore epilogue events (post-2100 flavor)
+    r.triggeredEpilogueEvents = new Set(d.triggeredEpilogueEvents ?? []);
     return r;
   }
 
