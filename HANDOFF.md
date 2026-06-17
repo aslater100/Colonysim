@@ -33,7 +33,8 @@
 > 3. **#191 — atmosphere: day/night + city lights + season + vignette** (`claude/4x-atmosphere`, on #190).
 > 4. **#193 — modern UI theme** (`claude/4x-ui-polish`, on #191, scoped to `.cv-app`).
 > 5. **#194 — "Path to Nationhood" objectives panel** (`claude/4x-objectives`, on #193).
-> 6. **#195 — event toasts** (`claude/4x-toasts`, on #194). ← stack tip (this HANDOFF lives here).
+> 6. **#195 — event toasts** (`claude/4x-toasts`, on #194).
+> 7. **#196 — save/load (autosave + continue)** (`claude/4x-saveload`, on #195). ← stack tip (this HANDOFF lives here).
 > - **#192 — tech & civics depth** (`claude/4x-tech-depth`, INDEPENDENT off `main`): +12 wired nodes, 899→902 tests, sim:macro ON TARGET. Merge any time.
 > - All CI green at time of writing. node_modules worktrees live under `.claude/worktrees/` — exclude them from vitest with `--exclude '**/.claude/**'` or test counts double.
 >
@@ -55,6 +56,40 @@
 **Current version:** v0.42.0  
 **Legacy note (pre-pivot):** the entries below describe the now-retired TownCore seamless-world
 track; kept for `RegionSim`/`RegionView` reference, not as current direction.
+
+---
+
+## Session Snapshot — 4X overnight build (2026-06-17)
+
+Took the 4X build from a broken placeholder (a `coreview.ts` that crashed on boot — it
+queried a `<canvas>` `core.html` never had, hand-drew panels that fought `RegionView`, and
+booted an empty `RegionSim`) to a playable, saveable, good-looking colony→nation campaign.
+**8 draft PRs** (#189–#196 stacked + the independent #192), all CI green, suite 894 → 900
+(stack) / 902 (#192).
+
+- **#189 foundation** — `RegionSim.foundColony()` (the replacement for the dropped `fromTown`
+  flip) + a clean shell delegating all map/panel rendering to `RegionView`; DPR-crisp canvas;
+  persistent HUD + event log; fixed-timestep loop; draggable panels. `tests/region-found.test.ts`.
+- **#190 fog of war + sea bathymetry** — explored frontier shrouds the unknown (feathered,
+  cloud-mottled), hides undiscovered rivals; continuous ocean depth ramp. Map-cache only.
+- **#191 atmosphere** — day/night tint, golden-hour dawn/dusk, population-scaled city lights,
+  seasonal wash, vignette — all off one `atmosphere()` state, screen-space, near-free.
+- **#193 modern UI** — cohesive cool-ink theme scoped to `body.cv-app` (classic game untouched):
+  glass panels, pill tabs, accent buttons, slim scrollbars.
+- **#194 objectives panel** — live "Path to Nationhood" checklist reading the model's own gates
+  (`charterGates`/`canCallConventionGates`/`canFoundTown`); no model changes.
+- **#195 event toasts** — notable good/bad log entries pop top-centre.
+- **#196 save/load** — autosave + continue + manual save; localStorage; reuses `serialize()`/
+  `deserialize()` via a `{rng,regionMap,weather}` stub + persisted seed. Round-trip test proves
+  deterministic continuation.
+- **#192 tech & civics depth** — +12 wired tech/civic nodes filling 1900–2100 gaps (incl. the
+  empty 2000–2024 window); sim:macro ON TARGET.
+
+**Good next candidates:** a proper 4X start/main menu for `core.html` (new-game with the
+`foundColony` start-preference: river-valley/coastal/highlands/surprise; Continue if a save
+exists); a minimap with fog; economy sparklines (needs a history sampler in `RegionSim`);
+in-map tooltips; first-run tutorial. **Process note:** background agents share the working
+tree unless launched with `isolation: "worktree"` — always isolate parallel agents.
 
 ---
 
