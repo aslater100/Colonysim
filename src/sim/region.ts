@@ -2943,6 +2943,78 @@ export class RegionSim {
     return region;
   }
 
+  // ---- THE FOUNDING: a fresh colony for the standalone 4X campaign ----
+  /**
+   * Found a brand-new colony with no TownCore flip behind it. Seeds a single
+   * small founding settlement at the map's best river-valley site, reveals the
+   * land immediately around it (the rest of the region stays under fog), and
+   * wires up the player faction, lenders and starting notables.
+   *
+   * This is the colony→nation arc's day zero: grow this town to ~24 souls with
+   * food and timber to spare, send out the first expedition, charter a state,
+   * and proclaim a nation before the century turns.
+   */
+  static foundColony(
+    rng: Rng,
+    map: RegionMap,
+    weather: Weather,
+    opts: { name?: string; treasury?: number; pref?: 'river-valley' | 'coastal' | 'highlands' | 'surprise' } = {},
+  ): RegionSim {
+    const region = new RegionSim(rng, 0, map, weather);
+    const site = map.startSite(opts.pref ?? 'river-valley');
+    const coord = map.cellToCoord(site.cellX, site.cellY);
+    region.treasury = opts.treasury ?? 1200;
+    region.prevMonthTreasury = region.treasury; // first delta reads ~0
+
+    const home: Settlement = {
+      id: region.nextId++,
+      name: opts.name ?? "Founder's Rest",
+      x: coord.rx,
+      y: coord.ry,
+      foundedDay: 0,
+      cohorts: { bands: [3, 5, 4, 2, 0] }, // ~14 souls: children, young, prime, elders
+      food: 60,
+      wood: 40,
+      satisfaction: 62,
+      housing: 18,
+      landQuality: site.fertility,
+      site,
+      lastRaidDay: -99,
+      lastFloodDay: -99,
+      strikeUntil: -1,
+      grievance: 0,
+      prices: defaultPrices(),
+      recentEvents: [],
+      factionId: 0, // player faction
+      garrisonStrength: 5,
+      loyaltyToFaction: 100,
+      sectors: defaultSectors(),
+      buildings: [],
+      construction: null,
+      focus: 'balanced',
+      activeEvents: [],
+      policies: { ...DEFAULT_CITY_POLICIES },
+    };
+    region.settlements.push(home);
+    region.lenders = createInitialLenders();
+    region.regionalizeFactionSystem(home);
+
+    // The founding valley is known; the rest of the region waits under fog.
+    region.revealTiles(home.x, home.y, 14, 'explored');
+
+    // The founders who will carry the story toward statehood.
+    for (const role of ['Mayor', 'Doctor', 'Captain'] as NotableRole[]) {
+      region.mintNotable(role, home.id);
+    }
+
+    region.addLog(
+      `Wagons halt in a sheltered valley. ${home.name} is founded, 1900 — ` +
+      `the first stone of a nation yet unnamed.`,
+      'good',
+    );
+    return region;
+  }
+
   /** Site selection and travel time come from the terrain, not dice. */
   private launchExpedition(from: Settlement, pop: number, food: number, wood: number): boolean {
     const fromCell = this.map.coordToCell(from.x, from.y);

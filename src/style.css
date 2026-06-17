@@ -1167,3 +1167,42 @@ body {
 }
 
 #go-restart:hover { background: #7a3a28; }
+
+/* ─── 4X campaign shell (core.html / coreview.ts) ─────────────────────── */
+.cv-canvas {
+  position: fixed;
+  inset: 0;
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  background: #10141c;
+  cursor: grab;
+}
+.cv-canvas:active { cursor: grabbing; }
+
+/* The persistent top HUD reuses .topbar; let it wrap gracefully on narrow viewports. */
+.cv-topbar { flex-wrap: wrap; row-gap: 2px; }
+
+/* Bottom-left rolling event log. */
+.cv-log {
+  position: fixed;
+  left: 10px;
+  bottom: 10px;
+  width: 360px;
+  max-height: 130px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  background: rgba(16, 14, 10, 0.78);
+  border: 1px solid #3a2e22;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.35;
+  pointer-events: none;
+  z-index: 90;
+}
+.cv-log .log-good { color: #8fd07a; }
+.cv-log .log-bad  { color: #e07a5a; }
+.cv-log .log-info { color: #b7a98e; }

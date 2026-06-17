@@ -1,18 +1,22 @@
 /**
- * CoreView 4X — A seamless open-world 4X interface for RegionSim.
+ * CENTURIA — the 4X campaign shell (core.html).
  *
- * Drop TownCore entirely. This is a pure strategic-level game:
- * - Manage abstract settlements (economy, policy, politics)
- * - Expand by buying parcels of land (wealth = scale)
- * - Trade, diplomacy, military through regional mechanics
- * - No individual settler AI, no detailed building placement
+ * A standalone strategic game over `RegionSim`: found a single colony in 1900,
+ * grow it, found daughter towns, charter a state, and proclaim a nation before
+ * the century turns in 2100. There is no town-detail / per-settler layer here —
+ * the deep simulation (sectoral economy, monetary policy, diplomacy, war,
+ * climate, tech & civics) is surfaced through `RegionView`'s panels.
+ *
+ * This module owns only the shell: boot, canvas, input, the persistent HUD,
+ * the event log, and the game loop. All map + panel rendering belongs to
+ * `RegionView`.
  *
  * Controls:
- *   Pan: WASD / arrow keys, middle-click drag
- *   Zoom: scroll wheel
- *   Select settlement: left-click
- *   Policy menu: click settlement → sidebar panel
- *   Speed: 1-4, Space to pause
+ *   Pan ........ WASD / arrow keys · middle-drag · left-drag empty map
+ *   Zoom ....... scroll wheel · +/- · 0 resets
+ *   Select ..... left-click a settlement (rivals open the diplomacy panel)
+ *   Panels ..... T research · R routes · L settlements · E economy
+ *   Speed ...... 1–4 · Space pauses
  */
 
 import './style.css';
@@ -21,401 +25,233 @@ import { RegionView } from './ui/regionview';
 import { RegionMap } from './sim/worldgen';
 import { Weather } from './sim/weather';
 import { Rng } from './sim/rng';
-import { TAX_BAND_LABELS, SECTOR_NAMES } from './sim/region';
-import { formatCurrency } from './sim/defs';
+import { formatCurrency, TICKS_PER_SECOND } from './sim/defs';
 import { buildSprites } from './ui/sprites';
 import { applyOverrides } from './ui/spriteOverrides';
+import { WindowManager } from './ui/WindowManager';
 import { Sfx } from './ui/audio';
 import { Music } from './ui/music';
 import { Soundscape } from './ui/soundscape';
 
-// Audio
+// ─────────────────────────────────────────────────────────────────────────────
+// Audio — unlocked on the first user gesture (browser autoplay policy).
+// ─────────────────────────────────────────────────────────────────────────────
 const sfx = new Sfx();
 const music = new Music();
 const soundscape = new Soundscape();
+let soundOn = true;
 const unlockAudio = () => { sfx.unlock(); music.unlock(); soundscape.unlock(); };
 addEventListener('mousedown', unlockAudio, { once: true });
 addEventListener('keydown', unlockAudio, { once: true });
 
-// Sprites
+// Sprites (region tier uses the town-tier sprite atlas for tier markers etc.).
 const sprites = buildSprites([]);
 void applyOverrides(sprites);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Canvas & rendering
+// Canvas — core.html ships only <div id="app">, so we mint the canvas here.
+// The backing store is sized at DPR for crisp HiDPI; RegionView draws in
+// device pixels and the screen→device ratio (canvas.width / rect.width) keeps
+// pointer input aligned.
 // ─────────────────────────────────────────────────────────────────────────────
+const app = document.getElementById('app') ?? document.body;
+const canvas = document.createElement('canvas');
+canvas.className = 'cv-canvas';
+app.appendChild(canvas);
 
-const canvas = document.querySelector('canvas')!;
-const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: true })!;
-let cw = 0, ch = 0, DPR = 1;
-
-function resizeCanvas() {
+let DPR = 1;
+function resizeCanvas(): void {
   DPR = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
-  cw = innerWidth; ch = innerHeight;
-  canvas.width = Math.round(cw * DPR);
-  canvas.height = Math.round(ch * DPR);
-  canvas.style.width = cw + 'px';
-  canvas.style.height = ch + 'px';
+  canvas.width = Math.round(innerWidth * DPR);
+  canvas.height = Math.round(innerHeight * DPR);
+  canvas.style.width = innerWidth + 'px';
+  canvas.style.height = innerHeight + 'px';
 }
 resizeCanvas();
 addEventListener('resize', resizeCanvas);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Game state
-// ─────────────────────────────────────────────────────────────────────────────
+/** Pointer position in canvas backing-store (device) pixels. */
+function devicePos(e: { clientX: number; clientY: number }): { x: number; y: number } {
+  const r = canvas.getBoundingClientRect();
+  const sx = r.width > 0 ? canvas.width / r.width : 1;
+  const sy = r.height > 0 ? canvas.height / r.height : 1;
+  return { x: (e.clientX - r.left) * sx, y: (e.clientY - r.top) * sy };
+}
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Game state — a fresh colony on a freshly generated region.
+// ─────────────────────────────────────────────────────────────────────────────
 const seed = Date.now() % 100000;
-const rng = new Rng(seed);
 const map = new RegionMap(seed);
 const weather = new Weather(seed);
-let region = new RegionSim(rng, 0, map, weather);
+const region = RegionSim.foundColony(new Rng(seed), map, weather);
 
-let regionView: RegionView | null = null;
+const regionView = new RegionView(canvas, region, document.body);
+// Centre the camera on the founding valley once the layout is known.
+regionView.selectedId = region.settlements[0]?.id ?? null;
+
+// Make the region panels draggable + persistent, like the classic game.
+const windows = new WindowManager();
+for (const p of regionView.draggablePanels) windows.register(p);
+
+(window as unknown as { region: RegionSim; regionView: RegionView }).region = region;
+(window as unknown as { region: RegionSim; regionView: RegionView }).regionView = regionView;
+
 let paused = false;
 let speed = 1;
 
-(window as unknown as { region: RegionSim }).region = region;
+// ─────────────────────────────────────────────────────────────────────────────
+// Persistent HUD — a thin DOM top bar (date / weather / towns / pop / treasury
+// / territory) plus a bottom-left event log. Map + panels are RegionView's job.
+// ─────────────────────────────────────────────────────────────────────────────
+const topBar = document.createElement('div');
+topBar.className = 'topbar cv-topbar';
+document.body.appendChild(topBar);
 
-// Initialize RegionView once sprites are ready
-Promise.resolve().then(() => {
-  regionView = new RegionView(canvas, region, document.body);
-});
+const logBox = document.createElement('div');
+logBox.className = 'cv-log';
+document.body.appendChild(logBox);
+
+function updateTopBar(): void {
+  const r = region;
+  const wx = r.weather.forDay(r.day);
+  const skyIcon = { clear: '☀', overcast: '☁', rain: '☔', storm: '⛈', snow: '❄' }[wx.sky] ?? '';
+  const drought = r.weather.isDrought(r.day) && r.seasonIndex < 3 ? ' <span class="tb-over">DROUGHT</span>' : '';
+  const delta = Math.round(r.treasuryDeltaMonth);
+  const trendColor = delta > 0 ? '#7fc26a' : delta < 0 ? '#e0995a' : '#998c6e';
+  const trendStr = delta === 0 ? '' :
+    ` <span style="color:${trendColor}" title="net treasury change last month">${delta > 0 ? '▲' : '▼'}${formatCurrency(Math.abs(delta))}/mo</span>`;
+  const terr = Math.round(r.playerTerritoryControl() * 100);
+  const tierLabel = r.nationProclaimed ? '★ NATION' : r.stateProclaimed ? '★ STATE' : 'COLONY';
+  topBar.innerHTML =
+    `<span class="tb-date">${r.dateLabel}</span>` +
+    `<span title="weather">${skyIcon}${drought}</span>` +
+    `<span title="settlements">TOWNS ${r.settlements.length}${r.expeditions.length ? ` (+${r.expeditions.length})` : ''}</span>` +
+    `<span title="population">POP ${r.totalPop()}</span>` +
+    `<span title="treasury">💰${formatCurrency(Math.round(r.treasury))}${trendStr}</span>` +
+    `<span title="your share of regional territory">⬣ ${terr}%</span>` +
+    `<span title="living notables">NOTABLES ${r.notables.filter((n) => n.alive).length}</span>` +
+    `<span class="tb-date">${tierLabel}</span>` +
+    `<button class="tb-btn" data-cv="sound" title="toggle audio">${soundOn ? '🔊' : '🔈'}</button>` +
+    `<span class="tb-speed">${paused ? '⏸ PAUSED' : '▶'.repeat(speed)} <i>(space · 1-4)</i></span>` +
+    (r.gameOver ? `<span class="tb-over">THE COLONY HAS PERISHED</span>` : '');
+  const soundBtn = topBar.querySelector<HTMLButtonElement>('[data-cv="sound"]');
+  if (soundBtn) soundBtn.onclick = toggleSound;
+}
+
+let lastLogLen = -1;
+function updateLog(): void {
+  if (region.log.length === lastLogLen) return;
+  lastLogLen = region.log.length;
+  logBox.innerHTML = region.log.slice(-6).reverse()
+    .map((l) => `<div class="log-${l.kind}">${region.dateLabel} · ${l.text}</div>`)
+    .join('');
+}
+
+function toggleSound(): void {
+  soundOn = !soundOn;
+  if (sfx.muted !== !soundOn) sfx.toggleMuted();
+  if (music.enabled === !soundOn) music.toggle();
+  if (soundscape.enabled === !soundOn) soundscape.toggle();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Input handling
+// Input
 // ─────────────────────────────────────────────────────────────────────────────
-
 let panning = false;
 let panLast = { x: 0, y: 0 };
-
-// Policy button click tracking
-interface PolicyButton {
-  x: number; y: number; w: number; h: number;
-  action: () => void;
-}
-let policyButtons: PolicyButton[] = [];
+let dragMoved = 0;
 
 canvas.addEventListener('mousedown', (e) => {
-  if (e.button === 1) { // middle click to pan
+  if (e.button === 1 || e.button === 0) {
     panning = true;
+    dragMoved = 0;
     panLast = { x: e.clientX, y: e.clientY };
-    e.preventDefault();
-    return;
-  }
-  if (e.button === 0) { // left click
-    // Check policy buttons first
-    for (const btn of policyButtons) {
-      if (e.clientX >= btn.x && e.clientX < btn.x + btn.w &&
-          e.clientY >= btn.y && e.clientY < btn.y + btn.h) {
-        btn.action();
-        return;
-      }
-    }
-    // Otherwise select settlement
-    if (regionView) {
-      const r = canvas.getBoundingClientRect();
-      regionView.click(e.clientX - r.left, e.clientY - r.top);
-    }
+    if (e.button === 1) e.preventDefault();
   }
 });
-
 canvas.addEventListener('mousemove', (e) => {
-  if (panning && regionView) {
-    const dx = e.clientX - panLast.x;
-    const dy = e.clientY - panLast.y;
-    regionView.panBy(dx, dy);
-    panLast = { x: e.clientX, y: e.clientY };
-  }
+  if (!panning) return;
+  const dx = e.clientX - panLast.x;
+  const dy = e.clientY - panLast.y;
+  dragMoved += Math.abs(dx) + Math.abs(dy);
+  // Drag the map in device px so it tracks the cursor exactly at any DPR.
+  regionView.panBy(dx * DPR, dy * DPR);
+  panLast = { x: e.clientX, y: e.clientY };
 });
-
-canvas.addEventListener('mouseup', () => {
+canvas.addEventListener('mouseup', (e) => {
+  if (panning && e.button === 0 && dragMoved < 5) {
+    const p = devicePos(e);
+    regionView.click(p.x, p.y);
+  }
   panning = false;
 });
-
+canvas.addEventListener('mouseleave', () => { panning = false; });
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('wheel', (e) => {
-  if (regionView) {
-    const dir = e.deltaY > 0 ? -1 : 1;
-    regionView.zoomAt(e.clientX, e.clientY, dir);
-  }
+  const p = devicePos(e);
+  regionView.zoomAt(p.x, p.y, e.deltaY < 0 ? 1 : -1);
   e.preventDefault();
-});
+}, { passive: false });
 
 addEventListener('keydown', (e) => {
+  // Don't steal keys while typing into a panel field.
+  const tag = (e.target as HTMLElement)?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  const PAN = 60 * DPR;
   switch (e.key.toLowerCase()) {
-    case ' ': paused = !paused; break;
+    case ' ': paused = !paused; e.preventDefault(); break;
     case '1': speed = 1; break;
     case '2': speed = 2; break;
     case '3': speed = 3; break;
     case '4': speed = 4; break;
-    case 'w': case 'arrowup': if (regionView) regionView.panBy(0, 20); break;
-    case 's': case 'arrowdown': if (regionView) regionView.panBy(0, -20); break;
-    case 'a': case 'arrowleft': if (regionView) regionView.panBy(20, 0); break;
-    case 'd': case 'arrowright': if (regionView) regionView.panBy(-20, 0); break;
-    case 'escape': if (regionView) regionView.selectedId = null; break;
+    case 'w': case 'arrowup': regionView.panBy(0, PAN); break;
+    case 's': case 'arrowdown': regionView.panBy(0, -PAN); break;
+    case 'a': case 'arrowleft': regionView.panBy(PAN, 0); break;
+    case 'd': case 'arrowright': regionView.panBy(-PAN, 0); break;
+    case '=': case '+': regionView.zoomAt(canvas.width / 2, canvas.height / 2, 1); break;
+    case '-': case '_': regionView.zoomAt(canvas.width / 2, canvas.height / 2, -1); break;
+    case '0': regionView.resetView(); break;
+    case 't': regionView.researchOpen = !regionView.researchOpen; break;
+    case 'r': regionView.routeNetworkOpen = !regionView.routeNetworkOpen; break;
+    case 'l': regionView.settlementListOpen = !regionView.settlementListOpen; break;
+    case 'e': regionView.economyOpen = !regionView.economyOpen; break;
+    case 'm': toggleSound(); break;
+    case 'escape': regionView.selectedId = null; regionView.selectedFactionId = null; break;
   }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Left sidebar (regional overview)
+// Main loop — fixed-timestep accumulator (parity with the classic region tick).
 // ─────────────────────────────────────────────────────────────────────────────
-
-function drawLeftSidebar(): void {
-  const panelW = 280, pad = 8, lineH = 14;
-  ctx.fillStyle = '#0b1118dd';
-  ctx.fillRect(0, 0, panelW, ch);
-  ctx.strokeStyle = '#33424f';
-  ctx.strokeRect(0.5, 0.5, panelW - 1, ch - 1);
-
-  ctx.font = '11px monospace';
-  ctx.textAlign = 'left';
-
-  let y = pad + 12;
-  const line = (label: string, val: string | number) => {
-    ctx.fillStyle = '#aab8c4';
-    ctx.fillText(label, pad, y);
-    ctx.fillStyle = '#dff1ff';
-    ctx.textAlign = 'right';
-    ctx.fillText(String(val), panelW - pad - 2, y);
-    ctx.textAlign = 'left';
-    y += lineH;
-  };
-
-  // Title
-  ctx.fillStyle = '#7fd0f0';
-  ctx.font = 'bold 13px monospace';
-  ctx.fillText('Overview', pad, y);
-  y += 18;
-
-  // Regional stats
-  const totalPop = region.settlements.reduce((a, s) => a + s.cohorts.bands.reduce((x, z) => x + z, 0), 0);
-  const totalSats = region.settlements.reduce((a, s) => a + s.satisfaction, 0) / Math.max(1, region.settlements.length);
-
-  line('Day', region.day);
-  line('Settlements', region.settlements.length);
-  line('Population', Math.round(totalPop));
-  line('Avg Satisfaction', Math.round(totalSats) + '%');
-
-  y += 4;
-  ctx.fillStyle = '#666';
-  ctx.fillRect(pad, y, panelW - pad * 2, 1);
-  y += 12;
-
-  // Treasury and military
-  ctx.fillStyle = '#7fd0f0';
-  ctx.font = 'bold 11px monospace';
-  ctx.fillText('State', pad, y);
-  y += 14;
-
-  ctx.font = '10px monospace';
-  line('Treasury', formatCurrency(region.treasury));
-  const totalGarrison = region.settlements.reduce((a, s) => a + s.garrisonStrength, 0);
-  line('Military', Math.round(totalGarrison));
-
-  y += 4;
-  ctx.fillStyle = '#666';
-  ctx.fillRect(pad, y, panelW - pad * 2, 1);
-  y += 12;
-
-  // Faction info
-  if (region.settlements.length > 0) {
-    const faction = region.settlements[0].factionId;
-    ctx.fillStyle = '#7fd0f0';
-    ctx.font = 'bold 11px monospace';
-    ctx.fillText('Faction', pad, y);
-    y += 14;
-
-    ctx.font = '9px monospace';
-    ctx.fillStyle = '#aab8c4';
-    ctx.fillText(`Faction ID: ${faction}`, pad, y);
-    y += lineH;
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Settlement UI panel
-// ─────────────────────────────────────────────────────────────────────────────
-
-function drawSettlementPanel(): void {
-  if (!regionView || !regionView.selectedId) return;
-  const s = region.settlements.find(t => t.id === regionView!.selectedId);
-  if (!s) return;
-
-  policyButtons = [];
-
-  const panelW = 320, pad = 8, lineH = 16, btnH = 18;
-  ctx.fillStyle = '#0b1118dd';
-  ctx.fillRect(cw - panelW, 0, panelW, ch);
-  ctx.strokeStyle = '#33424f';
-  ctx.strokeRect(cw - panelW + 0.5, 0.5, panelW - 1, ch - 1);
-
-  ctx.font = '11px monospace';
-  ctx.textAlign = 'left';
-
-  let y = pad + 12;
-  const sep = () => { ctx.fillStyle = '#666'; ctx.fillRect(cw - panelW + pad, y, panelW - pad * 2, 1); y += 12; };
-  const title = (t: string) => { ctx.fillStyle = '#7fd0f0'; ctx.font = 'bold 12px monospace'; ctx.fillText(t, cw - panelW + pad, y); y += 18; };
-  const line = (label: string, val: string | number) => {
-    ctx.font = '11px monospace'; ctx.fillStyle = '#aab8c4';
-    ctx.fillText(label, cw - panelW + pad, y);
-    ctx.fillStyle = '#dff1ff';
-    ctx.textAlign = 'right';
-    ctx.fillText(String(val), cw - panelW + panelW - pad - 2, y);
-    ctx.textAlign = 'left';
-    y += lineH;
-  };
-  const drawBtn = (x: number, w: number, label: string, onClick: () => void) => {
-    const bx = cw - panelW + x, by = y;
-    ctx.fillStyle = '#1a3a4a';
-    ctx.fillRect(bx, by, w, btnH);
-    ctx.strokeStyle = '#4a8aaa';
-    ctx.strokeRect(bx + 0.5, by + 0.5, w - 1, btnH - 1);
-    ctx.font = '9px monospace';
-    ctx.fillStyle = '#7fd0f0';
-    ctx.textAlign = 'center';
-    ctx.fillText(label, bx + w / 2, by + 12);
-    ctx.textAlign = 'left';
-    policyButtons.push({ x: bx, y: by, w, h: btnH, action: onClick });
-  };
-
-  // Settlement header
-  title(s.name);
-
-  // Status
-  const pop = s.cohorts.bands.reduce((a, b) => a + b, 0);
-  line('Population', Math.round(pop));
-  line('Satisfaction', Math.round(s.satisfaction) + '%');
-
-  sep();
-
-  // Resources
-  line('Food', Math.round(s.food));
-  line('Wood', Math.round(s.wood));
-  line('Military', Math.round(s.garrisonStrength));
-
-  sep();
-
-  // Policies
-  ctx.fillStyle = '#7fd0f0';
-  ctx.font = 'bold 11px monospace';
-  ctx.fillText('Policies', cw - panelW + pad, y);
-  y += lineH + 4;
-
-  // Tax band buttons
-  ctx.font = '10px monospace';
-  ctx.fillStyle = '#aab8c4';
-  ctx.fillText('Tax:', cw - panelW + pad, y);
-  const taxBtnW = 65;
-  drawBtn(pad + 30, taxBtnW, TAX_BAND_LABELS[s.policies.taxBand], () => {
-    region.setCityPolicy(s.id, 'taxBand', (s.policies.taxBand + 1) % 4);
-  });
-  y += btnH + 4;
-
-  // Wage policy buttons
-  ctx.fillStyle = '#aab8c4';
-  ctx.fillText('Wages:', cw - panelW + pad, y);
-  const wages = ['low', 'market', 'high'] as const;
-  const wageLbl = wages[(wages.indexOf(s.policies.wagePolicy) + 1) % 3];
-  drawBtn(pad + 40, taxBtnW, wageLbl, () => {
-    const idx = wages.indexOf(s.policies.wagePolicy);
-    region.setCityPolicy(s.id, 'wagePolicy', wages[(idx + 1) % 3]);
-  });
-  y += btnH + 4;
-
-  // Service level buttons
-  ctx.fillStyle = '#aab8c4';
-  ctx.fillText('Services:', cw - panelW + pad, y);
-  const svc = ['Minimal', 'Standard', 'Generous'];
-  drawBtn(pad + 50, taxBtnW, svc[s.policies.serviceLevel], () => {
-    region.setCityPolicy(s.id, 'serviceLevel', (s.policies.serviceLevel + 1) % 3);
-  });
-  y += btnH + 8;
-
-  // Sectors
-  sep();
-  ctx.fillStyle = '#7fd0f0';
-  ctx.font = 'bold 11px monospace';
-  ctx.fillText('Employment', cw - panelW + pad, y);
-  y += lineH + 4;
-
-  ctx.font = '9px monospace';
-  for (const [sid, sector] of Object.entries(s.sectors)) {
-    ctx.fillStyle = '#aab8c4';
-    const pct = Math.round(sector.share * 100);
-    ctx.fillText(`${SECTOR_NAMES[sid as keyof typeof SECTOR_NAMES]} ${pct}%`, cw - panelW + pad, y);
-    y += 12;
-  }
-
-  sep();
-
-  // Expansion
-  ctx.fillStyle = '#7fd0f0';
-  ctx.font = 'bold 11px monospace';
-  ctx.fillText('Development', cw - panelW + pad, y);
-  y += lineH + 4;
-
-  ctx.font = '9px monospace';
-  ctx.fillStyle = '#aab8c4';
-  ctx.fillText(`Housing: ${Math.round(s.housing)}`, cw - panelW + pad, y);
-  y += lineH;
-
-  const expandCost = Math.max(100, Math.round(s.housing * 25));
-  const expandLabel = `Expand Parcel (£${expandCost})`;
-  const canExpand = region.treasury >= expandCost;
-  drawBtn(pad + 10, panelW - pad * 3, expandLabel, () => {
-    if (canExpand) {
-      region.treasury -= expandCost;
-      s.housing += 20;
-    }
-  });
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Main loop
-// ─────────────────────────────────────────────────────────────────────────────
-
-function draw(): void {
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  ctx.fillStyle = '#15151a';
-  ctx.fillRect(0, 0, cw, ch);
-
-  // Draw regional map
-  if (regionView) {
-    regionView.draw();
-  }
-
-  // Draw left sidebar
-  drawLeftSidebar();
-
-  // Draw settlement panel if one is selected
-  drawSettlementPanel();
-
-  // Status line
-  ctx.font = '11px monospace';
-  ctx.fillStyle = '#aab8c4';
-  ctx.textAlign = 'left';
-  ctx.fillText(`Day ${region.day} | Settlements: ${region.settlements.length} | Speed: ${speed}${paused ? ' [PAUSED]' : ''}`, 8, ch - 8);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Simulation tick
-// ─────────────────────────────────────────────────────────────────────────────
-
 let lastTime = performance.now();
-function tick() {
+let acc = 0;
+
+function frame(): void {
   const now = performance.now();
-  const dt = (now - lastTime) / 1000;
+  const dt = Math.min(0.1, (now - lastTime) / 1000); // clamp after tab-out
   lastTime = now;
 
-  if (!paused) {
-    // Advance simulation
-    const daysToSimulate = dt * 20 * speed; // 20 days per real second at 1x
-    for (let i = 0; i < Math.floor(daysToSimulate); i++) {
+  if (!paused && !regionView.ceremonyOpen && !region.gameOver) {
+    acc += dt * TICKS_PER_SECOND * speed;
+    let guard = 0;
+    while (acc >= 1 && guard++ < 256) {
       region.tick();
+      acc -= 1;
     }
   }
 
-  draw();
-  requestAnimationFrame(tick);
+  regionView.draw();
+  updateTopBar();
+  updateLog();
+
+  // Diegetic audio: era soundtrack + ambience that swells with unrest.
+  const maxGrievance = region.settlements.reduce((m, s) => Math.max(m, s.grievance || 0), 0);
+  const tension = Math.min(1, maxGrievance / 100);
+  music.update({ year: region.year, paused, tension });
+  soundscape.update({ mode: 'region', paused, year: region.year, activeBuildWorkers: 0, activeRailRoutes: 0, maxGrievance, tension });
+
+  requestAnimationFrame(frame);
 }
 
-requestAnimationFrame(tick);
+requestAnimationFrame(frame);
