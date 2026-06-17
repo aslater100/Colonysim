@@ -60,6 +60,32 @@ describe('RegionSim.foundColony — the 4X day zero', () => {
     expect(r.settlements.length).toBeGreaterThanOrEqual(1);
   });
 
+  it('survives a save/load round-trip and continues deterministically', () => {
+    // The 4X shell saves region.serialize() + the world seed, and reloads via
+    // RegionSim.deserialize with a {rng, regionMap, weather} stub. This guards
+    // that the round-trip restores state AND the rng so play continues identically.
+    const seed = 31337;
+    const r = colony(seed);
+    for (let i = 0; i < ticksPerDay * 200; i++) r.tick();
+    const json = r.serialize();
+    const stub = { rng: new Rng(seed), regionMap: new RegionMap(seed), weather: new Weather(seed) } as never;
+    const r2 = RegionSim.deserialize(json, stub);
+
+    // Restored state matches.
+    expect(r2.day).toBe(r.day);
+    expect(r2.treasury).toBeCloseTo(r.treasury, 5);
+    expect(r2.settlements.length).toBe(r.settlements.length);
+    expect(r2.totalPop()).toBeCloseTo(r.totalPop(), 5);
+    const explored = (rr: RegionSim) => rr.explorationMap.reduce((a, col) => a + col.filter((v) => v !== 'fogged').length, 0);
+    expect(explored(r2)).toBe(explored(r));
+
+    // Continued play is identical (rng state was restored).
+    for (let i = 0; i < ticksPerDay * 120; i++) { r.tick(); r2.tick(); }
+    expect(r2.treasury).toBeCloseTo(r.treasury, 5);
+    expect(r2.totalPop()).toBeCloseTo(r.totalPop(), 5);
+    expect(r2.settlements.length).toBe(r.settlements.length);
+  });
+
   it('lets the founding town reach the expansion gate within a few years', () => {
     // Grow unmanaged; the colony should accumulate the pop/food/wood to found a
     // daughter town at some point in the early century — the arc is reachable.
