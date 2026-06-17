@@ -1716,3 +1716,44 @@ body {
 }
 
 @keyframes cv-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---- Sparklines (economy trend charts) ---- */
+.cv-sparklines-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 8px 0;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 4px;
+  border: 1px solid rgba(90, 169, 216, 0.1);
+}
+
+.cv-sparkline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+}
+
+.cv-sparkline-label {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cv-sparkline-svg {
+  width: 100%;
+  height: 32px;
+  margin: 0 -2px;
+}
+
+.cv-sparkline-value {
+  color: var(--text);
+  font-weight: 600;
+  font-family: ui-monospace, "SF Mono", monospace;
+  white-space: nowrap;
+}

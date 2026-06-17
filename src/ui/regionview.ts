@@ -11,6 +11,7 @@ import { ANNOUNCE_LEAD_DAYS } from '../sim/currency';
 import { REGION_N } from '../sim/worldgen';
 import { DesignScreen } from './designscreen';
 import { Minimap } from './minimap';
+import { sparklineGrid } from './sparklines';
 
 /** Parse a #rrggbb (or #rgb) hex string to {r,g,b}; falls back to grey. */
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
@@ -3131,9 +3132,13 @@ export class RegionView {
       );
     }).join('');
     const etab = this.economyTab;
+    const gdpHist = r.monthlyHistory.map((h) => h.gdp);
+    const treasuryHist = r.monthlyHistory.map((h) => h.treasury);
+    const inflationHist = r.monthlyHistory.map((h) => h.inflation);
     const overviewBody =
       `<p>treasury ` + formatCurrency(Math.floor(r.treasury)) + ` · GDP ` + formatCurrency(Math.floor(r.gdpLastMonth)) + `/mo</p>` +
       `<p>global tax ${Math.round(r.taxRate * 100)}% · trade ` + formatCurrency(Math.floor(r.tradeValueLastMonth)) + `/mo</p>` +
+      sparklineGrid(r.gdpLastMonth, r.treasury, r.inflationRate * 100, gdpHist, treasuryHist, inflationHist) +
       (factionHtml ? `<p class="insp-skills">FACTION MOOD</p>${factionHtml}` : '') +
       actionsHtml;
     return (
