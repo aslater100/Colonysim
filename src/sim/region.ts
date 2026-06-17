@@ -1906,11 +1906,10 @@ export class RegionSim {
     }
   }
 
-  /** Check if a tile is visible to a faction. */
-  canFoundSettlement(x: number, y: number, _factionId: number): boolean {
-    // TODO: implement per-faction visibility; for now use global visibility
-    // Can only found in explored tiles
-    if (this.explorationMap[x][y] === 'fogged') return false;
+  /** Check if a tile is visible to a faction for settlement founding. */
+  canFoundSettlement(x: number, y: number, factionId: number): boolean {
+    // Can only found in tiles visible to the faction (revealed by settlements + scouts)
+    if (!this.isVisibleToFaction(x, y, factionId)) return false;
     // Can't found where another settlement already exists
     return !this.settlements.some((s) => Math.abs(s.x - x) < 4 && Math.abs(s.y - y) < 4);
   }
