@@ -1966,6 +1966,11 @@ export class RegionSim {
     return strength;
   }
 
+  /** Get total unit count stationed at a settlement (GDD §7.1). */
+  garrisonUnitCount(settlement: Settlement): number {
+    return settlement.stationedUnits.reduce((sum, u) => sum + u.count, 0);
+  }
+
   /** Get comprehensive statistics for a faction (Phase 4: UI foundation).
    *  Useful for faction status panels and activity log context. */
   getFactionStats(factionId: number): {
@@ -6078,8 +6083,13 @@ export class RegionSim {
       });
     }
 
-    this.addLog(`Recruited ${count} ${type}(s) for £${totalCost} — ${w.units.reduce((sum, u) => sum + u.count, 0)} total units.`, 'good');
+    this.addLog(`Recruited ${count} ${type}(s) for £${totalCost} — ${this.totalArmyUnits()} total units.`, 'good');
     return totalCost;
+  }
+
+  /** Get total unit count in the active war army (GDD §7.1). */
+  totalArmyUnits(): number {
+    return this.playerWar?.units.reduce((sum, u) => sum + u.count, 0) ?? 0;
   }
 
   /** Combat power (GDD §7.3): unit-based power from armies with supply penalties. */
