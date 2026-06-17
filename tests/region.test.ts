@@ -267,6 +267,52 @@ describe('Region event variety', () => {
     expect(r.log[r.log.length - 1].text).toContain('They hang');
   });
 
+  // ---- events-depth: new regional events ----
+
+  it('an active coal_boom multiplies industry sector output', () => {
+    const r = flipped(42);
+    const t = r.settlements[0];
+    const mult = (sim: RegionSim, sec: string) =>
+      (sim as unknown as { eventOutputMult(tt: unknown, s: string): number }).eventOutputMult(t, sec);
+    expect(mult(r, 'industry')).toBe(1); // no event yet
+    t.activeEvents.push({ kind: 'coal_boom', untilDay: r.day + 50, severity: 1 });
+    expect(mult(r, 'industry')).toBeCloseTo(1.35, 5); // +35% industry
+    expect(mult(r, 'agriculture')).toBe(1); // sector-scoped, leaves others alone
+  });
+
+  it('an active wildfire cuts agriculture output', () => {
+    const r = flipped(42);
+    const t = r.settlements[0];
+    runDays(r, 35); // let the monthly recompute populate sector output
+    const before = t.sectors.agriculture.output;
+    expect(before).toBeGreaterThan(0);
+    t.activeEvents.push({ kind: 'wildfire', untilDay: r.day + 35, severity: 1 });
+    runDays(r, 35);
+    expect(t.sectors.agriculture.output).toBeLessThan(before);
+  });
+
+  it('era-gated events do not fire before their minYear', () => {
+    const r = flipped(42);
+    const def = REGION_EVENT_DEFS.find((d) => d.kind === 'automation_surge')!;
+    expect(def.minYear).toBe(2010);
+    // tickRegionalEvents is private; reach in and run it many times at an early year
+    const tick = (sim: RegionSim) => (sim as unknown as { tickRegionalEvents(): void }).tickRegionalEvents();
+    expect(r.year).toBeLessThan(2010);
+    for (let i = 0; i < 500; i++) tick(r);
+    const fired = r.settlements.some((t) => t.activeEvents.some((e) => e.kind === 'automation_surge'));
+    expect(fired).toBe(false);
+  });
+
+  it('a firing event applies its one-shot grievance swing', () => {
+    const r = flipped(42);
+    const t = r.settlements[0];
+    t.grievance = 0;
+    // pandemic_wave carries grievance +4 and minYear 1915; force it through the def fields
+    const def = REGION_EVENT_DEFS.find((d) => d.kind === 'pandemic_wave')!;
+    expect(def.grievance).toBe(4);
+    expect(def.satisfaction).toBe(-3);
+  });
+
   it('a funded State fire brigade holds the damage down', () => {
     const a = flipped(42);
     const burnt = a.settlements[0];
@@ -884,6 +930,87 @@ describe('Policy slots & expanded statute book (v0.16.0)', () => {
     expect(r2.activePolicies[0]).toBe('free_trade');
     expect(r2.policyActive('free_trade')).toBe(true);
     expect(r2.passedLaws).toContain('progressive_tax');
+  });
+
+  // ---- events-depth: new policies & laws ----
+
+  it('austerity policy adds treasury revenue and lowers satisfaction', () => {
+    const base = nationReady();
+    base.taxRate = 0.1;
+    base.treasury = 0;
+    runDays(base, 32);
+    const baseTreasury = base.treasury;
+    const baseSat = base.settlements.reduce((s, t) => s + t.satisfaction, 0) / base.settlements.length;
+
+    const r = nationReady();
+    r.setPolicy(0, 'austerity'); // slot 0 = economic for democracy
+    r.taxRate = 0.1;
+    r.treasury = 0;
+    runDays(r, 32);
+    expect(r.policyActive('austerity')).toBe(true);
+    expect(r.treasury).toBeGreaterThan(baseTreasury);
+    const sat = r.settlements.reduce((s, t) => s + t.satisfaction, 0) / r.settlements.length;
+    expect(sat).toBeLessThan(baseSat);
+  });
+
+  it('research_grants policy raises the research rate', () => {
+    const r = nationReady();
+    const before = r.researchRate();
+    r.setPolicy(1, 'research_grants'); // slot 1 = social for democracy
+    expect(r.policyActive('research_grants')).toBe(true);
+    expect(r.researchRate()).toBeCloseTo(before * 1.2, 5);
+  });
+
+  it('green_subsidies policy cuts national emissions', () => {
+    const r = nationReady();
+    r.researched.push('environmentalism', 'combustion_engine');
+    const before = r.playerEmissions();
+    r.setPolicy(0, 'green_subsidies');
+    expect(r.policyActive('green_subsidies')).toBe(true);
+    expect(r.playerEmissions()).toBeCloseTo(before * 0.85, 5);
+  });
+
+  it('tariff_act law raises the trade levy and shifts faction support', () => {
+    const r = nationReady();
+    r.politicalCapital = 200;
+    expect(r.tradeLevyRate).toBe(0.05);
+    const ok = r.enactLaw('tariff_act');
+    expect(ok).toBe(true);
+    expect(r.tradeLevyRate).toBe(0.08);
+    runDays(r, 31);
+    const merchants = r.factions.find((f) => f.id === 'merchants')!;
+    const landowners = r.factions.find((f) => f.id === 'landowners')!;
+    // merchants penalized, landowners favored relative to a no-law baseline
+    const base = nationReady();
+    base.politicalCapital = 200;
+    runDays(base, 31);
+    const baseMerch = base.factions.find((f) => f.id === 'merchants')!.support;
+    const baseLand = base.factions.find((f) => f.id === 'landowners')!.support;
+    expect(merchants.support).toBeLessThan(baseMerch);
+    expect(landowners.support).toBeGreaterThan(baseLand);
+  });
+
+  it('sanitation_act law raises satisfaction across the towns', () => {
+    const prep = (r: RegionSim) => {
+      for (const t of r.settlements) {
+        const pop = t.cohorts.bands.reduce((s, v) => s + v, 0);
+        t.housing = pop + 10;
+        t.food = pop * 40;
+        t.satisfaction = 50;
+      }
+    };
+    const base = nationReady();
+    prep(base);
+    runDays(base, 30);
+    const baseSat = base.settlements.reduce((s, t) => s + t.satisfaction, 0) / base.settlements.length;
+
+    const r = nationReady();
+    r.politicalCapital = 200;
+    expect(r.enactLaw('sanitation_act')).toBe(true);
+    prep(r);
+    runDays(r, 30);
+    const sat = r.settlements.reduce((s, t) => s + t.satisfaction, 0) / r.settlements.length;
+    expect(sat).toBeGreaterThan(baseSat);
   });
 
   it('all POLICY_CARDS have valid domains matching GOV_TYPES slots', () => {

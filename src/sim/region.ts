@@ -210,7 +210,10 @@ export type TownFocus = SectorId | 'balanced';
 
 export type RegionalEventKind =
   | 'drought' | 'flood' | 'plague' | 'earthquake'
-  | 'harvest_bonus' | 'trade_windfall' | 'labor_shortage' | 'gold_rush';
+  | 'harvest_bonus' | 'trade_windfall' | 'labor_shortage' | 'gold_rush'
+  // ---- events-depth: flavorful additions spanning the century ----
+  | 'coal_boom' | 'wildfire' | 'pandemic_wave' | 'rail_windfall'
+  | 'factory_unrest' | 'tourism_boom' | 'tech_breakthrough' | 'automation_surge';
 
 export interface ActiveEvent {
   kind: RegionalEventKind;
@@ -226,6 +229,9 @@ export interface RegionalEventDef {
   durationDays: number;
   probability: number;  // per-settlement per monthly update
   desc: string;
+  minYear?: number;     // events-depth: era-gated — won't fire before this year
+  satisfaction?: number; // events-depth: one-shot satisfaction swing when it fires
+  grievance?: number;    // events-depth: one-shot grievance swing when it fires
 }
 
 export const REGION_EVENT_DEFS: RegionalEventDef[] = [
@@ -237,6 +243,23 @@ export const REGION_EVENT_DEFS: RegionalEventDef[] = [
   { kind: 'trade_windfall', name: 'Trade Windfall', sector: 'services', outputMult: 1.20, durationDays: 30, probability: 0.04, desc: 'Caravans arrive flush with coin. Services +20%.' },
   { kind: 'labor_shortage', name: 'Labor Shortage', sector: 'industry', outputMult: 0.75, durationDays: 40, probability: 0.03, desc: 'Workers drain to the capital. Industry -25%.' },
   { kind: 'gold_rush',     name: 'Gold Rush',     sector: 'information', outputMult: 1.30, durationDays: 45, probability: 0.02, desc: 'Prospectors flood in hungry for maps and news. Information +30%.' },
+  // ---- events-depth additions ----
+  // Early-century industrial fortune: a rich coal seam under the town.
+  { kind: 'coal_boom',      name: 'Coal Boom',     sector: 'industry',    outputMult: 1.35, durationDays: 50, probability: 0.025, satisfaction: 2, minYear: 1905, desc: 'A rich seam is struck. The forges roar. Industry +35%.' },
+  // Disaster: a dry-season blaze sweeps the fields.
+  { kind: 'wildfire',       name: 'Wildfire',      sector: 'agriculture', outputMult: 0.55, durationDays: 35, probability: 0.02, satisfaction: -4, minYear: 1905, desc: 'Fire jumps the firebreaks. The harvest burns. Agriculture -45%.' },
+  // Disaster: a wave of contagion harsher than the local plague, era-flavored.
+  { kind: 'pandemic_wave',  name: 'Pandemic Wave', sector: 'all',         outputMult: 0.80, durationDays: 40, probability: 0.015, satisfaction: -3, grievance: 4, minYear: 1915, desc: 'A new sickness rides the rails between towns. All output -20%.' },
+  // Mid-century: the railhead arrives and freight floods the works.
+  { kind: 'rail_windfall',  name: 'Railhead Boom', sector: 'industry',    outputMult: 1.25, durationDays: 40, probability: 0.025, minYear: 1910, desc: 'The line reaches town; freight pours through the works. Industry +25%.' },
+  // Mid-century labor strife: the shop floor downs tools.
+  { kind: 'factory_unrest', name: 'Factory Unrest', sector: 'industry',   outputMult: 0.70, durationDays: 35, probability: 0.02, satisfaction: -3, grievance: 6, minYear: 1920, desc: 'The shop floor walks out over wages. Industry -30%.' },
+  // Late-century services surge: the town becomes a destination.
+  { kind: 'tourism_boom',   name: 'Tourism Boom',  sector: 'services',    outputMult: 1.30, durationDays: 45, probability: 0.025, satisfaction: 3, minYear: 1960, desc: 'Visitors and their coin arrive in droves. Services +30%.' },
+  // Late-century, scales the information sector hard.
+  { kind: 'tech_breakthrough', name: 'Tech Breakthrough', sector: 'information', outputMult: 1.45, durationDays: 45, probability: 0.02, satisfaction: 2, minYear: 1980, desc: 'A local lab files a patent that changes everything. Information +45%.' },
+  // End-century automation shock: information soars while the floor empties.
+  { kind: 'automation_surge', name: 'Automation Surge', sector: 'information', outputMult: 1.50, durationDays: 50, probability: 0.02, grievance: 5, minYear: 2010, desc: 'Robots take the line; the terminal booms, the floor grumbles. Information +50%.' },
 ];
 
 // ---- Phase 5: Local Policies ----
@@ -410,6 +433,35 @@ export const REGION_LAWS: RegionLaw[] = [
     domain: 'economic',
     desc: 'A tax on the smoke itself. National emissions ×0.7; treasury receives +1% of GDP monthly.',
   },
+  // ---- events-depth: additional laws (wired to existing hooks) ----
+  {
+    id: 'sanitation_act',
+    name: 'Public Sanitation Act',
+    cost: 25,
+    prereqs: [],
+    requiresState: true,
+    domain: 'social',
+    desc: 'Sewers, clean water, refuse collection. Settlement mortality −10%; satisfaction +3 everywhere.',
+  },
+  {
+    id: 'trade_unions_act',
+    name: 'Trade Unions Act',
+    cost: 30,
+    prereqs: ['labor_law'],
+    requiresState: true,
+    requiresNation: true,
+    domain: 'social',
+    desc: 'Legal collective bargaining. Grievance buildup 30% slower. Workers +20, Landowners −10.',
+  },
+  {
+    id: 'tariff_act',
+    name: 'Tariff Act',
+    cost: 20,
+    prereqs: ['income_tax'],
+    requiresState: true,
+    domain: 'economic',
+    desc: 'Protective duties on imports. Trade levy raised to 8%. Merchants −10, Landowners +10.',
+  },
 ];
 
 export const GOV_LEANS: Record<GovLean, { name: string; desc: string }> = {
@@ -553,6 +605,27 @@ export const POLICY_CARDS: PolicyCard[] = [
   {
     id: 'isolationism', name: 'Isolationism', domain: 'diplomatic', prereqs: [], upkeep: 0,
     desc: 'Self-reliance. Regional incident frequency −35%.',
+  },
+  // ---- events-depth: additional policy cards (all wired to existing hooks) ----
+  {
+    id: 'austerity', name: 'Austerity', domain: 'economic', prereqs: ['income_tax'], upkeep: 0,
+    desc: 'Balanced books, cut services. Treasury +£4/month, but satisfaction −4 everywhere.',
+  },
+  {
+    id: 'green_subsidies', name: 'Green Subsidies', domain: 'economic', prereqs: ['environmentalism'], upkeep: 3,
+    desc: 'Subsidize clean industry. National emissions ×0.85. Cost £3/month.',
+  },
+  {
+    id: 'research_grants', name: 'Research Grants', domain: 'social', prereqs: ['public_education'], upkeep: 2,
+    desc: 'State funds the laboratories. Research rate +20%. Cost £2/month.',
+  },
+  {
+    id: 'civic_pride', name: 'Civic Pride Campaign', domain: 'social', prereqs: [], upkeep: 1,
+    desc: 'Festivals, parades, public works. Grievance 20% slower. Cost £1/month.',
+  },
+  {
+    id: 'guest_workers', name: 'Guest Worker Program', domain: 'diplomatic', prereqs: ['labor_law'], upkeep: 0,
+    desc: 'Seasonal labor pacts draw newcomers. Migration flows +20%.',
   },
 ];
 
@@ -2261,6 +2334,7 @@ export class RegionSim {
     if (this.has('internet')) mult *= 1.15;
     if (this.has('artificial_intelligence')) mult *= 1.25;
     if (this.passedLaws.includes('national_education_act')) mult *= 1.3;
+    if (this.policyActive('research_grants')) mult *= 1.2;
     // Phase 2: every university adds its laboratories to the effort
     for (const t of this.settlements) {
       for (const id of t.buildings) {
@@ -2381,6 +2455,7 @@ export class RegionSim {
     if (this.has('fusion_power')) intensity *= 0.15;
     if (this.has('carbon_capture')) intensity *= 0.4;
     if (this.passedLaws.includes('carbon_levy')) intensity *= 0.7;
+    if (this.policyActive('green_subsidies')) intensity *= 0.85;
     if (this.eraBranch === 'solarpunk') intensity *= 0.8;
     return (this.totalPop() / 1000) * intensity * 0.04;
   }
@@ -3038,6 +3113,8 @@ export class RegionSim {
           (this.day < t.strikeUntil ? 5 : 0) +
           (this.policyActive('welfare_state') ? 6 : 0) +
           (this.passedLaws.includes('welfare_benefits') ? 5 : 0) +
+          (this.passedLaws.includes('sanitation_act') ? 3 : 0) +
+          (this.policyActive('austerity') ? -4 : 0) +
           (this.eraBranch === 'solarpunk' ? 4 : 0) // the garden century is good to live in
         : 0;
       // Land Reform (nation law) boosts food production 5%
@@ -3060,7 +3137,9 @@ export class RegionSim {
       if (this.stateProclaimed) {
         const laborFactor = (this.has('labor_law') ? 0.7 : 1) * (this.has('welfare_state') ? 0.8 : 1) *
           (this.has('social_insurance') ? 0.85 : 1) * (this.has('civil_rights') ? 0.85 : 1);
-        const constabFactor = this.policyActive('border_constabulary') ? 0.75 : 1;
+        const constabFactor = (this.policyActive('border_constabulary') ? 0.75 : 1) *
+          (this.passedLaws.includes('trade_unions_act') ? 0.7 : 1) *
+          (this.policyActive('civic_pride') ? 0.8 : 1);
         const pressure =
           (Math.max(0, this.taxRate - 0.15) * 35 - this.servicesLevel * 0.4 - Math.max(0, t.satisfaction - 55) * 0.05) * laborFactor * constabFactor +
           (this.eraBranch === 'dystopia' ? 0.15 : 0); // the neon century simmers
@@ -3182,15 +3261,16 @@ export class RegionSim {
       const services = this.stateProclaimed ? 1 - 0.05 * this.servicesLevel * interiorBonus : 1;
       const healthPolicy = this.policyActive('public_health_policy') ? 0.8 : 1;
       const healthcareLaw = this.passedLaws.includes('healthcare_act') ? 0.85 : 1;
+      const sanitationLaw = this.passedLaws.includes('sanitation_act') ? 0.9 : 1;
       // Tech & civics that bend the death rate: antibiotics end lethal infection,
       // social insurance funds the clinics that keep people out of the grave.
       const techHealth = (this.has('antibiotics') ? 0.85 : 1) * (this.has('social_insurance') ? 0.92 : 1);
       for (let i = 0; i < b.length; i++) {
-        b[i] -= b[i] * (BASE_MORTALITY_PER_YEAR[i] / 12) * doctor * services * healthPolicy * healthcareLaw * techHealth;
+        b[i] -= b[i] * (BASE_MORTALITY_PER_YEAR[i] / 12) * doctor * services * healthPolicy * healthcareLaw * sanitationLaw * techHealth;
       }
       // Immigration: the frontier draws people to fed, content towns
       const reeve = 1 + 0.1 * this.roleMult(t, 'Reeve');
-      const openBorders = this.policyActive('open_borders') ? 1.3 : 1;
+      const openBorders = (this.policyActive('open_borders') ? 1.3 : 1) * (this.policyActive('guest_workers') ? 1.2 : 1);
       // Drought suppresses immigration: news of failed harvests travels fast
       const agriEventMult = this.eventOutputMult(t, 'agriculture');
       // High taxes deter settlers: each tax band reduces immigration appeal by 10%
@@ -3510,6 +3590,8 @@ export class RegionSim {
     const progressiveTaxBonus = this.passedLaws.includes('progressive_tax') ? this.gdpLastMonth * 0.02 : 0;
     // Protectionism policy: tariff wall adds flat £3/month
     const protectionismBonus = this.policyActive('protectionism') ? 3 : 0;
+    // Austerity policy: belt-tightening adds a flat £4/month (paid in satisfaction elsewhere)
+    const austerityBonus = this.policyActive('austerity') ? 4 : 0;
     // Central Bank Charter: treasury earns interest at the policy rate
     const bankInterest = this.passedLaws.includes('central_bank_charter') ? this.treasury * (this.policyRate / 12) : 0;
     // Carbon Levy law: the smoke pays 1% of GDP into the treasury
@@ -3530,7 +3612,7 @@ export class RegionSim {
     // requisitions the merchantmen that would have carried the exports
     if (this.playerWar) this.exportEarningsLastMonth *= this.playerWar.blockade ? 0.6 : 0.7;
     this.treasury += revenue - spending + incomeTaxBonus + centralBankingBonus + estateLevyBonus +
-      progressiveTaxBonus + protectionismBonus + bankInterest + carbonLevyBonus + this.exportEarningsLastMonth;
+      progressiveTaxBonus + protectionismBonus + austerityBonus + bankInterest + carbonLevyBonus + this.exportEarningsLastMonth;
     if (this.treasury < 0) {
       this.treasury = 0;
       if (this.servicesLevel > 0) {
@@ -3969,9 +4051,13 @@ export class RegionSim {
       t.activeEvents = t.activeEvents.filter((ev) => ev.untilDay > this.day);
       // Roll each event definition per settlement
       for (const def of REGION_EVENT_DEFS) {
+        if (def.minYear !== undefined && this.year < def.minYear) continue; // era-gated
         if (!this.rng.chance(def.probability)) continue;
         if (t.activeEvents.some((ev) => ev.kind === def.kind)) continue; // no stacking
         t.activeEvents.push({ kind: def.kind, untilDay: this.day + def.durationDays, severity: 1 });
+        // events-depth: one-shot satisfaction/grievance swings (bounded, clamped)
+        if (def.satisfaction) t.satisfaction = Math.max(0, Math.min(100, t.satisfaction + def.satisfaction));
+        if (def.grievance) t.grievance = Math.max(0, Math.min(100, t.grievance + def.grievance));
         const good = def.outputMult >= 1.0;
         this.townEvent(t, `${def.name}: ${def.desc}`, good ? 'good' : 'bad');
         this.addLog(`${def.name} strikes ${t.name} — ${def.desc}`, good ? 'good' : 'bad');
@@ -4672,7 +4758,8 @@ export class RegionSim {
       + (this.passedLaws.includes('welfare_benefits') ? 10 : 0)
       + (this.passedLaws.includes('national_education_act') ? 10 : 0)
       + (this.passedLaws.includes('healthcare_act') ? 10 : 0)
-      + (this.passedLaws.includes('land_reform') ? 20 : 0),
+      + (this.passedLaws.includes('land_reform') ? 20 : 0)
+      + (this.passedLaws.includes('trade_unions_act') ? 20 : 0),
     ));
 
     const landownerPower = Math.min(50, 15 + food * 0.005);
@@ -4681,7 +4768,9 @@ export class RegionSim {
       - (this.passedLaws.includes('estate_tax') ? 25 : 0)
       - (this.passedLaws.includes('workers_charter') ? 10 : 0)
       - (this.passedLaws.includes('progressive_tax') ? 10 : 0)
-      - (this.passedLaws.includes('land_reform') ? 30 : 0),
+      - (this.passedLaws.includes('land_reform') ? 30 : 0)
+      - (this.passedLaws.includes('trade_unions_act') ? 10 : 0)
+      + (this.passedLaws.includes('tariff_act') ? 10 : 0),
     ));
 
     const merchantPower = Math.min(40, 10 + trade * 0.12);
@@ -4690,7 +4779,8 @@ export class RegionSim {
       + (this.passedLaws.includes('merchants_charter') ? 25 : 0)
       - (this.passedLaws.includes('workers_charter') ? 10 : 0)
       - (this.passedLaws.includes('progressive_tax') ? 10 : 0)
-      + (this.passedLaws.includes('press_freedom_act') ? 10 : 0),
+      + (this.passedLaws.includes('press_freedom_act') ? 10 : 0)
+      - (this.passedLaws.includes('tariff_act') ? 10 : 0),
     ));
 
     this.factions = [
@@ -4938,6 +5028,9 @@ export class RegionSim {
         break;
       case 'conscription_act':
         this.militiaLevel = Math.min(2, this.militiaLevel + 1);
+        break;
+      case 'tariff_act':
+        this.tradeLevyRate = 0.08;
         break;
       case 'central_bank_charter': {
         const pf = this.faction(this.playerFactionId);
