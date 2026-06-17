@@ -440,7 +440,7 @@ export const MINUTES_PER_DAY = 1440;
 export const DAYS_PER_SEASON = 15;
 export const SEASONS = ['Spring', 'Summer', 'Autumn', 'Winter'] as const;
 export const DAYS_PER_YEAR = DAYS_PER_SEASON * SEASONS.length;
-export const START_YEAR = 1900;
+export const START_YEAR = 1800;
 
 // ---- Stockpile / capacity constants ----
 /** Raw-good storage per stockpile zone tile. */

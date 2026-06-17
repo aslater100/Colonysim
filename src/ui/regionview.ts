@@ -799,11 +799,6 @@ export class RegionView {
       g.fillStyle = `rgba(12,20,46,${(0.5 * lit.night).toFixed(3)})`;
       g.fillRect(0, 0, W, H);
     }
-    // Golden hour warmth at dawn/dusk.
-    if (lit.golden > 0.01) {
-      g.fillStyle = `rgba(232,150,72,${(0.20 * lit.golden).toFixed(3)})`;
-      g.fillRect(0, 0, W, H);
-    }
     // Seasonal wash — faint, so it colours the mood without fighting the map.
     const seasonTint = ['rgba(120,180,96,0.07)', 'rgba(255,206,120,0.06)', 'rgba(208,138,60,0.08)', 'rgba(150,182,224,0.09)'][lit.season] ?? '';
     if (seasonTint) { g.fillStyle = seasonTint; g.fillRect(0, 0, W, H); }
@@ -2682,6 +2677,8 @@ export class RegionView {
     for (const sb of this.panel.querySelectorAll<HTMLButtonElement>('.policy-svc-btn')) {
       sb.onclick = () => { this.region.setCityPolicy(t.id, 'serviceLevel', Number(sb.dataset.svc)); this.refreshPanel(); };
     }
+    const scoutBtn = this.panel.querySelector<HTMLButtonElement>('.scout-btn');
+    if (scoutBtn) scoutBtn.onclick = () => { this.region.sendPlayerScout(t.id); this.refreshPanel(); };
     const aidBtn = this.panel.querySelector<HTMLButtonElement>('.crisis-aid-btn');
     if (aidBtn) aidBtn.onclick = () => { this.region.sendFoodAid(t.id); this.refreshPanel(); };
     const svcBtn = this.panel.querySelector<HTMLButtonElement>('.crisis-svc-btn');
@@ -3360,11 +3357,13 @@ export class RegionView {
           `sea wall ` + formatCurrency(r.seaWallCost(t)) + `</button></p>`
         : '') +
       this.garrisonHtml(t) +
+      this.scoutHtml(t) +
       this.crisisActionsHtml(t) +
       recentHtml;
 
     const economyBody =
       this.sectorsHtml(t) +
+      (!r.stateProclaimed ? this.colonyManageHtml(t) : '') +
       this.policiesHtml(t) +
       this.cityHtml(t) +
       this.routesHtml(t);
@@ -3385,6 +3384,47 @@ export class RegionView {
       `<div class="pal-section${ptab === 'overview' ? '' : ' hidden'}" data-psection="overview">${overviewBody}</div>` +
       `<div class="pal-section${ptab === 'economy' ? '' : ' hidden'}" data-psection="economy">${economyBody}</div>` +
       `<div class="pal-section${ptab === 'people' ? '' : ' hidden'}" data-psection="people">${peopleBody}</div>`
+    );
+  }
+
+  /** Scout-hire button — available pre-state so the player can explore the fog. */
+  private scoutHtml(t: Settlement): string {
+    const r = this.region;
+    if (t.factionId !== r.playerFactionId) return '';
+    const active = r.scouts.filter((s) => s.factionId === r.playerFactionId).length;
+    const canAfford = r.treasury >= 10;
+    const atCap = active >= 2;
+    const disabled = !canAfford || atCap;
+    const reason = atCap ? '2 scouts already active' : !canAfford ? 'need £10' : '';
+    return (
+      `<p class="insp-skills">EXPLORATION · ${active}/2 scouts active</p>` +
+      `<p><button class="mini scout-btn" ${disabled ? 'disabled' : ''} ` +
+      `title="${disabled ? reason : 'Hire a scout to explore the fog of war — active for 200 days'}">` +
+      `Hire Scout (£10)</button></p>`
+    );
+  }
+
+  /** Pre-state colony management: development focus and basic local policies. */
+  private colonyManageHtml(t: Settlement): string {
+    const r = this.region;
+    if (t.factionId !== r.playerFactionId) return '';
+    const focusBtns = (['balanced', ...SECTOR_IDS] as TownFocus[])
+      .map((f) => {
+        const label = f === 'balanced' ? 'balanced' : SECTOR_NAMES[f].toLowerCase();
+        return t.focus === f
+          ? `<b>${label}</b>`
+          : `<button class="mini focus-btn" data-f="${f}" title="Shift labor toward ${label} (£${FOCUS_CHANGE_COST})">${label}</button>`;
+      })
+      .join(' ');
+    return (
+      `<p class="insp-skills">COLONY MANAGEMENT</p>` +
+      `<p class="insp-skills">focus: ${focusBtns}</p>` +
+      `<p class="insp-skills"><abbr title="Raises town tax revenue but slows population growth">local tax</abbr>: ` +
+      TAX_BAND_LABELS.map((label, i) =>
+        t.policies.taxBand === i
+          ? `<b>${label}</b>`
+          : `<button class="mini policy-tax-btn" data-tax="${i}">${label}</button>`
+      ).join(' ') + `</p>`
     );
   }
 
