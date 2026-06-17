@@ -256,7 +256,7 @@ describe('Phase C: conquest & diplomacy', () => {
       // Meet all other gates manually
       (r as unknown as { stateProclaimed: boolean }).stateProclaimed = true;
       (r as unknown as { proclamationReady: boolean }).proclamationReady = false;
-      r.researched.push('statecraft');
+      r.researched.add('statecraft');
       // Make pop big enough
       for (const s of r.settlements) {
         const b = s.cohorts.bands;

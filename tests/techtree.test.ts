@@ -96,7 +96,7 @@ describe('Tech tree: research state', () => {
   it('public_education multiplies research rate by 1.5', () => {
     const r = makeRegion();
     const before = r.researchRate();
-    r.researched.push('public_education');
+    r.researched.add('public_education');
     const after = r.researchRate();
     expect(after).toBeCloseTo(before * 1.5, 5);
   });
@@ -104,7 +104,7 @@ describe('Tech tree: research state', () => {
   it('electrical_grid multiplies research rate by 1.25', () => {
     const r = makeRegion();
     const before = r.researchRate();
-    r.researched.push('electrical_grid');
+    r.researched.add('electrical_grid');
     const after = r.researchRate();
     expect(after).toBeCloseTo(before * 1.25, 5);
   });
@@ -112,7 +112,8 @@ describe('Tech tree: research state', () => {
   it('both boosts stack multiplicatively', () => {
     const r = makeRegion();
     const before = r.researchRate();
-    r.researched.push('public_education', 'electrical_grid');
+    r.researched.add('public_education');
+    r.researched.add('electrical_grid');
     const after = r.researchRate();
     expect(after).toBeCloseTo(before * 1.5 * 1.25, 5);
   });
@@ -210,25 +211,25 @@ describe('Tech tree: late-century effects', () => {
   it('artificial_intelligence multiplies research rate by 1.25', () => {
     const r = makeRegion();
     const before = r.researchRate();
-    r.researched.push('artificial_intelligence');
+    r.researched.add('artificial_intelligence');
     expect(r.researchRate()).toBeCloseTo(before * 1.25, 5);
   });
 
   it('carbon_capture cuts player emissions below fusion alone', () => {
     const r = makeRegion();
-    r.researched.push('fusion_power');
+    r.researched.add('fusion_power');
     const withFusion = r.playerEmissions();
-    r.researched.push('carbon_capture');
+    r.researched.add('carbon_capture');
     expect(r.playerEmissions()).toBeLessThan(withFusion);
   });
 
   it('robotics cuts route maintenance below automated freight alone', () => {
     const r = makeRegion();
     runDays(r, 12); // found town #2 so a route can exist
-    r.researched.push('automated_logistics');
+    r.researched.add('automated_logistics');
     const route = { kind: 'road' as const, path: new Array(40).fill(0).map((_, i) => i) } as any;
     const autoOnly = r.maintBill(route);
-    r.researched.push('robotics');
+    r.researched.add('robotics');
     expect(r.maintBill(route)).toBeLessThan(autoOnly);
   });
 
@@ -239,14 +240,15 @@ describe('Tech tree: late-century effects', () => {
     r.stateName = 'Test State';
     r.govLean = 'council';
     r.taxRate = 0.25;
-    r.researched.push('labor_law');
+    r.researched.add('labor_law');
     const r2 = makeRegion();
     runDays(r2, 12);
     r2.stateProclaimed = true;
     r2.stateName = 'Test State';
     r2.govLean = 'council';
     r2.taxRate = 0.25;
-    r2.researched.push('labor_law', 'welfare_state');
+    r2.researched.add('labor_law');
+    r2.researched.add('welfare_state');
     for (const t of r.settlements) t.grievance = 0;
     for (const t of r2.settlements) t.grievance = 0;
     runDays(r, 30);
@@ -271,7 +273,7 @@ describe('Tech tree: gameplay effects', () => {
     expect(r.year).toBe(earlyYear);
     expect(r.railUnlocked()).toBe(false);
     // Research steel_industry → now unlocked
-    r.researched.push('steel_industry');
+    r.researched.add('steel_industry');
     expect(r.railUnlocked()).toBe(true);
   });
 
@@ -292,14 +294,14 @@ describe('Tech tree: gameplay effects', () => {
     const targetDay = (earlyYear - 1900) * 60;
     r.minute = targetDay * MINUTES_PER_DAY;
     expect(r.highwayUnlocked()).toBe(false);
-    r.researched.push('asphalt');
+    r.researched.add('asphalt');
     expect(r.highwayUnlocked()).toBe(true);
   });
 
   it('computing multiplies research rate by 1.25', () => {
     const r = makeRegion();
     const before = r.researchRate();
-    r.researched.push('computing');
+    r.researched.add('computing');
     const after = r.researchRate();
     expect(after).toBeCloseTo(before * 1.25, 5);
   });
@@ -312,7 +314,7 @@ describe('Tech tree: gameplay effects', () => {
     const targetDay = (earlyYear - 1900) * 60;
     r.minute = targetDay * MINUTES_PER_DAY;
     expect(r.maglevUnlocked()).toBe(false);
-    r.researched.push('maglev');
+    r.researched.add('maglev');
     expect(r.maglevUnlocked()).toBe(true);
   });
 
@@ -336,7 +338,7 @@ describe('Tech tree: gameplay effects', () => {
     for (const t of r2.settlements) t.grievance = 0;
 
     // Give labor_law to r but not r2
-    r.researched.push('labor_law');
+    r.researched.add('labor_law');
     runDays(r, 30);
     runDays(r2, 30);
 
@@ -367,7 +369,7 @@ describe('Tech tree: gameplay effects', () => {
     r2.gdpLastMonth = 100;
     r2.treasury = 0;
 
-    r.researched.push('income_tax');
+    r.researched.add('income_tax');
     // Run exactly 30 days so monthly economy fires once
     runDays(r, 30);
     runDays(r2, 30);
@@ -380,21 +382,22 @@ describe('Tech tree: new mid-century depth effects', () => {
   it('compulsory_schooling multiplies research rate by 1.2', () => {
     const r = makeRegion();
     const before = r.researchRate();
-    r.researched.push('compulsory_schooling');
+    r.researched.add('compulsory_schooling');
     expect(r.researchRate()).toBeCloseTo(before * 1.2, 5);
   });
 
   it('telecommunications and internet stack on the research rate', () => {
     const r = makeRegion();
     const before = r.researchRate();
-    r.researched.push('telecommunications', 'internet');
+    r.researched.add('telecommunications');
+    r.researched.add('internet');
     expect(r.researchRate()).toBeCloseTo(before * 1.15 * 1.15, 5);
   });
 
   it('chemical_industry raises player emissions', () => {
     const r = makeRegion();
     const before = r.playerEmissions();
-    r.researched.push('chemical_industry');
+    r.researched.add('chemical_industry');
     expect(r.playerEmissions()).toBeGreaterThan(before);
   });
 
@@ -407,7 +410,7 @@ describe('Tech tree: new mid-century depth effects', () => {
     // immigration threshold, then compare deaths over a long stretch.
     for (const t of r.settlements) { t.satisfaction = 30; t.cohorts.bands[4] += 200; }
     for (const t of r2.settlements) { t.satisfaction = 30; t.cohorts.bands[4] += 200; }
-    r2.researched.push('antibiotics');
+    r2.researched.add('antibiotics');
     const popStart1 = r.settlements.reduce((s, t) => s + t.cohorts.bands[4], 0);
     const popStart2 = r2.settlements.reduce((s, t) => s + t.cohorts.bands[4], 0);
     runDays(r, 365);
@@ -429,7 +432,7 @@ describe('Tech tree: new mid-century depth effects', () => {
     };
     const r = setup();
     const r2 = setup();
-    r2.researched.push('civil_rights');
+    r2.researched.add('civil_rights');
     for (const t of r.settlements) t.grievance = 0;
     for (const t of r2.settlements) t.grievance = 0;
     runDays(r, 30);
@@ -454,7 +457,7 @@ describe('Tech tree: new mid-century depth effects', () => {
     };
     const r = setup();
     const r2 = setup();
-    r2.researched.push('central_banking');
+    r2.researched.add('central_banking');
     runDays(r, 30);
     runDays(r2, 30);
     expect(r2.treasury).toBeGreaterThan(r.treasury);
@@ -468,7 +471,7 @@ describe('Tech tree: save/load round-trip', () => {
     sim.stock.wood = 200;
     sim.stock.meal = 200;
     const r = RegionSim.fromTown(sim, 8, 80, 80);
-    r.researched.push('steel_industry');
+    r.researched.add('steel_industry');
     // public_education has era 1900 and prereq common_law — available from start
     r.startResearch('public_education');
     r.researchProgress = 42;

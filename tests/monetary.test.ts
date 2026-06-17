@@ -28,8 +28,8 @@ function nationState(seed: number): RegionSim {
   r.legitimacy = 60;
   r.activePolicies = [];
   r.treasury = 1000;
-  r.passedLaws.push('central_bank_charter');
-  r.passedLaws.push('income_tax');
+  r.passedLaws.add('central_bank_charter');
+  r.passedLaws.add('income_tax');
   return r;
 }
 
@@ -231,7 +231,7 @@ describe('Central Bank features', () => {
 
   it('borrowFromCentralBank is rejected without the charter', () => {
     const r = nationState(42);
-    r.passedLaws = r.passedLaws.filter((l) => l !== 'central_bank_charter');
+    r.passedLaws.delete('central_bank_charter');
     const result = r.borrowFromCentralBank(100);
     expect(result.ok).toBe(false);
   });

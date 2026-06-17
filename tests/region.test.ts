@@ -456,14 +456,14 @@ describe('Elections & faction politics (v0.14.0)', () => {
 
   it('elections schedule once suffrage is researched and state exists', () => {
     const r = stateReady();
-    r.researched.push('universal_suffrage');
+    r.researched.add('universal_suffrage');
     runDays(r, 1);
     expect(r.nextElectionDay).toBeGreaterThan(0);
   });
 
   it('election awards political capital proportional to satisfaction', () => {
     const r = stateReady();
-    r.researched.push('universal_suffrage');
+    r.researched.add('universal_suffrage');
     // Set all towns to 80% satisfaction
     for (const t of r.settlements) t.satisfaction = 80;
     // Force election today
@@ -476,7 +476,7 @@ describe('Elections & faction politics (v0.14.0)', () => {
 
   it('low-approval election logs LOST and awards less capital', () => {
     const r = stateReady();
-    r.researched.push('universal_suffrage');
+    r.researched.add('universal_suffrage');
     for (const t of r.settlements) t.satisfaction = 15;
     r.nextElectionDay = r.day;
     runDays(r, 1);
@@ -533,7 +533,7 @@ describe('Elections & faction politics (v0.14.0)', () => {
     r.politicalCapital = 100;
     r.enactLaw('workers_charter');
     expect(r.servicesLevel).toBe(1);
-    expect(r.passedLaws.includes('workers_charter')).toBe(true);
+    expect(r.passedLaws.has('workers_charter')).toBe(true);
   });
 
   it("Merchants' Charter reduces the trade levy", () => {
@@ -548,7 +548,7 @@ describe('Elections & faction politics (v0.14.0)', () => {
     const r = stateReady();
     r.politicalCapital = 100;
     expect(r.enactLaw('estate_tax')).toBe(false); // prereq not met
-    r.researched.push('income_tax');
+    r.researched.add('income_tax');
     expect(r.enactLaw('estate_tax')).toBe(true);
     expect(r.estateTaxActive).toBe(true);
   });
@@ -558,7 +558,7 @@ describe('Elections & faction politics (v0.14.0)', () => {
     // Boost workers so estate levy + tax revenue > admin overhead (2 towns × £5 = £10/month)
     for (const t of r.settlements) t.cohorts.bands[2] += 100;
     r.politicalCapital = 100;
-    r.researched.push('income_tax');
+    r.researched.add('income_tax');
     r.enactLaw('estate_tax');
     r.treasury = 0;
     runDays(r, 30); // one monthly economy cycle
@@ -602,7 +602,12 @@ describe('Constitutional Convention & Nation Proclamation (v0.15.0)', () => {
     r.govLean = 'council';
     r.treasury = 40000; // Nation requires £35k net
     r.militiaLevel = 2; // Militia contributes to military requirement (2*3=6 + 10 garrison = 16 >= 15)
-    r.researched.push('statecraft', 'universal_suffrage', 'income_tax', 'free_press', 'labor_law', 'public_education');
+    r.researched.add('statecraft');
+    r.researched.add('universal_suffrage');
+    r.researched.add('income_tax');
+    r.researched.add('free_press');
+    r.researched.add('labor_law');
+    r.researched.add('public_education');
     // Force population above threshold
     for (const t of r.settlements) {
       t.cohorts.bands[2] += 800;
@@ -615,14 +620,14 @@ describe('Constitutional Convention & Nation Proclamation (v0.15.0)', () => {
     const sim = new Simulation(42);
     while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
     const r = RegionSim.fromTown(sim, 8, 80, 80);
-    r.researched.push('statecraft');
+    r.researched.add('statecraft');
     for (const t of r.settlements) t.cohorts.bands[2] += 800;
     expect(r.canCallConvention()).toBe(false);
   });
 
   it('canCallConvention() false without statecraft research', () => {
     const r = nationReady();
-    r.researched = r.researched.filter((id) => id !== 'statecraft');
+    r.researched.delete('statecraft');
     expect(r.canCallConvention()).toBe(false);
   });
 
@@ -753,7 +758,12 @@ describe('Constitutional Convention & Nation Proclamation (v0.15.0)', () => {
     r2.stateName = 'Testonia';
     r2.govLean = 'council';
     r2.treasury = 200;
-    r2.researched.push('statecraft', 'universal_suffrage', 'income_tax', 'free_press', 'labor_law', 'public_education');
+    r2.researched.add('statecraft');
+    r2.researched.add('universal_suffrage');
+    r2.researched.add('income_tax');
+    r2.researched.add('free_press');
+    r2.researched.add('labor_law');
+    r2.researched.add('public_education');
     for (const t of r2.settlements) t.cohorts.bands[2] += 800;
     const notable2 = r2.notables.find((n) => n.alive);
     r2.proclaimNation('Test Nation', 'democracy', { treasury: notable2?.id ?? null });
@@ -779,7 +789,12 @@ describe('Policy slots & expanded statute book (v0.16.0)', () => {
     r.govLean = 'council';
     r.treasury = 50000; // Nation costs £25k, start with £50k
     r.militiaLevel = 2; // Militia contributes to military requirement (2*3=6 + 10 garrison = 16 >= 15)
-    r.researched.push('statecraft', 'universal_suffrage', 'income_tax', 'free_press', 'labor_law', 'public_education');
+    r.researched.add('statecraft');
+    r.researched.add('universal_suffrage');
+    r.researched.add('income_tax');
+    r.researched.add('free_press');
+    r.researched.add('labor_law');
+    r.researched.add('public_education');
     for (const t of r.settlements) {
       t.cohorts.bands[2] += 800;
       t.garrisonStrength = 5; // Garrison contributes to military requirement
@@ -794,7 +809,12 @@ describe('Policy slots & expanded statute book (v0.16.0)', () => {
     const r = RegionSim.fromTown(sim, 8, 80, 80);
     runDays(r, 12);
     r.stateProclaimed = true;
-    r.researched.push('statecraft', 'universal_suffrage', 'income_tax', 'free_press', 'labor_law', 'public_education');
+    r.researched.add('statecraft');
+    r.researched.add('universal_suffrage');
+    r.researched.add('income_tax');
+    r.researched.add('free_press');
+    r.researched.add('labor_law');
+    r.researched.add('public_education');
     const laws = r.availableLaws();
     expect(laws.some((l) => l.requiresNation)).toBe(false);
   });
@@ -821,7 +841,8 @@ describe('Policy slots & expanded statute book (v0.16.0)', () => {
     const r = RegionSim.fromTown(sim, 8, 80, 80);
     runDays(r, 12);
     r.stateProclaimed = true;
-    r.researched.push('statecraft', 'universal_suffrage');
+    r.researched.add('statecraft');
+    r.researched.add('universal_suffrage');
     for (const t of r.settlements) t.cohorts.bands[2] += 800;
     r.proclaimNation('Juntonia', 'junta', {});
     expect(r.activePolicies).toHaveLength(3);
@@ -963,7 +984,8 @@ describe('Policy slots & expanded statute book (v0.16.0)', () => {
 
   it('green_subsidies policy cuts national emissions', () => {
     const r = nationReady();
-    r.researched.push('environmentalism', 'combustion_engine');
+    r.researched.add('environmentalism');
+    r.researched.add('combustion_engine');
     const before = r.playerEmissions();
     r.setPolicy(0, 'green_subsidies');
     expect(r.policyActive('green_subsidies')).toBe(true);
@@ -1050,8 +1072,14 @@ describe('Sectoral economy (Phase 1)', () => {
     const t = r.settlements[0];
     const agriBefore = t.sectors.agriculture.share;
     const infoBefore = t.sectors.information.share;
-    r.researched.push('steel_industry', 'electrical_grid', 'combustion_engine',
-      'mass_production', 'asphalt', 'atomic_age', 'computing', 'automated_logistics');
+    r.researched.add('steel_industry');
+    r.researched.add('electrical_grid');
+    r.researched.add('combustion_engine');
+    r.researched.add('mass_production');
+    r.researched.add('asphalt');
+    r.researched.add('atomic_age');
+    r.researched.add('computing');
+    r.researched.add('automated_logistics');
     runDays(r, 200);
     expect(t.sectors.agriculture.share).toBeLessThan(agriBefore);
     expect(t.sectors.information.share).toBeGreaterThan(infoBefore);
@@ -1070,7 +1098,9 @@ describe('Sectoral economy (Phase 1)', () => {
   it('tech multiplies sector productivity, and GDP grows with it', () => {
     const a = flipped(42);
     const b = flipped(42);
-    b.researched.push('steel_industry', 'electrical_grid', 'mass_production');
+    b.researched.add('steel_industry');
+    b.researched.add('electrical_grid');
+    b.researched.add('mass_production');
     for (const r of [a, b]) {
       r.stateProclaimed = true;
       r.stateName = 'Test State';
@@ -1185,7 +1215,8 @@ describe('City works & zoning (Phase 2)', () => {
     const capital = r.settlements[0];
     const factory = REGION_BUILDINGS.find((b) => b.id === 'factory')!;
     expect(r.cityBuildCheck(capital, factory).reason).toContain('requires');
-    r.researched.push('steel_industry', 'mass_production');
+    r.researched.add('steel_industry');
+    r.researched.add('mass_production');
     expect(r.cityBuildCheck(capital, factory).ok).toBe(true);
   });
 
@@ -1280,7 +1311,8 @@ describe('Cost scaling with development & size (Baumol / Wagner / ideas-harder-t
     const r = freshState(42);
     for (const t of r.settlements) t.cohorts.bands = [2000, 3000, 3000, 1500, 500];
     r.gdpLastMonth = r.totalPop() * 60;
-    r.researched.push('steel_industry', 'mass_production'); // unlock the factory
+    r.researched.add('steel_industry');
+    r.researched.add('mass_production'); // unlock the factory
     const capital = r.settlements[0];
     const cost = r.cityBuildCost(factory);
     const before = r.treasury;

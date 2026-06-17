@@ -80,10 +80,10 @@ describe('The global ledger (GDD §8.2)', () => {
     setYear(r, 2046);
     const basePlayer = r.playerEmissions();
     const baseWorld = r.worldEmissions();
-    r.researched.push('renewables');
+    r.researched.add('renewables');
     expect(r.playerEmissions()).toBeCloseTo(basePlayer * 0.6, 5);
     expect(r.worldEmissions()).toBeCloseTo(baseWorld * 0.8, 5);
-    r.researched.push('fusion_power');
+    r.researched.add('fusion_power');
     expect(r.worldEmissions()).toBeCloseTo(baseWorld * 0.8 * 0.5, 5);
     expect(r.playerEmissions()).toBeCloseTo(basePlayer * 0.6 * 0.15, 5);
   });
@@ -92,7 +92,7 @@ describe('The global ledger (GDD §8.2)', () => {
     const r = nationReady();
     r.politicalCapital = 100;
     expect(r.enactLaw('carbon_levy')).toBe(false); // society has not noticed the smoke yet
-    r.researched.push('environmentalism');
+    r.researched.add('environmentalism');
     const before = r.playerEmissions();
     expect(r.enactLaw('carbon_levy')).toBe(true);
     expect(r.playerEmissions()).toBeCloseTo(before * 0.7, 5);
@@ -296,7 +296,7 @@ describe('Climate Accords (GDD §8.2)', () => {
   it('accordUnlocked() gates the treaty behind environmentalism + year', () => {
     const r = nationReady();
     setYear(r, 2008);
-    r.researched.push('environmentalism');
+    r.researched.add('environmentalism');
     expect(r.accordUnlocked()).toBe(false); // not yet 2010
     setYear(r, 2010);
     expect(r.accordUnlocked()).toBe(true);
@@ -337,7 +337,9 @@ describe('Geoengineering (GDD §8.2)', () => {
     const r = nationReady();
     setYear(r, 2055);
     expect(r.deployGeoengineering()).toBe(false); // no tech yet
-    r.researched.push('renewables', 'computing', 'geoengineering');
+    r.researched.add('renewables');
+    r.researched.add('computing');
+    r.researched.add('geoengineering');
     expect(r.deployGeoengineering()).toBe(true);
     expect(r.geoDeployed).toBe(true);
   });
@@ -345,7 +347,9 @@ describe('Geoengineering (GDD §8.2)', () => {
   it('can only deploy once', () => {
     const r = nationReady();
     setYear(r, 2055);
-    r.researched.push('renewables', 'computing', 'geoengineering');
+    r.researched.add('renewables');
+    r.researched.add('computing');
+    r.researched.add('geoengineering');
     r.deployGeoengineering();
     expect(r.deployGeoengineering()).toBe(false);
   });
@@ -355,7 +359,9 @@ describe('Geoengineering (GDD §8.2)', () => {
     setYear(r, 2055);
     r.co2ppm = 500;
     r.warmingC = 2.0;
-    r.researched.push('renewables', 'computing', 'geoengineering');
+    r.researched.add('renewables');
+    r.researched.add('computing');
+    r.researched.add('geoengineering');
     r.deployGeoengineering();
     // Run climate ticks inside the active window
     const before = r.warmingC;
@@ -368,7 +374,9 @@ describe('Geoengineering (GDD §8.2)', () => {
     setYear(r, 2055);
     r.co2ppm = CO2_BASE_PPM; // no natural warming pressure
     r.warmingC = 1.5;
-    r.researched.push('renewables', 'computing', 'geoengineering');
+    r.researched.add('renewables');
+    r.researched.add('computing');
+    r.researched.add('geoengineering');
     r.deployGeoengineering();
     const ticksInWindow = GEOENGINEER_DURATION_DAYS / 30;
     for (let i = 0; i < ticksInWindow; i++) climateTick(r);
@@ -380,7 +388,9 @@ describe('Geoengineering (GDD §8.2)', () => {
     setYear(r, 2055);
     r.co2ppm = CO2_BASE_PPM;
     r.warmingC = 1.0;
-    r.researched.push('renewables', 'computing', 'geoengineering');
+    r.researched.add('renewables');
+    r.researched.add('computing');
+    r.researched.add('geoengineering');
     r.deployGeoengineering();
     // advance past the window
     r.geoDeployDay = r.day - GEOENGINEER_DURATION_DAYS - 1;
@@ -394,7 +404,9 @@ describe('Geoengineering (GDD §8.2)', () => {
   it('geoengineering is a diplomacy bomb: all rivals lose 15 relations', () => {
     const r = nationReady();
     setYear(r, 2055);
-    r.researched.push('renewables', 'computing', 'geoengineering');
+    r.researched.add('renewables');
+    r.researched.add('computing');
+    r.researched.add('geoengineering');
     const rv = makeRivalWith(r, 5, 5);
     rv.relations = 40;
     r.deployGeoengineering();

@@ -351,7 +351,7 @@ describe('The maglev era (transportation.md §5)', () => {
     const route = r.routeBetween(a.id, b.id)!;
     const manned = r.maintBill(route);
     expect(manned).toBeCloseTo((route.path.length / CELL_SCALE) * ROUTE_SPECS.road.maintPerCell, 5);
-    r.researched.push('automated_logistics');
+    r.researched.add('automated_logistics');
     expect(r.maintBill(route)).toBeCloseTo(manned * 0.6, 5);
   });
 });
