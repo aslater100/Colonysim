@@ -71,6 +71,8 @@ export interface Settlement {
   factionId: number;
   /** Military garrison strength (abstract: militia count) */
   garrisonStrength: number;
+  /** Units stationed in this settlement's garrison (GDD §7.1) */
+  stationedUnits: ArmyUnit[];
   /** Loyalty to controlling faction (0–100); affects labor productivity and revolt risk */
   loyaltyToFaction: number;
   /** Phase 1: where this town's labor works, what it produces, what it pays. */
@@ -3009,6 +3011,7 @@ export class RegionSim {
       // Phase 0: Regional faction system
       factionId: 0, // player faction
       garrisonStrength: 5, // starting militia
+      stationedUnits: [],
       loyaltyToFaction: 100, // starting settlement is fully loyal
       sectors: defaultSectors(),
       buildings: [],
@@ -3099,6 +3102,7 @@ export class RegionSim {
       recentEvents: [],
       factionId: 0, // player faction
       garrisonStrength: 5,
+      stationedUnits: [],
       loyaltyToFaction: 100,
       sectors: defaultSectors(),
       buildings: [],
@@ -4764,6 +4768,7 @@ export class RegionSim {
           // Phase 0: Regional faction system
           factionId: this.playerFactionId,
           garrisonStrength: 2, // new towns have smaller garrisons
+          stationedUnits: [],
           loyaltyToFaction: 100,
           sectors: defaultSectors(),
           buildings: [],
@@ -6265,6 +6270,78 @@ export class RegionSim {
     return Math.max(0, Math.round(sum + rv.weights.grudge * 2 - occupied * OCCUPATION_SCORE_DISCOUNT));
   }
 
+  /** Station units at a settlement garrison (GDD §7.1: garrison management). */
+  stationUnits(settlementId: number, type: ArmyUnitType, count: number): boolean {
+    const w = this.playerWar;
+    if (!w || count <= 0) return false;
+
+    const settlement = this.settlement(settlementId);
+    if (!settlement) return false;
+
+    // Find units of this type in the army
+    const armyUnit = w.units.find(u => u.type === type);
+    if (!armyUnit || armyUnit.count < count) {
+      this.addLog(`Not enough ${type} available to station — need ${count}, have ${armyUnit?.count ?? 0}.`, 'info');
+      return false;
+    }
+
+    // Remove from army
+    armyUnit.count -= count;
+    w.units = w.units.filter(u => u.count > 0);
+
+    // Add to settlement garrison
+    const existing = settlement.stationedUnits.find(u => u.type === type);
+    if (existing) {
+      existing.count += count;
+    } else {
+      settlement.stationedUnits.push({
+        type,
+        count,
+        morale: 100,
+        suppliedDays: 30, // garrison units don't consume supply like field armies
+      });
+    }
+
+    this.addLog(`Stationed ${count} ${type}(s) at ${settlement.name}.`, 'good');
+    return true;
+  }
+
+  /** Deploy units from a settlement garrison to the field army (GDD §7.1). */
+  deployUnits(settlementId: number, type: ArmyUnitType, count: number): boolean {
+    const w = this.playerWar;
+    if (!w || count <= 0) return false;
+
+    const settlement = this.settlement(settlementId);
+    if (!settlement) return false;
+
+    // Find units in garrison
+    const garrisonUnit = settlement.stationedUnits.find(u => u.type === type);
+    if (!garrisonUnit || garrisonUnit.count < count) {
+      this.addLog(`Not enough ${type} in ${settlement.name} garrison — need ${count}, have ${garrisonUnit?.count ?? 0}.`, 'info');
+      return false;
+    }
+
+    // Remove from garrison
+    garrisonUnit.count -= count;
+    settlement.stationedUnits = settlement.stationedUnits.filter(u => u.count > 0);
+
+    // Add to field army
+    const existing = w.units.find(u => u.type === type);
+    if (existing) {
+      existing.count += count;
+    } else {
+      w.units.push({
+        type,
+        count,
+        morale: 100,
+        suppliedDays: w.supplyReserve * 30,
+      });
+    }
+
+    this.addLog(`Deployed ${count} ${type}(s) from ${settlement.name}.`, 'good');
+    return true;
+  }
+
   /** Offer peace (GDD §7.4), priced in war score. Overreach is punished:
    *  a humiliated rival is a revanchist for fifty years — the Versailles trap. */
   offerPeace(term: PeaceTerm): boolean {
@@ -6668,6 +6745,7 @@ export class RegionSim {
       recentEvents: s.recentEvents ?? [],
       factionId: s.factionId ?? 0,
       garrisonStrength: s.garrisonStrength ?? 2,
+      stationedUnits: s.stationedUnits ?? [],
       loyaltyToFaction: s.loyaltyToFaction ?? 100,
       sectors: s.sectors ?? defaultSectors(),
       buildings: s.buildings ?? [],
@@ -7961,6 +8039,7 @@ export class RegionSim {
       prices: { ...BASE_PRICE },
       factionId: faction.id,
       garrisonStrength: 2,
+      stationedUnits: [],
       loyaltyToFaction: 85, // new settlements are loyal to their faction
       sectors: defaultSectors(),
       buildings: [],
