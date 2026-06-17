@@ -11,7 +11,15 @@
 
 ---
 
-## Session Snapshot — Audio in the primary engine (2026-06-17, latest)
+## Session Snapshot — Provincial Roads tech (2026-06-17, latest)
+
+**What landed:** A `provincial_roads` town tech (prereq carpentry) raises holdings daily
+tribute (gold + biome staples) by 50% — ties research to seamless-world expansion. Opt-in;
+894 tests. `holdingsIncome()`/`tickHoldings()` apply `holdingsMult()`.
+
+---
+
+## Session Snapshot — Audio in the primary engine (2026-06-17)
 
 **What landed (branch `claude/game-build-iteration-assets-2kd2z0`):** CoreView (the primary
 engine) was **silent** — the tested `Music` / `Soundscape` / `Sfx` modules were only wired

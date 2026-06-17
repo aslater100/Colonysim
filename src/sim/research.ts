@@ -119,6 +119,10 @@ export const CORE_TECHS: CoreTechDef[] = [
     id: 'mechanization', name: 'Mechanization', cost: 240, prereqs: ['blacksmithing', 'carpentry'],
     desc: 'Every workstation runs an additional 15% faster',
   },
+  {
+    id: 'provincial_roads', name: 'Provincial Roads', cost: 160, prereqs: ['carpentry'],
+    desc: 'Trunk roads to your holdings raise their daily tribute by 50%',
+  },
 ];
 
 export const CORE_TECH_MAP = new Map<string, CoreTechDef>(CORE_TECHS.map(t => [t.id, t]));

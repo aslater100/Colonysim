@@ -2265,3 +2265,25 @@ describe('TownCore holdings income (seamless world M3)', () => {
     expect(c.gold).toBeGreaterThan(goldBefore); // tithe (no daily gold sinks on a fresh colony)
   });
 });
+
+describe('TownCore provincial_roads tech', () => {
+  const landNeighbour = (c: TownCore): [number, number] => {
+    const { cellX, cellY } = c.site;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const nx = cellX + dx, ny = cellY + dy;
+      if (nx >= 0 && ny >= 0 && !c.regionMap.isWater(nx, ny)) return [nx, ny];
+    }
+    throw new Error('no land neighbour');
+  };
+  it('raises holdings gold income by 50%', () => {
+    const c = new TownCore({ width: 96, height: 96, seed: 7 });
+    c.gold = 100000;
+    const [x, y] = landNeighbour(c);
+    c.buyParcel(x, y);
+    const base = c.holdingsIncome();
+    c.researchBook.points = 9999;
+    c.research('carpentry');          // prereq
+    expect(c.research('provincial_roads')).toBe(true);
+    expect(c.holdingsIncome()).toBe(Math.round(base * 1.5));
+  });
+});

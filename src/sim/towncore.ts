@@ -463,20 +463,23 @@ export class TownCore {
     this.ownedCells.add(`${cx},${cy}`);
     return true;
   }
+  /** Multiplier on holdings tribute — Provincial Roads tech raises it 50%. */
+  private holdingsMult(): number { return this.researchBook.hasTech('provincial_roads') ? 1.5 : 1; }
   /** Gold tribute each owned parcel (beyond the capital) sends per day. */
   holdingsIncome(): number {
-    return this._owned ? Math.max(0, this._owned.size - 1) * HOLDING_TITHE : 0;
+    return this._owned ? Math.round(Math.max(0, this._owned.size - 1) * HOLDING_TITHE * this.holdingsMult()) : 0;
   }
   /** Daily tribute from off-screen holdings — biome staple + gold. */
   private tickHoldings(): void {
     if (!this._owned || this._owned.size <= 1) return;
+    const mult = this.holdingsMult();
     const homeKey = `${this.site.cellX},${this.site.cellY}`;
     for (const key of this._owned) {
       if (key === homeKey) continue;
       const [cx, cy] = key.split(',').map(Number);
       const y = HOLDING_YIELD[this.regionMap.at(cx, cy).biome];
-      if (y) this.stock.add(y.res, y.amt);
-      this.gold += HOLDING_TITHE;
+      if (y) this.stock.add(y.res, y.amt * mult);
+      this.gold += HOLDING_TITHE * mult;
     }
   }
 
