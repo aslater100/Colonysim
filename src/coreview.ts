@@ -113,6 +113,62 @@ const logBox = document.createElement('div');
 logBox.className = 'cv-log';
 document.body.appendChild(logBox);
 
+// ── "Path to Nationhood" objectives panel ──────────────────────────────────
+// Surfaces the model's own gate logic (canFoundTown / charterGates /
+// canCallConventionGates) as a live checklist, so the deep colony→nation arc is
+// legible: the player always sees the next milestone and exactly what blocks it.
+const objBox = document.createElement('div');
+objBox.className = 'cv-objectives';
+objBox.id = 'cv-objectives';
+document.body.appendChild(objBox);
+windows.register({ id: 'cv-objectives', element: objBox, baseZ: 14 });
+
+let lastObjFrame = -999;
+function updateObjectives(frameNo: number): void {
+  if (frameNo - lastObjFrame < 30) return; // ~twice a second
+  lastObjFrame = frameNo;
+  const r = region;
+  const row = (g: { label: string; met: boolean; detail: string }) =>
+    `<div class="cv-obj-row ${g.met ? 'cv-obj-done' : ''}">` +
+    `<span class="cv-obj-mark">${g.met ? '✓' : '○'}</span>` +
+    `<span class="cv-obj-label">${g.label}</span>` +
+    (g.detail ? `<span class="cv-obj-detail">${g.detail}</span>` : '') +
+    `</div>`;
+
+  let stage: string, goal: string, gates: { label: string; met: boolean; detail: string }[];
+  if (!r.stateProclaimed) {
+    stage = 'Colony';
+    goal = 'Charter a State';
+    gates = r.charterGates();
+    // Until there's a second town, the first concrete step is expansion.
+    if (r.settlements.length < 2) {
+      const cap = r.settlements[0];
+      if (cap) {
+        const ft = r.canFoundTown(cap.id);
+        gates = [{ label: 'Found your first daughter town', met: false, detail: ft.ok ? 'ready — open the town panel' : ft.reason }, ...gates];
+      }
+    }
+  } else if (!r.nationProclaimed) {
+    stage = 'State';
+    goal = 'Proclaim a Nation';
+    gates = r.canCallConventionGates();
+  } else {
+    stage = 'Nation';
+    goal = 'Lead the century to 2100';
+    const terr = Math.round(r.playerTerritoryControl() * 100);
+    gates = [
+      { label: 'Unification', met: terr >= 75, detail: `${terr}% territory (75%+ by 2070)` },
+      { label: 'Endure to 2100', met: false, detail: `year ${r.year}` },
+    ];
+  }
+  const done = gates.filter((g) => g.met).length;
+  objBox.innerHTML =
+    `<div class="cv-obj-head"><span class="cv-obj-stage">${stage}</span>` +
+    `<span class="cv-obj-goal">▸ ${goal}</span>` +
+    `<span class="cv-obj-prog">${done}/${gates.length}</span></div>` +
+    gates.map(row).join('');
+}
+
 function updateTopBar(): void {
   const r = region;
   const wx = r.weather.forDay(r.day);
@@ -227,8 +283,10 @@ addEventListener('keydown', (e) => {
 // ─────────────────────────────────────────────────────────────────────────────
 let lastTime = performance.now();
 let acc = 0;
+let uiFrame = 0;
 
 function frame(): void {
+  uiFrame++;
   const now = performance.now();
   const dt = Math.min(0.1, (now - lastTime) / 1000); // clamp after tab-out
   lastTime = now;
@@ -245,6 +303,7 @@ function frame(): void {
   regionView.draw();
   updateTopBar();
   updateLog();
+  updateObjectives(uiFrame);
 
   // Diegetic audio: era soundtrack + ambience that swells with unrest.
   const maxGrievance = region.settlements.reduce((m, s) => Math.max(m, s.grievance || 0), 0);
