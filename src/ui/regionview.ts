@@ -186,6 +186,16 @@ export class RegionView {
     return { px: m + (x / 100) * (W - 2 * m), py: m + (y / 100) * (H - 2 * m) };
   }
 
+  /** Has the player explored or scouted the tile under this region coord
+   *  (0..100)? Used to keep undiscovered rivals hidden under the fog. */
+  private revealedAt(rx: number, ry: number): boolean {
+    const emap = this.region.explorationMap;
+    const E = emap.length;
+    const ex = Math.min(E - 1, Math.max(0, Math.floor((rx / 100) * E)));
+    const ey = Math.min(E - 1, Math.max(0, Math.floor((ry / 100) * E)));
+    return emap[ex][ey] !== 'fogged';
+  }
+
   click(px: number, py: number): void {
     this.selectedId = null;
     this.selectedFactionId = null;
@@ -403,6 +413,7 @@ export class RegionView {
       for (const settlementId of faction.settlementIds) {
         const s = region.settlement(settlementId);
         if (!s) continue;
+        if (!this.revealedAt(s.x, s.y)) continue; // hidden until discovered
         const { px, py } = this.toPx(s.x, s.y);
         if (!this.inView(px, py, 24)) continue;
         const selected = this.selectedFactionId === faction.id;
@@ -443,6 +454,7 @@ export class RegionView {
     for (const scout of region.scouts) {
       const faction = region.faction(scout.factionId);
       if (!faction || faction.id === region.playerFactionId) continue;
+      if (!this.revealedAt(scout.x, scout.y)) continue; // unseen beyond the frontier
       const { px, py } = this.toPx(scout.x, scout.y);
       if (!this.inView(px, py, 16)) continue;
       const bob = Math.floor(this.frame / 20) % 2;
@@ -597,6 +609,11 @@ export class RegionView {
     const r = this.region;
     let s = `${this.canvas.width}x${this.canvas.height}|${r.regionalFactions.length}`;
     for (const t of r.settlements) s += `;${t.id},${t.factionId},${Math.round(t.x)},${Math.round(t.y)}`;
+    // Fog-of-war frontier: rebuild the cache as the explored count advances
+    // (reveals are monotonic, so a running count is a sufficient change key).
+    let explored = 0;
+    for (const col of r.explorationMap) for (const v of col) if (v !== 'fogged') explored++;
+    s += `|fog${explored}`;
     return s;
   }
 
@@ -615,7 +632,49 @@ export class RegionView {
     cg.clearRect(0, 0, W, H);
     this.drawTerrain(cg, W, H);
     this.drawTerritories(cg, W, H);
+    this.drawFog(cg, W, H);
     this.mapCacheSig = sig;
+  }
+
+  /** Fog of war: the world beyond the explored frontier lies under a soft,
+   *  cloud-mottled shroud. Cells you have never seen ('fogged') sink under a
+   *  near-opaque veil; the frontier feathers (lighter where it abuts known
+   *  ground) so the discovered map melts into the unknown rather than ending at
+   *  a hard rectangle. Baked into the map cache (over terrain + territory, so
+   *  undiscovered rivals stay hidden) and rebuilt when the frontier advances. */
+  private drawFog(g: CanvasRenderingContext2D, W: number, H: number): void {
+    const N = REGION_N;
+    const m = 60;
+    const cw = (W - 2 * m) / N;
+    const ch = (H - 2 * m) / N;
+    const known = (cx: number, cy: number): boolean => {
+      if (cx < 0 || cy < 0 || cx >= N || cy >= N) return false;
+      return this.revealedAt((cx / N) * 100, (cy / N) * 100);
+    };
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        if (known(x, y)) continue;
+        // Feather toward the frontier: any known neighbour thins the veil.
+        const frontier =
+          known(x - 1, y) || known(x + 1, y) || known(x, y - 1) || known(x, y + 1) ||
+          known(x - 1, y - 1) || known(x + 1, y - 1) || known(x - 1, y + 1) || known(x + 1, y + 1);
+        const bx = Math.floor(m + x * cw);
+        const by = Math.floor(m + y * ch);
+        const bw = Math.ceil(cw);
+        const bh = Math.ceil(ch);
+        // Painterly cloud mottle so the shroud reads as drifting fog, not a slab.
+        const hash = (x * 374761393 ^ y * 668265263) >>> 0;
+        const mottle = ((hash % 7) - 3) * 0.012;
+        const base = frontier ? 0.48 : 0.9;
+        g.fillStyle = `rgba(9,13,21,${Math.max(0, Math.min(0.96, base + mottle))})`;
+        g.fillRect(bx, by, bw, bh);
+        // A cool, sparse cloud highlight catching light over the deep unknown.
+        if (!frontier && (hash >> 4) % 6 === 0) {
+          g.fillStyle = 'rgba(74,88,116,0.10)';
+          g.fillRect(bx, by, bw, bh);
+        }
+      }
+    }
   }
 
   /** Is a base-coord point within the current viewport (plus margin)? */
@@ -976,7 +1035,13 @@ export class RegionView {
         // Base biome colour
         let col: string;
         switch (c.biome) {
-          case 'sea':       col = c.elevation < -0.3 ? '#1c3244' : '#243d52'; break;
+          case 'sea': {
+            // Continuous depth ramp: open ocean sinks toward near-black blue,
+            // shelf water lifts toward a teal shore — the map reads as bathymetry.
+            const d = Math.max(0, Math.min(1, -c.elevation / 0.6));
+            col = `rgb(${Math.round(40 - 22 * d)},${Math.round(64 - 30 * d)},${Math.round(86 - 36 * d)})`;
+            break;
+          }
           case 'lake':      col = '#2e4a5c'; break;
           case 'river':     col = '#36586e'; break;
           case 'marsh':     col = '#39503e'; break;
