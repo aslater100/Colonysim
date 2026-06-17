@@ -1133,7 +1133,7 @@ const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSi
   },
   // ---- Monarchy (dynastic/prestige-focused) ----
   (faction, region) => {
-    if (faction.treasury >= 250 && region.year >= 1900) {
+    if (faction.treasury >= 250 && region.year >= 1800) {
       return {
         id: 'dynastic_supremacy',
         objective: 'Establish a royal lineage and secure inheritance',
@@ -1149,7 +1149,7 @@ const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSi
   },
   // ---- Theocracy (religious/doctrinal-focused) ----
   (_faction, region) => {
-    if (region.year >= 1900) {
+    if (region.year >= 1800) {
       return {
         id: 'convert_heathen',
         objective: 'Spread the faith to ideologically distant regions',
@@ -1306,7 +1306,7 @@ const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSi
   },
   // ---- Industrial powerhouse (modern & collectivist states) ----
   (_faction, region) => {
-    if (region.year >= 1900) {
+    if (region.year >= 1800) {
       return {
         id: 'industrial_powerhouse',
         objective: 'Forge an industrial powerhouse of mills and mines',
@@ -1388,7 +1388,7 @@ const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSi
   },
   // ---- The one true faith (theocratic consolidation) ----
   (_faction, region) => {
-    if (region.year >= 1900) {
+    if (region.year >= 1800) {
       return {
         id: 'one_true_faith',
         objective: 'Bind the faithful under one sacred banner',
