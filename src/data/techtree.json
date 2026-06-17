@@ -15,7 +15,7 @@
       "tree": "tech",
       "cost": 80,
       "prereqs": ["steam_power"],
-      "era": 1900,
+      "era": 1800,
       "desc": "Bessemer converters yield structural steel at scale. Rail can be laid five years early."
     },
     {
@@ -96,7 +96,7 @@
       "tree": "tech",
       "cost": 50,
       "prereqs": ["steam_power"],
-      "era": 1900,
+      "era": 1800,
       "desc": "Theodolite teams chart the hinterland, letting the realm purchase explored parcels that don't yet touch its borders."
     },
     {
@@ -132,7 +132,7 @@
       "tree": "civics",
       "cost": 60,
       "prereqs": ["common_law"],
-      "era": 1900,
+      "era": 1800,
       "desc": "A schoolhouse in every settlement doubles literacy. Research rate +50%."
     },
     {

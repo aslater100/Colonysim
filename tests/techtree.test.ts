@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Simulation } from '../src/sim/sim';
 import { RegionSim, REGION_MINUTES_PER_TICK, TECH_TREE, RAIL_ERA_YEAR, HIGHWAY_ERA_YEAR, MAGLEV_ERA_YEAR } from '../src/sim/region';
-import { MINUTES_PER_DAY } from '../src/sim/defs';
+import { MINUTES_PER_DAY, START_YEAR } from '../src/sim/defs';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
 
@@ -196,7 +196,7 @@ describe('Tech tree: research completion', () => {
   it('auto-unlocks dependant nodes after prerequisite completes', () => {
     const r = makeRegion();
     // Advance to year 1912 so electrical_grid's era gate is met
-    r.minute = (1912 - 1900) * 60 * MINUTES_PER_DAY;
+    r.minute = (1912 - START_YEAR) * 60 * MINUTES_PER_DAY;
     r.startResearch('steel_industry');
     const node = TECH_TREE.find((n) => n.id === 'steel_industry')!;
     r.researchProgress = node.cost - 0.01;
@@ -268,7 +268,7 @@ describe('Tech tree: gameplay effects', () => {
     // Simulate being 1 year before the normal threshold
     const earlyYear = RAIL_ERA_YEAR - 4;
     // Advance sim to earlyYear
-    const targetDay = (earlyYear - 1900) * 60;
+    const targetDay = (earlyYear - START_YEAR) * 60;
     r.minute = targetDay * MINUTES_PER_DAY;
     expect(r.year).toBe(earlyYear);
     expect(r.railUnlocked()).toBe(false);
@@ -281,7 +281,7 @@ describe('Tech tree: gameplay effects', () => {
     const r = makeRegion();
     r.stateProclaimed = true;
     r.stateName = 'Test State';
-    const targetDay = (RAIL_ERA_YEAR - 1900 - 1) * 60; // one year before
+    const targetDay = (RAIL_ERA_YEAR - START_YEAR - 1) * 60; // one year before
     r.minute = targetDay * MINUTES_PER_DAY;
     expect(r.railUnlocked()).toBe(false);
   });
@@ -291,7 +291,7 @@ describe('Tech tree: gameplay effects', () => {
     r.stateProclaimed = true;
     r.stateName = 'Test State';
     const earlyYear = HIGHWAY_ERA_YEAR - 4;
-    const targetDay = (earlyYear - 1900) * 60;
+    const targetDay = (earlyYear - START_YEAR) * 60;
     r.minute = targetDay * MINUTES_PER_DAY;
     expect(r.highwayUnlocked()).toBe(false);
     r.researched.add('asphalt');
@@ -311,7 +311,7 @@ describe('Tech tree: gameplay effects', () => {
     r.stateProclaimed = true;
     r.stateName = 'Test State';
     const earlyYear = MAGLEV_ERA_YEAR - 4;
-    const targetDay = (earlyYear - 1900) * 60;
+    const targetDay = (earlyYear - START_YEAR) * 60;
     r.minute = targetDay * MINUTES_PER_DAY;
     expect(r.maglevUnlocked()).toBe(false);
     r.researched.add('maglev');
@@ -408,8 +408,8 @@ describe('Tech tree: new mid-century depth effects', () => {
     runDays(r2, 12);
     // Zero out immigration/birth confounds by freezing satisfaction below the
     // immigration threshold, then compare deaths over a long stretch.
-    for (const t of r.settlements) { t.satisfaction = 30; t.cohorts.bands[4] += 200; }
-    for (const t of r2.settlements) { t.satisfaction = 30; t.cohorts.bands[4] += 200; }
+    for (const t of r.settlements) { t.satisfaction = 30; t.cohorts.bands[4] += 200; t.food = 99999; }
+    for (const t of r2.settlements) { t.satisfaction = 30; t.cohorts.bands[4] += 200; t.food = 99999; }
     r2.researched.add('antibiotics');
     const popStart1 = r.settlements.reduce((s, t) => s + t.cohorts.bands[4], 0);
     const popStart2 = r2.settlements.reduce((s, t) => s + t.cohorts.bands[4], 0);
@@ -472,7 +472,7 @@ describe('Tech tree: save/load round-trip', () => {
     sim.stock.meal = 200;
     const r = RegionSim.fromTown(sim, 8, 80, 80);
     r.researched.add('steel_industry');
-    // public_education has era 1900 and prereq common_law — available from start
+    // public_education has era 1800 and prereq common_law — available from start
     r.startResearch('public_education');
     r.researchProgress = 42;
 

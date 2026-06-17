@@ -279,13 +279,13 @@ function updateTopBar(): void {
   helpOverlay.innerHTML =
     `<div class="cv-help-box">` +
     `<h1>CENTURIA</h1>` +
-    `<p class="cv-help-tag">Build · Endure · Govern — one valley to a nation, 1900–2100.</p>` +
+    `<p class="cv-help-tag">Build · Endure · Govern — one valley to a nation, 1800–2100.</p>` +
     `<div class="cv-help-cols">` +
-    `<div><h3>The arc</h3><ul>` +
-    `<li>Grow your colony, then <b>found daughter towns</b>.</li>` +
+    `<div><h3>Your journey</h3><ul>` +
+    `<li>Grow your settlement, then <b>found new towns</b> across the valley.</li>` +
     `<li>Charter a <b>State</b>, then proclaim a <b>Nation</b>.</li>` +
-    `<li>Steer economy, diplomacy, war &amp; climate to 2100.</li>` +
-    `<li>Watch the <b>Path to Nationhood</b> panel for your next step.</li>` +
+    `<li>Shape the economy, conduct diplomacy, wage war, and face a changing climate.</li>` +
+    `<li>Follow the <b>Path to Nationhood</b> panel for your next milestone.</li>` +
     `</ul></div>` +
     `<div><h3>Map controls</h3><ul>` +
     `<li><b>W/A/S/D</b> pan map</li>` +
@@ -301,14 +301,8 @@ function updateTopBar(): void {
     `<li><b>R</b> — Routes panel</li>` +
     `<li><b>L</b> — Settlements list</li>` +
     `<li><b>E</b> — Economy panel</li>` +
-    `<li><b>H</b> or <b>?</b> — This help</li>` +
-    `</ul></div>` +
-    `<div><h3>Game &amp; settings</h3><ul>` +
-    `<li><b>Space</b> pause / resume</li>` +
-    `<li><b>1–4</b> game speed</li>` +
-    `<li><b>Ctrl/⌘-S</b> save game</li>` +
-    `<li><b>M</b> toggle sound</li>` +
-    `<li><b>Esc</b> deselect</li>` +
+    `<li><b>H</b> — Jump to capital</li>` +
+    `<li><b>?</b> — This help</li>` +
     `</ul></div>` +
     `</div>` +
     `<button class="cv-help-start">Begin ▸</button>` +
@@ -420,7 +414,13 @@ addEventListener('keydown', (e) => {
     case 'l': regionView.settlementListOpen = !regionView.settlementListOpen; break;
     case 'e': regionView.economyOpen = !regionView.economyOpen; break;
     case 'm': toggleSound(); break;
-    case 'h': case '?': if (helpOverlay.classList.contains('hidden')) showHelp(); else hideHelp(); break;
+    case 'h': {
+      const pf = region.faction(region.playerFactionId);
+      const cap = pf ? region.settlement(pf.capital) : null;
+      if (cap) regionView.centerOn(cap.x, cap.y);
+      break;
+    }
+    case '?': if (helpOverlay.classList.contains('hidden')) showHelp(); else hideHelp(); break;
     case 'escape':
       if (!helpOverlay.classList.contains('hidden')) { hideHelp(); break; }
       regionView.selectedId = null; regionView.selectedFactionId = null; break;

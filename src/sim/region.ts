@@ -838,12 +838,12 @@ export interface RivalRegimeDef {
 }
 
 export const RIVAL_REGIMES: RivalRegimeDef[] = [
-  { id: 'parliamentary', name: 'Parliamentary Democracy', bloc: 'liberal', eraFrom: 1900 },
-  { id: 'merchant_republic', name: 'Merchant Republic', bloc: 'liberal', eraFrom: 1900 },
-  { id: 'const_monarchy', name: 'Constitutional Monarchy', bloc: 'traditional', eraFrom: 1900 },
-  { id: 'abs_monarchy', name: 'Absolute Monarchy', bloc: 'traditional', eraFrom: 1900 },
-  { id: 'theocracy', name: 'Theocracy', bloc: 'traditional', eraFrom: 1900 },
-  { id: 'junta', name: 'Military Junta', bloc: 'autocratic', eraFrom: 1900 },
+  { id: 'parliamentary', name: 'Parliamentary Democracy', bloc: 'liberal', eraFrom: 1800 },
+  { id: 'merchant_republic', name: 'Merchant Republic', bloc: 'liberal', eraFrom: 1800 },
+  { id: 'const_monarchy', name: 'Constitutional Monarchy', bloc: 'traditional', eraFrom: 1800 },
+  { id: 'abs_monarchy', name: 'Absolute Monarchy', bloc: 'traditional', eraFrom: 1800 },
+  { id: 'theocracy', name: 'Theocracy', bloc: 'traditional', eraFrom: 1800 },
+  { id: 'junta', name: 'Military Junta', bloc: 'autocratic', eraFrom: 1800 },
   { id: 'peoples_republic', name: "People's Republic", bloc: 'revolutionary', eraFrom: 1917 },
   { id: 'one_party', name: 'One-Party State', bloc: 'autocratic', eraFrom: 1920 },
   { id: 'fascist', name: 'Fascist State', bloc: 'autocratic', eraFrom: 1925 },
@@ -1133,7 +1133,7 @@ const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSi
   },
   // ---- Monarchy (dynastic/prestige-focused) ----
   (faction, region) => {
-    if (faction.treasury >= 250 && region.year >= 1900) {
+    if (faction.treasury >= 250 && region.year >= 1800) {
       return {
         id: 'dynastic_supremacy',
         objective: 'Establish a royal lineage and secure inheritance',
@@ -1149,7 +1149,7 @@ const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSi
   },
   // ---- Theocracy (religious/doctrinal-focused) ----
   (_faction, region) => {
-    if (region.year >= 1900) {
+    if (region.year >= 1800) {
       return {
         id: 'convert_heathen',
         objective: 'Spread the faith to ideologically distant regions',
@@ -1306,7 +1306,7 @@ const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSi
   },
   // ---- Industrial powerhouse (modern & collectivist states) ----
   (_faction, region) => {
-    if (region.year >= 1900) {
+    if (region.year >= 1800) {
       return {
         id: 'industrial_powerhouse',
         objective: 'Forge an industrial powerhouse of mills and mines',
@@ -1388,7 +1388,7 @@ const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSi
   },
   // ---- The one true faith (theocratic consolidation) ----
   (_faction, region) => {
-    if (region.year >= 1900) {
+    if (region.year >= 1800) {
       return {
         id: 'one_true_faith',
         objective: 'Bind the faithful under one sacred banner',
@@ -4194,11 +4194,41 @@ export class RegionSim {
     return true;
   }
 
+  /** Hire a scout from one of the player's towns to explore the fog of war.
+   *  Available pre-state; costs £10 from the treasury. Max 2 active scouts. */
+  sendPlayerScout(townId: number): { ok: boolean; reason: string } {
+    const t = this.settlement(townId);
+    if (!t || t.factionId !== this.playerFactionId) return { ok: false, reason: 'not your town' };
+    const active = this.scouts.filter((s) => s.factionId === this.playerFactionId).length;
+    if (active >= 2) return { ok: false, reason: 'already 2 scouts in the field' };
+    if (this.treasury < 10) return { ok: false, reason: 'need £10' };
+    this.treasury -= 10;
+    const scout: Scout = {
+      id: this.nextScoutId++,
+      factionId: this.playerFactionId,
+      x: Math.max(0, Math.min(100, t.x + (Math.random() * 4 - 2))),
+      y: Math.max(0, Math.min(100, t.y + (Math.random() * 4 - 2))),
+      health: 100,
+      maintenanceCost: 0,
+      createdDay: this.day,
+      expireDay: this.day + 200,
+      targetMode: 'random',
+    };
+    this.scouts.push(scout);
+    this.addLog(`A scout sets out from ${t.name} to map the surrounding lands.`, 'info');
+    return { ok: true, reason: '' };
+  }
+
   /** Repaint a town's development focus: labor drifts toward the favored
    *  sector starting next month. */
   setTownFocus(townId: number, focus: TownFocus): boolean {
     const t = this.settlement(townId);
-    if (!t || !this.canManageCity(t).ok || t.focus === focus) return false;
+    if (!t || t.focus === focus) return false;
+    // Pre-state: only the player's own towns may be steered; post-state the full
+    // canManageCity gate applies (which also covers population requirements).
+    const isPlayerTown = t.factionId === this.playerFactionId;
+    if (!isPlayerTown) return false;
+    if (this.stateProclaimed && !this.canManageCity(t).ok) return false;
     if (this.treasury < FOCUS_CHANGE_COST) return false;
     this.treasury -= FOCUS_CHANGE_COST;
     t.focus = focus;
@@ -4376,7 +4406,12 @@ export class RegionSim {
   /** Change a local governance policy for a managed city. */
   setCityPolicy(townId: number, key: keyof CityPolicies, value: number | WagePolicy): boolean {
     const t = this.settlement(townId);
-    if (!t || !this.canManageCity(t).ok) return false;
+    if (!t) return false;
+    // Pre-state: allow the player to set basic policies on their own towns.
+    // Post-state: the full canManageCity gate applies.
+    const isPlayerTown = t.factionId === this.playerFactionId;
+    if (!isPlayerTown) return false;
+    if (this.stateProclaimed && !this.canManageCity(t).ok) return false;
     if (key === 'taxBand') {
       const v = Number(value);
       if (v < 0 || v > 3 || !Number.isInteger(v)) return false;
