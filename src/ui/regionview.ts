@@ -5,7 +5,7 @@
  */
 import type { Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, TownFocus, WagePolicy, Route, SectorId } from '../sim/region';
 import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR } from '../sim/region';
-import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS } from '../sim/defs';
+import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS, MINUTES_PER_DAY } from '../sim/defs';
 import type { CurrencySymbol } from '../sim/defs';
 import { ANNOUNCE_LEAD_DAYS } from '../sim/currency';
 import { REGION_N } from '../sim/worldgen';
@@ -483,7 +483,15 @@ export class RegionView {
       g.fillText(`→ ${e.name}`, px, py - 8);
     }
     g.textAlign = 'left';
+
+    // City lights pop on the map as dusk falls (still in map-space).
+    const lit = this.atmosphere();
+    this.drawCityLights(lit);
+
     g.restore(); // end map-space; HUD below draws in screen space
+
+    // Time-of-day + seasonal tint and a soft vignette frame the whole scene.
+    this.drawAtmosphere(W, H, lit);
 
     // Charter banner — the path to the State. Each requirement reads as a
     // ✓/✗ chip so the player can see exactly what still blocks Incorporation.
@@ -634,6 +642,70 @@ export class RegionView {
     this.drawTerritories(cg, W, H);
     this.drawFog(cg, W, H);
     this.mapCacheSig = sig;
+  }
+
+  /** Compute the current lighting state from the in-game clock + season: a
+   *  night factor (0 day … 1 deep night), a warm golden-hour amount at dawn/
+   *  dusk, and the season index. Drives both the city-light glows and the
+   *  full-screen tint so they stay in sync. */
+  private atmosphere(): { night: number; golden: number; season: number } {
+    const dayFrac = (this.region.minute % MINUTES_PER_DAY) / MINUTES_PER_DAY; // 0 = midnight
+    const sun = Math.sin(dayFrac * Math.PI); // 0 at midnight, 1 at noon
+    const night = Math.pow(Math.max(0, 1 - sun), 1.5);
+    // Golden hour peaks mid-morning (~05:00) and mid-evening (~19:00).
+    const bump = (c: number) => Math.max(0, 1 - Math.abs(dayFrac - c) / 0.09);
+    const golden = Math.min(1, bump(0.22) + bump(0.78));
+    return { night, golden, season: this.region.seasonIndex };
+  }
+
+  /** Warm hearth-glow under each known settlement once dusk sets in — scaled by
+   *  population so cities blaze and hamlets flicker. Drawn in map-space. */
+  private drawCityLights(lit: { night: number }): void {
+    if (lit.night < 0.15) return;
+    const { g, region } = this;
+    g.globalCompositeOperation = 'lighter';
+    for (const t of region.settlements) {
+      if (!this.revealedAt(t.x, t.y)) continue;
+      const { px, py } = this.toPx(t.x, t.y);
+      if (!this.inView(px, py, 40)) continue;
+      const pop = region.popOf(t);
+      const radius = 10 + Math.min(26, Math.sqrt(pop) * 1.6);
+      const a = lit.night * Math.min(0.7, 0.28 + pop / 4000);
+      const grad = g.createRadialGradient(px, py, 0, px, py, radius);
+      grad.addColorStop(0, `rgba(255,214,140,${a})`);
+      grad.addColorStop(0.5, `rgba(240,170,90,${a * 0.45})`);
+      grad.addColorStop(1, 'rgba(240,170,90,0)');
+      g.fillStyle = grad;
+      g.beginPath();
+      g.arc(px, py, radius, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.globalCompositeOperation = 'source-over';
+  }
+
+  /** Full-screen atmospheric pass (screen-space): a night/golden-hour tint, a
+   *  subtle seasonal wash, and a vignette. Cheap — a few rects + one gradient. */
+  private drawAtmosphere(W: number, H: number, lit: { night: number; golden: number; season: number }): void {
+    const { g } = this;
+    // Deep-night cool overlay.
+    if (lit.night > 0.01) {
+      g.fillStyle = `rgba(12,20,46,${(0.5 * lit.night).toFixed(3)})`;
+      g.fillRect(0, 0, W, H);
+    }
+    // Golden hour warmth at dawn/dusk.
+    if (lit.golden > 0.01) {
+      g.fillStyle = `rgba(232,150,72,${(0.20 * lit.golden).toFixed(3)})`;
+      g.fillRect(0, 0, W, H);
+    }
+    // Seasonal wash — faint, so it colours the mood without fighting the map.
+    const seasonTint = ['rgba(120,180,96,0.07)', 'rgba(255,206,120,0.06)', 'rgba(208,138,60,0.08)', 'rgba(150,182,224,0.09)'][lit.season] ?? '';
+    if (seasonTint) { g.fillStyle = seasonTint; g.fillRect(0, 0, W, H); }
+    // Vignette: a darkened frame that draws the eye inward.
+    const vg = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.36, W / 2, H / 2, Math.max(W, H) * 0.72);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, 'rgba(4,6,12,0.5)');
+    g.fillStyle = vg;
+    g.fillRect(0, 0, W, H);
   }
 
   /** Fog of war: the world beyond the explored frontier lies under a soft,
