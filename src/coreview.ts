@@ -32,6 +32,7 @@ import {
   STATION_DEF_BY_NUM, STATION_DEFS,
   TICKS_PER_SECOND, SEASONS, START_YEAR, DAYS_PER_SEASON, DAYS_PER_YEAR, MINUTES_PER_TICK, MINUTES_PER_DAY,
   RESOURCE_KINDS, BLUEPRINT_DEFS, TUNING,
+  type ResourceKind,
 } from './sim/defs';
 import { RESEARCH_PER_DESK_PER_DAY } from './sim/research';
 import { REGION_N, type Biome } from './sim/worldgen';
@@ -127,6 +128,9 @@ const ctx = canvas.getContext('2d')!;
 // the per-frame base transform (set in draw) scales it up uniformly, so layout,
 // input and the world camera are unchanged — only sharper.
 let cw = 0, ch = 0, DPR = 1;
+
+// Left panel: resource/building info sidebar (SoS-style).
+const PANEL_W = 140;
 
 // Minimap: off-screen canvas rendered at 2px/tile, overlaid in bottom-right corner.
 const MINI_PX = 2; // px per tile in the minimap
@@ -312,6 +316,7 @@ addEventListener('keydown', (e) => {
     e.preventDefault();
     return;
   }
+  if (e.key === 'Escape' && activeCat >= 0) { activeCat = -1; e.preventDefault(); return; }
   if (e.key === 'Escape') { goToMenu(); return; }
   if (e.key === ' ') { paused = !paused; e.preventDefault(); return; }
   // Camera: WASD / arrows pan, O frames the whole map. (WASD skipped when a
@@ -428,11 +433,13 @@ addEventListener('mouseup', () => {
   }
 });
 let hoverX = -1, hoverY = -1;
+let screenMX = -1, screenMY = -1; // raw cursor in canvas px, for bar tooltips
 canvas.addEventListener('mousemove', (e) => {
+  const r0 = canvas.getBoundingClientRect();
+  screenMX = e.clientX - r0.left; screenMY = e.clientY - r0.top;
   if (worldView) { worldHover = worldCellAt(e); return; }
   if (panning) { view.x -= e.clientX - panLast.x; view.y -= e.clientY - panLast.y; panLast = { x: e.clientX, y: e.clientY }; return; }
-  const r = canvas.getBoundingClientRect();
-  const t = tileAt(e.clientX - r.left, e.clientY - r.top);
+  const t = tileAt(screenMX, screenMY);
   hoverX = t.x; hoverY = t.y;
   if (painting) paintAt(e);
 });
@@ -636,50 +643,182 @@ function worldCellAt(e: MouseEvent): { cx: number; cy: number } | null {
 // actions. Categories sit at the very bottom; the active category's items wrap
 // in a grid above. ponytail: rebuilt into `barHit` each frame and hit-tested on
 // click — a few dozen rects, no retained layout.
-interface BarItem { label: string; apply: () => void; active: () => boolean; }
+interface BarItem { label: string; apply: () => void; active: () => boolean; iconId?: string; }
 const niceName = (s: string) => s.replace(/_/g, ' ');
-const toolItem = (label: string, t: Tool): BarItem => ({ label, apply: () => { tool = t; }, active: () => tool === t });
+const toolItem = (label: string, t: Tool, iconId?: string): BarItem => ({ label, apply: () => { tool = t; }, active: () => tool === t, iconId: iconId ?? t });
 const BAR_CATS = ['Build', 'Rooms', 'Work', 'Plans', 'Farm', 'Gather'] as const;
-let activeCat = 0;
+const ICON_SIZE = 24; // pixel-art icon size, SoS-style
+const iconCache = new Map<string, CanvasImageSource>(); // cache small icon sprites
+
+// Generate a small pixel-art icon for a tool/category. Simple geometric shapes.
+function makeIcon(id: string): CanvasImageSource {
+  const cv = new OffscreenCanvas(ICON_SIZE, ICON_SIZE);
+  const g = cv.getContext('2d')!;
+  g.fillStyle = '#ccc'; g.fillRect(0, 0, ICON_SIZE, ICON_SIZE); // background for debugging; will be transparent in use
+  g.fillStyle = '#7fd0f0'; // SoS-like cyan for active, we'll vary by context
+  // Simple iconic shapes for each tool:
+  const p = (x: number, y: number, w: number, h: number) => g.fillRect(x, y, w, h); // primitive rect
+  switch (id) {
+    // Categories
+    case 'Build': p(4, 6, 7, 7); p(13, 6, 7, 7); p(4, 15, 7, 7); p(13, 15, 7, 7); break; // 2×2 grid = building
+    case 'Rooms': p(6, 6, 12, 12); g.strokeStyle = '#7fd0f0'; g.lineWidth = 1; g.strokeRect(6, 6, 12, 12); break; // single box
+    case 'Work': p(8, 5, 3, 14); p(13, 5, 3, 14); p(5, 9, 14, 3); break; // crosshatch = work/tools
+    case 'Plans': p(6, 6, 3, 3); p(12, 6, 3, 3); p(6, 12, 3, 3); p(12, 12, 3, 3); p(8, 8, 3, 3); break; // grid
+    case 'Farm': p(4, 8, 3, 8); p(10, 8, 3, 8); p(16, 8, 3, 8); break; // crops
+    case 'Gather': p(6, 6, 4, 10); p(14, 6, 4, 10); p(4, 16, 16, 2); break; // axe shape
+    // Tools (simplified)
+    case 'wall': p(4, 10, 16, 4); break; // horizontal line
+    case 'floor': p(4, 4, 16, 16); break; // filled square
+    case 'gate': p(6, 6, 4, 12); p(14, 6, 4, 12); p(10, 4, 4, 16); break; // gate shape
+    case 'bridge': p(4, 12, 3, 6); p(9, 10, 6, 8); p(17, 12, 3, 6); break; // bridge
+    case 'erase': g.strokeStyle = '#7fd0f0'; g.lineWidth = 2; g.strokeRect(5, 5, 14, 14); break; // X or outline
+    case 'room': p(6, 6, 12, 12); break; // room = box
+    case 'station': p(8, 6, 2, 12); p(14, 6, 2, 12); p(6, 10, 12, 2); break; // station = cross
+    case 'blueprint': p(6, 6, 12, 12); g.fillStyle = '#333'; g.fillRect(8, 8, 2, 2); g.fillRect(12, 8, 2, 2); g.fillRect(8, 12, 2, 2); break; // blueprint with dots
+    case 'field': p(4, 8, 4, 8); p(10, 8, 4, 8); p(16, 8, 4, 8); break; // field rows
+    case 'veggarden': p(6, 6, 4, 4); p(12, 6, 4, 4); p(6, 14, 4, 4); p(12, 14, 4, 4); break; // garden grid
+    case 'orchard': p(8, 6, 8, 12); g.fillStyle = '#333'; g.fillRect(10, 9, 4, 4); break; // tree
+    case 'flax': p(6, 4, 2, 16); p(10, 4, 2, 16); p(14, 4, 2, 16); break; // tall crops
+    case 'forage': p(7, 6, 2, 10); p(11, 8, 2, 8); p(15, 7, 2, 9); break; // varied heights
+    case 'woodcutter': p(7, 4, 10, 16); g.fillStyle = '#333'; g.fillRect(10, 8, 4, 4); break; // tree
+    case 'quarry': p(4, 8, 3, 8); p(8, 6, 3, 10); p(12, 4, 3, 12); p(16, 10, 3, 6); break; // descending blocks
+    case 'fishery': p(6, 8, 3, 3); p(11, 10, 3, 3); p(16, 8, 3, 3); p(8, 14, 8, 2); break; // fish + water
+    case 'trap': p(6, 6, 12, 4); p(6, 14, 12, 4); p(8, 10, 2, 8); p(14, 10, 2, 8); break; // trap
+    // Rooms (from rooms.json)
+    case 'home': p(6, 6, 12, 12); g.fillStyle = '#333'; g.fillRect(12, 10, 2, 2); break; // house with window
+    case 'kitchen': p(4, 6, 16, 4); p(4, 12, 16, 8); g.fillStyle = '#333'; g.fillRect(8, 14, 2, 2); g.fillRect(14, 14, 2, 2); break; // kitchen stove
+    case 'bakery': p(6, 8, 3, 8); p(11, 8, 3, 8); p(16, 8, 3, 8); break; // ovens
+    case 'mill': p(6, 6, 12, 12); g.fillStyle = '#333'; g.fillRect(8, 8, 8, 2); g.fillRect(10, 6, 4, 6); break; // mill wheel
+    case 'smithy': p(6, 10, 3, 6); p(10, 8, 4, 8); p(15, 10, 3, 6); break; // anvil
+    case 'foundry': p(4, 10, 16, 6); g.fillStyle = '#333'; g.fillRect(6, 12, 12, 2); break; // furnace
+    case 'sawmill': p(4, 6, 3, 12); p(9, 6, 6, 12); p(17, 6, 3, 12); break; // saw blade
+    case 'workshop': p(4, 8, 3, 8); p(8, 8, 3, 8); p(12, 8, 3, 8); p(16, 8, 3, 8); break; // workbenches
+    case 'kilnhouse': p(6, 6, 12, 12); g.fillStyle = '#333'; g.fillRect(10, 10, 4, 4); break; // kiln
+    case 'library': p(4, 4, 3, 16); p(8, 6, 3, 14); p(12, 7, 3, 13); p(16, 8, 3, 12); break; // books
+    case 'infirmary': p(8, 6, 2, 12); p(14, 6, 2, 12); p(6, 10, 12, 2); break; // medical cross
+    case 'apothecary': p(6, 6, 2, 12); p(10, 8, 2, 10); p(14, 6, 2, 12); break; // bottles
+    case 'tavern': p(4, 8, 3, 8); p(8, 6, 3, 10); p(12, 8, 3, 8); p(16, 7, 3, 9); break; // cups
+    case 'storehouse': p(4, 6, 3, 10); p(8, 4, 3, 12); p(12, 5, 3, 11); p(16, 6, 3, 10); break; // storage shelves
+    case 'burial_ground': p(8, 6, 2, 10); p(14, 6, 2, 10); g.fillStyle = '#333'; p(10, 14, 8, 2); break; // graves + grave marker
+    case 'outpost': p(4, 12, 16, 4); p(10, 4, 4, 8); break; // flag/tower
+    case 'watchtower': p(6, 8, 3, 8); p(10, 4, 4, 12); p(15, 8, 3, 8); break; // tower
+    case 'yard': p(4, 6, 16, 12); g.fillStyle = '#333'; g.fillRect(8, 10, 8, 2); break; // open yard
+    case 'market': p(4, 8, 3, 8); p(8, 8, 3, 8); p(12, 8, 3, 8); p(16, 8, 3, 8); break; // market stalls
+    case 'barracks': p(4, 6, 3, 10); p(8, 6, 3, 10); p(12, 6, 3, 10); p(16, 6, 3, 10); break; // barracks rows
+    case 'pasture': p(4, 8, 4, 8); p(10, 6, 4, 10); p(16, 9, 4, 7); break; // grazing
+    case 'temple': p(6, 6, 12, 12); g.fillStyle = '#333'; g.fillRect(10, 8, 4, 6); break; // temple altar
+    case 'smokehouse': p(8, 6, 8, 10); g.fillStyle = '#333'; p(10, 4, 4, 2); break; // smoke racks
+    // Stations (from stations.json)
+    case 'bed': p(6, 6, 12, 10); g.fillStyle = '#333'; g.fillRect(10, 8, 4, 2); break; // bed
+    case 'bunk': p(4, 5, 3, 4); p(8, 7, 3, 4); p(12, 5, 3, 4); p(16, 7, 3, 4); break; // bunks
+    case 'oven': p(4, 10, 4, 6); p(8, 10, 4, 6); p(12, 10, 4, 6); p(16, 10, 4, 6); break; // ovens
+    case 'baking_oven': p(6, 10, 12, 6); break; // large oven
+    case 'millstone': p(6, 6, 12, 12); g.fillStyle = '#333'; g.strokeStyle = '#7fd0f0'; g.lineWidth = 1; g.strokeRect(8, 8, 8, 8); break; // millstone
+    case 'anvil': p(6, 10, 12, 6); g.fillStyle = '#333'; g.fillRect(8, 6, 8, 4); break; // anvil
+    case 'weapon_bench': p(4, 10, 3, 6); p(8, 8, 3, 8); p(12, 10, 3, 6); break; // weapon bench
+    case 'smelter': p(4, 8, 4, 8); p(10, 6, 4, 10); p(16, 8, 4, 8); break; // smelter
+    case 'saw_bench': p(4, 6, 3, 12); p(8, 6, 3, 12); p(12, 6, 3, 12); break; // saws
+    case 'loom': p(4, 6, 3, 12); p(9, 6, 6, 12); p(17, 6, 3, 12); break; // loom
+    case 'rope_walk': p(4, 8, 16, 2); p(8, 6, 2, 6); p(14, 6, 2, 6); break; // rope
+    case 'carpentry_bench': p(6, 8, 12, 8); g.fillStyle = '#333'; g.fillRect(8, 10, 8, 2); break; // workbench
+    case 'kiln': p(6, 6, 12, 12); g.fillStyle = '#333'; g.fillRect(10, 8, 4, 4); break; // kiln
+    case 'coke_oven': p(4, 8, 16, 8); break; // large oven
+    case 'herb_table': p(6, 6, 12, 12); g.fillStyle = '#333'; g.fillRect(8, 10, 8, 2); break; // table
+    case 'brew_vat': p(6, 8, 12, 8); g.fillStyle = '#333'; g.fillRect(10, 10, 4, 2); break; // vat
+    case 'study_desk': p(6, 8, 12, 10); g.fillStyle = '#333'; g.fillRect(8, 10, 8, 2); break; // desk
+    case 'table': p(6, 10, 12, 4); g.fillStyle = '#333'; g.fillRect(8, 8, 8, 2); break; // table
+    case 'sickbed': p(4, 6, 3, 10); p(9, 6, 3, 10); p(14, 6, 3, 10); break; // sickbeds
+    case 'shelf': p(4, 6, 3, 10); p(8, 7, 3, 9); p(12, 8, 3, 8); p(16, 9, 3, 7); break; // shelves
+    case 'crate': p(4, 8, 3, 8); p(9, 8, 3, 8); p(14, 8, 3, 8); break; // crates
+    case 'grave_marker': p(8, 6, 8, 10); g.fillStyle = '#333'; g.fillRect(10, 14, 4, 2); break; // grave
+    case 'hunting_lodge': p(6, 8, 12, 8); g.fillStyle = '#333'; g.fillRect(8, 10, 8, 2); break; // lodge
+    case 'smoke_rack': p(4, 6, 3, 10); p(8, 6, 3, 10); p(12, 6, 3, 10); p(16, 6, 3, 10); break; // smoke racks
+    case 'watch_post': p(8, 4, 8, 12); g.fillStyle = '#333'; g.fillRect(10, 8, 4, 2); break; // watchtower
+    case 'well': p(8, 6, 8, 10); g.fillStyle = '#333'; g.fillRect(10, 14, 4, 2); break; // well
+    case 'market_stall': p(4, 10, 3, 6); p(8, 10, 3, 6); p(12, 10, 3, 6); p(16, 10, 3, 6); break; // stalls
+    case 'training_post': p(6, 8, 12, 8); g.fillStyle = '#333'; g.fillRect(8, 10, 8, 2); break; // training post
+    case 'animal_pen': p(4, 6, 3, 10); p(9, 6, 3, 10); p(14, 6, 3, 10); break; // pen
+    case 'shrine': p(6, 6, 12, 12); g.fillStyle = '#333'; g.fillRect(10, 8, 4, 6); break; // shrine
+    default: p(6, 6, 12, 12); break; // fallback
+  }
+  return cv;
+}
+
 function catItems(cat: string): BarItem[] {
   switch (cat) {
     case 'Build': return [toolItem('Wall', 'wall'), toolItem('Floor', 'floor'), toolItem('Gate', 'gate'), toolItem('Bridge', 'bridge'), toolItem('Erase', 'erase')];
-    case 'Rooms': return ROOM_DEFS.map((d, i) => ({ label: (d as { name?: string }).name ?? niceName(d.id), apply: () => { tool = 'room'; roomTypeIdx = i; }, active: () => tool === 'room' && roomTypeIdx === i }));
-    case 'Work': return STATION_DEFS.map((d, i) => ({ label: (d as { name?: string }).name ?? niceName(d.id), apply: () => { tool = 'station'; stationTypeIdx = i; }, active: () => tool === 'station' && stationTypeIdx === i }));
-    case 'Plans': return BLUEPRINT_DEFS.map((d, i) => ({ label: d.name, apply: () => { tool = 'blueprint'; blueprintIdx = i; }, active: () => tool === 'blueprint' && blueprintIdx === i }));
+    case 'Rooms': return ROOM_DEFS.map((d, i) => {
+      const name = (d as { name?: string }).name ?? niceName(d.id);
+      return { label: name, iconId: d.id, apply: () => { tool = 'room'; roomTypeIdx = i; }, active: () => tool === 'room' && roomTypeIdx === i };
+    });
+    case 'Work': return STATION_DEFS.map((d, i) => {
+      const name = (d as { name?: string }).name ?? niceName(d.id);
+      return { label: name, iconId: d.id, apply: () => { tool = 'station'; stationTypeIdx = i; }, active: () => tool === 'station' && stationTypeIdx === i };
+    });
+    case 'Plans': return BLUEPRINT_DEFS.map((d, i) => ({ label: d.name, iconId: 'blueprint', apply: () => { tool = 'blueprint'; blueprintIdx = i; }, active: () => tool === 'blueprint' && blueprintIdx === i }));
     case 'Farm': return [toolItem('Field', 'field'), toolItem('Veg', 'veggarden'), toolItem('Orchard', 'orchard'), toolItem('Flax', 'flax'), toolItem('Forage', 'forage')];
     case 'Gather': return [toolItem('Wood', 'woodcutter'), toolItem('Quarry', 'quarry'), toolItem('Fishery', 'fishery'), toolItem('Trap', 'trap')];
   }
   return [];
 }
-let barHit: { x: number; y: number; w: number; h: number; on: () => void }[] = [];
+// SoS-style: a centered row of category icons; click one to pop a submenu of
+// its tools above the bar. Closed by default so the world stays clear.
+let activeCat = -1; // -1 = no submenu open
+let barHit: { x: number; y: number; w: number; h: number; on: () => void; label: string }[] = [];
+function drawIconBtn(x: number, y: number, iconId: string, label: string, active: boolean, on: () => void): void {
+  let icon = iconCache.get(iconId);
+  if (!icon) { icon = makeIcon(iconId); iconCache.set(iconId, icon); }
+  ctx.fillStyle = active ? '#2f5168' : '#161d27';
+  ctx.fillRect(x, y, ICON_SIZE, ICON_SIZE);
+  ctx.strokeStyle = active ? '#7fd0f0' : '#33424f'; ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, ICON_SIZE - 1, ICON_SIZE - 1);
+  ctx.drawImage(icon, x, y, ICON_SIZE, ICON_SIZE);
+  barHit.push({ x, y, w: ICON_SIZE, h: ICON_SIZE, on, label });
+}
 function drawCommandBar(): void {
   barHit = [];
-  const BH = 22, gap = 4, catW = 84, itemW = 96;
-  const drawBtn = (x: number, y: number, w: number, label: string, on: () => void, hot: boolean) => {
-    ctx.fillStyle = hot ? '#2f5168' : '#161d27';
-    ctx.fillRect(x, y, w, BH);
-    ctx.strokeStyle = hot ? '#7fd0f0' : '#33424f'; ctx.lineWidth = 1;
-    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, BH - 1);
-    ctx.fillStyle = hot ? '#dff1ff' : '#aab8c4';
-    ctx.font = '11px monospace'; ctx.textAlign = 'center';
-    ctx.fillText(label.length > 13 ? label.slice(0, 12) + '…' : label, x + w / 2, y + 15);
-    ctx.textAlign = 'left';
-    barHit.push({ x, y, w, h: BH, on });
-  };
-  const catY = ch - BH - 4;
-  const catRowW = BAR_CATS.length * (catW + gap) - gap;
-  let cx = Math.round((cw - catRowW) / 2);
-  BAR_CATS.forEach((c, i) => { drawBtn(cx, catY, catW, c, () => { activeCat = i; }, i === activeCat); cx += catW + gap; });
-  const items = catItems(BAR_CATS[activeCat]);
-  const perRow = Math.max(1, Math.floor((cw * 0.96) / (itemW + gap)));
-  const rows = Math.ceil(items.length / perRow);
-  for (let r = 0; r < rows; r++) {
-    const rowItems = items.slice(r * perRow, (r + 1) * perRow);
-    const rowW = rowItems.length * (itemW + gap) - gap;
-    let ix = Math.round((cw - rowW) / 2);
-    const iy = catY - (rows - r) * (BH + gap) - 2;
-    for (const it of rowItems) { drawBtn(ix, iy, itemW, it.label, it.apply, it.active()); ix += itemW + gap; }
+  const gap = 3, pad = 6;
+  const catW = BAR_CATS.length * (ICON_SIZE + gap) - gap;
+  const catX = Math.round((cw - catW) / 2);
+  const catY = ch - ICON_SIZE - pad;
+
+  // Submenu: grid of tool icons above the bar, centered over the category row.
+  if (activeCat >= 0) {
+    const items = catItems(BAR_CATS[activeCat]);
+    const perRow = Math.min(items.length, 12);
+    const rows = Math.ceil(items.length / perRow);
+    const panelW = perRow * (ICON_SIZE + gap) - gap + pad * 2;
+    const panelH = rows * (ICON_SIZE + gap) - gap + pad * 2;
+    const panelX = Math.round((cw - panelW) / 2);
+    const panelY = catY - panelH - 6;
+    ctx.fillStyle = '#0b1118ee';
+    ctx.fillRect(panelX, panelY, panelW, panelH);
+    ctx.strokeStyle = '#33424f'; ctx.lineWidth = 1;
+    ctx.strokeRect(panelX + 0.5, panelY + 0.5, panelW - 1, panelH - 1);
+    items.forEach((it, i) => {
+      const r = Math.floor(i / perRow), c = i % perRow;
+      const ix = panelX + pad + c * (ICON_SIZE + gap);
+      const iy = panelY + pad + r * (ICON_SIZE + gap);
+      drawIconBtn(ix, iy, it.iconId ?? it.label.toLowerCase().replace(/\s+/g, '_'), it.label,
+        it.active(), () => { it.apply(); activeCat = -1; });
+    });
+  }
+
+  // Category row — always visible, centered. Click toggles its submenu.
+  BAR_CATS.forEach((c, i) => {
+    drawIconBtn(catX + i * (ICON_SIZE + gap), catY, c, c, i === activeCat,
+      () => { activeCat = activeCat === i ? -1 : i; });
+  });
+
+  // Tooltip for whichever button the cursor is over (icons alone are cryptic).
+  const hit = barHit.find(b => screenMX >= b.x && screenMX < b.x + b.w && screenMY >= b.y && screenMY < b.y + b.h);
+  if (hit) {
+    ctx.font = '11px monospace'; ctx.textAlign = 'left';
+    const tw = ctx.measureText(hit.label).width + 8;
+    const tx = Math.min(hit.x, cw - tw - 2), ty = hit.y - 18;
+    ctx.fillStyle = '#0b1118ee'; ctx.fillRect(tx, ty, tw, 15);
+    ctx.strokeStyle = '#33424f'; ctx.strokeRect(tx + 0.5, ty + 0.5, tw - 1, 14);
+    ctx.fillStyle = '#dff1ff'; ctx.fillText(hit.label, tx + 4, ty + 11);
   }
 }
 function clickCommandBar(mx: number, my: number): boolean {
@@ -687,6 +826,52 @@ function clickCommandBar(mx: number, my: number): boolean {
   return false;
 }
 
+function drawLeftPanel(): void {
+  const pad = 4, lineH = 14;
+  ctx.fillStyle = '#0b1118dd';
+  ctx.fillRect(0, 0, PANEL_W, ch);
+  ctx.strokeStyle = '#33424f'; ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, PANEL_W - 1, ch - 1);
+
+  ctx.font = '10px monospace'; ctx.textAlign = 'left';
+  let y = pad + 8;
+  const print = (label: string, val: string | number) => {
+    ctx.fillStyle = '#aab8c4'; ctx.fillText(label, pad, y);
+    ctx.fillStyle = '#dff1ff'; ctx.textAlign = 'right'; ctx.fillText(String(val), PANEL_W - pad - 2, y);
+    ctx.textAlign = 'left';
+    y += lineH;
+  };
+
+  // Time & population
+  const seasonNames = ['Spr', 'Sum', 'Aut', 'Win'];
+  const season = seasonNames[Math.floor((core.day % DAYS_PER_YEAR) / DAYS_PER_SEASON)];
+  const year = Math.floor(core.day / DAYS_PER_YEAR) + 1900;
+  print(`Y${year} ${season}`, core.day % DAYS_PER_YEAR);
+  print('Pop', core.agents.count);
+
+  y += 2;
+  ctx.fillStyle = '#666'; ctx.fillRect(pad, y, PANEL_W - pad * 2, 1);
+  y += 6;
+
+  // Resources
+  const resOrder: ResourceKind[] = ['meal', 'wood', 'stone', 'grain', 'clay'];
+  for (const rid of resOrder) {
+    const cnt = core.stock.count(rid);
+    if (cnt > 0 || resOrder.indexOf(rid) < 3) {
+      const shortName = rid.length > 3 ? rid.split('_').map(w => w[0]).join('') : rid;
+      print(shortName, cnt | 0);
+    }
+  }
+
+  y += 2;
+  ctx.fillStyle = '#666'; ctx.fillRect(pad, y, PANEL_W - pad * 2, 1);
+  y += 6;
+
+  // Station count
+  const stationCnt = [...core.stationViews()].length;
+  print('Stations', stationCnt);
+  print('Builds', core.builds.length);
+}
 function draw(): void {
   if (worldView) { drawWorld(); return; }
   const px = TILE; // world is drawn in base px under the camera transform below
@@ -930,6 +1115,23 @@ function draw(): void {
           if (wallW) ctx.fillRect(x*px, y*px, 4, px);
         }
       }
+    }
+
+    // Zone overlays: light-colored grid for designated zones (SoS-style).
+    if (g.zone[i]) {
+      const cols = ['', 'rgba(212,212,106,0.25)', 'rgba(106,212,138,0.25)', 'rgba(200,200,216,0.25)', 'rgba(106,212,212,0.25)', 'rgba(212,160,106,0.25)', 'rgba(192,96,208,0.25)', 'rgba(224,112,144,0.25)', 'rgba(144,192,80,0.25)'];
+      const col = cols[g.zone[i]] || '#fff';
+      ctx.fillStyle = col;
+      ctx.fillRect(x * px, y * px, px, px);
+      // Zone boundary edge highlight: darker edge on zone transitions
+      const zoneN = y > 0 && g.zone[(y-1)*MAP+x];
+      const zoneS = y < MAP-1 && g.zone[(y+1)*MAP+x];
+      const zoneE = x < MAP-1 && g.zone[y*MAP+(x+1)];
+      const zoneW = x > 0 && g.zone[y*MAP+(x-1)];
+      if (g.zone[i] !== zoneN || !zoneN) { ctx.fillStyle = 'rgba(100,100,100,0.4)'; ctx.fillRect(x*px, y*px, px, 1); }
+      if (g.zone[i] !== zoneS || !zoneS) { ctx.fillStyle = 'rgba(100,100,100,0.4)'; ctx.fillRect(x*px, (y+1)*px-1, px, 1); }
+      if (g.zone[i] !== zoneE || !zoneE) { ctx.fillStyle = 'rgba(100,100,100,0.4)'; ctx.fillRect((x+1)*px-1, y*px, 1, px); }
+      if (g.zone[i] !== zoneW || !zoneW) { ctx.fillStyle = 'rgba(100,100,100,0.4)'; ctx.fillRect(x*px, y*px, 1, px); }
     }
 
     // Sapling: scale by age so young trees are tiny and nearly mature ones are full-size.
@@ -1921,6 +2123,9 @@ function draw(): void {
     ctx.fillStyle = logColors[entry.kind];
     ctx.fillText(`d${entry.day} ${entry.text}`, 8, ch - 10 - k * 16);
   }
+
+  // ── Left panel (resource/building info, SoS-style) ───────────────────────────
+  drawLeftPanel();
 
   // ── Command bar (bottom-centre, SoS-style) ───────────────────────────
   drawCommandBar();
