@@ -356,6 +356,7 @@ canvas.addEventListener('mousedown', (e) => {
   }
 });
 canvas.addEventListener('mousemove', (e) => {
+  regionView.updateTooltip(e.clientX, e.clientY);
   if (!panning) return;
   const dx = e.clientX - panLast.x;
   const dy = e.clientY - panLast.y;

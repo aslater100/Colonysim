@@ -1693,4 +1693,26 @@ body {
   border-color: rgba(90, 169, 216, 0.7) !important;
 }
 
+/* ---- Tooltip (settlement hover) ---- */
+.cv-tooltip {
+  position: fixed;
+  background: rgba(20, 28, 40, 0.95);
+  border: 1px solid rgba(90, 169, 216, 0.5);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: #dde6ef;
+  font-family: ui-monospace, "SF Mono", monospace;
+  pointer-events: none;
+  z-index: 100;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.cv-tooltip.hidden {
+  display: none;
+}
+
 @keyframes cv-fade-in { from { opacity: 0; } to { opacity: 1; } }

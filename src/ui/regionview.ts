@@ -102,6 +102,9 @@ export class RegionView {
   private static readonly MAX_SCALE = 6;
   // ---- Minimap (corner navigation aid) ----
   private minimap: Minimap;
+  // ---- Tooltips (settlement hover info) ----
+  private tooltip: HTMLElement;
+  private tooltipSettlementId: number | null = null;
 
   constructor(private canvas: HTMLCanvasElement, private region: RegionSim, root: HTMLElement) {
     this.g = canvas.getContext('2d')!;
@@ -151,6 +154,10 @@ export class RegionView {
     this.rivalPanel.className = 'inspector region-panel hidden';
     root.appendChild(this.rivalPanel);
     this.minimap = new Minimap(region, root, { size: 140, position: 'bottom-right' });
+    // Create tooltip element
+    this.tooltip = document.createElement('div');
+    this.tooltip.className = 'cv-tooltip hidden';
+    root.appendChild(this.tooltip);
   }
 
   /** Draggable panels for the WindowManager (region mode). */
@@ -261,6 +268,51 @@ export class RegionView {
     this.camX = W / 2 - p.px;
     this.camY = H / 2 - p.py;
     this.clampCamera();
+  }
+
+  /** Update tooltip position and visibility based on mouse position. */
+  updateTooltip(screenX: number, screenY: number): void {
+    const mx = (screenX - this.camX) / this.camScale;
+    const my = (screenY - this.camY) / this.camScale;
+    const radius = 26;
+    let hoveredId: number | null = null;
+
+    for (const t of this.region.settlements) {
+      const p = this.toPx(t.x, t.y);
+      if (Math.hypot(p.px - mx, p.py - my) < radius) {
+        hoveredId = t.id;
+        break;
+      }
+    }
+
+    if (hoveredId !== this.tooltipSettlementId) {
+      this.tooltipSettlementId = hoveredId;
+      if (hoveredId !== null) {
+        const settlement = this.region.settlement(hoveredId);
+        if (settlement) {
+          const pop = Math.round(this.region.popOf(settlement));
+          const happy = Math.round(settlement.satisfaction || 0);
+          const food = settlement.food || 0;
+          const foodStatus = food < pop * 5 ? '⚠ low' : 'ok';
+          this.tooltip.innerHTML = `<b>${settlement.name}</b><br>` +
+            `pop ${pop} · happy ${happy}% · food ${foodStatus}`;
+          this.tooltip.classList.remove('hidden');
+        }
+      } else {
+        this.tooltip.classList.add('hidden');
+      }
+    }
+
+    if (hoveredId !== null) {
+      // Position tooltip near cursor, avoiding edges
+      let tx = screenX + 12;
+      let ty = screenY + 12;
+      const rect = this.tooltip.getBoundingClientRect();
+      if (tx + rect.width > window.innerWidth) tx = screenX - rect.width - 12;
+      if (ty + rect.height > window.innerHeight) ty = screenY - rect.height - 12;
+      this.tooltip.style.left = tx + 'px';
+      this.tooltip.style.top = ty + 'px';
+    }
   }
 
   /** Keep the scaled map from drifting off-screen; at scale 1 it stays pinned. */
