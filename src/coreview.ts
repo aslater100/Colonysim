@@ -22,6 +22,7 @@ import { RegionMap } from './sim/worldgen';
 import { Weather } from './sim/weather';
 import { Rng } from './sim/rng';
 import { TAX_BAND_LABELS, SECTOR_NAMES } from './sim/region';
+import { formatCurrency } from './sim/defs';
 import { buildSprites } from './ui/sprites';
 import { applyOverrides } from './ui/spriteOverrides';
 import { Sfx } from './ui/audio';
@@ -155,6 +156,82 @@ addEventListener('keydown', (e) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Left sidebar (regional overview)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function drawLeftSidebar(): void {
+  const panelW = 280, pad = 8, lineH = 14;
+  ctx.fillStyle = '#0b1118dd';
+  ctx.fillRect(0, 0, panelW, ch);
+  ctx.strokeStyle = '#33424f';
+  ctx.strokeRect(0.5, 0.5, panelW - 1, ch - 1);
+
+  ctx.font = '11px monospace';
+  ctx.textAlign = 'left';
+
+  let y = pad + 12;
+  const line = (label: string, val: string | number) => {
+    ctx.fillStyle = '#aab8c4';
+    ctx.fillText(label, pad, y);
+    ctx.fillStyle = '#dff1ff';
+    ctx.textAlign = 'right';
+    ctx.fillText(String(val), panelW - pad - 2, y);
+    ctx.textAlign = 'left';
+    y += lineH;
+  };
+
+  // Title
+  ctx.fillStyle = '#7fd0f0';
+  ctx.font = 'bold 13px monospace';
+  ctx.fillText('Overview', pad, y);
+  y += 18;
+
+  // Regional stats
+  const totalPop = region.settlements.reduce((a, s) => a + s.cohorts.bands.reduce((x, z) => x + z, 0), 0);
+  const totalSats = region.settlements.reduce((a, s) => a + s.satisfaction, 0) / Math.max(1, region.settlements.length);
+
+  line('Day', region.day);
+  line('Settlements', region.settlements.length);
+  line('Population', Math.round(totalPop));
+  line('Avg Satisfaction', Math.round(totalSats) + '%');
+
+  y += 4;
+  ctx.fillStyle = '#666';
+  ctx.fillRect(pad, y, panelW - pad * 2, 1);
+  y += 12;
+
+  // Treasury and military
+  ctx.fillStyle = '#7fd0f0';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('State', pad, y);
+  y += 14;
+
+  ctx.font = '10px monospace';
+  line('Treasury', formatCurrency(region.treasury));
+  const totalGarrison = region.settlements.reduce((a, s) => a + s.garrisonStrength, 0);
+  line('Military', Math.round(totalGarrison));
+
+  y += 4;
+  ctx.fillStyle = '#666';
+  ctx.fillRect(pad, y, panelW - pad * 2, 1);
+  y += 12;
+
+  // Faction info
+  if (region.settlements.length > 0) {
+    const faction = region.settlements[0].factionId;
+    ctx.fillStyle = '#7fd0f0';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('Faction', pad, y);
+    y += 14;
+
+    ctx.font = '9px monospace';
+    ctx.fillStyle = '#aab8c4';
+    ctx.fillText(`Faction ID: ${faction}`, pad, y);
+    y += lineH;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Settlement UI panel
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -267,6 +344,29 @@ function drawSettlementPanel(): void {
     ctx.fillText(`${SECTOR_NAMES[sid as keyof typeof SECTOR_NAMES]} ${pct}%`, cw - panelW + pad, y);
     y += 12;
   }
+
+  sep();
+
+  // Expansion
+  ctx.fillStyle = '#7fd0f0';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('Development', cw - panelW + pad, y);
+  y += lineH + 4;
+
+  ctx.font = '9px monospace';
+  ctx.fillStyle = '#aab8c4';
+  ctx.fillText(`Housing: ${Math.round(s.housing)}`, cw - panelW + pad, y);
+  y += lineH;
+
+  const expandCost = Math.max(100, Math.round(s.housing * 25));
+  const expandLabel = `Expand Parcel (£${expandCost})`;
+  const canExpand = region.treasury >= expandCost;
+  drawBtn(pad + 10, panelW - pad * 3, expandLabel, () => {
+    if (canExpand) {
+      region.treasury -= expandCost;
+      s.housing += 20;
+    }
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -282,6 +382,9 @@ function draw(): void {
   if (regionView) {
     regionView.draw();
   }
+
+  // Draw left sidebar
+  drawLeftSidebar();
 
   // Draw settlement panel if one is selected
   drawSettlementPanel();
