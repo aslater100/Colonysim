@@ -32,6 +32,7 @@ import { WindowManager } from './ui/WindowManager';
 import { Sfx } from './ui/audio';
 import { Music } from './ui/music';
 import { Soundscape } from './ui/soundscape';
+import { showMainMenu } from './ui/mainmenu';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Audio — unlocked on the first user gesture (browser autoplay policy).
@@ -80,9 +81,7 @@ function devicePos(e: { clientX: number; clientY: number }): { x: number; y: num
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Game state — continue a saved campaign if one exists, else found a fresh
-// colony on a freshly generated region. The save stores the world seed so the
-// procedural map/weather rebuild deterministically on load.
+// Game state — initialized after the main menu is shown.
 // ─────────────────────────────────────────────────────────────────────────────
 const SAVE_KEY = 'centuria-4x-save';
 type DeserializeSim = Parameters<typeof RegionSim.deserialize>[1];
@@ -100,13 +99,40 @@ function loadSaved(): { region: RegionSim; seed: number } | null {
 
 let gameSeed: number;
 let region: RegionSim;
-const loaded = loadSaved();
-if (loaded) {
-  region = loaded.region;
-  gameSeed = loaded.seed;
-} else {
-  gameSeed = Date.now() % 100000;
-  region = RegionSim.foundColony(new Rng(gameSeed), new RegionMap(gameSeed), new Weather(gameSeed));
+
+let isNewCampaign = false;
+
+async function initGame(): Promise<void> {
+  const choice = await showMainMenu();
+
+  if (choice.action === 'classic') {
+    window.location.href = 'index.html';
+    return;
+  }
+
+  let loaded: { region: RegionSim; seed: number } | null = null;
+
+  if (choice.action === 'continue') {
+    loaded = loadSaved();
+  }
+
+  if (loaded) {
+    region = loaded.region;
+    gameSeed = loaded.seed;
+    isNewCampaign = false;
+  } else {
+    gameSeed = Date.now() % 100000;
+    const pref = choice.pref || 'river-valley';
+    region = RegionSim.foundColony(
+      new Rng(gameSeed),
+      new RegionMap(gameSeed),
+      new Weather(gameSeed),
+      { pref }
+    );
+    isNewCampaign = true;
+  }
+
+  startGame();
 }
 
 function saveGame(): void {
@@ -118,7 +144,8 @@ function newGame(): void {
   location.reload();
 }
 
-const regionView = new RegionView(canvas, region, document.body);
+function startGame(): void {
+  const regionView = new RegionView(canvas, region, document.body);
 // Centre the camera on the founding valley once the layout is known.
 regionView.selectedId = region.settlements[0]?.id ?? null;
 
@@ -240,46 +267,46 @@ function updateTopBar(): void {
 // Notable events (good/bad log entries — raids, treaty offers, breakthroughs,
 // disasters, milestones) pop as transient top-centre cards so they aren't lost
 // in the rolling log. Primed on first poll so the founding history is silent.
-const toastBox = document.createElement('div');
-toastBox.className = 'cv-toasts';
-document.body.appendChild(toastBox);
+  const toastBox = document.createElement('div');
+  toastBox.className = 'cv-toasts';
+  document.body.appendChild(toastBox);
 
-// ── Welcome / help overlay ──────────────────────────────────────────────────
-// A first-run guide to the colony→nation arc + controls, reopenable via the
-// HUD "?" button or the H/? keys. Additive overlay — never blocks the sim.
-const helpOverlay = document.createElement('div');
-helpOverlay.className = 'cv-help hidden';
-helpOverlay.innerHTML =
-  `<div class="cv-help-box">` +
-  `<h1>CENTURIA</h1>` +
-  `<p class="cv-help-tag">Build · Endure · Govern — one valley to a nation, 1900–2100.</p>` +
-  `<div class="cv-help-cols">` +
-  `<div><h3>The arc</h3><ul>` +
-  `<li>Grow your colony, then <b>found daughter towns</b>.</li>` +
-  `<li>Charter a <b>State</b>, then proclaim a <b>Nation</b>.</li>` +
-  `<li>Steer economy, diplomacy, war &amp; climate to 2100.</li>` +
-  `<li>Watch the <b>Path to Nationhood</b> panel for your next step.</li>` +
-  `</ul></div>` +
-  `<div><h3>Controls</h3><ul>` +
-  `<li><b>Pan</b> WASD / arrows / drag · <b>Zoom</b> wheel / +− · <b>0</b> reset</li>` +
-  `<li><b>Click</b> a town to manage it · <b>Esc</b> deselect</li>` +
-  `<li>Panels: <b>T</b> research · <b>R</b> routes · <b>L</b> towns · <b>E</b> economy</li>` +
-  `<li><b>Space</b> pause · <b>1–4</b> speed · <b>Ctrl/⌘-S</b> save · <b>M</b> sound</li>` +
-  `</ul></div>` +
-  `</div>` +
-  `<button class="cv-help-start">Begin ▸</button>` +
-  `</div>`;
-document.body.appendChild(helpOverlay);
-const showHelp = () => helpOverlay.classList.remove('hidden');
-const hideHelp = () => helpOverlay.classList.add('hidden');
-helpOverlay.addEventListener('mousedown', (e) => { if (e.target === helpOverlay || (e.target as HTMLElement).classList.contains('cv-help-start')) hideHelp(); });
-// Show once for a brand-new campaign (not when continuing a save).
-if (!loaded && !localStorage.getItem('centuria-4x-seen')) {
-  localStorage.setItem('centuria-4x-seen', '1');
-  showHelp();
-}
+  // ── Welcome / help overlay ──────────────────────────────────────────────────
+  // A first-run guide to the colony→nation arc + controls, reopenable via the
+  // HUD "?" button or the H/? keys. Additive overlay — never blocks the sim.
+  const helpOverlay = document.createElement('div');
+  helpOverlay.className = 'cv-help hidden';
+  helpOverlay.innerHTML =
+    `<div class="cv-help-box">` +
+    `<h1>CENTURIA</h1>` +
+    `<p class="cv-help-tag">Build · Endure · Govern — one valley to a nation, 1900–2100.</p>` +
+    `<div class="cv-help-cols">` +
+    `<div><h3>The arc</h3><ul>` +
+    `<li>Grow your colony, then <b>found daughter towns</b>.</li>` +
+    `<li>Charter a <b>State</b>, then proclaim a <b>Nation</b>.</li>` +
+    `<li>Steer economy, diplomacy, war &amp; climate to 2100.</li>` +
+    `<li>Watch the <b>Path to Nationhood</b> panel for your next step.</li>` +
+    `</ul></div>` +
+    `<div><h3>Controls</h3><ul>` +
+    `<li><b>Pan</b> WASD / arrows / drag · <b>Zoom</b> wheel / +− · <b>0</b> reset</li>` +
+    `<li><b>Click</b> a town to manage it · <b>Esc</b> deselect</li>` +
+    `<li>Panels: <b>T</b> research · <b>R</b> routes · <b>L</b> towns · <b>E</b> economy</li>` +
+    `<li><b>Space</b> pause · <b>1–4</b> speed · <b>Ctrl/⌘-S</b> save · <b>M</b> sound</li>` +
+    `</ul></div>` +
+    `</div>` +
+    `<button class="cv-help-start">Begin ▸</button>` +
+    `</div>`;
+  document.body.appendChild(helpOverlay);
+  const showHelp = () => helpOverlay.classList.remove('hidden');
+  const hideHelp = () => helpOverlay.classList.add('hidden');
+  helpOverlay.addEventListener('mousedown', (e) => { if (e.target === helpOverlay || (e.target as HTMLElement).classList.contains('cv-help-start')) hideHelp(); });
+  // Show once for a brand-new campaign (not when continuing a save).
+  if (isNewCampaign && !localStorage.getItem('centuria-4x-seen')) {
+    localStorage.setItem('centuria-4x-seen', '1');
+    showHelp();
+  }
 
-let lastToastLen = region.log.length; // prime: skip boot history
+  let lastToastLen = region.log.length; // prime: skip boot history
 function pollToasts(): void {
   const log = region.log;
   if (log.length <= lastToastLen) { lastToastLen = log.length; return; }
@@ -417,15 +444,18 @@ function frame(): void {
   soundscape.update({ mode: 'region', paused, year: region.year, activeBuildWorkers: 0, activeRailRoutes: 0, maxGrievance, tension });
 
   requestAnimationFrame(frame);
+  }
+
+  requestAnimationFrame(frame);
+
+  // Autosave: every 45s of real time, and whenever the tab is hidden or closed,
+  // so a campaign survives a refresh or crash without manual saving.
+  setInterval(saveGame, 45000);
+  addEventListener('beforeunload', saveGame);
+  addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveGame(); });
+  addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveGame(); }
+  });
 }
 
-requestAnimationFrame(frame);
-
-// Autosave: every 45s of real time, and whenever the tab is hidden or closed,
-// so a campaign survives a refresh or crash without manual saving.
-setInterval(saveGame, 45000);
-addEventListener('beforeunload', saveGame);
-addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveGame(); });
-addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveGame(); }
-});
+initGame();
