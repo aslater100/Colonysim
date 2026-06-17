@@ -4168,8 +4168,11 @@ export class RegionSim {
 
   /** Why this building can't be raised here right now — or ok. */
   cityBuildCheck(t: Settlement, def: RegionalBuildingDef): { ok: boolean; reason: string } {
-    const manage = this.canManageCity(t);
-    if (!manage.ok) return manage;
+    if (t.factionId !== this.playerFactionId) return { ok: false, reason: 'not your town' };
+    if (this.stateProclaimed) {
+      const manage = this.canManageCity(t);
+      if (!manage.ok) return manage;
+    }
     if (t.construction) return { ok: false, reason: 'a project is already underway' };
     if (def.prereq && !this.has(def.prereq)) {
       const node = TECH_TREE.find((n) => n.id === def.prereq);
