@@ -3,8 +3,8 @@
  * operating altitude after the flip (GDD §2.5). Painterly backdrop, town
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
-import type { Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, TownFocus, WagePolicy, Route, SectorId } from '../sim/region';
-import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR } from '../sim/region';
+import type { Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType } from '../sim/region';
+import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES } from '../sim/region';
 import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS, MINUTES_PER_DAY } from '../sim/defs';
 import type { CurrencySymbol } from '../sim/defs';
 import { ANNOUNCE_LEAD_DAYS } from '../sim/currency';
@@ -79,6 +79,8 @@ export class RegionView {
   /** Era-branch reveal modal: shown once when the century forks (GDD §3.2). */
   private eraModal: HTMLElement;
   private eraDismissed = false;
+  /** Unit recruitment modal (GDD §7.1: military depth). */
+  private recruitmentModal: HTMLElement;
   private frame = 0;
   // ---- Static-map cache. Terrain + territory fills are O(N²) and barely change,
   //      so render them once into an offscreen canvas (base coords) and blit it
@@ -151,6 +153,9 @@ export class RegionView {
     this.eraModal = document.createElement('div');
     this.eraModal.className = 'win-modal hidden';
     root.appendChild(this.eraModal);
+    this.recruitmentModal = document.createElement('div');
+    this.recruitmentModal.className = 'ceremony hidden';
+    root.appendChild(this.recruitmentModal);
     this.rivalPanel = document.createElement('div');
     this.rivalPanel.className = 'inspector region-panel hidden';
     root.appendChild(this.rivalPanel);
@@ -1830,6 +1835,9 @@ export class RegionView {
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-deal-btn')) {
       btn.onclick = () => this.openDealModal(Number(btn.dataset.rival));
     }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-preset-btn')) {
+      btn.onclick = () => this.proposePresetDeal(Number(btn.dataset.rival), btn.dataset.preset!);
+    }
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-counter-sign-btn')) {
       btn.onclick = () => r.acceptCounter(Number(btn.dataset.rival));
     }
@@ -1861,6 +1869,9 @@ export class RegionView {
     });
     this.statePanel.querySelector<HTMLButtonElement>('#geo-deploy-btn')?.addEventListener('click', () => {
       r.deployGeoengineering();
+    });
+    this.statePanel.querySelector<HTMLButtonElement>('#war-recruit-btn')?.addEventListener('click', () => {
+      this.showRecruitmentModal();
     });
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-sanction-btn')) {
       btn.onclick = () => r.sanctionAccordDefector(Number(btn.dataset.rival));
@@ -1934,6 +1945,7 @@ export class RegionView {
           `title="A state gift — dearer, faster">gift ` + formatCurrency(GIFT_COST) + `</button> ` +
           `<button class="mini dip-deal-btn" data-rival="${rv.id}" ` +
           `title="Open the bargaining table: compose a multi-item basket (GDD §6.3)">negotiate</button> ` +
+          this.quickDealButtons(rv.id) + ` ` +
           proposals + warBtn + `</p>`;
       // Show richer personality information
       const profile = r.rivalProfile(rv.id);
@@ -2045,12 +2057,50 @@ export class RegionView {
       `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${Math.round(w.support)}%;background:${supCol}"></div></div>` +
       `<span>${Math.round(w.support)}</span></div>` +
       `<p class="insp-skills">casualties ${Math.round(w.casualties)} · combat power ${Math.round(r.warPower())} vs ${Math.round(r.rivalWarPower(rv))}</p>` +
+      this.militaryUnitsHtml(w) +
       sides +
       `<p>${mobBtns} ${blockadeBtn}</p>` +
       (callBtns ? `<p>${callBtns}</p>` : '') +
       occ +
       `<p>${termBtns}</p>` +
       `<p>${offerBtn} <button class="mini war-capitulate-btn" title="End the war on their terms — reparations and a stripped treasury">capitulate</button></p>`;
+  }
+
+  /** Military units display and recruitment (GDD §7.1). */
+  private militaryUnitsHtml(w: any): string {
+    const unitLines = w.units.length > 0
+      ? `<p class="insp-skills">UNITS: ${w.units.map((u: any) => `${u.count} ${u.type} (morale ${Math.round(u.morale)})`).join(' · ')}</p>`
+      : `<p class="insp-skills">no units recruited yet</p>`;
+    const supplyStatus = w.supplyReserve > 2 ? `<span style="color:#4e9">✓</span>` : w.supplyReserve > 1 ? `<span style="color:#ca4">⚠</span>` : `<span style="color:#e55">✗</span>`;
+    const supplyLine = `<span style="display:inline-block;width:140px">supply ${supplyStatus} ${Math.round(w.supplyReserve * 10) / 10}mo</span>`;
+    const recruitBtn = `<button class="mini war-recruit-btn" id="war-recruit-btn">recruit</button>`;
+    return unitLines + `<p>${supplyLine} ${recruitBtn}</p>`;
+  }
+
+  /** Show recruitment modal for unit types (GDD §7.1). */
+  private showRecruitmentModal(): void {
+    const r = this.region;
+    const w = r.playerWar;
+    if (!w) return;
+    const types: ArmyUnitType[] = ['militia', 'cavalry', 'artillery'];
+    const rows = types.map((t) => {
+      const def = UNIT_TYPES[t];
+      return `<p><b>${t}</b> — £${def.recruitCost}/unit · power ${def.powerPerUnit} · ${def.trainingDays}d training · ${def.supplyCost}/day supply
+        <input type="number" min="1" max="100" value="5" id="recruit-${t}-count" style="width:50px">
+        <button class="mini" id="recruit-${t}-btn">recruit</button></p>`;
+    }).join('');
+    this.recruitmentModal.innerHTML = `<div class="ceremony-content"><h2>Recruit Army Units</h2><p>Treasury: <b>${formatCurrency(r.treasury)}</b></p>${rows}<button id="recruit-close-btn">Done</button></div>`;
+    this.recruitmentModal.classList.remove('hidden');
+    this.recruitmentModal.querySelector<HTMLButtonElement>('#recruit-close-btn')!.onclick = () => {
+      this.recruitmentModal.classList.add('hidden');
+    };
+    for (const t of types) {
+      this.recruitmentModal.querySelector<HTMLButtonElement>(`#recruit-${t}-btn`)!.onclick = () => {
+        const count = parseInt(this.recruitmentModal.querySelector<HTMLInputElement>(`#recruit-${t}-count`)!.value) || 0;
+        r.recruitUnits(t, count);
+        this.showRecruitmentModal(); // refresh modal
+      };
+    }
   }
 
   /** Politics section: political capital, elections, faction bars, law cards. */
@@ -2223,6 +2273,52 @@ export class RegionView {
     return `✗ ${ledger}. They would walk — "${v.reason}."`;
   }
 
+  /** Forecast relations impact after deal (GDD §6.3 advanced UI). */
+  private relationsForecast(): string {
+    const r = this.region;
+    const rv = r.rival(this.dealRivalId);
+    if (!rv) return '';
+    // ponytail: rough estimate based on deal value; exact calc happens if they sign
+    const v = r.evaluateDeal(rv, this.currentBasket());
+    if (!v.accept) return '';
+    const relChange = Math.round(Math.min(20, v.get / 5));
+    const newRel = Math.min(100, Math.round(rv.relations) + relChange);
+    const trend = newRel >= 25 ? '↗ friendly' : newRel >= -25 ? '→ neutral' : '↘ hostile';
+    return `<p class="insp-skills">Forecast: relations ${Math.round(rv.relations)} → ${newRel} (${trend})</p>`;
+  }
+
+  /** Quick preset deals for faster diplomacy (GDD §6.3 advanced UI). */
+  private quickDealButtons(rivalId: number): string {
+    const r = this.region;
+    const rv = r.rival(rivalId);
+    if (!rv) return '';
+    // ponytail: preset deals are templates, not game mechanics — just compose the basket faster
+    const presets = [
+      { name: '🤝 NAP', treaties: ['non_aggression'] as TreatyKind[], gold: 0 },
+      { name: '🤝 Trade', treaties: ['trade_agreement'] as TreatyKind[], gold: 0 },
+      { name: '🛡️ Pact', treaties: ['defensive_pact'] as TreatyKind[], gold: 0 },
+    ];
+    return presets.map((p) => {
+      const hasAll = p.treaties.every((t) => rv.treaties.includes(t));
+      return `<button class="mini dip-preset-btn" data-rival="${rivalId}" data-preset="${p.name}" ${hasAll ? 'disabled' : ''} ` +
+        `title="Quick propose: ${p.treaties.map((t) => TREATY_DEFS[t].name).join(' + ')}">${p.name}</button>`;
+    }).join(' ');
+  }
+
+  /** Propose a preset deal basket (GDD §6.3). */
+  private proposePresetDeal(rivalId: number, presetName: string): void {
+    const r = this.region;
+    const presets: Record<string, { treaties: TreatyKind[]; gold: number }> = {
+      '🤝 NAP': { treaties: ['non_aggression'], gold: 0 },
+      '🤝 Trade': { treaties: ['trade_agreement'], gold: 0 },
+      '🛡️ Pact': { treaties: ['defensive_pact'], gold: 0 },
+    };
+    const p = presets[presetName];
+    if (!p) return;
+    const basket: DealBasket = { treaties: p.treaties, goldToThem: p.gold, goldToYou: 0, borderSettlement: false };
+    r.proposeDeal(rivalId, basket);
+  }
+
   private renderDealModal(): void {
     const r = this.region;
     const rv = r.rival(this.dealRivalId);
@@ -2253,6 +2349,7 @@ export class RegionView {
       `<label>${getCurrencySymbol()} asked of them <input type="number" id="deal-gold-you" min="0" step="5" value="${this.dealGoldToYou}" style="width:70px"></label> ` +
       `<span class="insp-skills">(treasury ` + formatCurrency(Math.floor(r.treasury)) + `)</span></p>` +
       `<p id="deal-verdict" class="insp-skills">${this.dealVerdictLine()}</p>` +
+      `<div class="deal-forecast">${this.relationsForecast()}</div>` +
       `<p><button id="deal-propose-btn" ${r.treasury >= this.dealGoldToThem ? '' : 'disabled'}>Put it on the table</button> ` +
       `<button id="deal-cancel-btn" class="mini">Withdraw</button></p>` +
       `</div>`;
@@ -2260,6 +2357,8 @@ export class RegionView {
 
     const refreshVerdict = () => {
       this.dealModal.querySelector('#deal-verdict')!.textContent = this.dealVerdictLine();
+      const forecastEl = this.dealModal.querySelector('.deal-forecast');
+      if (forecastEl) forecastEl.innerHTML = this.relationsForecast();
     };
     for (const box of this.dealModal.querySelectorAll<HTMLInputElement>('.deal-treaty')) {
       box.onchange = () => {
