@@ -223,6 +223,7 @@ function updateTopBar(): void {
     `<button class="tb-btn" data-cv="sound" title="toggle audio (M)">${soundOn ? '🔊' : '🔈'}</button>` +
     `<button class="tb-btn" data-cv="save" title="save campaign">💾 Save</button>` +
     `<button class="tb-btn" data-cv="new" title="start a new colony">New</button>` +
+    `<button class="tb-btn" data-cv="help" title="how to play (H)">?</button>` +
     `<span class="tb-speed">${paused ? '⏸ PAUSED' : '▶'.repeat(speed)} <i>(space · 1-4)</i></span>` +
     (r.gameOver ? `<span class="tb-over">THE COLONY HAS PERISHED</span>` : '');
   const soundBtn = topBar.querySelector<HTMLButtonElement>('[data-cv="sound"]');
@@ -231,6 +232,8 @@ function updateTopBar(): void {
   if (saveBtn) saveBtn.onclick = () => { saveGame(); saveBtn.textContent = '✓ Saved'; setTimeout(() => { saveBtn.textContent = '💾 Save'; }, 1200); };
   const newBtn = topBar.querySelector<HTMLButtonElement>('[data-cv="new"]');
   if (newBtn) newBtn.onclick = newGame;
+  const helpBtn = topBar.querySelector<HTMLButtonElement>('[data-cv="help"]');
+  if (helpBtn) helpBtn.onclick = showHelp;
 }
 
 // ── Event toasts ────────────────────────────────────────────────────────────
@@ -240,6 +243,41 @@ function updateTopBar(): void {
 const toastBox = document.createElement('div');
 toastBox.className = 'cv-toasts';
 document.body.appendChild(toastBox);
+
+// ── Welcome / help overlay ──────────────────────────────────────────────────
+// A first-run guide to the colony→nation arc + controls, reopenable via the
+// HUD "?" button or the H/? keys. Additive overlay — never blocks the sim.
+const helpOverlay = document.createElement('div');
+helpOverlay.className = 'cv-help hidden';
+helpOverlay.innerHTML =
+  `<div class="cv-help-box">` +
+  `<h1>CENTURIA</h1>` +
+  `<p class="cv-help-tag">Build · Endure · Govern — one valley to a nation, 1900–2100.</p>` +
+  `<div class="cv-help-cols">` +
+  `<div><h3>The arc</h3><ul>` +
+  `<li>Grow your colony, then <b>found daughter towns</b>.</li>` +
+  `<li>Charter a <b>State</b>, then proclaim a <b>Nation</b>.</li>` +
+  `<li>Steer economy, diplomacy, war &amp; climate to 2100.</li>` +
+  `<li>Watch the <b>Path to Nationhood</b> panel for your next step.</li>` +
+  `</ul></div>` +
+  `<div><h3>Controls</h3><ul>` +
+  `<li><b>Pan</b> WASD / arrows / drag · <b>Zoom</b> wheel / +− · <b>0</b> reset</li>` +
+  `<li><b>Click</b> a town to manage it · <b>Esc</b> deselect</li>` +
+  `<li>Panels: <b>T</b> research · <b>R</b> routes · <b>L</b> towns · <b>E</b> economy</li>` +
+  `<li><b>Space</b> pause · <b>1–4</b> speed · <b>Ctrl/⌘-S</b> save · <b>M</b> sound</li>` +
+  `</ul></div>` +
+  `</div>` +
+  `<button class="cv-help-start">Begin ▸</button>` +
+  `</div>`;
+document.body.appendChild(helpOverlay);
+const showHelp = () => helpOverlay.classList.remove('hidden');
+const hideHelp = () => helpOverlay.classList.add('hidden');
+helpOverlay.addEventListener('mousedown', (e) => { if (e.target === helpOverlay || (e.target as HTMLElement).classList.contains('cv-help-start')) hideHelp(); });
+// Show once for a brand-new campaign (not when continuing a save).
+if (!loaded && !localStorage.getItem('centuria-4x-seen')) {
+  localStorage.setItem('centuria-4x-seen', '1');
+  showHelp();
+}
 
 let lastToastLen = region.log.length; // prime: skip boot history
 function pollToasts(): void {
@@ -337,7 +375,10 @@ addEventListener('keydown', (e) => {
     case 'l': regionView.settlementListOpen = !regionView.settlementListOpen; break;
     case 'e': regionView.economyOpen = !regionView.economyOpen; break;
     case 'm': toggleSound(); break;
-    case 'escape': regionView.selectedId = null; regionView.selectedFactionId = null; break;
+    case 'h': case '?': if (helpOverlay.classList.contains('hidden')) showHelp(); else hideHelp(); break;
+    case 'escape':
+      if (!helpOverlay.classList.contains('hidden')) { hideHelp(); break; }
+      regionView.selectedId = null; regionView.selectedFactionId = null; break;
   }
 });
 
