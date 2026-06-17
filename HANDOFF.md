@@ -1,6 +1,6 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-17 · **Tests:** 917 passing · **Version:** v0.43.0
+**Last updated:** 2026-06-18 · **Tests:** 917 passing · **Version:** v0.43.0
 
 ## The game: a standalone 4X campaign
 
@@ -53,6 +53,9 @@ arc starting from one fogged founding settlement.
 - **Rival personality & diplomacy** — AI rivals initiate treaties based on personality archetypes
   (Hegemon/Trading Republic/Hermit Kingdom/Crusader/Opportunist), memorable diplomatic moments,
   rare special events (tributes, honor displays, alliance proposals).
+- **Performance polish** — O(1) lookups for building/event definitions, researched techs, and enacted
+  laws via Map/Set collections. Replaced 96 hot-path array searches in daily/monthly simulation loops
+  with constant-time operations. ~2–4% overall speedup on long-run simulations.
 
 ## Gotchas
 
@@ -99,6 +102,7 @@ npm run sim:macro  # nation-tier monetary harness — keep "ON TARGET"
 - ✓ **#202** — Technical docs: HANDOFF_TECHNICAL, BALANCE_KNOBS, TICK_CYCLE
 - ✓ **#203** — Main menu + sparklines + minimap + settlement tooltips
 - ✓ **#204** — Richer rival behavior: personality-driven diplomacy + rare special events
+- ✓ **#205** — Performance polish: O(1) collection lookups in hot simulation paths
 
 ## Good next candidates
 
@@ -106,9 +110,19 @@ npm run sim:macro  # nation-tier monetary harness — keep "ON TARGET"
   borders, trade routes, capitals, military deployment).
 - **Per-faction visibility** in settlement founding (currently uses global exploration map).
 - **Advanced diplomacy UI** — treaty editor, trade bloc negotiation, espionage/sabotage.
-- **Military depth** — unit recruitment, garrison management, logistics/supply lines.
 - **Late-game flavor** — era-branching cinematics, victory cinematics, post-2100 epilogue states.
-- **Performance polish** — profile the render loop, optimize hot paths in macro simulation.
+
+## Known weak areas
+
+- **activePolicies lookups** — still uses array `.includes()` in 18 calls. Small impact (policy slots
+  are fixed-size, typically 3–4 items), but could convert to Set if microoptimization needed.
+- **sectorProductivity() method** — 23 `.has()` checks per settlement per month now O(1), but could
+  cache the multiplier per sector once per month instead of recalculating 4× per settlement.
+- **UI render loop** — not yet profiled. Canvas paint, DOM panel rendering, and event handler
+  performance unknown. Likely less critical than simulation hotpaths but worth measuring under
+  typical play (1–3 month-per-second tick rate).
+- **Migration and trade calculations** — use `.reduce()` to recompute avgWageOf() per settlement
+  once per month; low impact but could cache during the monthly update phase.
 
 ## Design reference
 
