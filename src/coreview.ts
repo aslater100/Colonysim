@@ -80,12 +80,43 @@ function devicePos(e: { clientX: number; clientY: number }): { x: number; y: num
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Game state — a fresh colony on a freshly generated region.
+// Game state — continue a saved campaign if one exists, else found a fresh
+// colony on a freshly generated region. The save stores the world seed so the
+// procedural map/weather rebuild deterministically on load.
 // ─────────────────────────────────────────────────────────────────────────────
-const seed = Date.now() % 100000;
-const map = new RegionMap(seed);
-const weather = new Weather(seed);
-const region = RegionSim.foundColony(new Rng(seed), map, weather);
+const SAVE_KEY = 'centuria-4x-save';
+type DeserializeSim = Parameters<typeof RegionSim.deserialize>[1];
+
+function loadSaved(): { region: RegionSim; seed: number } | null {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return null;
+    const save = JSON.parse(raw) as { seed: number; data: string };
+    if (typeof save.seed !== 'number' || typeof save.data !== 'string') return null;
+    const stub = { rng: new Rng(save.seed), regionMap: new RegionMap(save.seed), weather: new Weather(save.seed) } as unknown as DeserializeSim;
+    return { region: RegionSim.deserialize(save.data, stub), seed: save.seed };
+  } catch { return null; }
+}
+
+let gameSeed: number;
+let region: RegionSim;
+const loaded = loadSaved();
+if (loaded) {
+  region = loaded.region;
+  gameSeed = loaded.seed;
+} else {
+  gameSeed = Date.now() % 100000;
+  region = RegionSim.foundColony(new Rng(gameSeed), new RegionMap(gameSeed), new Weather(gameSeed));
+}
+
+function saveGame(): void {
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ v: 1, seed: gameSeed, data: region.serialize() })); } catch { /* quota/full — ignore */ }
+}
+function newGame(): void {
+  if (!confirm('Abandon this campaign and start a new colony? Your saved game will be overwritten.')) return;
+  localStorage.removeItem(SAVE_KEY);
+  location.reload();
+}
 
 const regionView = new RegionView(canvas, region, document.body);
 // Centre the camera on the founding valley once the layout is known.
@@ -189,11 +220,17 @@ function updateTopBar(): void {
     `<span title="your share of regional territory">⬣ ${terr}%</span>` +
     `<span title="living notables">NOTABLES ${r.notables.filter((n) => n.alive).length}</span>` +
     `<span class="tb-date">${tierLabel}</span>` +
-    `<button class="tb-btn" data-cv="sound" title="toggle audio">${soundOn ? '🔊' : '🔈'}</button>` +
+    `<button class="tb-btn" data-cv="sound" title="toggle audio (M)">${soundOn ? '🔊' : '🔈'}</button>` +
+    `<button class="tb-btn" data-cv="save" title="save campaign">💾 Save</button>` +
+    `<button class="tb-btn" data-cv="new" title="start a new colony">New</button>` +
     `<span class="tb-speed">${paused ? '⏸ PAUSED' : '▶'.repeat(speed)} <i>(space · 1-4)</i></span>` +
     (r.gameOver ? `<span class="tb-over">THE COLONY HAS PERISHED</span>` : '');
   const soundBtn = topBar.querySelector<HTMLButtonElement>('[data-cv="sound"]');
   if (soundBtn) soundBtn.onclick = toggleSound;
+  const saveBtn = topBar.querySelector<HTMLButtonElement>('[data-cv="save"]');
+  if (saveBtn) saveBtn.onclick = () => { saveGame(); saveBtn.textContent = '✓ Saved'; setTimeout(() => { saveBtn.textContent = '💾 Save'; }, 1200); };
+  const newBtn = topBar.querySelector<HTMLButtonElement>('[data-cv="new"]');
+  if (newBtn) newBtn.onclick = newGame;
 }
 
 // ── Event toasts ────────────────────────────────────────────────────────────
@@ -342,3 +379,12 @@ function frame(): void {
 }
 
 requestAnimationFrame(frame);
+
+// Autosave: every 45s of real time, and whenever the tab is hidden or closed,
+// so a campaign survives a refresh or crash without manual saving.
+setInterval(saveGame, 45000);
+addEventListener('beforeunload', saveGame);
+addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveGame(); });
+addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveGame(); }
+});
