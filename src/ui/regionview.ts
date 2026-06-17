@@ -1835,6 +1835,9 @@ export class RegionView {
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-deal-btn')) {
       btn.onclick = () => this.openDealModal(Number(btn.dataset.rival));
     }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-preset-btn')) {
+      btn.onclick = () => this.proposePresetDeal(Number(btn.dataset.rival), btn.dataset.preset!);
+    }
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-counter-sign-btn')) {
       btn.onclick = () => r.acceptCounter(Number(btn.dataset.rival));
     }
@@ -1942,6 +1945,7 @@ export class RegionView {
           `title="A state gift — dearer, faster">gift ` + formatCurrency(GIFT_COST) + `</button> ` +
           `<button class="mini dip-deal-btn" data-rival="${rv.id}" ` +
           `title="Open the bargaining table: compose a multi-item basket (GDD §6.3)">negotiate</button> ` +
+          this.quickDealButtons(rv.id) + ` ` +
           proposals + warBtn + `</p>`;
       // Show richer personality information
       const profile = r.rivalProfile(rv.id);
@@ -2269,6 +2273,52 @@ export class RegionView {
     return `✗ ${ledger}. They would walk — "${v.reason}."`;
   }
 
+  /** Forecast relations impact after deal (GDD §6.3 advanced UI). */
+  private relationsForecast(): string {
+    const r = this.region;
+    const rv = r.rival(this.dealRivalId);
+    if (!rv) return '';
+    // ponytail: rough estimate based on deal value; exact calc happens if they sign
+    const v = r.evaluateDeal(rv, this.currentBasket());
+    if (!v.accept) return '';
+    const relChange = Math.round(Math.min(20, v.get / 5));
+    const newRel = Math.min(100, Math.round(rv.relations) + relChange);
+    const trend = newRel >= 25 ? '↗ friendly' : newRel >= -25 ? '→ neutral' : '↘ hostile';
+    return `<p class="insp-skills">Forecast: relations ${Math.round(rv.relations)} → ${newRel} (${trend})</p>`;
+  }
+
+  /** Quick preset deals for faster diplomacy (GDD §6.3 advanced UI). */
+  private quickDealButtons(rivalId: number): string {
+    const r = this.region;
+    const rv = r.rival(rivalId);
+    if (!rv) return '';
+    // ponytail: preset deals are templates, not game mechanics — just compose the basket faster
+    const presets = [
+      { name: '🤝 NAP', treaties: ['non_aggression'] as TreatyKind[], gold: 0 },
+      { name: '🤝 Trade', treaties: ['trade_agreement'] as TreatyKind[], gold: 0 },
+      { name: '🛡️ Pact', treaties: ['defensive_pact'] as TreatyKind[], gold: 0 },
+    ];
+    return presets.map((p) => {
+      const hasAll = p.treaties.every((t) => rv.treaties.includes(t));
+      return `<button class="mini dip-preset-btn" data-rival="${rivalId}" data-preset="${p.name}" ${hasAll ? 'disabled' : ''} ` +
+        `title="Quick propose: ${p.treaties.map((t) => TREATY_DEFS[t].name).join(' + ')}">${p.name}</button>`;
+    }).join(' ');
+  }
+
+  /** Propose a preset deal basket (GDD §6.3). */
+  private proposePresetDeal(rivalId: number, presetName: string): void {
+    const r = this.region;
+    const presets: Record<string, { treaties: TreatyKind[]; gold: number }> = {
+      '🤝 NAP': { treaties: ['non_aggression'], gold: 0 },
+      '🤝 Trade': { treaties: ['trade_agreement'], gold: 0 },
+      '🛡️ Pact': { treaties: ['defensive_pact'], gold: 0 },
+    };
+    const p = presets[presetName];
+    if (!p) return;
+    const basket: DealBasket = { treaties: p.treaties, goldToThem: p.gold, goldToYou: 0, borderSettlement: false };
+    r.proposeDeal(rivalId, basket);
+  }
+
   private renderDealModal(): void {
     const r = this.region;
     const rv = r.rival(this.dealRivalId);
@@ -2299,6 +2349,7 @@ export class RegionView {
       `<label>${getCurrencySymbol()} asked of them <input type="number" id="deal-gold-you" min="0" step="5" value="${this.dealGoldToYou}" style="width:70px"></label> ` +
       `<span class="insp-skills">(treasury ` + formatCurrency(Math.floor(r.treasury)) + `)</span></p>` +
       `<p id="deal-verdict" class="insp-skills">${this.dealVerdictLine()}</p>` +
+      `<div class="deal-forecast">${this.relationsForecast()}</div>` +
       `<p><button id="deal-propose-btn" ${r.treasury >= this.dealGoldToThem ? '' : 'disabled'}>Put it on the table</button> ` +
       `<button id="deal-cancel-btn" class="mini">Withdraw</button></p>` +
       `</div>`;
@@ -2306,6 +2357,8 @@ export class RegionView {
 
     const refreshVerdict = () => {
       this.dealModal.querySelector('#deal-verdict')!.textContent = this.dealVerdictLine();
+      const forecastEl = this.dealModal.querySelector('.deal-forecast');
+      if (forecastEl) forecastEl.innerHTML = this.relationsForecast();
     };
     for (const box of this.dealModal.querySelectorAll<HTMLInputElement>('.deal-treaty')) {
       box.onchange = () => {
