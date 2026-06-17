@@ -1935,11 +1935,16 @@ export class RegionView {
           `<button class="mini dip-deal-btn" data-rival="${rv.id}" ` +
           `title="Open the bargaining table: compose a multi-item basket (GDD §6.3)">negotiate</button> ` +
           proposals + warBtn + `</p>`;
-      return `<div class="bar-row" title="${RIVAL_ARCHETYPES[rv.archetype].name} — agenda: ${rv.agenda}. ${recentHistory}">` +
+      // Show richer personality information
+      const profile = r.rivalProfile(rv.id);
+      const personalityInfo = profile
+        ? `${profile.traits.join(', ')} — ${profile.approximateStrength}`
+        : '';
+      return `<div class="bar-row" title="${RIVAL_ARCHETYPES[rv.archetype].name} — ${personalityInfo}. Agenda: ${rv.agenda}.">` +
         `<span style="width:80px;display:inline-block"><b>${rv.name}</b></span>` +
         `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${pct}%;background:${col}"></div></div>` +
         `<span>${rel}</span></div>` +
-        `<p class="insp-skills" title="${recentHistory}">${gov}${rv.borderSettled ? ' · border settled' : ''} · ${treaties}</p>` +
+        `<p class="insp-skills" title="${recentHistory}">${gov}${rv.borderSettled ? ' · border settled' : ''} · ${personalityInfo}${personalityInfo ? ' · ' : ''}${treaties}</p>` +
         offerRow + counterRow +
         verbs;
     }).join('');

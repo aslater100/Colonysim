@@ -5224,6 +5224,39 @@ export class RegionSim {
     return this.rivals.filter((rv) => rv.relations < -40 && !rv.treaties.includes('non_aggression'));
   }
 
+  /** Rich rival profile for UI display: personality, power, recent events. */
+  rivalProfile(id: number): {
+    personality: string;
+    traits: string[];
+    recentHistory: string[];
+    approximateStrength: string;
+  } | null {
+    const rv = this.rival(id);
+    if (!rv) return null;
+
+    // Personality description based on dominant traits
+    const traits: string[] = [];
+    if (rv.weights.expansion >= 7) traits.push('expansionist');
+    if (rv.weights.commerce >= 7) traits.push('commercial');
+    if (rv.weights.ideology >= 7) traits.push('ideological');
+    if (rv.weights.honor >= 7) traits.push('honorable');
+    if (rv.weights.risk >= 7) traits.push('risk-taking');
+    if (rv.weights.grudge >= 7) traits.push('vindictive');
+
+    // Approximate power level based on population
+    let strength = 'modest power';
+    if (rv.pop > 10000) strength = 'considerable power';
+    if (rv.pop > 20000) strength = 'great-power scale';
+    if (rv.pop > 40000) strength = 'continental hegemon';
+
+    // Show most recent history items
+    const recentHistory = rv.history.slice(-3);
+
+    const personality = RIVAL_ARCHETYPES[rv.archetype].name;
+
+    return { personality, traits, recentHistory, approximateStrength: strength };
+  }
+
   private clampRel(v: number): number {
     return Math.max(-100, Math.min(100, v));
   }
@@ -5526,6 +5559,9 @@ export class RegionSim {
       this.accordCompliance[rv.id] = 1.0;
       this.accordDefectLogged.delete(rv.id);
     }
+    // Record memorable moment in rival history (GDD §6.2: personality-aware narrative)
+    const treaty = TREATY_DEFS[kind].name;
+    this.noteHistory(rv, `Signed ${treaty} with ${this.stateName || 'the State'}, ${this.year}.`);
   }
 
   /** Clean up per-kind state when a treaty is torn. */
@@ -5534,6 +5570,9 @@ export class RegionSim {
       delete this.accordCompliance[rv.id];
       this.accordDefectLogged.delete(rv.id);
     }
+    // Record the betrayal in history — a grudge that decays over decades (GDD §5.4)
+    const treaty = TREATY_DEFS[kind].name;
+    this.noteHistory(rv, `Treaty of ${treaty} torn by ${this.stateName || 'the State'}, ${this.year} — remembered.`);
   }
 
   /** Send a paid envoy: the cheap, repeatable relations verb. */
@@ -5548,6 +5587,10 @@ export class RegionSim {
     const stanceBonus = this.allianceStance === 'coalition-builder' ? 2 : this.allianceStance === 'isolationist' ? -2 : 0;
     const gain = Math.max(1, 4 + Math.round(rv.weights.commerce * 0.3) + stanceBonus);
     rv.relations = this.clampRel(rv.relations + gain);
+    // Record this diplomatic outreach in rival history if it's a turning point
+    if (rv.relations < -30 && rv.relations + gain >= -30) {
+      this.noteHistory(rv, `Thaw in relations with ${this.stateName || 'the State'}, ${this.year}.`);
+    }
     this.addLog(`An envoy rides for ${rv.name} with letters and samples of the valley's grain — relations warm (+${gain}).`, 'good');
     return true;
   }
@@ -5562,6 +5605,10 @@ export class RegionSim {
     rv.lastGiftDay = this.day;
     const gain = 6 + Math.round(rv.weights.commerce * 0.5);
     rv.relations = this.clampRel(rv.relations + gain);
+    // Record major gifts in history (memorable gestures of respect)
+    if (gain >= 8) {
+      this.noteHistory(rv, `Received gifts from ${this.stateName || 'the State'}, ${this.year}.`);
+    }
     this.addLog(`A state gift is sent to ${rv.leader} of ${rv.name} — relations warm (+${gain}).`, 'good');
     return true;
   }
@@ -7315,9 +7362,10 @@ export class RegionSim {
    *  Staggered scheduling keeps this O(factions) but amortized O(1) per month. */
   private updateRivalAI(): void {
     // Nation-level rivals: staggered diplomatic cadence (peace, war, treaties).
+    // GDD §6.2: Personality-driven AI generates offers based on weights, relations, and situation.
     for (const rival of this.rivals) {
       if (this.day - rival.lastEnvoyDay >= 365) {
-        // Placeholder: could drive AI decisions here (peace, war, treaties)
+        this.rivalDiplomaticRound(rival);
         rival.lastEnvoyDay = this.day;
       }
     }
@@ -7330,6 +7378,155 @@ export class RegionSim {
         this.updateFactionAI(faction);
         faction.lastUpdateDay = this.day;
       }
+    }
+  }
+
+  /** Annual diplomatic round: AI initiates offers based on personality and relations. */
+  private rivalDiplomaticRound(rival: RivalNation): void {
+    if (!this.stateProclaimed) return; // Player must be a nation to be courted
+
+    // Clean up expired offers
+    this.offers = this.offers.filter((o) => o.rivalId !== rival.id || this.day < o.expiresDay);
+
+    // Rival already has an outstanding offer; wait for response
+    if (this.offerFor(rival.id)) return;
+
+    // Personality-driven offer generation: weighted by relations, treaties already held,
+    // and the rival's archetype preferences.
+    const appetite = this.rivalOfferAppetite(rival);
+    const kinds = this.treatyKindsRivalCanOffer(rival);
+
+    if (appetite > 0 && kinds.length > 0) {
+      // Weight choices by personality: commerce-driven rivals favor trade agreements,
+      // honor-weighted rivals push defensive pacts, expansion-hungry rivals want non-aggression.
+      const weighted = kinds.map((kind) => ({
+        kind,
+        priority: this.treatyOfferPriority(rival, kind),
+      })).sort((a, b) => b.priority - a.priority);
+
+      const chosen = weighted[0]?.kind;
+      if (chosen && this.aiRng.chance(appetite / 50)) {
+        this.offers.push({
+          rivalId: rival.id,
+          kind: chosen,
+          expiresDay: this.day + 180, // 6-month expiration
+        });
+        this.addLog(
+          `DIPLOMATIC OVERTURE: ${rival.name} proposes a ${TREATY_DEFS[chosen].name}.`,
+          'info',
+        );
+      }
+    }
+
+    // Rare chance for small gifts to improve relations (personality-driven)
+    if (rival.weights.commerce >= 6 && this.day - rival.lastGiftDay >= 365) {
+      if (rival.relations < 20 && this.aiRng.chance(0.15)) {
+        rival.relations = this.clampRel(rival.relations + 15);
+        rival.lastGiftDay = this.day;
+        this.addLog(`${rival.name} sends a gift of goodwill.`, 'good');
+      }
+    }
+
+    // Rare dramatic moments and special events (GDD §6.4: the world has its own politics)
+    this.checkRivalSpecialEvents(rival);
+  }
+
+  /** Rare special diplomatic moments: leadership changes, alliances, betrayals. */
+  private checkRivalSpecialEvents(rival: RivalNation): void {
+    // Very rare: a rival seeks alliance against a mutual hostile third party
+    // (only if they have good relations with us and low relations with someone else)
+    if (
+      rival.relations >= 40 && rival.treaties.includes('non_aggression') &&
+      !rival.treaties.includes('defensive_pact') &&
+      this.rivals.length >= 2 && this.aiRng.chance(0.015)
+    ) {
+      // Find a mutual hostile (someone both dislike)
+      const mutualHostiles = this.rivals.filter(
+        (other) => other.id !== rival.id &&
+          other.relations < rival.relations - 30 &&
+          (this.rivalPairs[this.pairKey(rival.id, other.id)] ?? 0) < rival.relations - 30
+      );
+      if (mutualHostiles.length > 0 && this.aiRng.chance(0.5)) {
+        const hostile = mutualHostiles[0];
+        this.offers.push({
+          rivalId: rival.id,
+          kind: 'defensive_pact',
+          expiresDay: this.day + 180,
+        });
+        this.addLog(
+          `ALLIANCE PROPOSAL: ${rival.name} proposes a pact against ${hostile.name} ` +
+          `— their mutual enmity draws you together.`,
+          'info',
+        );
+        this.noteHistory(rival, `Sought defensive pact against ${hostile.name}, ${this.year}.`);
+      }
+    }
+
+    // Very rare: if relations collapse, a rival might demand tribute or vassalage
+    // (only aggressive/expansionist types do this)
+    if (
+      rival.relations < -70 && rival.weights.expansion >= 7 && rival.pop > 15000 &&
+      !this.playerWar && this.aiRng.chance(0.012)
+    ) {
+      const tributeDemand = Math.round(this.treasury * 0.1);
+      this.addLog(
+        `ULTIMATUM: ${rival.name}, emboldened by power, demands ` + formatCurrency(tributeDemand) + ` in tribute. ` +
+        `${rival.leader} threatens grave consequences for refusal.`,
+        'bad',
+      );
+      this.noteHistory(rival, `Demanded tribute from ${this.stateName || 'the State'}, ${this.year}.`);
+    }
+
+    // Rare: honorable rivals may fulfill verbal agreements or surprising displays of honor
+    // (builds legendary status for noble rivals)
+    if (
+      rival.relations >= 60 && rival.weights.honor >= 8 &&
+      rival.history.filter((h) => h.includes(this.stateName || 'State')).length >= 2 &&
+      this.aiRng.chance(0.02)
+    ) {
+      const bonus = 5 + rival.weights.honor;
+      rival.relations = this.clampRel(rival.relations + bonus);
+      this.addLog(
+        `HONOR UPHELD: ${rival.name} fulfills an ancient agreement with surprising integrity. ` +
+        `The envoys speak of ${rival.leader}'s legendary word.`,
+        'good',
+      );
+      this.noteHistory(rival, `Displayed honor in dealings with ${this.stateName || 'the State'}, ${this.year}.`);
+    }
+  }
+
+  /** Appetite (0–100) for AI to initiate an offer: based on relations and personality. */
+  private rivalOfferAppetite(rival: RivalNation): number {
+    // The more cordial the relation, the more likely to propose (GDD §6.3).
+    // Higher commerce weight increases appetite for trade; honor increases pact appetite.
+    const baseAppetite = Math.max(0, rival.relations + 30);
+    const commerceBonus = rival.weights.commerce * 2;
+    const honorBonus = rival.weights.honor * 1.5;
+    return baseAppetite + commerceBonus + honorBonus;
+  }
+
+  /** Which treaty kinds a rival can currently offer (already signed ones excluded). */
+  private treatyKindsRivalCanOffer(rival: RivalNation): TreatyKind[] {
+    const all: TreatyKind[] = ['non_aggression', 'trade_agreement', 'defensive_pact'];
+    if (this.accordUnlocked()) all.push('climate_accord');
+    return all.filter((kind) => !rival.treaties.includes(kind));
+  }
+
+  /** Priority (0–100) of offering a specific treaty kind, based on personality. */
+  private treatyOfferPriority(rival: RivalNation, kind: TreatyKind): number {
+    switch (kind) {
+      case 'trade_agreement':
+        // Commerce-driven rivals prize trade; ideology-driven rivals less so
+        return rival.weights.commerce * 8 - rival.weights.ideology * 2;
+      case 'non_aggression':
+        // Cautious, expansion-averse rivals push for non-aggression to lock borders
+        return (10 - rival.weights.risk) * 6 + (10 - rival.weights.expansion) * 4;
+      case 'defensive_pact':
+        // Honor-weighted and ideology-driven rivals form alliances; risk-averse rivals avoid
+        return rival.weights.honor * 7 + rival.weights.ideology * 4 - rival.weights.risk * 3;
+      case 'climate_accord':
+        // Commerce-driven (rules-loving) rivals adopt climate accords; expansion hawks resist
+        return rival.weights.commerce * 5 - rival.weights.expansion * 4;
     }
   }
 
