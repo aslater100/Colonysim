@@ -443,10 +443,12 @@ describe('Region save/load', () => {
     for (const t of finalPlayerSettlements) {
       t.garrisonStrength = Math.max(t.garrisonStrength || 0, 5);
     }
-    if (!r.ceremonyPending && r.charterEligible()) {
-      r.ceremonyPending = true;
+    if (!r.stateProclaimed) {
+      if (!r.ceremonyPending && r.charterEligible()) {
+        r.ceremonyPending = true;
+      }
+      r.completeIncorporation('Testonia', 'mayor');
     }
-    r.completeIncorporation('Testonia', 'mayor');
     r.treasury = 5000;
     const [a, b] = r.settlements;
     expect(r.buildRoad(a.id, b.id)).toBe(true);

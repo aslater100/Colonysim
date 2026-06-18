@@ -69,10 +69,12 @@ function toStatehood(r: RegionSim): void {
   for (const t of finalPlayerSettlements) {
     t.garrisonStrength = Math.max(t.garrisonStrength || 0, 5);
   }
-  if (!r.ceremonyPending && r.charterEligible()) {
-    r.ceremonyPending = true;
+  if (!r.stateProclaimed) {
+    if (!r.ceremonyPending && r.charterEligible()) {
+      r.ceremonyPending = true;
+    }
+    r.completeIncorporation('Testonia', 'council');
   }
-  r.completeIncorporation('Testonia', 'council');
 }
 
 describe('Region corridors (M6b)', () => {
