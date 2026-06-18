@@ -6,6 +6,7 @@ import { Music } from './ui/music';
 import { Soundscape } from './ui/soundscape';
 import { DesignScreen } from './ui/designscreen';
 import { TitleScreen } from './ui/titlescreen';
+import { PauseMenu } from './ui/pausemenu';
 import { TICKS_PER_SECOND } from './sim/defs';
 
 const root = document.getElementById('app')!;
@@ -61,9 +62,10 @@ let region: RegionSim | null = bootSim();
 let regionView: RegionView | null = null;
 let paused = false;
 let speed = 1;
-
+let pauseMenuOpen = false;
 
 const titleScreen = new TitleScreen(root, { sfx, music, soundscape });
+const pauseMenu = new PauseMenu(root);
 const fpsDiv = document.createElement('div');
 fpsDiv.id = 'fps';
 fpsDiv.style.cssText = 'position:fixed;bottom:4px;left:4px;font:10px monospace;color:#888;pointer-events:none;';
@@ -72,7 +74,12 @@ root.appendChild(fpsDiv);
 function save(): boolean {
   if (!region) return false;
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify({ v: 4, region: region.serialize() }));
+    const regionJson = region.serialize();
+    localStorage.setItem(SAVE_KEY, JSON.stringify({ v: 4, region: regionJson }));
+    // Also save to pause menu slots
+    const year = region.minute / (60 * 24 * 365);
+    const description = `Year ${Math.floor(year)}, ${region.settlements.length} settlements`;
+    pauseMenu.saveGame(regionJson, description);
     return true;
   } catch (err) {
     console.error('save failed:', err);
@@ -106,6 +113,24 @@ titleScreen.onContinue = () => {
 };
 titleScreen.onQuit = () => window.close();
 
+pauseMenu.onResume = () => {
+  pauseMenuOpen = false;
+  paused = false;
+};
+pauseMenu.onQuit = () => {
+  pauseMenuOpen = false;
+  showTitleScreen();
+};
+pauseMenu.onLoadGame = (regionJson: string) => {
+  try {
+    const loaded = RegionSim.deserialize(regionJson);
+    pauseMenuOpen = false;
+    enterRegionMode(loaded);
+  } catch (err) {
+    console.error('failed to load game:', err);
+  }
+};
+
 if (region) {
   enterRegionMode(region);
 } else {
@@ -118,7 +143,9 @@ const keys = new Set<string>();
 window.addEventListener('keydown', (e) => {
   keys.add(e.key);
   if (e.key === ' ') {
-    paused = !paused;
+    if (!pauseMenuOpen) {
+      paused = !paused;
+    }
     e.preventDefault();
     return;
   }
@@ -127,13 +154,19 @@ window.addEventListener('keydown', (e) => {
   if (e.key === '3') speed = 8;
   if (e.key === 's' && e.ctrlKey) { save(); e.preventDefault(); return; }
   if (e.key === 'Escape') {
-    if (regionView && !regionView.ceremonyOpen) {
+    if (pauseMenuOpen) {
+      pauseMenuOpen = false;
+      pauseMenu.hide();
+      paused = false;
+    } else if (regionView && !regionView.ceremonyOpen) {
+      pauseMenuOpen = true;
       paused = true;
-      showTitleScreen();
+      pauseMenu.show();
     }
+    e.preventDefault();
     return;
   }
-  if (regionView) {
+  if (regionView && !pauseMenuOpen) {
     if (e.key === 't' || e.key === 'T') { regionView.researchOpen = !regionView.researchOpen; e.preventDefault(); return; }
   }
 });
