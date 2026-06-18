@@ -4704,6 +4704,16 @@ export class RegionSim {
   }
 
   // ---- expeditions & expansion ----
+
+  /** Calculate the treasury cost to found a new town based on number of existing settlements.
+   *  Formula: 100 * (1.5 ^ numTowns) — costs grow exponentially to encourage dense settlement. */
+  foundingCost(): number {
+    const playerTowns = this.settlements.filter((s) => s.factionId === this.playerFactionId).length;
+    const baseCost = 100;
+    const multiplier = Math.pow(1.5, playerTowns);
+    return Math.round(baseCost * multiplier);
+  }
+
   canFoundTown(fromId: number): { ok: boolean; reason: string } {
     const t = this.settlement(fromId);
     if (!t) return { ok: false, reason: 'no settlement' };
@@ -4712,6 +4722,10 @@ export class RegionSim {
     }
     const m = this.expansionCostMult();
     const needPop = Math.round(24 * m), needFood = Math.round(80 * m), needWood = Math.round(80 * m);
+    const foundCost = this.foundingCost();
+    if (this.treasury < foundCost) {
+      return { ok: false, reason: `founding costs ${formatCurrency(foundCost)} (have ${formatCurrency(Math.floor(this.treasury))})` };
+    }
     if (this.popOf(t) < needPop) return { ok: false, reason: `needs ${needPop} pop (has ${Math.floor(this.popOf(t))})` };
     if (t.food < needFood) return { ok: false, reason: `needs ${needFood} food (has ${Math.floor(t.food)})` };
     if (t.wood < needWood) return { ok: false, reason: `needs ${needWood} wood (has ${Math.floor(t.wood)})` };
@@ -4735,12 +4749,15 @@ export class RegionSim {
     this.removePop(t, 8);
     t.food -= food;
     t.wood -= wood;
+    const foundCost = this.foundingCost();
+    this.treasury -= foundCost;
     const e = this.expeditions[this.expeditions.length - 1];
     const days = e.arrivesDay - this.day;
     this.addLog(
       `An expedition of 8 sets out from ${t.name} for ${e.name} — ${days} days through ` +
       `${e.site.roughness > 0.5 ? 'hard country' : 'open country'}` +
-      `${e.site.river ? ', bound for a river site' : ''}${e.site.coastal ? ', on the coast' : ''}.`,
+      `${e.site.river ? ', bound for a river site' : ''}${e.site.coastal ? ', on the coast' : ''} ` +
+      `(charter fee: ${formatCurrency(foundCost)}).`,
       'info',
     );
     return true;
