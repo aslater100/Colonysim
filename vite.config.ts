@@ -9,12 +9,10 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
-  // Two entries: the live game (index.html) + the TownCore play-test (core.html).
   build: {
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),
-        core: resolve(__dirname, 'core.html'),
       },
     },
   },
