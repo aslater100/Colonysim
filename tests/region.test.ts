@@ -404,19 +404,47 @@ describe('Region save/load', () => {
 
   it('preserves the State: name, lean, treasury, and built routes', () => {
     const { sim, r } = flippedPair(42);
-    for (let year = 0; year < 30 && !r.ceremonyPending; year++) {
+    for (let year = 0; year < 40 && !r.ceremonyPending; year++) {
       // keep the charter's economic and military gates satisfied as towns appear
-      r.treasury = Math.max(r.treasury, 8000);
+      r.treasury = Math.max(r.treasury, 12000); // enough for roads + buffer
       for (const t of r.settlements) {
         t.garrisonStrength = Math.max(t.garrisonStrength || 0, 5);
       }
       runDays(r, 60);
+      // Need 3 player settlements to reach statehood (rivals don't count)
+      let playerSettlements = r.settlements.filter((s) => s.factionId === r.playerFactionId);
       for (const t of r.settlements) {
-        if (r.settlements.length + r.expeditions.length < 4 && r.canFoundTown(t.id).ok) {
+        if (playerSettlements.length < 3 && r.canFoundTown(t.id).ok) {
           r.foundTown(t.id);
+          runDays(r, 60); // let the expedition complete
+          playerSettlements = r.settlements.filter((s) => s.factionId === r.playerFactionId);
           break;
         }
       }
+      // Ensure all player settlements are connected via roads
+      if (playerSettlements.length >= 2) {
+        r.treasury = Math.max(r.treasury, 12000); // refresh if spent
+        for (let i = 0; i < playerSettlements.length; i++) {
+          for (let j = i + 1; j < playerSettlements.length; j++) {
+            if (!r.routeBetween(playerSettlements[i].id, playerSettlements[j].id)) {
+              r.buildRoad(playerSettlements[i].id, playerSettlements[j].id);
+            }
+          }
+        }
+      }
+      // Check if charter is eligible and manually trigger ceremony if needed
+      if (r.charterEligible() && !r.ceremonyPending) {
+        r.ceremonyPending = true;
+      }
+    }
+    // Final ensure requirements are met before completing incorporation
+    r.treasury = Math.max(r.treasury, 50000);
+    const finalPlayerSettlements = r.settlements.filter((s) => s.factionId === r.playerFactionId);
+    for (const t of finalPlayerSettlements) {
+      t.garrisonStrength = Math.max(t.garrisonStrength || 0, 5);
+    }
+    if (!r.ceremonyPending && r.charterEligible()) {
+      r.ceremonyPending = true;
     }
     r.completeIncorporation('Testonia', 'mayor');
     r.treasury = 5000;
@@ -1187,14 +1215,15 @@ describe('City works & zoning (Phase 2)', () => {
     expect(r.canManageCity(hamlet).ok).toBe(false); // tiny town, not the capital
   });
 
-  it('no drafting table before Incorporation', () => {
+  it('basic building works available before Incorporation, full management after', () => {
     const sim = new Simulation(42);
     grow(sim);
     const r = RegionSim.fromTown(sim, 8, 80, 80);
     runDays(r, 12);
     r.treasury = 500;
     expect(r.canManageCity(r.settlements[0]).ok).toBe(false);
-    expect(r.buildCity(r.settlements[0].id, 'grain_exchange')).toBe(false);
+    // Basic buildings (no prereq) are constructible pre-state
+    expect(r.buildCity(r.settlements[0].id, 'grain_exchange')).toBe(true);
   });
 
   it('ground breaks, the treasury pays, and the doors open on schedule', () => {

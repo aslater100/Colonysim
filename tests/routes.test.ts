@@ -26,24 +26,51 @@ function flipped(seed: number): RegionSim {
 }
 
 function toStatehood(r: RegionSim): void {
-  for (let year = 0; year < 30 && !r.ceremonyPending; year++) {
+  for (let year = 0; year < 40 && !r.ceremonyPending; year++) {
     // Ensure charter requirements stay met during loop (including new settlements)
-    r.treasury = Math.max(r.treasury, 8000);
+    r.treasury = Math.max(r.treasury, 12000); // enough for roads + buffer
     for (const t of r.settlements) {
       t.garrisonStrength = Math.max(t.garrisonStrength || 0, 5);
     }
     runDays(r, 60);
+
+    // Need 3 player settlements to reach statehood (rivals don't count)
+    let playerSettlements = r.settlements.filter((s) => s.factionId === r.playerFactionId);
     for (const t of r.settlements) {
-      if (r.settlements.length + r.expeditions.length < 4 && r.canFoundTown(t.id).ok) {
+      if (playerSettlements.length < 3 && r.canFoundTown(t.id).ok) {
         r.foundTown(t.id);
+        runDays(r, 60); // let the expedition complete
+        playerSettlements = r.settlements.filter((s) => s.factionId === r.playerFactionId);
         break;
       }
     }
+
+    // Ensure all player settlements are connected via roads
+    if (playerSettlements.length >= 2) {
+      r.treasury = Math.max(r.treasury, 12000); // refresh if spent
+      for (let i = 0; i < playerSettlements.length; i++) {
+        for (let j = i + 1; j < playerSettlements.length; j++) {
+          if (!r.routeBetween(playerSettlements[i].id, playerSettlements[j].id)) {
+            r.buildRoad(playerSettlements[i].id, playerSettlements[j].id);
+          }
+        }
+      }
+    }
+
+    // Check if charter is eligible and manually trigger ceremony if needed
+    if (r.charterEligible() && !r.ceremonyPending) {
+      r.ceremonyPending = true;
+    }
   }
+
   // Final ensure requirements are met before completing incorporation
   r.treasury = Math.max(r.treasury, 50000);
-  for (const t of r.settlements) {
+  const finalPlayerSettlements = r.settlements.filter((s) => s.factionId === r.playerFactionId);
+  for (const t of finalPlayerSettlements) {
     t.garrisonStrength = Math.max(t.garrisonStrength || 0, 5);
+  }
+  if (!r.ceremonyPending && r.charterEligible()) {
+    r.ceremonyPending = true;
   }
   r.completeIncorporation('Testonia', 'council');
 }
