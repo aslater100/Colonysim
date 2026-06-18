@@ -409,6 +409,8 @@ describe('Region save/load', () => {
       r.treasury = Math.max(r.treasury, 12000); // enough for roads + buffer
       for (const t of r.settlements) {
         t.garrisonStrength = Math.max(t.garrisonStrength || 0, 5);
+        // Boost population to ensure 500+ for charter gate
+        t.cohorts.bands[1] = Math.max(t.cohorts.bands[1], 100);
       }
       runDays(r, 60);
       // Need 3 player settlements to reach statehood (rivals don't count)
