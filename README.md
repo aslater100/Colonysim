@@ -1,12 +1,10 @@
 # CENTURIA
 
 A deep 4X civilization simulator spanning 1800–2100. Begin with twelve named
-settlers stepping off a wagon in 1900; end three centuries later as a great
-power signing peace treaties — Explore a procedural valley, Expand across
-three strategic tiers (town, state, nation), eXploit resources through a
+settlers stepping off a wagon in 1800; end three centuries later as a great
+power signing peace treaties — Explore a procedural valley, Expand and grow into a mighty nation from a small city, eXploit resources through a
 dynamic sectoral economy, and eXterminate rivals through diplomacy and war.
-RimWorld-intimate at town scale, Cities/Citystate at state scale, Civ at
-nation scale, all in pixel art over lush era-evolving backdrops.
+True to its roots in games like Victoria, all in hi-def pixel art over lush era-evolving backdrops.
 
 - **Design:** [GDD.md](GDD.md) — the full game design document.
 - **Milestones:** [01 Tier-1 colony](docs/specs/01-tier1-colony.md) ·
