@@ -37,7 +37,7 @@ export function showMainMenu(): Promise<MenuResult> {
 
     const subtitle = document.createElement('p');
     subtitle.className = 'cv-menu-subtitle';
-    subtitle.textContent = 'A colony-to-nation simulation, 1900–2100';
+    subtitle.textContent = 'A colony-to-nation simulation, 1800–2100';
     dialog.appendChild(subtitle);
 
     const buttonGroup = document.createElement('div');
@@ -171,7 +171,7 @@ function showStartPreferences(
 
       const s = document.createElement('p');
       s.className = 'cv-menu-subtitle';
-      s.textContent = 'A colony-to-nation simulation, 1900–2100';
+      s.textContent = 'A colony-to-nation simulation, 1800–2100';
       dialog.appendChild(s);
 
       const bg = document.createElement('div');

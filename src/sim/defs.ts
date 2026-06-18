@@ -440,6 +440,8 @@ export const MINUTES_PER_DAY = 1440;
 export const DAYS_PER_SEASON = 15;
 export const SEASONS = ['Spring', 'Summer', 'Autumn', 'Winter'] as const;
 export const DAYS_PER_YEAR = DAYS_PER_SEASON * SEASONS.length;
+export const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'] as const;
+export const DAYS_PER_MONTH = 5; // ~60 days/year ÷ 12 months
 export const START_YEAR = 1800;
 
 // ---- Stockpile / capacity constants ----
@@ -714,6 +716,529 @@ export const TUNING = {
   /** Confidence erosion per unit of private leverage above leverageFragile. */
   fragilityGain: 140,
 };
+
+// ---- Faction system (GDD §7.3: political depth) ----
+/** Factions are political movements that rise and fall throughout the game.
+ *  They compete for influence, affecting laws, research, morale, and economic priorities.
+ *  Each faction has ambitions (long-term goals), rivalries, and can take actions.
+ *  Period-appropriate emergence prevents anachronistic factions. */
+
+export type FactionId = 'oligarchs' | 'industrialists' | 'liberals' | 'communists' | 'socialists'
+                       | 'nationalists' | 'oil_barons' | 'technocrats' | 'environmentalists' | 'water_barons'
+                       | 'monarchists' | 'conservatives' | 'free_traders' | 'merchant_guilds' | 'labor_unions'
+                       | 'scientists' | 'bureaucrats' | 'military_industrial' | 'militarists' | 'theocrats'
+                       | 'pacifists' | 'humanitarians' | 'information_brokers';
+
+/** Faction ambitions: what they're working towards. Rivalries are inferred from opposing goals. */
+export interface FactionAmbition {
+  id: string;
+  name: string;
+  description: string; // What the faction is trying to accomplish
+  /** Laws they want passed to achieve this ambition */
+  targetLaws: string[];
+  /** Tech they want researched */
+  targetTech?: string[];
+  /** If player blocks this ambition, faction loses 15 strength. If achieved, gains 25. */
+  reward: number;
+}
+
+/** Actions a faction can take based on strength and ambition progress */
+export type FactionAction =
+  | 'demand_law'          // Demand player pass a specific law
+  | 'sabotage_rival'      // Undermine a rival faction (reduce their strength)
+  | 'strike'              // Workers strike; morale drops if ignored
+  | 'bribery'             // Offer deals to player
+  | 'propaganda'          // Sway public opinion (boost own morale, cut rivals)
+  | 'assassination'       // Eliminate rivals via violence (rare, high-strength only)
+  | 'alliance'            // Form alliance with another faction
+  | 'boycott'             // Economic boycott of player policies;
+
+export interface FactionDef {
+  id: FactionId;
+  name: string;
+  desc: string;
+  minYear: number; // First year this faction can emerge
+  maxYear?: number; // Last year this faction is relevant (optional; omit for 2100+)
+  /** Values [0-1]: how much this faction boosts/cuts research for each tech category. */
+  techModifiers: {
+    infrastructure?: number;
+    military?: number;
+    agriculture?: number;
+    industry?: number;
+    energy?: number;
+    culture?: number;
+    finance?: number;
+  };
+  /** Laws this faction strongly opposes (blocks if strength > threshold). */
+  opposes: string[];
+  /** Laws this faction promotes (auto-enables if strength > threshold). */
+  promotes: string[];
+  /** Morale modifiers: how much this faction's strength affects settler happiness. */
+  moraleMod: number;
+  /** How government type availability is affected */
+  govRestrictions?: string[];
+  /** Military strength bonus when this faction is dominant. */
+  militaryBonus: number;
+  /** Economic sector productivity modifier (% per strength point). */
+  economicFocus?: string;
+  /** Other factions this one naturally rivals (opposing ideologies) */
+  rivals: FactionId[];
+  /** Other factions this one naturally allies with (shared goals) */
+  allies: FactionId[];
+  /** 2-3 core ambitions this faction pursues */
+  ambitions: FactionAmbition[];
+  /** Available actions this faction can take (based on era/strength) */
+  availableActions: FactionAction[];
+}
+
+export interface FactionDef {
+  id: FactionId;
+  name: string;
+  desc: string;
+  minYear: number; // First year this faction can emerge
+  maxYear?: number; // Last year this faction is relevant (optional; omit for 2100+)
+  /** Values [0-1]: how much this faction boosts/cuts research for each tech category. */
+  techModifiers: {
+    infrastructure?: number;
+    military?: number;
+    agriculture?: number;
+    industry?: number;
+    energy?: number; // oil_barons -1.5, environmentalists +1.5 for renewables
+    culture?: number;
+    finance?: number;
+  };
+  /** Laws this faction strongly opposes (blocks if strength > threshold). */
+  opposes: string[]; // e.g., oligarchs oppose 'universal_suffrage'
+  /** Laws this faction promotes (auto-enables if strength > threshold). */
+  promotes: string[];
+  /** Morale modifiers: how much this faction's strength affects settler happiness. */
+  moraleMod: number; // e.g., communists +20 if strong, -20 if weak
+  /** How government type availability is affected: e.g. oligarchs restrict democracy */
+  govRestrictions?: string[]; // gov types oligarchs disallow
+  /** Military strength bonus when this faction is dominant. */
+  militaryBonus: number;
+  /** Economic sector productivity modifier (% per strength point). */
+  economicFocus?: string; // 'agriculture', 'manufacturing', 'finance', 'tech'
+}
+
+export const FACTION_DEFS: FactionDef[] = [
+  {
+    id: 'oligarchs',
+    name: 'Oligarchs',
+    desc: 'Wealthy merchants controlling finance. Hoard wealth, resist democracy.',
+    minYear: 1800,
+    techModifiers: { finance: 1.2, infrastructure: 0.9 },
+    opposes: ['universal_suffrage', 'labor_law', 'progressive_tax'],
+    promotes: ['income_tax'],
+    moraleMod: -15,
+    govRestrictions: ['democracy'],
+    militaryBonus: 5,
+    economicFocus: 'finance',
+    rivals: ['communists', 'labor_unions', 'humanitarians'],
+    allies: ['monarchists', 'conservatives', 'free_traders'],
+    ambitions: [
+      { id: 'wealth_hoarding', name: 'Wealth Accumulation', description: 'Prevent progressive taxation and worker protections', targetLaws: [], reward: 25 },
+      { id: 'block_democracy', name: 'Preserve Aristocracy', description: 'Prevent universal suffrage from spreading', targetLaws: [], reward: 30 },
+      { id: 'dominate_finance', name: 'Financial Dominance', description: 'Control banking and trade', targetLaws: [], reward: 20 },
+    ],
+    availableActions: ['demand_law', 'sabotage_rival', 'bribery', 'propaganda', 'alliance'],
+  },
+  {
+    id: 'monarchists',
+    name: 'Monarchists',
+    desc: 'Aristocratic reactionaries defending traditional hierarchy and hereditary rule.',
+    minYear: 1800,
+    maxYear: 1950,
+    techModifiers: { culture: 0.8, military: 1.1 },
+    opposes: ['universal_suffrage', 'labor_law', 'democracy'],
+    promotes: ['hereditary_rule'],
+    moraleMod: -10,
+    govRestrictions: ['democracy', 'republic'],
+    militaryBonus: 15,
+    rivals: ['liberals', 'communists', 'labor_unions'],
+    allies: ['oligarchs', 'conservatives', 'theocrats'],
+    ambitions: [
+      { id: 'restore_monarchy', name: 'Restore Monarchy', description: 'Prevent democracy and establish hereditary rule', targetLaws: [], reward: 35 },
+      { id: 'noble_privilege', name: 'Noble Privilege', description: 'Maintain aristocratic advantages', targetLaws: [], reward: 25 },
+    ],
+    availableActions: ['demand_law', 'sabotage_rival', 'propaganda', 'alliance'],
+  },
+  {
+    id: 'conservatives',
+    name: 'Conservatives',
+    desc: 'Status quo defenders opposing rapid change and upheaval.',
+    minYear: 1800,
+    techModifiers: { culture: 0.7, infrastructure: 1.0 },
+    opposes: [],
+    promotes: [],
+    moraleMod: 0,
+    militaryBonus: 0,
+    rivals: ['liberals', 'communists', 'technocrats'],
+    allies: ['oligarchs', 'monarchists', 'free_traders'],
+    ambitions: [
+      { id: 'status_quo', name: 'Preserve Order', description: 'Resist revolutionary movements', targetLaws: [], reward: 20 },
+      { id: 'block_radicalism', name: 'Block Radicalism', description: 'Prevent communists and anarchists from gaining power', targetLaws: [], reward: 25 },
+    ],
+    availableActions: ['sabotage_rival', 'propaganda', 'alliance'],
+  },
+  {
+    id: 'industrialists',
+    name: 'Industrialists',
+    desc: 'Factory owners pushing mass production and fossil fuels for profit.',
+    minYear: 1850,
+    maxYear: 2000,
+    techModifiers: { industry: 1.4, energy: -0.8, agriculture: 0.7 },
+    opposes: ['environmental_protection', 'renewable_energy'],
+    promotes: ['coal_power', 'mass_manufacturing'],
+    moraleMod: 5,
+    militaryBonus: 10,
+    economicFocus: 'manufacturing',
+    rivals: ['environmentalists', 'labor_unions', 'scientists'],
+    allies: ['oligarchs', 'nationalists', 'military_industrial'],
+    ambitions: [
+      { id: 'coal_dominance', name: 'Coal Dominance', description: 'Lock in coal and fossil fuels as primary energy', targetLaws: [], reward: 30 },
+      { id: 'maximize_output', name: 'Maximum Output', description: 'Maximize factory production and profits', targetLaws: [], reward: 25 },
+      { id: 'exploit_labor', name: 'Labor Exploitation', description: 'Suppress worker rights and keep wages low', targetLaws: [], reward: 20 },
+    ],
+    availableActions: ['demand_law', 'sabotage_rival', 'bribery', 'propaganda', 'alliance', 'strike'],
+  },
+  {
+    id: 'liberals',
+    name: 'Liberals',
+    desc: 'Progressive intellectuals pushing democracy, rights, and individual freedoms.',
+    minYear: 1850,
+    techModifiers: { culture: 1.3, infrastructure: 1.1 },
+    opposes: ['autocracy', 'censorship', 'monarchy'],
+    promotes: ['universal_suffrage', 'freedom_of_speech'],
+    moraleMod: 10,
+    militaryBonus: 0,
+    rivals: ['monarchists', 'conservatives', 'theocrats'],
+    allies: ['communists', 'labor_unions', 'scientists'],
+    ambitions: [
+      { id: 'establish_democracy', name: 'Establish Democracy', description: 'Achieve universal suffrage and democratic rule', targetLaws: [], reward: 35 },
+      { id: 'civil_liberties', name: 'Civil Liberties', description: 'Guarantee freedom of speech and assembly', targetLaws: [], reward: 30 },
+      { id: 'secular_governance', name: 'Secular Governance', description: 'Separate church and state', targetLaws: [], reward: 25 },
+    ],
+    availableActions: ['demand_law', 'sabotage_rival', 'propaganda', 'alliance'],
+  },
+  {
+    id: 'communists',
+    name: 'Communists',
+    desc: 'Revolutionary idealists demanding radical equality and state control.',
+    minYear: 1870,
+    techModifiers: { agriculture: 1.2, culture: 1.3, industry: 1.0 },
+    opposes: ['private_property', 'capitalism', 'oligarchy'],
+    promotes: ['wealth_redistribution', 'labor_law'],
+    moraleMod: 20,
+    govRestrictions: ['monarchy'],
+    militaryBonus: 15,
+    rivals: ['oligarchs', 'monarchists', 'free_traders', 'conservatives'],
+    allies: ['labor_unions', 'scientists', 'humanitarians'],
+    ambitions: [
+      { id: 'workers_revolution', name: "Workers' Revolution", description: 'Overthrow class system and establish equality', targetLaws: [], reward: 40 },
+      { id: 'seize_means', name: 'Seize Means of Production', description: 'Nationalize factories and eliminate private property', targetLaws: [], reward: 35 },
+      { id: 'permanent_equality', name: 'Establish Communism', description: 'Create a classless, stateless society', targetLaws: [], reward: 50 },
+    ],
+    availableActions: ['demand_law', 'sabotage_rival', 'strike', 'propaganda', 'alliance', 'assassination'],
+  },
+  {
+    id: 'labor_unions',
+    name: 'Labor Unions',
+    desc: 'Worker collectives demanding fair wages, safety, and rights (reformist, not revolutionary).',
+    minYear: 1880,
+    techModifiers: { culture: 1.1, industry: 0.9 },
+    opposes: ['child_labor', 'unsafe_conditions'],
+    promotes: ['labor_law', 'workplace_safety'],
+    moraleMod: 15,
+    militaryBonus: 5,
+    rivals: ['oligarchs', 'industrialists', 'military_industrial'],
+    allies: ['communists', 'socialists', 'scientists', 'humanitarians'],
+    ambitions: [
+      { id: 'fair_wages', name: 'Living Wages', description: 'Ensure workers earn enough to live decently', targetLaws: [], reward: 25 },
+      { id: 'worker_rights', name: 'Worker Rights', description: 'Win collective bargaining and labor protections', targetLaws: [], reward: 30 },
+      { id: 'safe_conditions', name: 'Safe Conditions', description: 'Eliminate workplace hazards and child labor', targetLaws: [], reward: 28 },
+    ],
+    availableActions: ['demand_law', 'strike', 'sabotage_rival', 'propaganda', 'alliance'],
+  },
+  {
+    id: 'socialists',
+    name: 'Socialists',
+    desc: 'Reformers advocating worker protections and gradual wealth redistribution.',
+    minYear: 1890,
+    techModifiers: { culture: 1.1, agriculture: 1.1 },
+    opposes: ['oligarchy', 'exploitation'],
+    promotes: ['labor_law', 'welfare_state'],
+    moraleMod: 15,
+    militaryBonus: 5,
+    rivals: ['oligarchs', 'industrialists', 'conservatives'],
+    allies: ['communists', 'labor_unions', 'humanitarians'],
+    ambitions: [
+      { id: 'welfare_state', name: 'Welfare State', description: 'Create universal health, education, and social safety net', targetLaws: [], reward: 35 },
+      { id: 'redistribute_wealth', name: 'Redistribute Wealth', description: 'Tax the rich and support the poor', targetLaws: [], reward: 30 },
+      { id: 'worker_dignity', name: 'Worker Dignity', description: 'Ensure all workers have rights and protections', targetLaws: [], reward: 28 },
+    ],
+    availableActions: ['demand_law', 'propaganda', 'alliance', 'sabotage_rival'],
+  },
+  {
+    id: 'nationalists',
+    name: 'Nationalists',
+    desc: 'Militarist patriots prioritizing territorial expansion and military strength.',
+    minYear: 1800,
+    techModifiers: { military: 1.5, culture: 0.8, agriculture: 0.9 },
+    opposes: ['pacifism', 'free_trade'],
+    promotes: ['military_doctrine'],
+    moraleMod: 5,
+    militaryBonus: 25,
+    economicFocus: 'military',
+    rivals: ['pacifists', 'free_traders', 'humanitarians'],
+    allies: ['monarchists', 'militarists', 'oil_barons'],
+    ambitions: [
+      { id: 'territorial_expansion', name: 'Territorial Expansion', description: 'Expand borders and military might', targetLaws: [], reward: 35 },
+      { id: 'military_dominance', name: 'Military Dominance', description: 'Become the strongest military power', targetLaws: [], reward: 40 },
+      { id: 'national_glory', name: 'National Glory', description: 'Make the nation a world power', targetLaws: [], reward: 30 },
+    ],
+    availableActions: ['demand_law', 'sabotage_rival', 'propaganda', 'alliance', 'assassination'],
+  },
+  {
+    id: 'militarists',
+    name: 'Militarists',
+    desc: 'War hawks profiting from military-industrial expansion and weapons sales.',
+    minYear: 1880,
+    techModifiers: { military: 1.4, industry: 1.2 },
+    opposes: ['pacifism', 'disarmament'],
+    promotes: ['military_buildup'],
+    moraleMod: -5,
+    militaryBonus: 20,
+    rivals: ['pacifists', 'humanitarians', 'scientists'],
+    allies: ['nationalists', 'oligarchs', 'industrialists'],
+    ambitions: [
+      { id: 'weapons_proliferation', name: 'Weapons Trade', description: 'Profit from weapons manufacturing and sales', targetLaws: [], reward: 30 },
+      { id: 'permanent_war', name: 'Perpetual Conflict', description: 'Maintain constant military threats to boost spending', targetLaws: [], reward: 35 },
+      { id: 'military_industrial', name: 'Military-Industrial Complex', description: 'Merge military and industry for profit', targetLaws: [], reward: 40 },
+    ],
+    availableActions: ['demand_law', 'bribery', 'sabotage_rival', 'propaganda', 'alliance'],
+  },
+  {
+    id: 'oil_barons',
+    name: 'Oil Barons',
+    desc: 'Fossil fuel magnates blocking renewables to protect billion-dollar investments.',
+    minYear: 1850,
+    maxYear: 2050,
+    techModifiers: { energy: -1.5, industry: 1.3 },
+    opposes: ['renewable_energy', 'carbon_tax'],
+    promotes: ['fossil_fuels'],
+    moraleMod: -5,
+    militaryBonus: 0,
+    economicFocus: 'energy',
+    rivals: ['environmentalists', 'scientists', 'humanitarians'],
+    allies: ['oligarchs', 'industrialists', 'nationalists'],
+    ambitions: [
+      { id: 'petrol_forever', name: 'Petrol Forever', description: 'Lock in fossil fuels as permanent energy source', targetLaws: [], reward: 40 },
+      { id: 'block_renewables', name: 'Block Renewables', description: 'Sabotage solar, wind, and green energy research', targetLaws: [], reward: 35 },
+      { id: 'climate_denial', name: 'Climate Denial', description: 'Suppress climate science and environmental warnings', targetLaws: [], reward: 30 },
+    ],
+    availableActions: ['demand_law', 'bribery', 'sabotage_rival', 'propaganda', 'alliance', 'assassination'],
+  },
+  {
+    id: 'free_traders',
+    name: 'Free Traders',
+    desc: 'Laissez-faire capitalists opposing taxes, regulation, and government control.',
+    minYear: 1850,
+    techModifiers: { finance: 1.2, industry: 1.0 },
+    opposes: ['trade_tariffs', 'wealth_tax', 'regulation'],
+    promotes: ['free_trade', 'deregulation'],
+    moraleMod: 0,
+    militaryBonus: 0,
+    rivals: ['nationalists', 'labor_unions', 'communists'],
+    allies: ['oligarchs', 'conservatives', 'merchant_guilds'],
+    ambitions: [
+      { id: 'free_markets', name: 'Free Markets', description: 'Eliminate all trade tariffs and regulations', targetLaws: [], reward: 35 },
+      { id: 'deregulation', name: 'Deregulation', description: 'Remove government oversight of business', targetLaws: [], reward: 30 },
+      { id: 'tax_reduction', name: 'Tax Reduction', description: 'Cut taxes to minimum', targetLaws: [], reward: 25 },
+    ],
+    availableActions: ['demand_law', 'bribery', 'propaganda', 'alliance'],
+  },
+  {
+    id: 'merchant_guilds',
+    name: 'Merchant Guilds',
+    desc: 'Trade consortiums pushing commerce and market expansion.',
+    minYear: 1800,
+    maxYear: 1920,
+    techModifiers: { finance: 1.1, infrastructure: 1.1 },
+    opposes: [],
+    promotes: ['free_trade', 'markets'],
+    moraleMod: 5,
+    militaryBonus: 0,
+    rivals: ['labor_unions', 'nationalists'],
+    allies: ['oligarchs', 'free_traders', 'industrialists'],
+    ambitions: [
+      { id: 'trade_monopoly', name: 'Trade Monopoly', description: 'Control merchant routes and market access', targetLaws: [], reward: 30 },
+      { id: 'market_dominance', name: 'Market Dominance', description: 'Become the dominant merchant faction', targetLaws: [], reward: 25 },
+    ],
+    availableActions: ['bribery', 'sabotage_rival', 'alliance'],
+  },
+  {
+    id: 'scientists',
+    name: 'Scientists',
+    desc: 'Research-driven intellectuals pursuing knowledge and technological progress.',
+    minYear: 1900,
+    techModifiers: { industry: 1.2, infrastructure: 1.3, culture: 1.3, energy: 1.2 },
+    opposes: ['anti_science', 'obscurantism'],
+    promotes: ['education', 'research_funding'],
+    moraleMod: 5,
+    militaryBonus: 5,
+    rivals: ['theocrats', 'conservatives', 'oil_barons'],
+    allies: ['liberals', 'technocrats', 'environmentalists'],
+    ambitions: [
+      { id: 'universal_education', name: 'Universal Education', description: 'Make education accessible to all', targetLaws: [], reward: 35 },
+      { id: 'research_dominance', name: 'Research Dominance', description: 'Lead scientific and technological advancement', targetLaws: [], reward: 40 },
+      { id: 'technology_future', name: 'Technology Future', description: 'Shape the future through innovation', targetLaws: [], reward: 45 },
+    ],
+    availableActions: ['demand_law', 'propaganda', 'alliance', 'sabotage_rival'],
+  },
+  {
+    id: 'technocrats',
+    name: 'Technocrats',
+    desc: 'Engineer-administrators obsessed with efficiency, automation, and optimization.',
+    minYear: 1950,
+    techModifiers: { industry: 1.4, infrastructure: 1.3, culture: 0.7 },
+    opposes: ['inefficiency', 'tradition'],
+    promotes: ['automation', 'computing'],
+    moraleMod: 0,
+    militaryBonus: 10,
+    rivals: ['conservatives', 'humanitarians', 'labor_unions'],
+    allies: ['scientists', 'oligarchs', 'militarists'],
+    ambitions: [
+      { id: 'total_automation', name: 'Total Automation', description: 'Replace all manual labor with machines', targetLaws: [], reward: 40 },
+      { id: 'optimization', name: 'Perfect Optimization', description: 'Maximize efficiency in every system', targetLaws: [], reward: 35 },
+      { id: 'technological_society', name: 'Technological Society', description: 'Reshape society around technology', targetLaws: [], reward: 45 },
+    ],
+    availableActions: ['demand_law', 'propaganda', 'alliance', 'sabotage_rival'],
+  },
+  {
+    id: 'environmentalists',
+    name: 'Environmentalists',
+    desc: 'Green activists fighting climate change and protecting ecosystems.',
+    minYear: 1950,
+    techModifiers: { energy: 1.5, agriculture: 1.2, culture: 1.2 },
+    opposes: ['pollution', 'fossil_fuels'],
+    promotes: ['renewable_energy', 'environmental_protection'],
+    moraleMod: 10,
+    militaryBonus: -5,
+    rivals: ['oil_barons', 'industrialists', 'military_industrial'],
+    allies: ['scientists', 'humanitarians', 'pacifists'],
+    ambitions: [
+      { id: 'green_transition', name: 'Green Transition', description: 'Convert entire economy to renewables', targetLaws: [], reward: 45 },
+      { id: 'stop_climate', name: 'Stop Climate Change', description: 'Reduce CO2 emissions below 350ppm', targetLaws: [], reward: 50 },
+      { id: 'rewild_earth', name: 'Rewild Earth', description: 'Restore ecosystems and protect wilderness', targetLaws: [], reward: 40 },
+    ],
+    availableActions: ['demand_law', 'sabotage_rival', 'propaganda', 'alliance', 'strike'],
+  },
+  {
+    id: 'theocrats',
+    name: 'Theocrats',
+    desc: 'Religious authorities wielding moral power and enforcing religious law.',
+    minYear: 1800,
+    techModifiers: { culture: 0.9 },
+    opposes: ['secular_governance', 'contraception', 'divorce'],
+    promotes: ['religious_law', 'religious_education'],
+    moraleMod: 10,
+    militaryBonus: 5,
+    rivals: ['scientists', 'liberals', 'humanitarians'],
+    allies: ['monarchists', 'conservatives', 'nationalists'],
+    ambitions: [
+      { id: 'religious_law', name: 'Religious Law', description: 'Impose religious doctrine on government', targetLaws: [], reward: 35 },
+      { id: 'moral_society', name: 'Moral Society', description: 'Enforce religious morality on all citizens', targetLaws: [], reward: 40 },
+      { id: 'religious_dominance', name: 'Religious Dominance', description: 'Make religion the foundation of society', targetLaws: [], reward: 45 },
+    ],
+    availableActions: ['demand_law', 'propaganda', 'alliance', 'sabotage_rival'],
+  },
+  {
+    id: 'pacifists',
+    name: 'Pacifists',
+    desc: 'Peace activists opposing military spending and violent conflict.',
+    minYear: 1900,
+    techModifiers: { culture: 1.2 },
+    opposes: ['military_buildup', 'war'],
+    promotes: ['disarmament', 'peace_treaties'],
+    moraleMod: 8,
+    militaryBonus: -20,
+    rivals: ['nationalists', 'militarists', 'military_industrial'],
+    allies: ['humanitarians', 'environmentalists', 'liberals'],
+    ambitions: [
+      { id: 'disarmament', name: 'Global Disarmament', description: 'Reduce military spending to minimum', targetLaws: [], reward: 40 },
+      { id: 'permanent_peace', name: 'Permanent Peace', description: 'End all wars and military conflicts', targetLaws: [], reward: 50 },
+      { id: 'conflict_prevention', name: 'Conflict Prevention', description: 'Build diplomatic systems to prevent war', targetLaws: [], reward: 45 },
+    ],
+    availableActions: ['demand_law', 'propaganda', 'alliance', 'sabotage_rival', 'strike'],
+  },
+  {
+    id: 'humanitarians',
+    name: 'Humanitarians',
+    desc: 'Social welfare advocates fighting poverty, illness, and human suffering.',
+    minYear: 1920,
+    techModifiers: { culture: 1.3, agriculture: 1.1 },
+    opposes: ['poverty', 'disease', 'inequality'],
+    promotes: ['welfare_state', 'public_health', 'education'],
+    moraleMod: 15,
+    militaryBonus: -5,
+    rivals: ['oligarchs', 'militarists', 'theocrats'],
+    allies: ['communists', 'socialists', 'scientists'],
+    ambitions: [
+      { id: 'end_poverty', name: 'End Poverty', description: 'Guarantee food, housing, and healthcare for all', targetLaws: [], reward: 50 },
+      { id: 'universal_healthcare', name: 'Universal Healthcare', description: 'Provide free healthcare to all citizens', targetLaws: [], reward: 45 },
+      { id: 'human_dignity', name: 'Human Dignity', description: 'Ensure every person has dignity and respect', targetLaws: [], reward: 55 },
+    ],
+    availableActions: ['demand_law', 'propaganda', 'alliance', 'strike'],
+  },
+  {
+    id: 'information_brokers',
+    name: 'Information Brokers',
+    desc: 'Media/tech monopolies controlling information, narrative, and surveillance.',
+    minYear: 1980,
+    techModifiers: { infrastructure: 1.3, industry: 1.2 },
+    opposes: ['privacy', 'transparency'],
+    promotes: ['surveillance', 'data_control'],
+    moraleMod: -10,
+    militaryBonus: 5,
+    rivals: ['humanitarians', 'liberals', 'pacifists'],
+    allies: ['oligarchs', 'technocrats', 'military_industrial'],
+    ambitions: [
+      { id: 'information_monopoly', name: 'Information Monopoly', description: 'Control all media and information', targetLaws: [], reward: 40 },
+      { id: 'surveillance_state', name: 'Surveillance State', description: 'Monitor and track all citizens', targetLaws: [], reward: 45 },
+      { id: 'narrative_control', name: 'Narrative Control', description: 'Shape public opinion and belief', targetLaws: [], reward: 50 },
+    ],
+    availableActions: ['propaganda', 'sabotage_rival', 'bribery', 'alliance'],
+  },
+  {
+    id: 'water_barons',
+    name: 'Water Barons',
+    desc: 'Corporate interests controlling water resources and privatizing utilities.',
+    minYear: 1960,
+    techModifiers: { agriculture: 0.7, industry: 1.1 },
+    opposes: ['public_utilities', 'universal_water_access'],
+    promotes: ['water_privatization', 'infrastructure'],
+    moraleMod: -10,
+    militaryBonus: 0,
+    rivals: ['humanitarians', 'environmentalists', 'socialists'],
+    allies: ['oligarchs', 'industrialists', 'free_traders'],
+    ambitions: [
+      { id: 'water_monopoly', name: 'Water Monopoly', description: 'Privatize all water sources and control access', targetLaws: [], reward: 45 },
+      { id: 'water_profit', name: 'Water Profit', description: 'Monetize water and maximize profits', targetLaws: [], reward: 40 },
+      { id: 'water_dependency', name: 'Water Dependency', description: 'Make citizens depend on corporate water', targetLaws: [], reward: 50 },
+    ],
+    availableActions: ['demand_law', 'bribery', 'sabotage_rival', 'propaganda', 'alliance'],
+  },
+];
+
+export function factionDef(id: FactionId): FactionDef | undefined {
+  return FACTION_DEFS.find((f) => f.id === id);
+}
+
+/** Return factions that are active (within their minYear...maxYear window) for a given year. */
+export function activeFactions(year: number): FactionDef[] {
+  return FACTION_DEFS.filter((f) => year >= f.minYear && (!f.maxYear || year <= f.maxYear));
+}
 
 // ---- Parcel / land-expansion tuning (Track B Phase 2–3) ----
 // The price of expanding the realm one cell at a time. Cost grows with

@@ -7,7 +7,7 @@
  * performance answer that lets the game scale to a State and beyond.
  */
 import { Rng } from './rng';
-import { MINUTES_PER_DAY, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, formatCurrency, setCurrencySymbol, AI_DIFFICULTY, TUNING } from './defs';
+import { MINUTES_PER_DAY, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, MONTHS, DAYS_PER_MONTH, FactionId as NewFactionId, activeFactions, formatCurrency, setCurrencySymbol, AI_DIFFICULTY, TUNING } from './defs';
 import type { CurrencySymbol, RegionDesign, NationDesign, AiDifficulty } from './defs';
 import { computePenalty, transitionEfficiency, ANNOUNCE_LEAD_DAYS } from './currency';
 import type { CurrencyChangeCause, CurrencyAnnouncement, CurrencyTransition } from './currency';
@@ -81,6 +81,8 @@ export interface Settlement {
   stationedUnits: ArmyUnit[];
   /** Loyalty to controlling faction (0–100); affects labor productivity and revolt risk */
   loyaltyToFaction: number;
+  /** Faction strength in this settlement (0-100 per faction); higher = more influence */
+  factionStrengths: Map<NewFactionId, number>;
   /** Phase 1: where this town's labor works, what it produces, what it pays. */
   sectors: Sectors;
   /** Phase 2: civic works raised in a managed city (building def ids). */
@@ -294,10 +296,10 @@ export type GovLean = 'council' | 'mayor' | 'compact';
 
 // ---- Faction politics (GDD §5.3) ----
 
-export type FactionId = 'workers' | 'landowners' | 'merchants';
+export type LegacyFactionId = 'workers' | 'landowners' | 'merchants';
 
 export interface Faction {
-  id: FactionId;
+  id: LegacyFactionId;
   name: string;
   power: number;   // 0–100: how much economic/social weight they carry
   support: number; // 0–100: how much they back the current regime
@@ -1604,6 +1606,8 @@ const WARMING_LAG_TICKS = 40;
 export const SEA_WALL_YEAR = 2025;
 /** Era 8 begins: the century's verdict is read (GDD §3.2). */
 export const BRANCH_YEAR = 2040;
+/** Early solarpunk decision point: beat the oil barons before 1990 to take the green path early */
+export const EARLY_SOLARPUNK_YEAR = 1990;
 /** The game ends 1 Jan 2100 with the Century Report — sandbox continues. */
 export const CENTURY_YEAR = 2100;
 /** Geoengineering: total °C shed by stratospheric aerosol injection. */
@@ -1753,6 +1757,8 @@ export class RegionSim {
   emissionsLastMonth = 0;
   /** The 2040 verdict, once read. Null until era 8 opens. */
   eraBranch: EraBranch | null = null;
+  /** Track if player has beaten the oil barons faction (enabler for early solarpunk path) */
+  beatOilBarons = false;
   /** The 1 Jan 2100 Century Report; sandbox continues after it. */
   centuryReport: CenturyReport | null = null;
   /** Compliance per rival (0–1): drifts monthly, commerce-driven. Below
@@ -1868,9 +1874,17 @@ export class RegionSim {
   get year(): number {
     return START_YEAR + Math.floor(this.day / DAYS_PER_YEAR);
   }
+  get month(): number {
+    return Math.floor((this.day % DAYS_PER_YEAR) / DAYS_PER_MONTH);
+  }
+  get monthDay(): number {
+    return (this.day % DAYS_PER_MONTH) + 1;
+  }
+  get monthName(): string {
+    return MONTHS[this.month];
+  }
   get dateLabel(): string {
-    const dayOfSeason = (this.day % DAYS_PER_YEAR) % DAYS_PER_SEASON + 1;
-    return `${this.season} ${dayOfSeason}, ${this.year}`;
+    return `${this.monthName} ${this.monthDay}, ${this.year}`;
   }
 
   totalPop(): number {
@@ -2593,6 +2607,8 @@ export class RegionSim {
         );
       }
     }
+    // Era branching: early path (1990) if oil barons beaten, otherwise standard (2040)
+    if (this.eraBranch === null && this.year >= EARLY_SOLARPUNK_YEAR && this.beatOilBarons) this.decideBranch();
     if (this.eraBranch === null && this.year >= BRANCH_YEAR) this.decideBranch();
     if (!this.centuryReport && this.year >= CENTURY_YEAR) this.buildCenturyReport();
     this.triggerEpilogueEvent(); // post-2100 flavor events
@@ -2686,22 +2702,39 @@ export class RegionSim {
     const gov = GOV_TYPES.find((g) => g.id === this.govType);
     const democratic = gov ? gov.electionsRequired : this.has('universal_suffrage');
     let branch: EraBranch;
-    if (proj >= 2.3) branch = 'drowned';
-    else if (!democratic || avgSat < 42 || (this.nationProclaimed && this.legitimacy < 35)) branch = 'dystopia';
-    else branch = 'solarpunk';
-    this.eraBranch = branch;
-    const lines: Record<EraBranch, string> = {
-      solarpunk:
-        `THE GARDEN CENTURY: ${BRANCH_YEAR} opens under glass and green. The grid hums clean, the ` +
-        `squares are planted, and the projected waterline stays on the chart, not in the streets.`,
-      dystopia:
-        `THE NEON CENTURY: ${BRANCH_YEAR} arrives behind checkpoints and billboards. The economy roars; ` +
-        `the people queue in its light and grumble in its shadow.`,
-      drowned:
-        `THE DROWNED CENTURY: ${BRANCH_YEAR}, and the projection is now a tide table. The sea is coming ` +
+    const yearLabel = this.year < EARLY_SOLARPUNK_YEAR ? EARLY_SOLARPUNK_YEAR : BRANCH_YEAR;
+
+    // Early solarpunk: beat the oil barons before 1990 to lock in the green path now
+    if (this.beatOilBarons && this.year >= EARLY_SOLARPUNK_YEAR && democratic && avgSat >= 42 && proj < 2.3) {
+      branch = 'solarpunk';
+      this.addLog(
+        `THE EARLY GARDEN: The oil barons are routed. Renewable energy sweeps the grid — solar and wind ` +
+        `now outpace coal. The 1990s opens under glass and green; the projected waterline retreats from the streets.`,
+        'good',
+      );
+    } else if (proj >= 2.3) {
+      branch = 'drowned';
+      this.addLog(
+        `THE DROWNED CENTURY: Year ${yearLabel}, and the projection is now a tide table. The sea is coming ` +
         `for the coastal streets — wall them, move them, or mourn them.`,
-    };
-    this.addLog(lines[branch], branch === 'solarpunk' ? 'good' : 'bad');
+        'bad',
+      );
+    } else if (!democratic || avgSat < 42 || (this.nationProclaimed && this.legitimacy < 35)) {
+      branch = 'dystopia';
+      this.addLog(
+        `THE NEON CENTURY: Year ${yearLabel} arrives behind checkpoints and billboards. The economy roars; ` +
+        `the people queue in its light and grumble in its shadow.`,
+        'bad',
+      );
+    } else {
+      branch = 'solarpunk';
+      this.addLog(
+        `THE GARDEN CENTURY: Year ${yearLabel} opens under glass and green. The grid hums clean, the ` +
+        `squares are planted, and the projected waterline stays on the chart, not in the streets.`,
+        'good',
+      );
+    }
+    this.eraBranch = branch;
   }
 
   /** Adaptation, the honest kind (GDD §8.2): province-scale money, poured
@@ -3026,6 +3059,7 @@ export class RegionSim {
       garrisonStrength: 5,
       stationedUnits: [],
       loyaltyToFaction: 100,
+      factionStrengths: new Map(activeFactions(1800).map(f => [f.id, 50] as [NewFactionId, number])),
       sectors: defaultSectors(),
       buildings: [],
       construction: null,
@@ -3046,7 +3080,7 @@ export class RegionSim {
     }
 
     region.addLog(
-      `Wagons halt in a sheltered valley. ${home.name} is founded, 1900 — ` +
+      `Wagons halt in a sheltered valley. ${home.name} is founded, 1800 — ` +
       `the first stone of a nation yet unnamed.`,
       'good',
     );
@@ -3098,10 +3132,20 @@ export class RegionSim {
   }
 
   // ---- main loop: one tick = 30 game-minutes ----
+  /** Calendar acceleration per tier keeps decision density constant while spanning centuries.
+   *  Applies after mid-game (1950+) to avoid breaking early progression. */
+  private calendarAcceleration(): number {
+    // Calendar speeds up in late mid-game and beyond to compress centuries into ~4-hour sessions.
+    // Year-based thresholds ensure consistent pacing regardless of proclamation flags.
+    if (this.year < 1950) return 1; // Discovery & exploration: normal pace
+    if (this.year < 2000) return 2; // State/nation eras: moderate speedup
+    return 1.5; // Late game (2000-2100): slower than mid for decision depth
+  }
+
   tick(): void {
     if (this.gameOver) return;
     const prevDay = this.day;
-    this.minute += REGION_MINUTES_PER_TICK;
+    this.minute += REGION_MINUTES_PER_TICK * this.calendarAcceleration();
     if (this.day !== prevDay) this.dailyUpdate();
   }
 
@@ -3358,6 +3402,7 @@ export class RegionSim {
     // sink). Nation-tier machinery (factions/diplomacy/central bank) stays gated.
     this.monthlyEconomy();
     if (this.stateProclaimed) this.updateFactions();
+    if (this.stateProclaimed) this.updateSettlementFactions();
     this.updateDiplomacy();
     this.consumeWarSupply(); // deplete supply reserves based on army size and supply consumption rate
     this.updateRivalAI(); // staggered AI updates for rivals (GDD §6.2)
@@ -3368,6 +3413,22 @@ export class RegionSim {
     if (this.stateProclaimed) this.collectVassalTribute();
     this.checkProclamationGate();
     this.checkWinConditions();
+    // Early solarpunk trigger: beaten the oil barons when renewables are cheap + available tech
+    if (!this.beatOilBarons && this.year >= 1980 && this.year < EARLY_SOLARPUNK_YEAR) {
+      const hasRenewables = this.has('solar_cells') || this.has('wind_power') || this.has('hydro_power');
+      const hasFossilMult = this.has('coal_mining') && this.has('oil_refining');
+      const playerFaction = this.faction(this.playerFactionId);
+      const hasStrongEconomy = playerFaction && playerFaction.treasury > 5000;
+      // Green victory: renewables tech + strong economy + hasn't relied on fossil fuels = beat the oil barons
+      if (hasRenewables && hasStrongEconomy && !hasFossilMult) {
+        this.beatOilBarons = true;
+        this.addLog(
+          `The oil barons are losing ground — renewable energy is now cheaper than coal. ` +
+          `Hydropower, wind, and solar plants sweep across the region. The path to green prosperity opens.`,
+          'good',
+        );
+      }
+    }
     // Record monthly history for sparklines (last 12 months)
     const gdp = this.settlements.reduce((s, t) => s + SECTOR_IDS.reduce((ss, id) => ss + t.sectors[id].output, 0), 0);
     this.monthlyHistory.push({ gdp, treasury: this.treasury, inflation: this.inflationRate * 100, employment: 100 });
@@ -4752,6 +4813,7 @@ export class RegionSim {
           garrisonStrength: 2, // new towns have smaller garrisons
           stationedUnits: [],
           loyaltyToFaction: 100,
+          factionStrengths: new Map(activeFactions(this.year).map(f => [f.id, 50] as [NewFactionId, number])),
           sectors: defaultSectors(),
           buildings: [],
           construction: null,
@@ -6627,7 +6689,10 @@ export class RegionSim {
       rng: this.rng.getState(),
       aiRng: this.aiRng.getState(),
       minute: this.minute,
-      settlements: this.settlements,
+      settlements: this.settlements.map(s => ({
+        ...s,
+        factionStrengths: Object.fromEntries(s.factionStrengths),
+      })),
       notables: this.notables,
       expeditions: this.expeditions,
       routes: this.routes,
@@ -6677,6 +6742,7 @@ export class RegionSim {
       warmingC: this.warmingC,
       emissionsLastMonth: this.emissionsLastMonth,
       eraBranch: this.eraBranch,
+      beatOilBarons: this.beatOilBarons,
       centuryReport: this.centuryReport,
       seaRiseAnnounced: this.seaRiseAnnounced,
       lastTidalLogDay: this.lastTidalLogDay,
@@ -6741,6 +6807,7 @@ export class RegionSim {
       garrisonStrength: s.garrisonStrength ?? 2,
       stationedUnits: s.stationedUnits ?? [],
       loyaltyToFaction: s.loyaltyToFaction ?? 100,
+      factionStrengths: new Map(Object.entries(s.factionStrengths ?? {}) as [NewFactionId, number][]),
       sectors: s.sectors ?? defaultSectors(),
       buildings: s.buildings ?? [],
       construction: s.construction ?? null,
@@ -6812,6 +6879,7 @@ export class RegionSim {
     r.warmingC = d.warmingC ?? 0;
     r.emissionsLastMonth = d.emissionsLastMonth ?? 0;
     r.eraBranch = d.eraBranch ?? null;
+    r.beatOilBarons = d.beatOilBarons ?? false;
     r.centuryReport = d.centuryReport ?? null;
     r.seaRiseAnnounced = d.seaRiseAnnounced ?? false;
     r.lastTidalLogDay = d.lastTidalLogDay ?? -999;
@@ -7617,6 +7685,68 @@ export class RegionSim {
     }
   }
 
+  /** Update settlement-level faction strengths based on laws, policies, and economic conditions.
+   *  Factions gain strength when the player enacts laws they support, and lose when blocked. */
+  private updateSettlementFactions(): void {
+    for (const settlement of this.settlements) {
+      // Get active factions for this year
+      const activeFacs = activeFactions(this.year);
+
+      for (const factionDef of activeFacs) {
+        const currentStrength = settlement.factionStrengths.get(factionDef.id) ?? 50;
+        let newStrength = currentStrength;
+
+        // Faction gains 20 strength when player passes a law they promote
+        for (const law of factionDef.promotes) {
+          if (this.passedLaws.has(law)) {
+            newStrength += 2;
+          }
+        }
+
+        // Faction loses 15 strength when player passes a law they oppose
+        for (const law of factionDef.opposes) {
+          if (this.passedLaws.has(law)) {
+            newStrength -= 2;
+          }
+        }
+
+        // Tech research boosts faction strength (if they have modifiers for that tech)
+        // Example: environmentalists boost when solar/wind researched
+        if (factionDef.id === 'environmentalists' && (this.has('solar_cells') || this.has('wind_power'))) {
+          newStrength += 1;
+        }
+        if (factionDef.id === 'oil_barons' && (this.has('coal_mining') || this.has('oil_refining'))) {
+          newStrength += 1;
+        }
+        if (factionDef.id === 'scientists' && (this.has('computing') || this.has('automation'))) {
+          newStrength += 1;
+        }
+
+        // Economic conditions affect factions
+        // Industrialists grow stronger during high GDP growth
+        if (factionDef.id === 'industrialists' && this.gdpLastMonth > 50000) {
+          newStrength += 0.5;
+        }
+        // Pacifists gain strength during peace
+        if (factionDef.id === 'pacifists' && !this.playerWar) {
+          newStrength += 0.5;
+        }
+        // Militarists gain during war
+        if (factionDef.id === 'militarists' && this.playerWar) {
+          newStrength += 0.5;
+        }
+
+        // Natural decay if faction goals are being ignored (very slow)
+        newStrength *= 0.99;
+
+        // Clamp to 0-100
+        newStrength = Math.max(0, Math.min(100, newStrength));
+
+        settlement.factionStrengths.set(factionDef.id, newStrength);
+      }
+    }
+  }
+
   /** Monthly update hook for faction AI: check if any faction is due for update.
    *  Staggered scheduling keeps this O(factions) but amortized O(1) per month. */
   private updateRivalAI(): void {
@@ -8035,6 +8165,7 @@ export class RegionSim {
       garrisonStrength: 2,
       stationedUnits: [],
       loyaltyToFaction: 85, // new settlements are loyal to their faction
+      factionStrengths: new Map(activeFactions(this.year).map(f => [f.id, 50] as [NewFactionId, number])),
       sectors: defaultSectors(),
       buildings: [],
       construction: null,

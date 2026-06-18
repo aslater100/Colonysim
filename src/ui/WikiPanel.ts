@@ -26,7 +26,7 @@ const WIKI_SECTIONS: WikiSection[] = [
       {
         id: 'basics',
         title: 'Game Basics',
-        content: `<strong>Centuria</strong> is a deep simulation builder where you grow a colony from 1900 to 2100.
+        content: `<strong>Centuria</strong> is a deep simulation builder where you grow a colony from 1800 to 2100.
         Your goal is to guide settlers through eras, manage resources, research technologies, and build a thriving nation.
 
         <strong>Key Concepts:</strong>
