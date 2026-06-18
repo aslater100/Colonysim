@@ -164,7 +164,23 @@ export class RegionView {
     this.tooltip = document.createElement('div');
     this.tooltip.className = 'cv-tooltip hidden';
     root.appendChild(this.tooltip);
+    // Create top bar for metrics
+    const topBar = document.createElement('div');
+    topBar.id = 'top-bar';
+    topBar.className = 'topbar';
+    root.appendChild(topBar);
+    this.topBar = topBar;
+    // Create event log for last 3 events
+    const eventLog = document.createElement('div');
+    eventLog.className = 'eventlog';
+    root.appendChild(eventLog);
+    this.eventLog = eventLog;
   }
+
+  /** Top bar displaying game metrics. */
+  private topBar: HTMLElement;
+  /** Event log showing last 3 events. */
+  private eventLog: HTMLElement;
 
   /** Draggable panels for the WindowManager (region mode). */
   get draggablePanels(): { id: string; element: HTMLElement; baseZ: number }[] {
@@ -676,6 +692,8 @@ export class RegionView {
 
     this.drawRivalBanners(W, H);
     this.drawWeather(W, H);
+    this.updateTopBar();
+    this.updateEventLog();
     this.drawPanel();
     this.drawRivalPanel();
     this.drawStatePanel();
@@ -2584,6 +2602,49 @@ export class RegionView {
   /** Force the panel to rebuild its HTML on the next frame (called after game actions). */
   private refreshPanel(): void {
     this.lastPanelBuildFrame = -999;
+  }
+
+  private updateTopBar(): void {
+    const r = this.region;
+    const year = Math.floor(r.minute / (60 * 24 * 365));
+    const dayOfYear = Math.floor((r.minute / (60 * 24)) % 365);
+    const month = Math.floor(dayOfYear / 30) + 1;
+    const day = Math.floor(dayOfYear % 30) + 1;
+
+    const selected = r.settlements.find((s) => s.id === this.selectedId);
+    const pop = selected ? Math.floor(selected.cohorts.bands.reduce((a, b) => a + b, 0)) : 0;
+
+    // Calculate total food and wood across all settlements
+    let totalFood = 0;
+    let totalWood = 0;
+    for (const settlement of r.settlements) {
+      totalFood += settlement.food;
+      totalWood += settlement.wood;
+    }
+
+    const treasury = formatCurrency(r.treasury);
+    const w = window as any;
+    const speed = w.gameSpeed || 1;
+    const paused = w.gamePaused ? '⏸ PAUSED' : '';
+    const speedLabel = speed === 1 ? '1×' : speed === 3 ? '3×' : speed === 8 ? '8×' : `${speed}×`;
+    this.topBar.innerHTML = `
+      <div class="tb-item tb-date">Year ${year}</div>
+      <div class="tb-item tb-time">Month ${month}, Day ${day}</div>
+      <div class="tb-item tb-treasury">${treasury}</div>
+      <div class="tb-item tb-resources">🌾 ${Math.floor(totalFood)} | 🪵 ${Math.floor(totalWood)}</div>
+      ${selected ? `<div class="tb-item tb-population">👥 ${pop}</div>` : ''}
+      <div class="tb-item tb-speed" style="margin-left: auto;">${paused} ${speedLabel}</div>
+    `;
+  }
+
+  private updateEventLog(): void {
+    const r = this.region;
+    const last3 = r.log.slice(-3).reverse();
+    const entries = last3.map((entry) => {
+      const className = `log-entry log-${entry.kind}`;
+      return `<div class="${className}">${entry.text}</div>`;
+    }).join('');
+    this.eventLog.innerHTML = entries || '<div class="log-entry log-info">No recent events</div>';
   }
 
   private drawPanel(): void {
