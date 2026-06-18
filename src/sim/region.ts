@@ -1604,6 +1604,8 @@ const WARMING_LAG_TICKS = 40;
 export const SEA_WALL_YEAR = 2025;
 /** Era 8 begins: the century's verdict is read (GDD §3.2). */
 export const BRANCH_YEAR = 2040;
+/** Early solarpunk decision point: beat the oil barons before 1990 to take the green path early */
+export const EARLY_SOLARPUNK_YEAR = 1990;
 /** The game ends 1 Jan 2100 with the Century Report — sandbox continues. */
 export const CENTURY_YEAR = 2100;
 /** Geoengineering: total °C shed by stratospheric aerosol injection. */
@@ -1753,6 +1755,8 @@ export class RegionSim {
   emissionsLastMonth = 0;
   /** The 2040 verdict, once read. Null until era 8 opens. */
   eraBranch: EraBranch | null = null;
+  /** Track if player has beaten the oil barons faction (enabler for early solarpunk path) */
+  beatOilBarons = false;
   /** The 1 Jan 2100 Century Report; sandbox continues after it. */
   centuryReport: CenturyReport | null = null;
   /** Compliance per rival (0–1): drifts monthly, commerce-driven. Below
@@ -2593,6 +2597,8 @@ export class RegionSim {
         );
       }
     }
+    // Era branching: early path (1990) if oil barons beaten, otherwise standard (2040)
+    if (this.eraBranch === null && this.year >= EARLY_SOLARPUNK_YEAR && this.beatOilBarons) this.decideBranch();
     if (this.eraBranch === null && this.year >= BRANCH_YEAR) this.decideBranch();
     if (!this.centuryReport && this.year >= CENTURY_YEAR) this.buildCenturyReport();
     this.triggerEpilogueEvent(); // post-2100 flavor events
@@ -2686,22 +2692,40 @@ export class RegionSim {
     const gov = GOV_TYPES.find((g) => g.id === this.govType);
     const democratic = gov ? gov.electionsRequired : this.has('universal_suffrage');
     let branch: EraBranch;
-    if (proj >= 2.3) branch = 'drowned';
-    else if (!democratic || avgSat < 42 || (this.nationProclaimed && this.legitimacy < 35)) branch = 'dystopia';
-    else branch = 'solarpunk';
-    this.eraBranch = branch;
-    const lines: Record<EraBranch, string> = {
-      solarpunk:
-        `THE GARDEN CENTURY: ${BRANCH_YEAR} opens under glass and green. The grid hums clean, the ` +
-        `squares are planted, and the projected waterline stays on the chart, not in the streets.`,
-      dystopia:
-        `THE NEON CENTURY: ${BRANCH_YEAR} arrives behind checkpoints and billboards. The economy roars; ` +
-        `the people queue in its light and grumble in its shadow.`,
-      drowned:
-        `THE DROWNED CENTURY: ${BRANCH_YEAR}, and the projection is now a tide table. The sea is coming ` +
+    const branchYear = this.year < EARLY_SOLARPUNK_YEAR ? EARLY_SOLARPUNK_YEAR : BRANCH_YEAR;
+    const yearLabel = this.year < EARLY_SOLARPUNK_YEAR ? EARLY_SOLARPUNK_YEAR : BRANCH_YEAR;
+
+    // Early solarpunk: beat the oil barons before 1990 to lock in the green path now
+    if (this.beatOilBarons && this.year >= EARLY_SOLARPUNK_YEAR && democratic && avgSat >= 42 && proj < 2.3) {
+      branch = 'solarpunk';
+      this.addLog(
+        `THE EARLY GARDEN: The oil barons are routed. Renewable energy sweeps the grid — solar and wind ` +
+        `now outpace coal. The 1990s opens under glass and green; the projected waterline retreats from the streets.`,
+        'good',
+      );
+    } else if (proj >= 2.3) {
+      branch = 'drowned';
+      this.addLog(
+        `THE DROWNED CENTURY: Year ${yearLabel}, and the projection is now a tide table. The sea is coming ` +
         `for the coastal streets — wall them, move them, or mourn them.`,
-    };
-    this.addLog(lines[branch], branch === 'solarpunk' ? 'good' : 'bad');
+        'bad',
+      );
+    } else if (!democratic || avgSat < 42 || (this.nationProclaimed && this.legitimacy < 35)) {
+      branch = 'dystopia';
+      this.addLog(
+        `THE NEON CENTURY: Year ${yearLabel} arrives behind checkpoints and billboards. The economy roars; ` +
+        `the people queue in its light and grumble in its shadow.`,
+        'bad',
+      );
+    } else {
+      branch = 'solarpunk';
+      this.addLog(
+        `THE GARDEN CENTURY: Year ${yearLabel} opens under glass and green. The grid hums clean, the ` +
+        `squares are planted, and the projected waterline stays on the chart, not in the streets.`,
+        'good',
+      );
+    }
+    this.eraBranch = branch;
   }
 
   /** Adaptation, the honest kind (GDD §8.2): province-scale money, poured
@@ -3098,10 +3122,23 @@ export class RegionSim {
   }
 
   // ---- main loop: one tick = 30 game-minutes ----
+  /** Calendar acceleration per tier keeps decision density constant while spanning centuries.
+   *  Applies after mid-game (1950+) to avoid breaking early progression. */
+  private calendarAcceleration(): number {
+    if (this.year < 1950) return 1; // Early/mid game: normal pace for now
+    if (!this.stateProclaimed) return 1; // Tier 1: normal pace
+    if (!this.nationProclaimed) {
+      // Tier 2: State. 1.5× speed after 1950 to accelerate mid-game
+      return 1.5;
+    }
+    // Tier 3: Nation (late game). 2–3× speed to compress final century into ~40 real hours
+    return this.year < 2000 ? 2 : 2.5;
+  }
+
   tick(): void {
     if (this.gameOver) return;
     const prevDay = this.day;
-    this.minute += REGION_MINUTES_PER_TICK;
+    this.minute += REGION_MINUTES_PER_TICK * this.calendarAcceleration();
     if (this.day !== prevDay) this.dailyUpdate();
   }
 
@@ -3368,6 +3405,22 @@ export class RegionSim {
     if (this.stateProclaimed) this.collectVassalTribute();
     this.checkProclamationGate();
     this.checkWinConditions();
+    // Early solarpunk trigger: beaten the oil barons when renewables are cheap + available tech
+    if (!this.beatOilBarons && this.year >= 1980 && this.year < EARLY_SOLARPUNK_YEAR) {
+      const hasRenewables = this.has('solar_cells') || this.has('wind_power') || this.has('hydro_power');
+      const hasFossilMult = this.has('coal_mining') && this.has('oil_refining');
+      const playerFaction = this.faction(this.playerFactionId);
+      const hasStrongEconomy = playerFaction && playerFaction.treasury > 5000;
+      // Green victory: renewables tech + strong economy + hasn't relied on fossil fuels = beat the oil barons
+      if (hasRenewables && hasStrongEconomy && !hasFossilMult) {
+        this.beatOilBarons = true;
+        this.addLog(
+          `The oil barons are losing ground — renewable energy is now cheaper than coal. ` +
+          `Hydropower, wind, and solar plants sweep across the region. The path to green prosperity opens.`,
+          'good',
+        );
+      }
+    }
     // Record monthly history for sparklines (last 12 months)
     const gdp = this.settlements.reduce((s, t) => s + SECTOR_IDS.reduce((ss, id) => ss + t.sectors[id].output, 0), 0);
     this.monthlyHistory.push({ gdp, treasury: this.treasury, inflation: this.inflationRate * 100, employment: 100 });
@@ -6677,6 +6730,7 @@ export class RegionSim {
       warmingC: this.warmingC,
       emissionsLastMonth: this.emissionsLastMonth,
       eraBranch: this.eraBranch,
+      beatOilBarons: this.beatOilBarons,
       centuryReport: this.centuryReport,
       seaRiseAnnounced: this.seaRiseAnnounced,
       lastTidalLogDay: this.lastTidalLogDay,
@@ -6812,6 +6866,7 @@ export class RegionSim {
     r.warmingC = d.warmingC ?? 0;
     r.emissionsLastMonth = d.emissionsLastMonth ?? 0;
     r.eraBranch = d.eraBranch ?? null;
+    r.beatOilBarons = d.beatOilBarons ?? false;
     r.centuryReport = d.centuryReport ?? null;
     r.seaRiseAnnounced = d.seaRiseAnnounced ?? false;
     r.lastTidalLogDay = d.lastTidalLogDay ?? -999;
