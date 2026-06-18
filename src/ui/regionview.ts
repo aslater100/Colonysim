@@ -540,18 +540,30 @@ export class RegionView {
       }
     }
 
-    // AI scouts: tiny moving dots (faction-colored)
+    // Scouts: tiny moving dots (faction-colored, with animation)
     for (const scout of region.scouts) {
       const faction = region.faction(scout.factionId);
-      if (!faction || faction.id === region.playerFactionId) continue;
-      if (!this.revealedAt(scout.x, scout.y)) continue; // unseen beyond the frontier
+      if (!faction) continue;
+      // Player scouts always visible; AI scouts only if revealed by player
+      if (faction.id !== region.playerFactionId && !this.revealedAt(scout.x, scout.y)) continue;
       const { px, py } = this.toPx(scout.x, scout.y);
       if (!this.inView(px, py, 16)) continue;
       const bob = Math.floor(this.frame / 20) % 2;
-      g.fillStyle = faction.color ?? '#aaa';
-      g.globalAlpha = 0.75;
-      g.fillRect(px - 2, py - 2 - bob, 4, 4);
-      g.globalAlpha = 1;
+      // Player scouts: white outline + faction color fill; AI scouts: faction color only
+      if (faction.id === region.playerFactionId) {
+        g.fillStyle = faction.color ?? '#00ff00';
+        g.globalAlpha = 0.9;
+        g.fillRect(px - 3, py - 3 - bob, 6, 6);
+        g.globalAlpha = 1;
+        g.strokeStyle = '#fff';
+        g.lineWidth = 1;
+        g.strokeRect(px - 3, py - 3 - bob, 6, 6);
+      } else {
+        g.fillStyle = faction.color ?? '#aaa';
+        g.globalAlpha = 0.75;
+        g.fillRect(px - 2, py - 2 - bob, 4, 4);
+        g.globalAlpha = 1;
+      }
     }
 
     // Expeditions: a wagon dot crawling to its site

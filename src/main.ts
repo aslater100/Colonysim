@@ -161,6 +161,8 @@ window.addEventListener('keydown', (e) => {
   if (e.key === '1') { speed = 1; updateUIState(); }
   if (e.key === '2') { speed = 3; updateUIState(); }
   if (e.key === '3') { speed = 8; updateUIState(); }
+  if ((e.key === '+' || e.key === '=') && regionView) { regionView.zoomAt(canvas.width / 2, canvas.height / 2, 1); e.preventDefault(); return; }
+  if (e.key === '-' && regionView) { regionView.zoomAt(canvas.width / 2, canvas.height / 2, -1); e.preventDefault(); return; }
   if (e.key === 's' && e.ctrlKey) { save(); e.preventDefault(); return; }
   if (e.key === 'Escape') {
     if (pauseMenuOpen) {
@@ -212,7 +214,13 @@ canvas.addEventListener('click', (e) => {
   if (regionDrag.moved < 5) regionView?.click(e.clientX, e.clientY);
 });
 
-// zoom not yet implemented in RegionView
+canvas.addEventListener('wheel', (e) => {
+  if (regionView) {
+    const dir = e.deltaY < 0 ? 1 : -1;
+    regionView.zoomAt(e.clientX, e.clientY, dir);
+    e.preventDefault();
+  }
+});
 
 // ---- main loop ----
 let acc = 0;
