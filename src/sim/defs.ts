@@ -717,6 +717,175 @@ export const TUNING = {
   fragilityGain: 140,
 };
 
+// ---- Faction system (GDD §7.3: political depth) ----
+/** Factions are political movements that rise and fall throughout the game.
+ *  They compete for influence, affecting laws, research, morale, and economic priorities.
+ *  Period-appropriate emergence prevents anachronistic factions. */
+
+export type FactionId = 'oligarchs' | 'industrialists' | 'liberals' | 'communists' | 'socialists'
+                       | 'nationalists' | 'oil_barons' | 'technocrats' | 'environmentalists' | 'water_barons';
+
+export interface FactionDef {
+  id: FactionId;
+  name: string;
+  desc: string;
+  minYear: number; // First year this faction can emerge
+  maxYear?: number; // Last year this faction is relevant (optional; omit for 2100+)
+  /** Values [0-1]: how much this faction boosts/cuts research for each tech category. */
+  techModifiers: {
+    infrastructure?: number;
+    military?: number;
+    agriculture?: number;
+    industry?: number;
+    energy?: number; // oil_barons -1.5, environmentalists +1.5 for renewables
+    culture?: number;
+    finance?: number;
+  };
+  /** Laws this faction strongly opposes (blocks if strength > threshold). */
+  opposes: string[]; // e.g., oligarchs oppose 'universal_suffrage'
+  /** Laws this faction promotes (auto-enables if strength > threshold). */
+  promotes: string[];
+  /** Morale modifiers: how much this faction's strength affects settler happiness. */
+  moraleMod: number; // e.g., communists +20 if strong, -20 if weak
+  /** How government type availability is affected: e.g. oligarchs restrict democracy */
+  govRestrictions?: string[]; // gov types oligarchs disallow
+  /** Military strength bonus when this faction is dominant. */
+  militaryBonus: number;
+  /** Economic sector productivity modifier (% per strength point). */
+  economicFocus?: string; // 'agriculture', 'manufacturing', 'finance', 'tech'
+}
+
+export const FACTION_DEFS: FactionDef[] = [
+  {
+    id: 'oligarchs',
+    name: 'Oligarchs',
+    desc: 'Wealthy merchants and landowners who hoard wealth and resist democracy.',
+    minYear: 1800,
+    techModifiers: { finance: 1.2, infrastructure: 0.9 },
+    opposes: ['universal_suffrage', 'labor_law', 'progressive_tax'],
+    promotes: ['income_tax', 'aristocratic_privilege'],
+    moraleMod: -15, // strong oligarchs = unhappy workers
+    govRestrictions: ['democracy'],
+    militaryBonus: 5,
+    economicFocus: 'finance',
+  },
+  {
+    id: 'industrialists',
+    name: 'Industrialists',
+    desc: 'Factory owners who push mass production and fossil-fuel economies.',
+    minYear: 1850,
+    maxYear: 2000,
+    techModifiers: { industry: 1.4, energy: -0.8, agriculture: 0.7 },
+    opposes: ['environmental_protection', 'renewable_energy'],
+    promotes: ['coal_power', 'mass_manufacturing'],
+    moraleMod: 5, // industrialists boost morale via jobs
+    militaryBonus: 10,
+    economicFocus: 'manufacturing',
+  },
+  {
+    id: 'liberals',
+    name: 'Liberals',
+    desc: 'Progressive intellectuals pushing individual rights, democracy, and civil freedoms.',
+    minYear: 1850,
+    techModifiers: { culture: 1.3, infrastructure: 1.1 },
+    opposes: ['autocracy', 'censorship'],
+    promotes: ['universal_suffrage', 'freedom_of_speech'],
+    moraleMod: 10, // liberals boost morale via freedoms
+    govRestrictions: [],
+    militaryBonus: 0,
+  },
+  {
+    id: 'communists',
+    name: 'Communists',
+    desc: 'Revolutionary idealists demanding radical equality, state control, and workers rights.',
+    minYear: 1870,
+    techModifiers: { agriculture: 1.2, culture: 1.3, industry: 1.0 },
+    opposes: ['private_property', 'capitalism', 'income_tax'],
+    promotes: ['universal_suffrage', 'labor_law', 'wealth_redistribution'],
+    moraleMod: 20, // communists strongly boost morale of workers
+    govRestrictions: ['monarchy'],
+    militaryBonus: 15,
+  },
+  {
+    id: 'socialists',
+    name: 'Socialists',
+    desc: 'Reformers advocating for strong worker protections and wealth redistribution.',
+    minYear: 1890,
+    techModifiers: { culture: 1.1, agriculture: 1.1 },
+    opposes: ['oligarchy'],
+    promotes: ['labor_law', 'welfare_state'],
+    moraleMod: 15,
+    militaryBonus: 5,
+  },
+  {
+    id: 'nationalists',
+    name: 'Nationalists',
+    desc: 'Militarists and patriots who prioritize territorial expansion and military strength.',
+    minYear: 1800,
+    techModifiers: { military: 1.5, culture: 0.8, agriculture: 0.9 },
+    opposes: ['pacifism', 'free_trade'],
+    promotes: ['expansionism', 'military_doctrine'],
+    moraleMod: 5,
+    militaryBonus: 25,
+    economicFocus: 'military',
+  },
+  {
+    id: 'oil_barons',
+    name: 'Oil Barons',
+    desc: 'Fossil fuel magnates blocking renewable energy to protect petrol profits.',
+    minYear: 1850,
+    maxYear: 2050,
+    techModifiers: { energy: -1.5, industry: 1.3 },
+    opposes: ['renewable_energy', 'environmental_protection', 'carbon_tax'],
+    promotes: ['fossil_fuels', 'energy_independence'],
+    moraleMod: -5,
+    militaryBonus: 0,
+    economicFocus: 'energy',
+  },
+  {
+    id: 'technocrats',
+    name: 'Technocrats',
+    desc: 'Engineer-administrators emphasizing efficiency, automation, and technological progress.',
+    minYear: 1950,
+    techModifiers: { industry: 1.4, infrastructure: 1.3, culture: 0.7 },
+    opposes: ['luddism', 'craftsmanship'],
+    promotes: ['automation', 'computing'],
+    moraleMod: 0, // neutral on morale, boost efficiency
+    militaryBonus: 10,
+  },
+  {
+    id: 'environmentalists',
+    name: 'Environmentalists',
+    desc: 'Green activists pushing renewable energy, conservation, and climate action.',
+    minYear: 1950,
+    techModifiers: { energy: 1.5, agriculture: 1.2, culture: 1.2 },
+    opposes: ['fossil_fuels', 'pollution'],
+    promotes: ['renewable_energy', 'environmental_protection', 'carbon_tax'],
+    moraleMod: 10,
+    militaryBonus: -5,
+  },
+  {
+    id: 'water_barons',
+    name: 'Water Barons',
+    desc: 'Corporate interests controlling water resources and privatizing public utilities.',
+    minYear: 1960,
+    techModifiers: { agriculture: 0.7, industry: 1.1 },
+    opposes: ['public_utilities', 'universal_water_access'],
+    promotes: ['water_privatization', 'infrastructure'],
+    moraleMod: -10,
+    militaryBonus: 0,
+  },
+];
+
+export function factionDef(id: FactionId): FactionDef | undefined {
+  return FACTION_DEFS.find((f) => f.id === id);
+}
+
+/** Return factions that are active (within their minYear...maxYear window) for a given year. */
+export function activeFactions(year: number): FactionDef[] {
+  return FACTION_DEFS.filter((f) => year >= f.minYear && (!f.maxYear || year <= f.maxYear));
+}
+
 // ---- Parcel / land-expansion tuning (Track B Phase 2–3) ----
 // The price of expanding the realm one cell at a time. Cost grows with
 // distance from the founding town, the terrain's difficulty, and how much
