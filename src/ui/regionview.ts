@@ -170,10 +170,17 @@ export class RegionView {
     topBar.className = 'topbar';
     root.appendChild(topBar);
     this.topBar = topBar;
+    // Create event log for last 3 events
+    const eventLog = document.createElement('div');
+    eventLog.className = 'eventlog';
+    root.appendChild(eventLog);
+    this.eventLog = eventLog;
   }
 
   /** Top bar displaying game metrics. */
   private topBar: HTMLElement;
+  /** Event log showing last 3 events. */
+  private eventLog: HTMLElement;
 
   /** Draggable panels for the WindowManager (region mode). */
   get draggablePanels(): { id: string; element: HTMLElement; baseZ: number }[] {
@@ -686,6 +693,7 @@ export class RegionView {
     this.drawRivalBanners(W, H);
     this.drawWeather(W, H);
     this.updateTopBar();
+    this.updateEventLog();
     this.drawPanel();
     this.drawRivalPanel();
     this.drawStatePanel();
@@ -2622,6 +2630,16 @@ export class RegionView {
       <div class="tb-item tb-resources">🌾 ${Math.floor(totalFood)} | 🪵 ${Math.floor(totalWood)}</div>
       ${selected ? `<div class="tb-item tb-population">👥 ${pop}</div>` : ''}
     `;
+  }
+
+  private updateEventLog(): void {
+    const r = this.region;
+    const last3 = r.log.slice(-3).reverse();
+    const entries = last3.map((entry) => {
+      const className = `log-entry log-${entry.kind}`;
+      return `<div class="${className}">${entry.text}</div>`;
+    }).join('');
+    this.eventLog.innerHTML = entries || '<div class="log-entry log-info">No recent events</div>';
   }
 
   private drawPanel(): void {
