@@ -97,6 +97,16 @@ const M_RAGTIME: Phrase[] = [
     { deg: 2, step: 6, dur: 2 }, { deg: 4, step: 10, dur: 1 }, { deg: 2, step: 11, dur: 1 },
     { deg: 0, step: 12, dur: 4 },
   ],
+  [
+    { deg: 2, step: 0, dur: 1 }, { deg: 4, step: 1, dur: 1 }, { deg: 6, step: 3, dur: 2 },
+    { deg: 4, step: 5, dur: 1 }, { deg: 2, step: 6, dur: 2 }, { deg: 0, step: 8, dur: 1 },
+    { deg: 2, step: 9, dur: 1 }, { deg: 4, step: 10, dur: 4 },
+  ],
+  [
+    { deg: 0, step: 0, dur: 2 }, { deg: 4, step: 2, dur: 2 }, { deg: 6, step: 4, dur: 1 },
+    { deg: 7, step: 5, dur: 1, oct: 4 }, { deg: 6, step: 6, dur: 2 }, { deg: 4, step: 8, dur: 1 },
+    { deg: 2, step: 9, dur: 3 }, { deg: 0, step: 12, dur: 4 },
+  ],
 ];
 
 // Chip-jazz: a long swung eighth line that climbs to the bluesy flat-seven.
@@ -111,6 +121,16 @@ const M_CHIPJAZZ: Phrase[] = [
     { deg: 6, step: 6, dur: 2 }, { deg: 4, step: 8, dur: 2 }, { deg: 2, step: 10, dur: 2 },
     { deg: 0, step: 12, dur: 4 },
   ],
+  [
+    { deg: 2, step: 0, dur: 2 }, { deg: 4, step: 2, dur: 2 }, { deg: 6, step: 4, dur: 2, oct: 4 },
+    { deg: 7, step: 6, dur: 2, oct: 4 }, { deg: 6, step: 8, dur: 2 }, { deg: 4, step: 10, dur: 2 },
+    { deg: 2, step: 12, dur: 4 },
+  ],
+  [
+    { deg: 6, step: 0, dur: 2 }, { deg: 4, step: 2, dur: 2 }, { deg: 2, step: 4, dur: 2 },
+    { deg: 0, step: 6, dur: 2 }, { deg: 2, step: 8, dur: 2 }, { deg: 4, step: 10, dur: 2 },
+    { deg: 6, step: 12, dur: 4, oct: 4 },
+  ],
 ];
 
 // Mid-century: lyrical, long-breathed parlour phrasing.
@@ -122,6 +142,13 @@ const M_MIDCENTURY: Phrase[] = [
   [
     { deg: 6, step: 0, dur: 4 }, { deg: 4, step: 4, dur: 4 }, { deg: 2, step: 8, dur: 4 },
     { deg: 0, step: 12, dur: 4 },
+  ],
+  [
+    { deg: 0, step: 0, dur: 4 }, { deg: 2, step: 4, dur: 6 }, { deg: 4, step: 10, dur: 2 },
+    { deg: 6, step: 12, dur: 4, oct: 4 },
+  ],
+  [
+    { deg: 4, step: 0, dur: 8 }, { deg: 6, step: 8, dur: 4 }, { deg: 2, step: 12, dur: 4 },
   ],
 ];
 
@@ -137,6 +164,16 @@ const M_ANALOG: Phrase[] = [
     { deg: 2, step: 9, dur: 1 }, { deg: 3, step: 10, dur: 1 }, { deg: 2, step: 11, dur: 1 },
     { deg: 0, step: 12, dur: 4 },
   ],
+  [
+    { deg: 2, step: 0, dur: 1 }, { deg: 4, step: 1, dur: 1 }, { deg: 5, step: 3, dur: 2 },
+    { deg: 6, step: 6, dur: 2 }, { deg: 4, step: 8, dur: 1 }, { deg: 2, step: 10, dur: 2 },
+    { deg: 0, step: 13, dur: 3 },
+  ],
+  [
+    { deg: 6, step: 0, dur: 2 }, { deg: 4, step: 2, dur: 2 }, { deg: 5, step: 5, dur: 1 },
+    { deg: 6, step: 6, dur: 2 }, { deg: 4, step: 9, dur: 2 }, { deg: 2, step: 11, dur: 2 },
+    { deg: 0, step: 14, dur: 2 },
+  ],
 ];
 
 // Electronica: a tight, repetitive hook with a driving inner pulse.
@@ -151,6 +188,16 @@ const M_ELECTRONICA: Phrase[] = [
     { deg: 3, step: 8, dur: 1 }, { deg: 4, step: 10, dur: 1 }, { deg: 2, step: 12, dur: 2 },
     { deg: 0, step: 14, dur: 2 },
   ],
+  [
+    { deg: 2, step: 0, dur: 1 }, { deg: 4, step: 1, dur: 1 }, { deg: 0, step: 2, dur: 1 },
+    { deg: 4, step: 3, dur: 2 }, { deg: 2, step: 6, dur: 1 }, { deg: 4, step: 8, dur: 2, oct: 4 },
+    { deg: 3, step: 10, dur: 1 }, { deg: 0, step: 12, dur: 4 },
+  ],
+  [
+    { deg: 0, step: 0, dur: 1 }, { deg: 3, step: 1, dur: 1 }, { deg: 4, step: 3, dur: 1 },
+    { deg: 2, step: 4, dur: 2 }, { deg: 0, step: 7, dur: 1 }, { deg: 4, step: 8, dur: 2, oct: 4 },
+    { deg: 2, step: 11, dur: 1 }, { deg: 0, step: 12, dur: 4 },
+  ],
 ];
 
 // Future: sparse, floating long tones that drift across the bar.
@@ -160,6 +207,12 @@ const M_FUTURE: Phrase[] = [
   ],
   [
     { deg: 7, step: 0, dur: 6, oct: 4 }, { deg: 4, step: 8, dur: 4 }, { deg: 2, step: 12, dur: 4 },
+  ],
+  [
+    { deg: 2, step: 0, dur: 6 }, { deg: 4, step: 6, dur: 4 }, { deg: 6, step: 10, dur: 6, oct: 4 },
+  ],
+  [
+    { deg: 6, step: 0, dur: 8, oct: 4 }, { deg: 4, step: 8, dur: 4 }, { deg: 0, step: 12, dur: 4 },
   ],
 ];
 
