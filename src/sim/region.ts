@@ -2692,7 +2692,6 @@ export class RegionSim {
     const gov = GOV_TYPES.find((g) => g.id === this.govType);
     const democratic = gov ? gov.electionsRequired : this.has('universal_suffrage');
     let branch: EraBranch;
-    const branchYear = this.year < EARLY_SOLARPUNK_YEAR ? EARLY_SOLARPUNK_YEAR : BRANCH_YEAR;
     const yearLabel = this.year < EARLY_SOLARPUNK_YEAR ? EARLY_SOLARPUNK_YEAR : BRANCH_YEAR;
 
     // Early solarpunk: beat the oil barons before 1990 to lock in the green path now
