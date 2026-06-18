@@ -1648,8 +1648,58 @@ export interface CenturyReport {
 }
 
 const TOWN_NAMES = [
+  // Original names
   'Eastvale', 'Norwick', 'Millbrook', 'Ashford', 'Redfort', 'Larkspur',
   'Coldwater', 'Hartsfield', 'Brindle', 'Ostmark', 'Fenwick', 'Sorrel',
+  // European-inspired names
+  'Aldwick', 'Berling', 'Carlston', 'Doverby', 'Elmhurst', 'Fairdale', 'Glenmore', 'Huntington',
+  'Ivywood', 'Jamestown', 'Kingston', 'Lancaster', 'Maidstone', 'Northby', 'Oxford', 'Peterborough',
+  'Queenston', 'Ravenswick', 'Salisbury', 'Thornfield', 'Upperton', 'Valeworth', 'Waltham', 'Yarmouth',
+  'Zephyrhaven', 'Ashbrook', 'Blackwell', 'Cedarvale', 'Darkwood', 'Eastham', 'Fairwood', 'Greystone',
+  'Heathfield', 'Ironford', 'Jardine', 'Kesswick', 'Longfield', 'Moorland', 'Newbrook', 'Oakworth',
+  'Penrose', 'Quickwood', 'Riverton', 'Southwick', 'Thorton', 'Underwood', 'Viewmont', 'Waterford',
+  // Colonial names
+  'Bridgeport', 'Chatham', 'Denton', 'Ellsworth', 'Frankfort', 'Grayville', 'Hartwell', 'Independence',
+  'Jefferson', 'Kenmore', 'Liberty', 'Madison', 'Neville', 'Oakton', 'Palmerton', 'Ridgewood',
+  'Shelby', 'Tenton', 'Union', 'Vinton', 'Wallingford', 'Westbrook', 'Windham', 'Worthington',
+  // Additional variety
+  'Appleton', 'Barrington', 'Camden', 'Dalton', 'Edgeworth', 'Felton', 'Grafton', 'Hampden',
+  'Idlewood', 'Jacksonvale', 'Kellerton', 'Lewisburg', 'Meredith', 'Newtonville', 'Orchard', 'Princeton',
+  'Quincy', 'Rosewood', 'Shirebrook', 'Tallman', 'Utton', 'Vaughn', 'Waverly', 'Whitten',
+  'Yardley', 'Zenith', 'Abingdon', 'Bethel', 'Chesterfield', 'Deepwood', 'Everton', 'Fordham',
+  'Gladstone', 'Hardwick', 'Inwood', 'Jericho', 'Kellys', 'Lakewood', 'Millford', 'Nantucket',
+  'Orwell', 'Pembroke', 'Reddington', 'Stephenson', 'Tilbury', 'Uniontown', 'Ventnor', 'Westgate',
+  // River and landmark names
+  'Riverdale', 'Bridgehaven', 'Stillwater', 'Clearwater', 'Stonebridge', 'Crossroads', 'Hilltop', 'Marshland',
+  'Woodland', 'Sunridge', 'Highfield', 'Flatland', 'Goldwater', 'Silverpine', 'Shadygrove', 'Windridge',
+  'Stormvale', 'Brightfield', 'Darkridge', 'Sweetwater', 'Homestead', 'Crossfield', 'Willowbrook', 'Fieldstone',
+  'Blackstone', 'Redstone', 'Whitestone', 'Bluegrass', 'Greenwood', 'Hardpine', 'Softmeadow', 'Roughwood',
+  // Fantasy-inspired but plausible
+  'Goldshire', 'Silverdale', 'Copperfield', 'Ironhill', 'Steelbrook', 'Brightwell', 'Darkwell', 'Deepwell',
+  'Stonewood', 'Leatherthorn', 'Thornwell', 'Firebrook', 'Frostbrook', 'Stormbrook', 'Windbrook', 'Sunbrook',
+  'Moonbrook', 'Starwood', 'Shadowbrook', 'Ghostfield', 'Spiritwood', 'Lightfield', 'Darkfield', 'Fairfield',
+  // Short, punchy names
+  'Dale', 'Vale', 'Hill', 'Field', 'Ford', 'Port', 'Bay', 'Cove',
+  'Dock', 'Port', 'Moor', 'Fen', 'Bog', 'Heath', 'Bush', 'Grove',
+  'Shaw', 'Wood', 'Glen', 'Dale', 'Vale', 'Holt', 'Tor', 'Peak',
+  // Compound names (double-element)
+  'Ashhill', 'Beechwood', 'Cedarbrook', 'Dalebrook', 'Elmwood', 'Firewood', 'Gravelford', 'Hawthorne',
+  'Ironstone', 'Jasperhull', 'Kingsley', 'Limestone', 'Marblewood', 'Nightwood', 'Oakhill', 'Pearlstone',
+  'Quarystone', 'Ravenhill', 'Sandhurst', 'Timbering', 'Uniqueville', 'Veinbrook', 'Woldgate', 'Yellowstone',
+  // Additional names to reach 200+
+  'Acton', 'Antrim', 'Ardmore', 'Armagh', 'Athlone', 'Athy', 'Austen', 'Avery',
+  'Bainbridge', 'Ballinamore', 'Ballintoy', 'Ballyliffin', 'Ballymore', 'Ballyshannon', 'Bangor', 'Bantry',
+  'Bardstown', 'Barnard', 'Barnstable', 'Barony', 'Basingford', 'Basking', 'Batchford', 'Bathford',
+  'Bathurst', 'Battersby', 'Battiscombe', 'Batwick', 'Bawley', 'Baxley', 'Bayfield', 'Baymont',
+  'Bayonet', 'Beaconsfield', 'Beadlewood', 'Beakley', 'Beamish', 'Beanfield', 'Bearfield', 'Beatrice',
+  'Beauchamp', 'Beaufield', 'Beaufort', 'Beaumont', 'Beckford', 'Bedford', 'Bedworth', 'Beechford',
+  'Beefland', 'Beeford', 'Beesley', 'Beeston', 'Beggarsbush', 'Belcourt', 'Belfield', 'Belfast',
+  'Belford', 'Belgaum', 'Belingham', 'Belknap', 'Bellamy', 'Bellingham', 'Bellmore', 'Bellville',
+  'Belmont', 'Beloyed', 'Belstead', 'Belton', 'Belvidere', 'Benbury', 'Bencoolen', 'Bendigo',
+  'Bendsley', 'Benedictville', 'Benfield', 'Benfleet', 'Bengough', 'Benicia', 'Benjamin', 'Benicia',
+  'Benmore', 'Bennet', 'Bennettsville', 'Bennington', 'Bennyworth', 'Bensalem', 'Bensley', 'Benstead',
+  'Bentham', 'Bentley', 'Bentworth', 'Benwick', 'Benyon', 'Benziger', 'Berard', 'Bercey',
+  'Berclay', 'Berdorf', 'Bereford', 'Berengard', 'Bereoford', 'Berenice', 'Berenson', 'Bererford',
 ];
 
 export const ROLE_BONUS_DESC: Record<NotableRole, string> = {
