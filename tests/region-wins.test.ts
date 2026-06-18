@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { Simulation } from '../src/sim/sim';
 import { RegionSim } from '../src/sim/region';
 import type { CenturyReport } from '../src/sim/region';
 
@@ -12,11 +11,7 @@ import type { CenturyReport } from '../src/sim/region';
  * rival settlements, so the player holds the map — handy for territory paths.
  */
 function region(seed = 1): RegionSim {
-  const sim = new Simulation(seed);
-  while (sim.settlers.length < 22) sim.spawnSettler(32, 34);
-  sim.stock.wood = 200;
-  sim.stock.meal = 200;
-  return RegionSim.fromTown(sim, 8, 80, 80);
+  return RegionSim.create(seed);
 }
 
 const checkWins = (r: RegionSim) => (r as unknown as { checkWinConditions(): void }).checkWinConditions();

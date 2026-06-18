@@ -1,32 +1,18 @@
 import './style.css';
-import { Simulation } from './sim/sim';
 import { RegionSim } from './sim/region';
-import { ParcelManager } from './sim/parcel';
-import { TICKS_PER_SECOND, TUNING, BLUEPRINT_DEFS } from './sim/defs';
-import { MAP_W, MAP_H } from './sim/world';
-import { BuildGrid } from './sim/build';
-import { Renderer, drawMinimap } from './ui/render';
-import type { Camera } from './ui/render';
-import { Hud } from './ui/hud';
 import { RegionView } from './ui/regionview';
-import { TILE } from './ui/sprites';
 import { Sfx } from './ui/audio';
 import { Music } from './ui/music';
 import { Soundscape } from './ui/soundscape';
 import { DesignScreen } from './ui/designscreen';
 import { TitleScreen } from './ui/titlescreen';
-import { WindowManager } from './ui/WindowManager';
-import type { TownDesign } from './sim/defs';
-
-// Route to the standalone TownCore play-test harness when ?core is in the URL.
-if (new URLSearchParams(location.search).has('core')) location.replace('./core.html');
+import { TICKS_PER_SECOND } from './sim/defs';
 
 const root = document.getElementById('app')!;
 const canvas = document.createElement('canvas');
 canvas.id = 'game';
 root.appendChild(canvas);
 
-// Minimap: a small region-map preview in the bottom-right corner (Civ 6 style).
 const MINIMAP_W = 160;
 const MINIMAP_H = 120;
 const minimapCanvas = document.createElement('canvas');
@@ -34,19 +20,10 @@ minimapCanvas.id = 'minimap';
 minimapCanvas.width = MINIMAP_W;
 minimapCanvas.height = MINIMAP_H;
 root.appendChild(minimapCanvas);
-const minimapCtx = minimapCanvas.getContext('2d')!;
-minimapCtx.imageSmoothingEnabled = false;
 
 const SAVE_KEY = 'centuria-save';
-const SOA_SAVE_KEY = 'centuria_save'; // SoA TownCore save slot
-const DESIGN_KEY = 'centuria-town-design';
 
-// Booting after "Load Game": the menu sets a one-shot flag and reloads, and
-// we resume from the snapshot instead of seeding a fresh colony. Saves are
-// either a bare town snapshot (v1), combined town+region (v2), or parcel system (v3).
-// A fresh game first shows the town design screen; the choice is stashed in
-// sessionStorage and the page reloads to build the world from it.
-function bootSim(): { parcelManager: ParcelManager; region: RegionSim | null; needsDesign: boolean } {
+function bootSim(): RegionSim | null {
   try {
     const pending = sessionStorage.getItem('centuria-load-on-boot');
     if (pending) {
@@ -54,71 +31,16 @@ function bootSim(): { parcelManager: ParcelManager; region: RegionSim | null; ne
       const data = localStorage.getItem(SAVE_KEY);
       if (data) {
         const d = JSON.parse(data);
-        if (d.v === 3 && d.parcels) {
-          // v3: parcel system save with ParcelManager + optional region
-          const town = Simulation.deserialize(d.town);
-          const parcelMgr = ParcelManager.deserialize(d.parcels, town);
-          if (d.region) {
-            const reg = RegionSim.deserialize(d.region, town);
-            town.economy.cash = reg.treasury;
-            return { parcelManager: parcelMgr, region: reg, needsDesign: false };
-          }
-          return { parcelManager: parcelMgr, region: null, needsDesign: false };
+        if (d.v === 4 && d.region) {
+          return RegionSim.deserialize(d.region);
         }
-        if (d.v === 2 && d.mode === 'region') {
-          // v2 → v3 migration: wrap the town in ParcelManager
-          const town = Simulation.deserialize(d.town);
-          const reg = RegionSim.deserialize(d.region, town);
-          town.economy.cash = reg.treasury;
-          const parcelMgr = new ParcelManager(town);
-          return { parcelManager: parcelMgr, region: reg, needsDesign: false };
-        }
-        // v1: bare town save → wrap in ParcelManager
-        const town = Simulation.deserialize(d);
-        const parcelMgr = new ParcelManager(town);
-        return { parcelManager: parcelMgr, region: null, needsDesign: false };
       }
-    }
-    const designJson = sessionStorage.getItem(DESIGN_KEY);
-    if (designJson) {
-      sessionStorage.removeItem(DESIGN_KEY);
-      const design = JSON.parse(designJson) as TownDesign;
-      const sim = new Simulation(Date.now() % 100000, design);
-      return { parcelManager: new ParcelManager(sim), region: null, needsDesign: false };
     }
   } catch (err) {
     console.error('load failed, starting fresh:', err);
   }
-  const sim = new Simulation(Date.now() % 100000);
-  return { parcelManager: new ParcelManager(sim), region: null, needsDesign: true };
+  return null;
 }
-
-const boot = bootSim();
-const parcelManager = boot.parcelManager;
-const sim = parcelManager.home;
-// Debug/automation hook (used by headless smoke tests; harmless in play)
-(window as unknown as { sim: Simulation; parcelManager: ParcelManager }).sim = sim;
-(window as unknown as { parcelManager: ParcelManager }).parcelManager = parcelManager;
-const buildGrid = new BuildGrid();
-const cam: Camera = {
-  x: (MAP_W * TILE) / 2 - window.innerWidth / 2,
-  y: (MAP_H * TILE) / 2 - window.innerHeight / 2,
-  zoom: 1,
-  placing: null,
-  placingRotation: 0,
-  placingZone: null,
-  chopMode: false,
-  overlay: 'none',
-  mouseTile: { x: 0, y: 0 },
-  selectedSettler: null,
-  selectedBuilding: null,
-  selectedStockpile: null,
-  buildGrid,
-  roomPaintMode: null,
-  roomTypeId: 0,
-  stationTypeId: 0,
-  stampBlueprint: null,
-};
 
 function resize(): void {
   canvas.width = window.innerWidth;
@@ -132,340 +54,107 @@ window.addEventListener('resize', resize);
 const sfx = new Sfx();
 const music = new Music();
 const soundscape = new Soundscape();
-// Browsers gate audio behind a user gesture; the first input unlocks it.
 window.addEventListener('mousedown', () => { sfx.unlock(); music.unlock(); soundscape.unlock(); }, { once: true });
 window.addEventListener('keydown', () => { sfx.unlock(); music.unlock(); soundscape.unlock(); }, { once: true });
 
-const renderer = new Renderer(canvas, sim, cam);
-const hud = new Hud(root, sim, cam, sfx, music, soundscape);
+let region: RegionSim | null = bootSim();
+let regionView: RegionView | null = null;
+let paused = false;
+let speed = 1;
 
-// Draggable windows: panels remember where you drag them and raise on click.
-const windows = new WindowManager(hud.draggablePanels);
 
-hud.onSave = () => {
+const titleScreen = new TitleScreen(root, { sfx, music, soundscape });
+const fpsDiv = document.createElement('div');
+fpsDiv.id = 'fps';
+fpsDiv.style.cssText = 'position:fixed;bottom:4px;left:4px;font:10px monospace;color:#888;pointer-events:none;';
+root.appendChild(fpsDiv);
+
+function save(): boolean {
+  if (!region) return false;
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify({
-      v: 3,
-      town: sim.serialize(),
-      parcels: parcelManager.serialize(),
-    }));
+    localStorage.setItem(SAVE_KEY, JSON.stringify({ v: 4, region: region.serialize() }));
     return true;
   } catch (err) {
     console.error('save failed:', err);
     return false;
   }
-};
-hud.onLoad = () => {
-  sessionStorage.setItem('centuria-load-on-boot', '1');
-  location.reload();
-};
-hud.hasSave = () => {
-  try {
-    return localStorage.getItem(SAVE_KEY) !== null;
-  } catch {
-    return false;
-  }
-};
-
-// The soundtrack's tension scalar: bumped by alarming log lines, decaying each
-// frame, so the music swells into a crisis and settles once it passes.
-let tension = 0;
-
-// Event sounds: watch the colony log and voice the moments that matter.
-let sfxLogLen = sim.log.length;
-function playLogSounds(): void {
-  if (sim.log.length === sfxLogLen) return;
-  const fresh = sim.log.slice(sfxLogLen);
-  sfxLogLen = sim.log.length;
-  const danger = fresh.some((l) => l.text.startsWith('RAID!') || l.text.startsWith('Wolves'));
-  if (danger) tension = 1;
-  else if (fresh.some((l) => l.kind === 'bad')) tension = Math.max(tension, 0.5);
-  if (danger) return sfx.horn();
-  if (fresh.some((l) => l.text.includes('has died'))) return sfx.knell();
-  if (fresh.some((l) => l.kind === 'bad')) return sfx.thud();
-  if (fresh.some((l) => l.kind === 'good')) return sfx.chime();
 }
 
-// ---- the flip: town → region (GDD §2.4) ----
-let mode: 'town' | 'region' | 'world' = 'town';
-let dioramaOpen = false;
-let region: RegionSim | null = null;
-let regionView: RegionView | null = null;
-
-// ---- seamless world view (distinct from continuous zoom) ----
-// Clicking the minimap switches between town and world views (via mode: 'world').
-// World view frames the parcel grid; town view shows detail.
-
-// ---- Title / Home Screen ----
-const titleScreen = new TitleScreen(root, { sfx, music, soundscape });
+function enterRegionMode(r: RegionSim): void {
+  region = r;
+  (window as any).region = r;
+  regionView = new RegionView(canvas, r, root);
+  paused = false;
+  titleScreen.hide();
+}
 
 function showTitleScreen(): void {
-  hud.closeMenu();
-  hud.paused = true;
-  const hasSave = localStorage.getItem(SAVE_KEY) !== null || localStorage.getItem(SOA_SAVE_KEY) !== null;
+  paused = true;
+  const hasSave = localStorage.getItem(SAVE_KEY) !== null;
   titleScreen.show(hasSave);
 }
 
-// New Colony now launches the SoA scale-engine (TownCore) by default — the swap.
-// The fat-Simulation game lives on as "Classic Colony" (onNewColonyClassic).
 titleScreen.onNewColony = () => {
-  location.assign('./core.html');
-};
-titleScreen.onNewColonyClassic = () => {
-  titleScreen.hide();
-  hud.paused = true;
-  new DesignScreen().showTownDesign((design) => {
-    sessionStorage.setItem(DESIGN_KEY, JSON.stringify(design));
-    location.reload();
+  new DesignScreen().showRegionDesign((design) => {
+    const r = RegionSim.create(Date.now() % 100000, design);
+    enterRegionMode(r);
   });
 };
 titleScreen.onContinue = () => {
-  // SoA save takes priority (it's the default engine). Fall back to Classic.
-  if (localStorage.getItem(SOA_SAVE_KEY) !== null) {
-    location.assign('./core.html?continue=1');
-  } else {
-    sessionStorage.setItem('centuria-load-on-boot', '1');
-    location.reload();
-  }
+  sessionStorage.setItem('centuria-load-on-boot', '1');
+  location.reload();
 };
 titleScreen.onQuit = () => window.close();
 
-hud.onRestart = showTitleScreen;
-hud.onQuit = () => window.close();
-
-/** Shared by the flip and the load path: hand the screen to the region. */
-function enterRegionMode(r: RegionSim): void {
-  region = r;
-  (window as unknown as { region: RegionSim }).region = r;
-  regionView = new RegionView(canvas, r, root);
-  for (const p of regionView.draggablePanels) windows.register(p);
-  mode = 'region';
-  dioramaOpen = false;
-  hud.resetLogLen(); // region log starts independently from town log
-  hud.closeMenu();
-  // Region saves bundle the town and parcel state too — the diorama keeps them alive.
-  hud.onSave = () => {
-    try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify({
-        v: 3, town: sim.serialize(), parcels: parcelManager.serialize(), region: r.serialize(),
-      }));
-      return true;
-    } catch (err) {
-      console.error('save failed:', err);
-      return false;
-    }
-  };
-  hud.setRegionMode(true);
+if (region) {
+  enterRegionMode(region);
+} else {
+  showTitleScreen();
 }
-
-hud.onFoundTown = () => {
-  if (!sim.canFoundSecondTown().ok) return;
-  // The region flip is a moment of decision: the design screen asks how the
-  // new tier will be run before the wagons roll.
-  hud.paused = true;
-  new DesignScreen().showRegionDesign((design) => {
-    sim.economy.cash -= TUNING.townFoundingCost;
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    r.applyRegionDesign(design);
-    enterRegionMode(r);
-    hud.paused = false;
-  });
-};
-if (boot.region) enterRegionMode(boot.region);
-
-// A fresh world waits on the founder's choices: show the home screen first.
-if (boot.needsDesign) showTitleScreen();
 
 // ---- input ----
 const keys = new Set<string>();
+
 window.addEventListener('keydown', (e) => {
   keys.add(e.key);
   if (e.key === ' ') {
-    if (!hud.menuOpen) hud.paused = !hud.paused;
+    paused = !paused;
     e.preventDefault();
     return;
   }
-  if (e.key === '1') hud.speed = 1;
-  if (e.key === '2') hud.speed = 3;
-  if (e.key === '3') hud.speed = 8;
+  if (e.key === '1') speed = 1;
+  if (e.key === '2') speed = 3;
+  if (e.key === '3') speed = 8;
+  if (e.key === 's' && e.ctrlKey) { save(); e.preventDefault(); return; }
   if (e.key === 'Escape') {
-    if (hud.menuOpen) {
-      hud.closeMenu();
-      return;
+    if (regionView && !regionView.ceremonyOpen) {
+      paused = true;
+      showTitleScreen();
     }
-    if (mode === 'world') {
-      // Escape from world view returns to town
-      mode = 'town';
-      return;
-    }
-    if (mode === 'region') {
-      if (!regionView?.ceremonyOpen) hud.openMenu();
-      return;
-    }
-    // First escape clears whatever tool/selection is live; a bare escape
-    // with nothing active opens the menu.
-    const anythingActive = cam.placing !== null || cam.placingZone !== null || cam.chopMode ||
-      cam.roomPaintMode !== null || cam.stampBlueprint !== null ||
-      cam.selectedSettler !== null || cam.selectedBuilding !== null || cam.selectedStockpile !== null;
-    cam.placing = null;
-    cam.placingRotation = 0;
-    cam.placingZone = null;
-    cam.chopMode = false;
-    cam.roomPaintMode = null;
-    cam.roomTypeId = 0;
-    cam.stationTypeId = 0;
-    cam.stampBlueprint = null;
-    cam.selectedSettler = null;
-    cam.selectedBuilding = null;
-    cam.selectedStockpile = null;
-    hud.refreshBuildBarState();
-    if (!anythingActive && mode === 'town') hud.openMenu();
     return;
   }
-  // R rotates placement ghost (town mode only)
-  if (mode === 'town' && (e.key === 'r' || e.key === 'R') && cam.placing) {
-    cam.placingRotation = ((cam.placingRotation ?? 0) + 1) % 4;
-    e.preventDefault();
-    return;
-  }
-  // World mode: Escape handled above; other keys ignored for now
-  if (mode === 'world') return;
-  // In region mode, R/S/E/T toggle the quick-access panels (Phase A sidebar).
-  if (mode === 'region' && regionView) {
-    if (e.key === 'r' || e.key === 'R') {
-      regionView.routeNetworkOpen = !regionView.routeNetworkOpen;
-      e.preventDefault(); return;
-    }
-    if (e.key === 's' || e.key === 'S') {
-      regionView.settlementListOpen = !regionView.settlementListOpen;
-      e.preventDefault(); return;
-    }
-    if (e.key === 'e' || e.key === 'E') {
-      regionView.economyOpen = !regionView.economyOpen;
-      e.preventDefault(); return;
-    }
-    if (e.key === 't' || e.key === 'T') {
-      regionView.researchOpen = !regionView.researchOpen;
-      e.preventDefault(); return;
-    }
-  }
-  // Region-map zoom/reset from the keyboard (zoom centers on the screen).
-  if (mode === 'region' && !dioramaOpen && regionView) {
-    if (e.key === '+' || e.key === '=') {
-      regionView.zoomAt(canvas.width / 2, canvas.height / 2, 1);
-      e.preventDefault();
-      return;
-    }
-    if (e.key === '-' || e.key === '_') {
-      regionView.zoomAt(canvas.width / 2, canvas.height / 2, -1);
-      e.preventDefault();
-      return;
-    }
-    if (e.key === '0') {
-      regionView.resetView();
-      e.preventDefault();
-      return;
-    }
-  }
-  // Palette hotkeys (the bracketed letters on the buttons)
-  if (mode === 'town' && hud.handleKey(e.key)) {
-    e.preventDefault();
+  if (regionView) {
+    if (e.key === 't' || e.key === 'T') { regionView.researchOpen = !regionView.researchOpen; e.preventDefault(); return; }
   }
 });
 window.addEventListener('keyup', (e) => keys.delete(e.key));
 
-// Pointer position relative to the canvas, not the viewport. Using clientX/Y
-// directly drifts the zoom/placement anchor whenever the canvas isn't pinned to
-// (0,0) (HUD insets, future layouts, Electron frame), so always subtract the rect.
-// We also map CSS pixels → canvas-buffer pixels: when the canvas is displayed at
-// a different size than its backing buffer (HiDPI, OS/browser display scaling, a
-// fractional devicePixelRatio), CSS px ≠ buffer px and the camera works in buffer
-// px — so an unscaled delta makes zoom-toward-cursor drift (the map slides as you
-// zoom). Scaling by buffer/displayed keeps the point under the cursor fixed.
-function canvasXY(e: MouseEvent | WheelEvent): { x: number; y: number } {
-  const r = canvas.getBoundingClientRect();
-  const sx = r.width > 0 ? canvas.width / r.width : 1;
-  const sy = r.height > 0 ? canvas.height / r.height : 1;
-  return { x: (e.clientX - r.left) * sx, y: (e.clientY - r.top) * sy };
-}
+
+const regionDrag = { active: false, lastX: 0, lastY: 0, moved: 0 };
 
 canvas.addEventListener('mousemove', (e) => {
-  const p = canvasXY(e);
-  cam.mouseTile = renderer.tileAt(p.x, p.y);
-  // Region map: left-drag pans the camera.
-  if (regionDrag.active && e.buttons === 1 && mode === 'region' && !dioramaOpen && regionView) {
+  if (regionDrag.active && e.buttons === 1 && regionView) {
     const dx = e.clientX - regionDrag.lastX;
     const dy = e.clientY - regionDrag.lastY;
     regionDrag.lastX = e.clientX;
     regionDrag.lastY = e.clientY;
     regionDrag.moved += Math.abs(dx) + Math.abs(dy);
-    regionView.panBy(dx, dy);
-    return;
-  }
-  // drag-paint zones/roads and chop/quarry marks
-  if (e.buttons === 1 && mode === 'town') {
-    const t = cam.mouseTile;
-    const prev = prevDragTile ?? t;
-    // Bresenham fill: paint every tile along the line from prev to current so
-    // fast mouse sweeps don't leave gaps in roads or zone designations.
-    const line = bresenhamLine(prev.x, prev.y, t.x, t.y);
-    prevDragTile = t;
-    for (const pt of line) {
-      const key = `${pt.x},${pt.y}`;
-      if (cam.placingZone && !paintedTiles.has(key)) {
-        paintedTiles.add(key);
-        const kind = cam.placingZone;
-        if (kind === 'dirt' || kind === 'plank' || kind === 'gravel' || kind === 'bridge') {
-          sim.planRoad(kind, pt.x, pt.y);
-        } else {
-          sim.planZone(kind, pt.x, pt.y);
-        }
-      } else if (cam.chopMode && !paintedTiles.has(key)) {
-        paintedTiles.add(key);
-        sim.markTree(pt.x, pt.y);
-      } else if (cam.roomPaintMode && cam.roomPaintMode !== 'station' && !paintedTiles.has(key)) {
-        paintedTiles.add(key);
-        if (cam.roomPaintMode === 'wall') buildGrid.setWall(pt.x, pt.y);
-        else if (cam.roomPaintMode === 'floor') buildGrid.setFloor(pt.x, pt.y);
-        else if (cam.roomPaintMode === 'room' && cam.roomTypeId) buildGrid.designate(pt.x, pt.y, cam.roomTypeId);
-        else if (cam.roomPaintMode === 'erase') {
-          buildGrid.clearWall(pt.x, pt.y);
-          buildGrid.clearFloor(pt.x, pt.y);
-          buildGrid.clearDesignation(pt.x, pt.y);
-        }
-      }
-    }
-    if (cam.roomPaintMode && cam.roomPaintMode !== 'station') buildGrid.rebuildRooms();
-  } else {
-    prevDragTile = null;
+    void dx; void dy; // pan not yet implemented in RegionView
   }
 });
 
-/** Bresenham line: all tiles from (x0,y0) to (x1,y1) inclusive. */
-function bresenhamLine(x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[] {
-  const pts: { x: number; y: number }[] = [];
-  const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
-  const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
-  let err = dx - dy;
-  while (true) {
-    pts.push({ x: x0, y: y0 });
-    if (x0 === x1 && y0 === y1) break;
-    const e2 = err * 2;
-    if (e2 > -dy) { err -= dy; x0 += sx; }
-    if (e2 < dx) { err += dx; y0 += sy; }
-  }
-  return pts;
-}
-
-const paintedTiles = new Set<string>();
-let prevDragTile: { x: number; y: number } | null = null;
-// Region-map drag-to-pan state. `moved` lets us tell a pan from a select-click.
-const regionDrag = { active: false, lastX: 0, lastY: 0, moved: 0 };
-
 canvas.addEventListener('mousedown', (e) => {
-  paintedTiles.clear();
-  prevDragTile = null;
-  if (mode === 'region' && !dioramaOpen && regionView) {
+  if (regionView) {
     regionDrag.active = true;
     regionDrag.lastX = e.clientX;
     regionDrag.lastY = e.clientY;
@@ -476,277 +165,54 @@ canvas.addEventListener('mousedown', (e) => {
 window.addEventListener('mouseup', () => { regionDrag.active = false; });
 
 canvas.addEventListener('click', (e) => {
-  if (mode === 'world') {
-    // World view: click to return to town (or future parcel selection)
-    return;
-  }
-  if (mode === 'region' && !dioramaOpen) {
-    // A drag pans the map; only treat a near-stationary release as a select.
-    if (regionDrag.moved < 5) regionView?.click(e.clientX, e.clientY);
-    return;
-  }
-  if (mode === 'region') return; // diorama is look-only
-  const tp = canvasXY(e);
-  const t = renderer.tileAt(tp.x, tp.y);
-  if (cam.stampBlueprint) {
-    const bp = BLUEPRINT_DEFS.find((b) => b.id === cam.stampBlueprint);
-    if (bp) buildGrid.stampBlueprint(bp, t.x - Math.floor(bp.w / 2), t.y - Math.floor(bp.h / 2));
-    if (!e.shiftKey) { cam.stampBlueprint = null; hud.refreshBuildBarState(); }
-    return;
-  }
-  if (cam.roomPaintMode === 'station' && cam.stationTypeId > 0) {
-    buildGrid.placeStation(cam.stationTypeId, t.x, t.y);
-    buildGrid.rebuildRooms();
-    if (!e.shiftKey) { cam.roomPaintMode = null; cam.stationTypeId = 0; hud.refreshBuildBarState(); }
-    return;
-  }
-  if (cam.roomPaintMode && cam.roomPaintMode !== 'station') {
-    // single-click paint (drag handles multi-tile; single click covers the gap)
-    if (cam.roomPaintMode === 'wall') buildGrid.setWall(t.x, t.y);
-    else if (cam.roomPaintMode === 'floor') buildGrid.setFloor(t.x, t.y);
-    else if (cam.roomPaintMode === 'room' && cam.roomTypeId) buildGrid.designate(t.x, t.y, cam.roomTypeId);
-    else if (cam.roomPaintMode === 'erase') {
-      buildGrid.clearWall(t.x, t.y);
-      buildGrid.clearFloor(t.x, t.y);
-      buildGrid.clearDesignation(t.x, t.y);
-    }
-    buildGrid.rebuildRooms();
-    return;
-  }
-  if (cam.placing) {
-    if (sim.placeBuilding(cam.placing, t.x, t.y, cam.placingRotation ?? 0)) {
-      if (!e.shiftKey) {
-        cam.placing = null;
-        cam.placingRotation = 0;
-        hud.refreshBuildBarState();
-      }
-    }
-    return;
-  }
-  if (cam.placingZone) {
-    const kind = cam.placingZone;
-    if (kind === 'dirt' || kind === 'plank' || kind === 'gravel' || kind === 'bridge') {
-      if (!paintedTiles.has(`${t.x},${t.y}`)) sim.planRoad(kind, t.x, t.y);
-    } else {
-      if (!paintedTiles.has(`${t.x},${t.y}`)) sim.planZone(kind, t.x, t.y);
-    }
-    return;
-  }
-  if (cam.chopMode) {
-    if (!paintedTiles.has(`${t.x},${t.y}`)) sim.markTree(t.x, t.y);
-    return;
-  }
-  // Selection: settler first (within half a tile), then building, then stockpile zone
-  cam.selectedSettler = null;
-  cam.selectedBuilding = null;
-  cam.selectedStockpile = null;
-  let best = 0.8;
-  for (const s of sim.settlers) {
-    const d = Math.hypot(s.pos.x - t.x, s.pos.y - t.y);
-    if (d < best) {
-      best = d;
-      cam.selectedSettler = s.id;
-    }
-  }
-  if (cam.selectedSettler === null && sim.world.inBounds(t.x, t.y)) {
-    const tile = sim.world.at(t.x, t.y);
-    if (tile.buildingId !== null) {
-      cam.selectedBuilding = tile.buildingId;
-    } else if (tile.stockpileZone) {
-      cam.selectedStockpile = { x: t.x, y: t.y };
-    }
-  }
+  if (regionDrag.moved < 5) regionView?.click(e.clientX, e.clientY);
 });
 
-// Minimap click: switch to world view (seamless map) or region view if region exists
-minimapCanvas.addEventListener('click', () => {
-  if (mode === 'town') {
-    // Switch to world view: always available, shows parcel grid
-    mode = 'world';
-  } else if (mode === 'world') {
-    // Switch back to town view
-    mode = 'town';
-  } else if (mode === 'region' && region && !dioramaOpen) {
-    // Region flip is separate: toggle diorama in region
-    dioramaOpen = !dioramaOpen;
-  }
-});
+// zoom not yet implemented in RegionView
 
-// Scroll wheel: zoom in/out around mouse cursor
-canvas.addEventListener('wheel', (e) => {
-  e.preventDefault();
-  const p = canvasXY(e);
-  // World view: no zoom for now
-  if (mode === 'world') return;
-  // Region map has its own camera; zoom it toward the cursor.
-  if (mode === 'region' && !dioramaOpen && regionView) {
-    regionView.zoomAt(p.x, p.y, e.deltaY < 0 ? 1 : -1);
-    return;
-  }
-  const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-  const newZoom = Math.max(0.4, Math.min(4.0, cam.zoom * factor));
-  // Keep the world point under the cursor fixed across the zoom (canvas-local px).
-  cam.x = p.x / cam.zoom + cam.x - p.x / newZoom;
-  cam.y = p.y / cam.zoom + cam.y - p.y / newZoom;
-  cam.zoom = newZoom;
-}, { passive: false });
-
-// Right-click to bulldoze/cancel zones (town mode only)
-canvas.addEventListener('contextmenu', (e) => {
-  e.preventDefault();
-  if (mode !== 'town') return;
-  const t2 = canvasXY(e);
-  const t = renderer.tileAt(t2.x, t2.y);
-  sim.bulldozeTile(t.x, t.y);
-});
-
-// ---- world view rendering ----
-function drawWorldMap(
-  ctx: CanvasRenderingContext2D,
-  regionMap: any,
-  site: any,
-  width: number,
-  height: number,
-): void {
-  const gridSize = 64;
-  const cellWidth = width / gridSize;
-  const cellHeight = height / gridSize;
-
-  for (let y = 0; y < gridSize; y++) {
-    for (let x = 0; x < gridSize; x++) {
-      const cell = regionMap.at(x, y);
-      let color: string;
-      switch (cell.biome) {
-        case 'sea': color = '#1a2a3a'; break;
-        case 'lake': color = '#2a3a5a'; break;
-        case 'river': color = '#3a4a7a'; break;
-        case 'marsh': color = '#3a4a3a'; break;
-        case 'plains': color = '#5a6a4a'; break;
-        case 'forest': color = '#3a5a2a'; break;
-        case 'hills': color = '#7a7a5a'; break;
-        case 'mountains': color = cell.elevation > 0.85 ? '#b0ada5' : '#8a7a6a'; break;
-        default: color = '#4a4a4a'; break;
-      }
-      ctx.fillStyle = color;
-      ctx.fillRect(Math.floor(x * cellWidth), Math.floor(y * cellHeight), Math.ceil(cellWidth), Math.ceil(cellHeight));
-    }
-  }
-
-  // Draw the settlement marker
-  const mx = (site.cellX / gridSize) * width;
-  const my = (site.cellY / gridSize) * height;
-  ctx.fillStyle = '#ffd700';
-  ctx.beginPath();
-  ctx.arc(mx, my, 6, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = '#ffed4e';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
-  // Title and hint
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 24px sans-serif';
-  ctx.fillText('Continental Map', 20, 40);
-  ctx.font = '14px sans-serif';
-  ctx.fillStyle = '#aaa';
-  ctx.fillText('Click minimap to return to town view', 20, 65);
-}
-
-// ---- main loop: fixed-timestep sim, rAF render ----
+// ---- main loop ----
 let acc = 0;
 let last = performance.now();
-let frameMsEma = 16.7; // smoothed frame time for the FPS readout
+let frameMsEma = 16.7;
+
 function loop(now: number): void {
   const rawMs = now - last;
   const dt = Math.min(0.25, rawMs / 1000);
   last = now;
-  // Exponential moving average so the counter is readable, not jittery.
   if (rawMs > 0 && rawMs < 1000) frameMsEma += (rawMs - frameMsEma) * 0.1;
-  const panSpeed = 420 * dt;
-  if (mode === 'world') {
-    // World view: no panning for now
-  } else if (mode === 'region' && !dioramaOpen && regionView) {
-    // Arrow/WASD scroll the region map (screen-space pan, so invert the sign).
-    let pdx = 0, pdy = 0;
-    if (keys.has('ArrowLeft') || keys.has('a')) pdx += panSpeed;
-    if (keys.has('ArrowRight') || keys.has('d')) pdx -= panSpeed;
-    if (keys.has('ArrowUp') || keys.has('w')) pdy += panSpeed;
-    if (keys.has('ArrowDown') || keys.has('s')) pdy -= panSpeed;
-    if (pdx || pdy) regionView.panBy(pdx, pdy);
-  } else {
-    if (keys.has('ArrowLeft') || keys.has('a')) cam.x -= panSpeed;
-    if (keys.has('ArrowRight') || keys.has('d')) cam.x += panSpeed;
-    if (keys.has('ArrowUp') || keys.has('w')) cam.y -= panSpeed;
-    if (keys.has('ArrowDown') || keys.has('s')) cam.y += panSpeed;
-    cam.x = Math.max(-200, Math.min(MAP_W * TILE - canvas.width / cam.zoom + 200, cam.x));
-    cam.y = Math.max(-200, Math.min(MAP_H * TILE - canvas.height / cam.zoom + 200, cam.y));
-  }
 
-  if (!hud.paused) {
-    acc += dt * TICKS_PER_SECOND * hud.speed;
+  // Arrow/WASD pan
+  void dt; // pan not yet implemented in RegionView
+
+  if (!paused && region && regionView) {
+    acc += dt * TICKS_PER_SECOND * speed;
     let guard = 0;
     while (acc >= 1 && guard++ < 64) {
-      if (mode === 'town' || mode === 'world') sim.tick(); // world view pauses the town too
-      else if (!regionView?.ceremonyOpen) region?.tick(); // history pauses for the ceremony
+      if (!regionView.ceremonyOpen) region.tick();
       acc -= 1;
     }
   }
-  if (mode === 'town') {
-    renderer.draw();
-    hud.update();
-    playLogSounds();
-    // Minimap: always draw region preview during town play
-    minimapCanvas.classList.remove('hidden');
-    drawMinimap(minimapCtx, sim.regionMap, sim.site, MINIMAP_W, MINIMAP_H);
-  } else if (mode === 'world') {
-    // World view: display the regional map at continental scale
-    const ctx = canvas.getContext('2d')!;
-    drawWorldMap(ctx, sim.regionMap, sim.site, canvas.width, canvas.height);
+
+  if (region && regionView) {
+    regionView.draw();
     minimapCanvas.classList.add('hidden');
-    hud.update();
-  } else if (region) {
-    if (dioramaOpen) {
-      sim.tickDiorama(region.minute);
-      renderer.draw();
-      minimapCanvas.classList.remove('hidden');
-      drawMinimap(minimapCtx, sim.regionMap, sim.site, MINIMAP_W, MINIMAP_H);
-    } else {
-      regionView?.draw();
-      minimapCanvas.classList.add('hidden');
-    }
-    hud.drawRegionTopBar(region, dioramaOpen);
-    hud.regionLog(region);
-    hud.drawRegionBottomBar(region);
-    const btn = document.getElementById('tb-diorama');
-    if (btn) (btn as HTMLButtonElement).onclick = () => {
-      dioramaOpen = !dioramaOpen;
-    };
   }
 
-  // Soundtrack: era by year, ambient-only when paused, swelling with tension.
-  if ((mode === 'town' || mode === 'world') && sim.raidActive) tension = 1;
-  else tension = Math.max(0, tension - dt * 0.12); // ~8s to settle from a peak
-  const year = mode === 'region' && region ? region.year : sim.year;
-  music.update({ year, paused: hud.paused, tension });
+  const year = region?.year ?? 1900;
+  music.update({ year, paused, tension: 0 });
 
-  // Diegetic soundscape: ambient layers driven by live game signals (GDD §3.3).
   soundscape.update({
-    mode: mode === 'world' ? 'town' : mode, // world is a town-view submode
-    paused: hud.paused,
+    mode: 'region',
+    paused,
     year,
-    activeBuildWorkers: (mode === 'town' || mode === 'world')
-      ? sim.settlers.filter((s) => s.task?.kind === 'build').length
-      : 0,
-    activeRailRoutes: mode === 'region' && region
-      ? region.routes.filter((r) => r.kind === 'rail' && r.condition > 50).length
-      : 0,
-    maxGrievance: mode === 'region' && region
-      ? Math.max(0, ...region.settlements.map((s) => s.grievance))
-      : 0,
-    tension,
+    activeBuildWorkers: 0,
+    activeRailRoutes: region ? region.routes.filter((r) => r.kind === 'rail' && r.condition > 50).length : 0,
+    maxGrievance: region ? Math.max(0, ...region.settlements.map((s) => s.grievance)) : 0,
+    tension: 0,
   });
 
-  hud.setFps(1000 / frameMsEma, frameMsEma);
+  const fps = Math.round(1000 / frameMsEma);
+  fpsDiv.textContent = `${fps} fps`;
 
   requestAnimationFrame(loop);
 }

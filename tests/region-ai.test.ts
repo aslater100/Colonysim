@@ -1,29 +1,22 @@
 import { describe, it, expect } from 'vitest';
-import { Simulation } from '../src/sim/sim';
 import { RegionSim, RIVAL_REGIMES } from '../src/sim/region';
 import { AI_DIFFICULTY, MINUTES_PER_DAY } from '../src/sim/defs';
-import type { TownDesign } from '../src/sim/defs';
 import { REGION_MINUTES_PER_TICK } from '../src/sim/region';
-
-const baseDesign: TownDesign = {
-  currencySymbol: '$',
-  difficulty: 'normal',
-  location: 'river-valley',
-  startingPop: 12,
-};
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
 
-function grow(sim: Simulation): void {
-  while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
-  sim.stock.wood = 200;
-  sim.stock.meal = 200;
-}
-
-function region(difficulty: TownDesign['difficulty'], seed = 42): RegionSim {
-  const sim = new Simulation(seed, { ...baseDesign, difficulty });
-  grow(sim);
-  return RegionSim.fromTown(sim, 8, 80, 80);
+function region(difficulty: 'easy' | 'normal' | 'hard', seed = 42): RegionSim {
+  const r = RegionSim.create(seed);
+  r.aiDifficulty = difficulty;
+  // Propagate difficulty to already-initialized factions (they were created
+  // with 'normal' knobs since create() defaults to 'normal').
+  const knobs = r.aiKnobs();
+  for (const f of r.regionalFactions) {
+    if (f.id === r.playerFactionId) continue;
+    f.updateFrequency = knobs.updateFreq;
+    f.aggressiveness = Math.max(0, Math.min(100, f.aggressiveness + knobs.aggressionBias));
+  }
+  return r;
 }
 
 function runDays(r: RegionSim, days: number): void {
@@ -38,7 +31,7 @@ describe('AI difficulty propagation', () => {
   });
 
   it('defaults to normal when no design was supplied', () => {
-    const r = RegionSim.fromTown(new Simulation(42), 8, 80, 80);
+    const r = RegionSim.create(42);
     expect(r.aiDifficulty).toBe('normal');
   });
 
@@ -137,7 +130,7 @@ describe('Goal ambition scales with difficulty', () => {
   it('a brutal AI sets itself tighter deadlines than a story AI', () => {
     // Same seed → identical aiRng stream → identical goal selection; only the
     // difficulty-driven deadline multiplier differs.
-    function gap(difficulty: TownDesign['difficulty']): number {
+    function gap(difficulty: 'easy' | 'normal' | 'hard'): number {
       const r = region(difficulty, 7);
       const f = r.regionalFactions.find((x) => x.id !== r.playerFactionId)!;
       f.regime = 'abs_monarchy';
@@ -221,24 +214,20 @@ describe('Diplomacy bends the regional economy', () => {
 
 describe('Faction AI persistence', () => {
   it('regime, difficulty, and alliances survive save/load', () => {
-    const sim = new Simulation(42, { ...baseDesign, difficulty: 'hard' });
-    grow(sim);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    const r = region('hard', 42);
     r.stateProclaimed = true;
     runDays(r, 200);
-    const r2 = RegionSim.deserialize(r.serialize(), sim);
+    const r2 = RegionSim.deserialize(r.serialize());
     expect(r2.aiDifficulty).toBe('hard');
     expect(r2.regionalFactions.map((f) => f.regime)).toEqual(r.regionalFactions.map((f) => f.regime));
   });
 
   it('pre-regime saves are backfilled with a plausible government', () => {
-    const sim = new Simulation(42);
-    grow(sim);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    const r = RegionSim.create(42);
     const raw = JSON.parse(r.serialize());
     for (const f of raw.regionalFactions) delete f.regime;
     delete raw.aiDifficulty;
-    const r2 = RegionSim.deserialize(JSON.stringify(raw), sim);
+    const r2 = RegionSim.deserialize(JSON.stringify(raw));
     for (const f of r2.regionalFactions) expect(typeof f.regime).toBe('string');
     expect(r2.aiDifficulty).toBe('normal');
   });

@@ -11,7 +11,6 @@ import { MINUTES_PER_DAY, DAYS_PER_SEASON, DAYS_PER_YEAR, SEASONS, START_YEAR, f
 import type { CurrencySymbol, RegionDesign, NationDesign, AiDifficulty } from './defs';
 import { computePenalty, transitionEfficiency, ANNOUNCE_LEAD_DAYS } from './currency';
 import type { CurrencyChangeCause, CurrencyAnnouncement, CurrencyTransition } from './currency';
-import type { Simulation, Settler, LogEntry } from './sim';
 import { RegionMap, REGION_N, CELL_SCALE } from './worldgen';
 import type { TownSite } from './worldgen';
 import { Weather } from './weather';
@@ -32,6 +31,13 @@ export interface TechNode {
 }
 
 export const TECH_TREE: TechNode[] = techTreeJson.nodes as TechNode[];
+
+/** Minimal log entry (shared with town sim). */
+export interface LogEntry {
+  day: number;
+  text: string;
+  kind: 'info' | 'good' | 'bad';
+}
 
 /** Region-tier clock runs faster: 30 game-minutes per tick (GDD §8.6). */
 export const REGION_MINUTES_PER_TICK = 30;
@@ -2975,104 +2981,6 @@ export class RegionSim {
     }
   }
 
-  // ---- THE FLIP: build the region from the founding town (GDD §2.4) ----
-  static fromTown(sim: Simulation, expeditionPop: number, expeditionFood: number, expeditionWood: number): RegionSim {
-    // The region inherits the town's world: same map, same weather, one truth.
-    const region = new RegionSim(sim.rng, sim.minute, sim.regionMap, sim.weather);
-    region.log = sim.log.slice(-3); // carry only the most recent town events
-    // Transfer town's cash to regional treasury
-    region.treasury = Math.max(0, Math.round(sim.economy.cash));
-    region.prevMonthTreasury = region.treasury; // seed so the first delta reads ~0
-    // Inherit the town's currency symbol
-    region.currencySymbol = sim.currencySymbol;
-    // Carry the chosen difficulty across so it can tune the AI competitors.
-    region.aiDifficulty = sim.difficulty;
-
-    // Town #1 cohortifies: real settler ages, minus those leaving on the expedition.
-    const stayers = sim.settlers.length - expeditionPop;
-    const bands = [0, 0, 0, 0, 0];
-    for (const s of sim.settlers) {
-      const band = s.age < 15 ? 0 : s.age < 30 ? 1 : s.age < 50 ? 2 : s.age < 70 ? 3 : 4;
-      bands[band]++;
-    }
-    // remove expedition members from the working bands first
-    let toRemove = expeditionPop;
-    for (const b of [1, 2, 3, 0, 4]) {
-      const take = Math.min(bands[b], toRemove);
-      bands[b] -= take;
-      toRemove -= take;
-      if (toRemove <= 0) break;
-    }
-    const homeCoord = region.map.cellToCoord(sim.site.cellX, sim.site.cellY);
-    const home: Settlement = {
-      id: region.nextId++,
-      name: 'Founder\'s Rest',
-      x: homeCoord.rx,
-      y: homeCoord.ry,
-      foundedDay: 0,
-      cohorts: { bands },
-      food: Math.max(0, sim.stock.meal + sim.stock.grain * 0.5 - expeditionFood),
-      wood: Math.max(0, sim.stock.wood - expeditionWood),
-      satisfaction: Math.round(sim.avgMood()),
-      housing: Math.max(stayers + 6, sim.builtOf('sleep').length * 6 + 8),
-      landQuality: sim.site.fertility,
-      site: sim.site,
-      lastRaidDay: -99,
-      lastFloodDay: -99,
-      strikeUntil: -1,
-      grievance: 0,
-      prices: defaultPrices(),
-      recentEvents: [],
-      // Phase 0: Regional faction system
-      factionId: 0, // player faction
-      garrisonStrength: 5, // starting militia
-      stationedUnits: [],
-      loyaltyToFaction: 100, // starting settlement is fully loyal
-      sectors: defaultSectors(),
-      buildings: [],
-      construction: null,
-      focus: 'balanced',
-      activeEvents: [],
-      policies: { ...DEFAULT_CITY_POLICIES },
-    };
-    region.settlements.push(home);
-
-    // Initialize NPC lenders for the region
-    region.lenders = createInitialLenders();
-
-    // Initialize player faction (will be refined with full faction system later)
-    region.regionalizeFactionSystem(home);
-
-    // The Notables carve-out: the most story-laden settlers stay individuals.
-    const scored = [...sim.settlers].sort((a, b) => region.storyScore(sim, b) - region.storyScore(sim, a));
-    const roles: NotableRole[] = ['Mayor', 'Doctor', 'Captain', 'Granger', 'Forewoman', 'Reeve'];
-    const count = Math.min(10, scored.length);
-    for (let i = 0; i < count; i++) {
-      const s = scored[i];
-      const role = roles[i % roles.length];
-      region.notables.push({
-        id: region.nextId++,
-        name: s.name,
-        age: s.age,
-        traits: [...s.traits],
-        role,
-        settlementId: home.id,
-        bio: [`Founding settler, 1900.`, `Named ${role} at the flip.`],
-        alive: true,
-      });
-    }
-
-    region.addLog(
-      `The colony has outgrown one valley. ${expeditionPop} settlers strike out to found a second town — ` +
-      `from this day, the story is told in towns and Notables, not head-counts.`,
-      'good',
-    );
-
-    // Expedition en route: scouts have read the land for the best nearby site.
-    region.launchExpedition(home, expeditionPop, expeditionFood, expeditionWood);
-    return region;
-  }
-
   // ---- THE FOUNDING: a fresh colony for the standalone 4X campaign ----
   /**
    * Found a brand-new colony with no TownCore flip behind it. Seeds a single
@@ -3094,7 +3002,6 @@ export class RegionSim {
     const site = map.startSite(opts.pref ?? 'river-valley');
     const coord = map.cellToCoord(site.cellX, site.cellY);
     region.treasury = opts.treasury ?? 1200;
-    region.prevMonthTreasury = region.treasury; // first delta reads ~0
 
     const home: Settlement = {
       id: region.nextId++,
@@ -3146,6 +3053,20 @@ export class RegionSim {
     return region;
   }
 
+  /** Create a fresh colony from a seed and optional design overrides. */
+  static create(seed: number, design: { currencySymbol?: string; expansionSpeed?: string; tradeOpenness?: string; taxRate?: number; servicesLevel?: number } = {}): RegionSim {
+    const rng = new Rng(seed);
+    const map = new RegionMap(seed);
+    const weather = new Weather(seed);
+    const region = RegionSim.foundColony(rng, map, weather, { treasury: 5000 });
+    if (design.currencySymbol) region.currencySymbol = design.currencySymbol as CurrencySymbol;
+    if (design.expansionSpeed) region.expansionSpeed = design.expansionSpeed as 'cautious' | 'steady' | 'aggressive';
+    if (design.tradeOpenness) region.tradeOpenness = design.tradeOpenness as 'protectionist' | 'balanced' | 'free-trade';
+    if (design.taxRate !== undefined) region.taxRate = design.taxRate;
+    if (design.servicesLevel !== undefined) region.servicesLevel = design.servicesLevel;
+    return region;
+  }
+
   /** Site selection and travel time come from the terrain, not dice. */
   private launchExpedition(from: Settlement, pop: number, food: number, wood: number): boolean {
     const fromCell = this.map.coordToCell(from.x, from.y);
@@ -3174,11 +3095,6 @@ export class RegionSim {
       site,
     });
     return true;
-  }
-
-  private storyScore(sim: Simulation, s: Settler): number {
-    const skillTotal = Object.values(s.skills).reduce((a, b) => a + b, 0) + s.combat;
-    return skillTotal + sim.friendsOf(s).length * 5;
   }
 
   // ---- main loop: one tick = 30 game-minutes ----
@@ -6707,6 +6623,7 @@ export class RegionSim {
   serialize(): string {
     return JSON.stringify({
       v: 1,
+      mapSeed: this.map.seed,
       rng: this.rng.getState(),
       aiRng: this.aiRng.getState(),
       minute: this.minute,
@@ -6805,11 +6722,15 @@ export class RegionSim {
     });
   }
 
-  /** Rebuild from a snapshot atop a restored town sim — the region keeps
-   *  sharing its rng, map, and weather (the corridor cache refills lazily). */
-  static deserialize(json: string, sim: Simulation): RegionSim {
+  /** Rebuild a region from a snapshot. The map and weather are reconstructed
+   *  from the stored seed; all mutable state is restored from the JSON. */
+  static deserialize(json: string): RegionSim {
     const d = JSON.parse(json);
-    const r = new RegionSim(sim.rng, d.minute, sim.regionMap, sim.weather);
+    const seed = d.mapSeed ?? 42;
+    const rng = new Rng(0);
+    const map = new RegionMap(seed);
+    const weather = new Weather(seed);
+    const r = new RegionSim(rng, d.minute, map, weather);
     // pre-market saves carry no prices: open those towns at the base rates;
     // pre-faction saves fly the player's banner; pre-sector saves start at 1900 labor shares
     r.settlements = (d.settlements as Settlement[]).map((s) => ({

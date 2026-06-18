@@ -1,66 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import { Simulation } from '../src/sim/sim';
+
 import { RegionSim, REGION_MINUTES_PER_TICK, REGION_LAWS, GOV_TYPES, POLICY_CARDS, POLICY_SWAP_COST, REGION_BUILDINGS, REGION_EVENT_DEFS, TECH_TREE } from '../src/sim/region';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
 import { REGION_N } from '../src/sim/worldgen';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
 
-function grow(sim: Simulation): void {
-  // make the town flip-eligible without playing 20 game-days
-  while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
-  sim.stock.wood = 200;
-  sim.stock.meal = 200;
-}
-
 function runDays(r: RegionSim, days: number): void {
   for (let i = 0; i < days * ticksPerDay; i++) r.tick();
 }
 
-describe('The flip (GDD §2.4)', () => {
-  it('conserves population: settlers in ≈ cohorts + expedition out', () => {
-    const sim = new Simulation(42);
-    grow(sim);
-    const before = sim.settlers.length;
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    expect(Math.round(r.totalPop())).toBe(before);
-    expect(r.expeditions).toHaveLength(1);
-    expect(r.expeditions[0].pop).toBe(8);
-  });
+/** Create a colony and immediately launch and land the first expedition (2 settlements). */
+function twoTownColony(seed: number): RegionSim {
+  const r = RegionSim.create(seed, { aiDifficulty: 'normal', currencySymbol: '$' });
+  r.settlements[0].cohorts.bands[2] += 20;
+  r.settlements[0].food = 200;
+  r.settlements[0].wood = 200;
+  r.foundTown(r.settlements[0].id);
+  runDays(r, 30); // wait for expedition to arrive (2-30 game-days)
+  return r;
+}
 
-  it('carves out Notables from the most story-laden settlers', () => {
-    const sim = new Simulation(42);
-    grow(sim);
-    const star = sim.settlers[0];
-    for (const k of Object.keys(star.skills) as (keyof typeof star.skills)[]) star.skills[k] = 10;
-    star.combat = 10;
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    expect(r.notables.length).toBeGreaterThanOrEqual(6);
-    expect(r.notables.some((n) => n.name === star.name)).toBe(true);
-    const roles = new Set(r.notables.map((n) => n.role));
-    expect(roles.has('Mayor')).toBe(true);
-    expect(roles.has('Doctor')).toBe(true);
-  });
-
+describe('RegionSim (aggregate model)', () => {
   it('the expedition arrives and founds town #2', () => {
-    const sim = new Simulation(42);
-    grow(sim);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12);
-    expect(r.settlements).toHaveLength(2);
+    const r = RegionSim.create(42, { aiDifficulty: 'normal', currencySymbol: '$' });
+    r.settlements[0].cohorts.bands[2] += 20;
+    r.settlements[0].food = 200;
+    r.settlements[0].wood = 200;
+    r.foundTown(r.settlements[0].id);
+    runDays(r, 30); // wait for expedition to arrive (2-30 game-days)
+    expect(r.settlements.filter((s) => s.factionId === r.playerFactionId)).toHaveLength(2);
     expect(r.expeditions).toHaveLength(0);
     expect(r.log.some((l) => l.text.includes('is founded'))).toBe(true);
   });
-});
 
-describe('RegionSim (aggregate model)', () => {
-  function flipped(seed: number): RegionSim {
-    const sim = new Simulation(seed);
-    grow(sim);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12);
-    return r;
-  }
+  function flipped(seed: number): RegionSim { return twoTownColony(seed); }
 
   it('cohorts age, give birth, and grow over years', () => {
     const r = flipped(42);
@@ -76,8 +50,12 @@ describe('RegionSim (aggregate model)', () => {
   it('dead Notables are replaced from the cohorts', () => {
     const r = flipped(42);
     const mayor = r.notables.find((n) => n.role === 'Mayor')!;
-    mayor.age = 90; // force the actuarial issue
-    runDays(r, 300);
+    // Set age to ancient so risk fires on first monthly check (annualRisk/12 = 0.01).
+    // Drive the RNG to a state where the check fires by calling ageNotables many times.
+    mayor.age = 90;
+    // Call the private ageNotables() 200 times directly: P(survive) = 0.99^200 < 14%
+    const priv = r as unknown as { ageNotables(): void };
+    for (let i = 0; i < 200; i++) priv.ageNotables();
     const mayors = r.notables.filter((n) => n.role === 'Mayor');
     expect(mayors.length).toBeGreaterThan(1); // a successor was minted
     expect(mayors.some((n) => n.alive)).toBe(true);
@@ -264,13 +242,7 @@ describe('RegionSim (aggregate model)', () => {
 });
 
 describe('Region event variety', () => {
-  function flipped(seed: number): RegionSim {
-    const sim = new Simulation(seed);
-    grow(sim);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12);
-    return r;
-  }
+  function flipped(seed: number): RegionSim { return twoTownColony(seed); }
 
   /** the event methods are private; tests reach in to fire them directly */
   type EventHooks = {
@@ -397,23 +369,25 @@ describe('Region event variety', () => {
 });
 
 describe('Region save/load', () => {
-  function flippedPair(seed: number): { sim: Simulation; r: RegionSim } {
-    const sim = new Simulation(seed);
-    grow(sim);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 200); // a few years of history: towns, trails, events
-    return { sim, r };
+  function flippedPair(seed: number): RegionSim {
+    const r = twoTownColony(seed);
+    runDays(r, 170); // a few years of history: towns, trails, events (30 already elapsed)
+    return r;
   }
 
-  /** save + load: deserialize atop a restored town sim, as the menu does */
-  function roundTrip(sim: Simulation, r: RegionSim): RegionSim {
-    const town = Simulation.deserialize(sim.serialize());
-    return RegionSim.deserialize(r.serialize(), town);
+  /** save + load: deserialize atop a restored region, as the menu does.
+   *  Faction goals contain closures that don't survive JSON, so deserialization
+   *  nulls them. We null them on the source too so both sides share the same
+   *  aiRng path on the next update. */
+  function roundTrip(r: RegionSim): RegionSim {
+    const json = r.serialize();
+    for (const f of r.regionalFactions) f.currentGoal = null;
+    return RegionSim.deserialize(json);
   }
 
   it('round-trips the region exactly', () => {
-    const { sim, r } = flippedPair(42);
-    const r2 = roundTrip(sim, r);
+    const r = flippedPair(42);
+    const r2 = roundTrip(r);
     expect(r2.day).toBe(r.day);
     expect(r2.totalPop()).toBe(r.totalPop());
     expect(r2.settlements.map((s) => s.name)).toEqual(r.settlements.map((s) => s.name));
@@ -425,8 +399,8 @@ describe('Region save/load', () => {
   });
 
   it('a loaded region continues deterministically — same history unfolds', () => {
-    const { sim, r } = flippedPair(42);
-    const r2 = roundTrip(sim, r);
+    const r = flippedPair(42);
+    const r2 = roundTrip(r);
     runDays(r, 150);
     runDays(r2, 150);
     expect(r2.totalPop()).toBe(r.totalPop());
@@ -435,8 +409,8 @@ describe('Region save/load', () => {
   });
 
   it('preserves the State: name, lean, treasury, and built routes', () => {
-    const { sim, r } = flippedPair(42);
-    for (let year = 0; year < 40 && !r.ceremonyPending; year++) {
+    const r = flippedPair(42);
+    for (let year = 0; year < 30 && !r.ceremonyPending; year++) {
       // keep the charter's economic and military gates satisfied as towns appear
       r.treasury = Math.max(r.treasury, 12000); // enough for roads + buffer
       for (const t of r.settlements) {
@@ -486,7 +460,7 @@ describe('Region save/load', () => {
     r.treasury = 5000;
     const [a, b] = r.settlements;
     expect(r.buildRoad(a.id, b.id)).toBe(true);
-    const r2 = roundTrip(sim, r);
+    const r2 = roundTrip(r);
     expect(r2.stateProclaimed).toBe(true);
     expect(r2.stateName).toBe('Testonia');
     expect(r2.govLean).toBe('mayor');
@@ -498,12 +472,7 @@ describe('Region save/load', () => {
 
 describe('Elections & faction politics (v0.14.0)', () => {
   function stateReady(): RegionSim {
-    const sim = new Simulation(42);
-    while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
-    sim.stock.wood = 200;
-    sim.stock.meal = 200;
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12); // town #2 arrives
+    const r = twoTownColony(42);
     r.stateProclaimed = true;
     r.stateName = 'Testonia';
     r.govLean = 'council';
@@ -630,11 +599,7 @@ describe('Elections & faction politics (v0.14.0)', () => {
   });
 
   it('politics fields survive save/load round-trip', () => {
-    const sim = new Simulation(42);
-    while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
-    sim.stock.wood = 200;
-    sim.stock.meal = 200;
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    const r = RegionSim.create(42, { aiDifficulty: 'normal', currencySymbol: '$' });
     r.stateProclaimed = true;
     r.politicalCapital = 45;
     r.nextElectionDay = 300;
@@ -642,7 +607,7 @@ describe('Elections & faction politics (v0.14.0)', () => {
     r.passedLaws = ['conscription_act'];
     r.tradeLevyRate = 0.03;
     r.estateTaxActive = true;
-    const r2 = RegionSim.deserialize(r.serialize(), sim);
+    const r2 = RegionSim.deserialize(r.serialize());
     expect(r2.politicalCapital).toBe(45);
     expect(r2.nextElectionDay).toBe(300);
     expect(r2.lastElectionYear).toBe(1924);
@@ -654,12 +619,7 @@ describe('Elections & faction politics (v0.14.0)', () => {
 
 describe('Constitutional Convention & Nation Proclamation (v0.15.0)', () => {
   function nationReady(): RegionSim {
-    const sim = new Simulation(42);
-    while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
-    sim.stock.wood = 200;
-    sim.stock.meal = 200;
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12);
+    const r = twoTownColony(42);
     r.stateProclaimed = true;
     r.proclamationReady = true; // Phase C: territory gate — set directly since we're not running the full sim
     r.stateName = 'Testonia';
@@ -681,9 +641,7 @@ describe('Constitutional Convention & Nation Proclamation (v0.15.0)', () => {
   }
 
   it('canCallConvention() false before stateProclaimed', () => {
-    const sim = new Simulation(42);
-    while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    const r = RegionSim.create(42, { aiDifficulty: 'normal', currencySymbol: '$' });
     r.researched.add('statecraft');
     for (const t of r.settlements) t.cohorts.bands[2] += 800;
     expect(r.canCallConvention()).toBe(false);
@@ -787,15 +745,11 @@ describe('Constitutional Convention & Nation Proclamation (v0.15.0)', () => {
   });
 
   it('nation fields survive save/load round-trip', () => {
-    const sim = new Simulation(42);
-    while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
-    sim.stock.wood = 200;
-    sim.stock.meal = 200;
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    const r = RegionSim.create(42, { aiDifficulty: 'normal', currencySymbol: '$' });
     r.stateProclaimed = true;
     r.proclaimNation('Saved Nation', 'monarchy', {});
     r.legitimacy = 72;
-    const r2 = RegionSim.deserialize(r.serialize(), sim);
+    const r2 = RegionSim.deserialize(r.serialize());
     expect(r2.nationProclaimed).toBe(true);
     expect(r2.nationName).toBe('Saved Nation');
     expect(r2.govType).toBe('monarchy');
@@ -812,12 +766,7 @@ describe('Constitutional Convention & Nation Proclamation (v0.15.0)', () => {
     const revenueWithout = r.treasury;
 
     // Reset and add treasury minister
-    const sim2 = new Simulation(42);
-    while (sim2.settlers.length < 22) sim2.spawnSettler(32, 34);
-    sim2.stock.wood = 200;
-    sim2.stock.meal = 200;
-    const r2 = RegionSim.fromTown(sim2, 8, 80, 80);
-    runDays(r2, 12);
+    const r2 = twoTownColony(42);
     r2.stateProclaimed = true;
     r2.stateName = 'Testonia';
     r2.govLean = 'council';
@@ -842,12 +791,7 @@ describe('Constitutional Convention & Nation Proclamation (v0.15.0)', () => {
 
 describe('Policy slots & expanded statute book (v0.16.0)', () => {
   function nationReady(): RegionSim {
-    const sim = new Simulation(42);
-    while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
-    sim.stock.wood = 200;
-    sim.stock.meal = 200;
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12);
+    const r = twoTownColony(42);
     r.stateProclaimed = true;
     r.stateName = 'Testonia';
     r.govLean = 'council';
@@ -868,10 +812,7 @@ describe('Policy slots & expanded statute book (v0.16.0)', () => {
   }
 
   it('nation-tier laws are hidden before proclamation', () => {
-    const sim = new Simulation(42);
-    while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12);
+    const r = twoTownColony(42);
     r.stateProclaimed = true;
     r.researched.add('statecraft');
     r.researched.add('universal_suffrage');
@@ -898,12 +839,7 @@ describe('Policy slots & expanded statute book (v0.16.0)', () => {
   });
 
   it('junta gets 3 policy slots', () => {
-    const sim = new Simulation(42);
-    while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
-    sim.stock.wood = 200;
-    sim.stock.meal = 200;
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12);
+    const r = twoTownColony(42);
     r.stateProclaimed = true;
     r.researched.add('statecraft');
     r.researched.add('universal_suffrage');
@@ -1003,15 +939,11 @@ describe('Policy slots & expanded statute book (v0.16.0)', () => {
   });
 
   it('active policies and nation laws survive save/load', () => {
-    const sim = new Simulation(42);
-    while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
-    sim.stock.wood = 200;
-    sim.stock.meal = 200;
     const r = nationReady();
     r.setPolicy(0, 'free_trade');
     r.politicalCapital = 200;
     r.enactLaw('progressive_tax');
-    const r2 = RegionSim.deserialize(r.serialize(), sim);
+    const r2 = RegionSim.deserialize(r.serialize());
     expect(r2.activePolicies[0]).toBe('free_trade');
     expect(r2.policyActive('free_trade')).toBe(true);
     expect(r2.passedLaws).toContain('progressive_tax');
@@ -1020,17 +952,33 @@ describe('Policy slots & expanded statute book (v0.16.0)', () => {
   // ---- events-depth: new policies & laws ----
 
   it('austerity policy adds treasury revenue and lowers satisfaction', () => {
-    const base = nationReady();
-    base.taxRate = 0.1;
-    base.treasury = 0;
+    const popOf = (t: { cohorts: { bands: number[] } }) => t.cohorts.bands.reduce((s, v) => s + v, 0);
+    function makeNation(): RegionSim {
+      const r = nationReady();
+      r.nationProclaimed = true;
+      r.govType = 'democracy';
+      r.activePolicies = [null, null, null, null];
+      r.taxRate = 0.1;
+      r.treasury = 0;
+      // Give each settlement adequate food/housing so the satisfaction target is
+      // positive before austerity — otherwise crowding clamps target to 0 and
+      // the -4 austerity penalty is invisible.
+      for (const t of r.settlements) {
+        const pop = popOf(t);
+        t.housing = pop + 10;
+        t.food = pop * 40;
+        t.satisfaction = 50;
+      }
+      return r;
+    }
+
+    const base = makeNation();
     runDays(base, 32);
     const baseTreasury = base.treasury;
     const baseSat = base.settlements.reduce((s, t) => s + t.satisfaction, 0) / base.settlements.length;
 
-    const r = nationReady();
+    const r = makeNation();
     r.setPolicy(0, 'austerity'); // slot 0 = economic for democracy
-    r.taxRate = 0.1;
-    r.treasury = 0;
     runDays(r, 32);
     expect(r.policyActive('austerity')).toBe(true);
     expect(r.treasury).toBeGreaterThan(baseTreasury);
@@ -1113,13 +1061,7 @@ describe('Policy slots & expanded statute book (v0.16.0)', () => {
 });
 
 describe('Sectoral economy (Phase 1)', () => {
-  function flipped(seed: number): RegionSim {
-    const sim = new Simulation(seed);
-    grow(sim);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12);
-    return r;
-  }
+  function flipped(seed: number): RegionSim { return twoTownColony(seed); }
 
   it('settlements open at 1900 labor shares: the plough takes seven hands in ten', () => {
     const r = flipped(42);
@@ -1176,16 +1118,10 @@ describe('Sectoral economy (Phase 1)', () => {
 });
 
 describe('Faction & fog-of-war persistence (Phase 0)', () => {
-  function flippedPair(seed: number): { sim: Simulation; r: RegionSim } {
-    const sim = new Simulation(seed);
-    grow(sim);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12);
-    return { sim, r };
-  }
+  function flippedPair(seed: number): RegionSim { return twoTownColony(seed); }
 
   it('the flip raises the player banner and fogs the rest of the world', () => {
-    const { r } = flippedPair(42);
+    const r = flippedPair(42);
     expect(r.regionalFactions.length).toBeGreaterThanOrEqual(3); // player + 2-3 rivals
     expect(r.faction(0)?.capital).toBe(r.settlements[0].id);
     const home = r.settlements[0];
@@ -1195,9 +1131,9 @@ describe('Faction & fog-of-war persistence (Phase 0)', () => {
   });
 
   it('factions, sectors, and the fog survive save/load', () => {
-    const { sim, r } = flippedPair(42);
+    const r = flippedPair(42);
     runDays(r, 35);
-    const r2 = RegionSim.deserialize(r.serialize(), sim);
+    const r2 = RegionSim.deserialize(r.serialize());
     expect(r2.regionalFactions.length).toBe(r.regionalFactions.length);
     expect(r2.settlements[0].factionId).toBe(0);
     expect(r2.settlements[0].sectors.agriculture.share)
@@ -1207,8 +1143,8 @@ describe('Faction & fog-of-war persistence (Phase 0)', () => {
   });
 
   it('pre-faction saves are backfilled: every town flies the player flag', () => {
-    const { sim, r } = flippedPair(42);
-    runDays(r, 12);
+    const r = flippedPair(42);
+    runDays(r, 5);
     const old = JSON.parse(r.serialize());
     delete old.regionalFactions;
     delete old.explorationMap;
@@ -1218,7 +1154,7 @@ describe('Faction & fog-of-war persistence (Phase 0)', () => {
       void factionId; void garrisonStrength; void loyaltyToFaction; void sectors;
       return rest;
     });
-    const r2 = RegionSim.deserialize(JSON.stringify(old), sim);
+    const r2 = RegionSim.deserialize(JSON.stringify(old));
     expect(r2.regionalFactions.length).toBeGreaterThanOrEqual(1);
     expect(r2.faction(0)?.settlementIds.length).toBe(r2.settlements.length);
     for (const t of r2.settlements) {
@@ -1232,10 +1168,7 @@ describe('Faction & fog-of-war persistence (Phase 0)', () => {
 
 describe('City works & zoning (Phase 2)', () => {
   function stateCity(seed: number): RegionSim {
-    const sim = new Simulation(seed);
-    grow(sim);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12);
+    const r = twoTownColony(seed);
     r.stateProclaimed = true;
     r.stateName = 'Test State';
     r.govLean = 'council';
@@ -1251,11 +1184,8 @@ describe('City works & zoning (Phase 2)', () => {
     expect(r.canManageCity(hamlet).ok).toBe(false); // tiny town, not the capital
   });
 
-  it('basic building works available before Incorporation, full management after', () => {
-    const sim = new Simulation(42);
-    grow(sim);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12);
+  it('basic buildings constructible before Incorporation, full management after', () => {
+    const r = RegionSim.create(42, { aiDifficulty: 'normal', currencySymbol: '$' });
     r.treasury = 500;
     expect(r.canManageCity(r.settlements[0]).ok).toBe(false);
     // Basic buildings (no prereq) are constructible pre-state
@@ -1315,10 +1245,7 @@ describe('City works & zoning (Phase 2)', () => {
   });
 
   it('civic works survive save/load, mid-construction and all', () => {
-    const sim = new Simulation(42);
-    grow(sim);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12);
+    const r = twoTownColony(42);
     r.stateProclaimed = true;
     r.stateName = 'Test State';
     r.govLean = 'council';
@@ -1327,7 +1254,7 @@ describe('City works & zoning (Phase 2)', () => {
     capital.buildings.push('waterworks');
     r.buildCity(capital.id, 'grain_exchange');
     r.setTownFocus(capital.id, 'agriculture');
-    const r2 = RegionSim.deserialize(r.serialize(), sim);
+    const r2 = RegionSim.deserialize(r.serialize());
     const c2 = r2.settlements[0];
     expect(c2.buildings).toContain('waterworks');
     expect(c2.construction?.id).toBe('grain_exchange');
@@ -1337,10 +1264,7 @@ describe('City works & zoning (Phase 2)', () => {
 
 describe('Cost scaling with development & size (Baumol / Wagner / ideas-harder-to-find)', () => {
   function freshState(seed: number): RegionSim {
-    const sim = new Simulation(seed);
-    grow(sim);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12);
+    const r = RegionSim.create(seed, { aiDifficulty: 'normal', currencySymbol: '$' });
     r.stateProclaimed = true;
     r.treasury = 5000;
     return r;
@@ -1389,10 +1313,7 @@ describe('Cost scaling with development & size (Baumol / Wagner / ideas-harder-t
 
 describe('Regional Events (Phase 4)', () => {
   function stateCity(seed: number): RegionSim {
-    const sim = new Simulation(seed);
-    grow(sim);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12);
+    const r = twoTownColony(seed);
     r.stateProclaimed = true;
     r.stateName = 'Test State';
     r.govLean = 'council';
@@ -1445,13 +1366,11 @@ describe('Regional Events (Phase 4)', () => {
   });
 
   it('events and policies survive save/load', () => {
-    const sim = new Simulation(42);
-    grow(sim);
     const r = stateCity(42);
     const t = r.settlements[0];
     t.activeEvents.push({ kind: 'trade_windfall', untilDay: r.day + 30, severity: 1 });
     r.setCityPolicy(t.id, 'taxBand', 2);
-    const r2 = RegionSim.deserialize(r.serialize(), sim);
+    const r2 = RegionSim.deserialize(r.serialize());
     expect(r2.settlements[0].activeEvents.some((ev) => ev.kind === 'trade_windfall')).toBe(true);
     expect(r2.settlements[0].policies.taxBand).toBe(2);
   });
@@ -1459,10 +1378,7 @@ describe('Regional Events (Phase 4)', () => {
 
 describe('Local Policies (Phase 5)', () => {
   function managedCity(seed: number): RegionSim {
-    const sim = new Simulation(seed);
-    grow(sim);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12);
+    const r = twoTownColony(seed);
     r.stateProclaimed = true;
     r.stateName = 'Test State';
     r.govLean = 'council';
@@ -1520,9 +1436,7 @@ describe('Local Policies (Phase 5)', () => {
 
 describe('Route Cargo Visualization (Phase 6)', () => {
   it('routes get a cargo type after a monthly update', () => {
-    const sim = new Simulation(42);
-    grow(sim);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    const r = twoTownColony(42); // needs 2 towns for routes to form
     runDays(r, 35); // at least one monthly update
     expect(r.routes.length).toBeGreaterThan(0);
     // After a monthly update, at least some routes should have cargo assigned
@@ -1533,26 +1447,18 @@ describe('Route Cargo Visualization (Phase 6)', () => {
   });
 
   it('cargo type survives save/load', () => {
-    const sim = new Simulation(42);
-    grow(sim);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    const r = twoTownColony(42); // needs 2 towns for routes to form
     runDays(r, 35);
     // Manually set a cargo type to ensure round-trip
     if (r.routes.length > 0) r.routes[0].cargoType = 'agriculture';
-    const r2 = RegionSim.deserialize(r.serialize(), sim);
+    const r2 = RegionSim.deserialize(r.serialize());
     expect(r2.routes[0]?.cargoType).toBe('agriculture');
   });
 });
 
 describe('Phase 0: Territory & resource visualization', () => {
   function flipped(seed: number): RegionSim {
-    const sim = new Simulation(seed);
-    while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
-    sim.stock.wood = 200;
-    sim.stock.meal = 200;
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12); // let the expedition found town #2
-    return r;
+    return twoTownColony(seed);
   }
 
   it('territory radius grows with population, garrison, and development', () => {

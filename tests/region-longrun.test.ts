@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { Simulation } from '../src/sim/sim';
 import { RegionSim, REGION_MINUTES_PER_TICK, BRANCH_YEAR, CENTURY_YEAR } from '../src/sim/region';
 import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
 
@@ -13,11 +12,7 @@ import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
 
 function nation(seed: number): RegionSim {
-  const sim = new Simulation(seed);
-  while (sim.settlers.length < 22) sim.spawnSettler(32, 34);
-  sim.stock.wood = 200;
-  sim.stock.meal = 200;
-  const r = RegionSim.fromTown(sim, 8, 80, 80);
+  const r = RegionSim.create(seed);
   r.stateProclaimed = true;
   r.nationProclaimed = true;
   r.govType = 'republic';

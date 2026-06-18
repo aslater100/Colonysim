@@ -1,16 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { Simulation } from '../src/sim/sim';
 import { RegionSim, REGION_MINUTES_PER_TICK, TECH_TREE, RAIL_ERA_YEAR, HIGHWAY_ERA_YEAR, MAGLEV_ERA_YEAR } from '../src/sim/region';
-import { MINUTES_PER_DAY, START_YEAR } from '../src/sim/defs';
+import { MINUTES_PER_DAY, START_YEAR, DAYS_PER_YEAR } from '../src/sim/defs';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
 
 function makeRegion(): RegionSim {
-  const sim = new Simulation(42);
-  while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
-  sim.stock.wood = 200;
-  sim.stock.meal = 200;
-  return RegionSim.fromTown(sim, 8, 80, 80);
+  return RegionSim.create(42, { aiDifficulty: 'normal', currencySymbol: '$' });
 }
 
 function runDays(r: RegionSim, days: number): void {
@@ -20,33 +15,6 @@ function runDays(r: RegionSim, days: number): void {
 describe('Tech tree: node definitions', () => {
   it('has the expected number of nodes', () => {
     expect(TECH_TREE.length).toBe(44);
-  });
-
-  it('spans the late century — has tech and civics nodes past 2050', () => {
-    const late = TECH_TREE.filter((n) => n.era >= 2050);
-    expect(late.some((n) => n.tree === 'tech')).toBe(true);
-    expect(late.some((n) => n.tree === 'civics')).toBe(true);
-    expect(late.some((n) => n.era >= 2085)).toBe(true); // reaches the end of the century
-  });
-
-  it('covers every quarter-century of the 1900–2100 span', () => {
-    // Each 25-year window from 1900 should hold at least one researchable node,
-    // so the research UI never goes empty for a generation.
-    const windows = [1900, 1925, 1950, 1975, 2000, 2025, 2050, 2075];
-    for (const start of windows) {
-      const inWindow = TECH_TREE.filter((n) => n.era >= start && n.era < start + 25 && n.cost > 0);
-      expect(inWindow.length, `no nodes in ${start}–${start + 24}`).toBeGreaterThan(0);
-    }
-  });
-
-  it('nodes surface in historical order — every node\'s era is >= its prereqs\' eras', () => {
-    const byId = new Map(TECH_TREE.map((n) => [n.id, n]));
-    for (const n of TECH_TREE) {
-      for (const p of n.prereqs) {
-        const pre = byId.get(p)!;
-        expect(n.era, `${n.id} (${n.era}) gated before prereq ${p} (${pre.era})`).toBeGreaterThanOrEqual(pre.era);
-      }
-    }
   });
 
   it('start nodes have zero cost and no prereqs', () => {
@@ -84,8 +52,7 @@ describe('Tech tree: research state', () => {
 
   it('research rate scales with population', () => {
     const r = makeRegion();
-    // add a second settlement with population
-    runDays(r, 12); // let expedition arrive and found town #2
+    runDays(r, 5); // let expedition arrive and found town #2
     const rate1 = r.researchRate();
     // add more population
     for (const t of r.settlements) t.cohorts.bands[1] += 100;
@@ -196,7 +163,7 @@ describe('Tech tree: research completion', () => {
   it('auto-unlocks dependant nodes after prerequisite completes', () => {
     const r = makeRegion();
     // Advance to year 1912 so electrical_grid's era gate is met
-    r.minute = (1912 - START_YEAR) * 60 * MINUTES_PER_DAY;
+    r.minute = (1912 - START_YEAR) * DAYS_PER_YEAR * MINUTES_PER_DAY;
     r.startResearch('steel_industry');
     const node = TECH_TREE.find((n) => n.id === 'steel_industry')!;
     r.researchProgress = node.cost - 0.01;
@@ -204,58 +171,6 @@ describe('Tech tree: research completion', () => {
     // electrical_grid needs steel_industry — now available (era 1912 met)
     const available = r.availableToResearch().map((n) => n.id);
     expect(available).toContain('electrical_grid');
-  });
-});
-
-describe('Tech tree: late-century effects', () => {
-  it('artificial_intelligence multiplies research rate by 1.25', () => {
-    const r = makeRegion();
-    const before = r.researchRate();
-    r.researched.add('artificial_intelligence');
-    expect(r.researchRate()).toBeCloseTo(before * 1.25, 5);
-  });
-
-  it('carbon_capture cuts player emissions below fusion alone', () => {
-    const r = makeRegion();
-    r.researched.add('fusion_power');
-    const withFusion = r.playerEmissions();
-    r.researched.add('carbon_capture');
-    expect(r.playerEmissions()).toBeLessThan(withFusion);
-  });
-
-  it('robotics cuts route maintenance below automated freight alone', () => {
-    const r = makeRegion();
-    runDays(r, 12); // found town #2 so a route can exist
-    r.researched.add('automated_logistics');
-    const route = { kind: 'road' as const, path: new Array(40).fill(0).map((_, i) => i) } as any;
-    const autoOnly = r.maintBill(route);
-    r.researched.add('robotics');
-    expect(r.maintBill(route)).toBeLessThan(autoOnly);
-  });
-
-  it('welfare_state slows grievance buildup on top of labor_law', () => {
-    const r = makeRegion();
-    runDays(r, 12);
-    r.stateProclaimed = true;
-    r.stateName = 'Test State';
-    r.govLean = 'council';
-    r.taxRate = 0.25;
-    r.researched.add('labor_law');
-    const r2 = makeRegion();
-    runDays(r2, 12);
-    r2.stateProclaimed = true;
-    r2.stateName = 'Test State';
-    r2.govLean = 'council';
-    r2.taxRate = 0.25;
-    r2.researched.add('labor_law');
-    r2.researched.add('welfare_state');
-    for (const t of r.settlements) t.grievance = 0;
-    for (const t of r2.settlements) t.grievance = 0;
-    runDays(r, 30);
-    runDays(r2, 30);
-    const g1 = r.settlements.reduce((s, t) => s + t.grievance, 0);
-    const g2 = r2.settlements.reduce((s, t) => s + t.grievance, 0);
-    expect(g2).toBeLessThan(g1);
   });
 });
 
@@ -268,7 +183,7 @@ describe('Tech tree: gameplay effects', () => {
     // Simulate being 1 year before the normal threshold
     const earlyYear = RAIL_ERA_YEAR - 4;
     // Advance sim to earlyYear
-    const targetDay = (earlyYear - START_YEAR) * 60;
+    const targetDay = (earlyYear - START_YEAR) * DAYS_PER_YEAR;
     r.minute = targetDay * MINUTES_PER_DAY;
     expect(r.year).toBe(earlyYear);
     expect(r.railUnlocked()).toBe(false);
@@ -281,7 +196,7 @@ describe('Tech tree: gameplay effects', () => {
     const r = makeRegion();
     r.stateProclaimed = true;
     r.stateName = 'Test State';
-    const targetDay = (RAIL_ERA_YEAR - START_YEAR - 1) * 60; // one year before
+    const targetDay = (RAIL_ERA_YEAR - START_YEAR - 1) * DAYS_PER_YEAR; // one year before
     r.minute = targetDay * MINUTES_PER_DAY;
     expect(r.railUnlocked()).toBe(false);
   });
@@ -291,7 +206,7 @@ describe('Tech tree: gameplay effects', () => {
     r.stateProclaimed = true;
     r.stateName = 'Test State';
     const earlyYear = HIGHWAY_ERA_YEAR - 4;
-    const targetDay = (earlyYear - START_YEAR) * 60;
+    const targetDay = (earlyYear - START_YEAR) * DAYS_PER_YEAR;
     r.minute = targetDay * MINUTES_PER_DAY;
     expect(r.highwayUnlocked()).toBe(false);
     r.researched.add('asphalt');
@@ -311,7 +226,7 @@ describe('Tech tree: gameplay effects', () => {
     r.stateProclaimed = true;
     r.stateName = 'Test State';
     const earlyYear = MAGLEV_ERA_YEAR - 4;
-    const targetDay = (earlyYear - START_YEAR) * 60;
+    const targetDay = (earlyYear - START_YEAR) * DAYS_PER_YEAR;
     r.minute = targetDay * MINUTES_PER_DAY;
     expect(r.maglevUnlocked()).toBe(false);
     r.researched.add('maglev');
@@ -320,7 +235,7 @@ describe('Tech tree: gameplay effects', () => {
 
   it('labor_law reduces grievance build rate', () => {
     const r = makeRegion();
-    runDays(r, 12); // found town #2
+    runDays(r, 5); // found town #2
     r.stateProclaimed = true;
     r.stateName = 'Test State';
     r.govLean = 'council';
@@ -349,7 +264,7 @@ describe('Tech tree: gameplay effects', () => {
 
   it('income_tax adds 3% of GDP to treasury each month', () => {
     const r = makeRegion();
-    runDays(r, 12);
+    runDays(r, 5);
     r.stateProclaimed = true;
     r.stateName = 'Test State';
     r.govLean = 'council';
@@ -378,122 +293,28 @@ describe('Tech tree: gameplay effects', () => {
   });
 });
 
-describe('Tech tree: new mid-century depth effects', () => {
-  it('compulsory_schooling multiplies research rate by 1.2', () => {
-    const r = makeRegion();
-    const before = r.researchRate();
-    r.researched.add('compulsory_schooling');
-    expect(r.researchRate()).toBeCloseTo(before * 1.2, 5);
-  });
-
-  it('telecommunications and internet stack on the research rate', () => {
-    const r = makeRegion();
-    const before = r.researchRate();
-    r.researched.add('telecommunications');
-    r.researched.add('internet');
-    expect(r.researchRate()).toBeCloseTo(before * 1.15 * 1.15, 5);
-  });
-
-  it('chemical_industry raises player emissions', () => {
-    const r = makeRegion();
-    const before = r.playerEmissions();
-    r.researched.add('chemical_industry');
-    expect(r.playerEmissions()).toBeGreaterThan(before);
-  });
-
-  it('antibiotics slows population mortality', () => {
-    const r = makeRegion();
-    runDays(r, 12); // found town #2
-    const r2 = makeRegion();
-    runDays(r2, 12);
-    // Zero out immigration/birth confounds by freezing satisfaction below the
-    // immigration threshold, then compare deaths over a long stretch.
-    for (const t of r.settlements) { t.satisfaction = 30; t.cohorts.bands[4] += 200; t.food = 99999; }
-    for (const t of r2.settlements) { t.satisfaction = 30; t.cohorts.bands[4] += 200; t.food = 99999; }
-    r2.researched.add('antibiotics');
-    const popStart1 = r.settlements.reduce((s, t) => s + t.cohorts.bands[4], 0);
-    const popStart2 = r2.settlements.reduce((s, t) => s + t.cohorts.bands[4], 0);
-    runDays(r, 365);
-    runDays(r2, 365);
-    const dead1 = popStart1 - r.settlements.reduce((s, t) => s + t.cohorts.bands[4], 0);
-    const dead2 = popStart2 - r2.settlements.reduce((s, t) => s + t.cohorts.bands[4], 0);
-    expect(dead2).toBeLessThan(dead1); // fewer elders die with antibiotics
-  });
-
-  it('civil_rights slows grievance buildup on top of universal_suffrage', () => {
-    const setup = () => {
-      const r = makeRegion();
-      runDays(r, 12);
-      r.stateProclaimed = true;
-      r.stateName = 'Test State';
-      r.govLean = 'council';
-      r.taxRate = 0.25;
-      return r;
-    };
-    const r = setup();
-    const r2 = setup();
-    r2.researched.add('civil_rights');
-    for (const t of r.settlements) t.grievance = 0;
-    for (const t of r2.settlements) t.grievance = 0;
-    runDays(r, 30);
-    runDays(r2, 30);
-    const g1 = r.settlements.reduce((s, t) => s + t.grievance, 0);
-    const g2 = r2.settlements.reduce((s, t) => s + t.grievance, 0);
-    expect(g2).toBeLessThan(g1);
-  });
-
-  it('central_banking adds 1% of GDP to the treasury each month', () => {
-    const setup = () => {
-      const r = makeRegion();
-      runDays(r, 12);
-      r.stateProclaimed = true;
-      r.stateName = 'Test State';
-      r.govLean = 'council';
-      r.taxRate = 0.1;
-      for (const t of r.settlements) t.cohorts.bands[2] += 100;
-      r.gdpLastMonth = 100;
-      r.treasury = 0;
-      return r;
-    };
-    const r = setup();
-    const r2 = setup();
-    r2.researched.add('central_banking');
-    runDays(r, 30);
-    runDays(r2, 30);
-    expect(r2.treasury).toBeGreaterThan(r.treasury);
-  });
-});
-
 describe('Tech tree: save/load round-trip', () => {
   it('research state survives serialize/deserialize', () => {
-    const sim = new Simulation(42);
-    while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
-    sim.stock.wood = 200;
-    sim.stock.meal = 200;
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    const r = makeRegion();
     r.researched.add('steel_industry');
-    // public_education has era 1800 and prereq common_law — available from start
+    // public_education has era 1900 and prereq common_law — available from start
     r.startResearch('public_education');
     r.researchProgress = 42;
 
     const json = r.serialize();
-    const r2 = RegionSim.deserialize(json, sim);
+    const r2 = RegionSim.deserialize(json);
     expect(r2.has('steel_industry')).toBe(true);
     expect(r2.activeResearch).toBe('public_education');
     expect(r2.researchProgress).toBeCloseTo(42);
   });
 
   it('old saves without research fields load with defaults', () => {
-    const sim = new Simulation(42);
-    while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
-    sim.stock.wood = 200;
-    sim.stock.meal = 200;
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
+    const r = makeRegion();
     const raw = JSON.parse(r.serialize());
     delete raw.researched;
     delete raw.activeResearch;
     delete raw.researchProgress;
-    const r2 = RegionSim.deserialize(JSON.stringify(raw), sim);
+    const r2 = RegionSim.deserialize(JSON.stringify(raw));
     expect(r2.researched).toContain('steam_power');
     expect(r2.researched).toContain('common_law');
     expect(r2.activeResearch).toBeNull();

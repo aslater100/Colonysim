@@ -1,29 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { Simulation } from '../src/sim/sim';
 import { RegionSim } from '../src/sim/region';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
-import type { TownDesign } from '../src/sim/defs';
 import { REGION_MINUTES_PER_TICK } from '../src/sim/region';
-
-const baseDesign: TownDesign = {
-  currencySymbol: '£',
-  difficulty: 'normal',
-  location: 'river-valley',
-  startingPop: 12,
-};
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
 
-function grow(sim: Simulation): void {
-  while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
-  sim.stock.wood = 200;
-  sim.stock.meal = 200;
-}
-
 function makeRegion(seed = 42): RegionSim {
-  const sim = new Simulation(seed, baseDesign);
-  grow(sim);
-  return RegionSim.fromTown(sim, 8, 80, 80);
+  return RegionSim.create(seed);
 }
 
 function runDays(r: RegionSim, days: number): void {
@@ -216,20 +199,15 @@ describe('Phase C: conquest & diplomacy', () => {
     });
 
     it('serializes and deserializes', () => {
-      const sim = new Simulation(42, baseDesign);
-      grow(sim);
-      const r = RegionSim.fromTown(sim, 8, 80, 80);
+      const r = makeRegion();
       (r as unknown as { proclamationReady: boolean }).proclamationReady = true;
       const serialized = r.serialize();
-      const sim2 = new Simulation(42, baseDesign);
-      const r2 = RegionSim.deserialize(serialized, sim2);
+      const r2 = RegionSim.deserialize(serialized);
       expect(r2.proclamationReady).toBe(true);
     });
 
     it('vassalage is preserved in serialize/deserialize', () => {
-      const sim = new Simulation(42, baseDesign);
-      grow(sim);
-      const r = RegionSim.fromTown(sim, 8, 80, 80);
+      const r = makeRegion();
       const rivalId = ensureRivalHasSettlement(r);
       const rival = r.faction(rivalId)!;
       const player = r.faction(r.playerFactionId)!;
@@ -241,8 +219,7 @@ describe('Phase C: conquest & diplomacy', () => {
       expect(rival.overlordId).toBe(r.playerFactionId);
 
       const serialized = r.serialize();
-      const sim2 = new Simulation(42, baseDesign);
-      const r2 = RegionSim.deserialize(serialized, sim2);
+      const r2 = RegionSim.deserialize(serialized);
       const rival2 = r2.faction(rivalId)!;
       const player2 = r2.faction(r2.playerFactionId)!;
       expect(rival2.overlordId).toBe(r2.playerFactionId);

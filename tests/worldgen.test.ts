@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RegionMap, REGION_N } from '../src/sim/worldgen';
 import { Weather } from '../src/sim/weather';
-import { Simulation } from '../src/sim/sim';
 
 describe('RegionMap (procedural world)', () => {
   it('is deterministic for a seed and varies across seeds', () => {
@@ -78,23 +77,3 @@ describe('Weather', () => {
   });
 });
 
-describe('Terrain → town integration', () => {
-  it('the town map carries water and per-tile fertility from its site', () => {
-    const sim = new Simulation(42);
-    const tiles = sim.world.tiles;
-    expect(tiles.some((t) => t.kind === 'water')).toBe(true);
-    const ferts = tiles.map((t) => t.fertility);
-    expect(Math.min(...ferts)).toBeGreaterThanOrEqual(0.3);
-    expect(Math.max(...ferts)).toBeLessThanOrEqual(1.5);
-    expect(Math.max(...ferts) - Math.min(...ferts)).toBeGreaterThan(0.1); // land varies
-  });
-
-  it('the wagon clearing is always buildable', () => {
-    for (const seed of [1, 42, 777, 31337]) {
-      const sim = new Simulation(seed);
-      expect(sim.planZone('farm', 40, 52)).toBe(true);
-      expect(sim.canPlace('kitchen', 54, 48)).toBe(true);
-      expect(sim.canPlace('house', 39, 44)).toBe(true);
-    }
-  });
-});

@@ -5,29 +5,16 @@
  *  - Nation flip: national identity (economic system, military doctrine,
  *    alliances) — and the one sanctioned chance to re-pick the currency.
  */
-import type { CurrencySymbol, TownDesign, RegionDesign, NationDesign } from '../sim/defs';
+import type { CurrencySymbol, RegionDesign, NationDesign } from '../sim/defs';
 import { CURRENCY_SYMBOLS } from '../sim/defs';
 
-export type { TownDesign, RegionDesign, NationDesign };
+export type { RegionDesign, NationDesign };
 
 interface Choice<T extends string> {
   value: T;
   label: string;
   desc: string;
 }
-
-const TOWN_DIFFICULTY: Choice<TownDesign['difficulty']>[] = [
-  { value: 'easy', label: 'Homesteader', desc: 'More settlers, fuller stores, gentler raids.' },
-  { value: 'normal', label: 'Pioneer', desc: 'The intended experience.' },
-  { value: 'hard', label: 'Survivor', desc: 'Fewer hands, thin stores, the frontier bites.' },
-];
-
-const TOWN_LOCATION: Choice<TownDesign['location']>[] = [
-  { value: 'river-valley', label: 'River Valley', desc: 'Fertile soil, fresh water, classic start.' },
-  { value: 'coastal', label: 'Coast', desc: 'Fishing and future ports; thinner soil.' },
-  { value: 'highlands', label: 'Highlands', desc: 'Stone and ore nearby; harsher winters.' },
-  { value: 'surprise', label: 'Surprise Me', desc: 'The map decides.' },
-];
 
 const REGION_EXPANSION: Choice<RegionDesign['expansionSpeed']>[] = [
   { value: 'cautious', label: 'Cautious', desc: 'Slow settlement, stable satisfaction.' },
@@ -146,44 +133,6 @@ export class DesignScreen {
     p.style.cssText = 'text-align:center;margin:0 0 12px 0;font-size:12px;color:#8a93a6;';
     this.box.appendChild(h);
     this.box.appendChild(p);
-  }
-
-  showTownDesign(cb: (d: TownDesign) => void): void {
-    this.title('FOUND A COLONY', 'Shape the settlement before the wagons roll.');
-
-    const currency = this.choiceRow(
-      'Currency',
-      CURRENCY_SYMBOLS.map((s) => ({ value: s, label: s, desc: 'The coin your ledgers are kept in.' })),
-      '$' as CurrencySymbol,
-    );
-    const location = this.choiceRow('Location', TOWN_LOCATION, 'river-valley');
-    const pop = this.choiceRow(
-      'Founding Party',
-      [
-        { value: '8', label: '8 settlers', desc: 'A hard core. Slow start, tight food.' },
-        { value: '12', label: '12 settlers', desc: 'The standard wagon train.' },
-        { value: '16', label: '16 settlers', desc: 'A crowd. Fast hands, hungry mouths.' },
-      ],
-      '12',
-    );
-    const difficulty = this.choiceRow('Difficulty', TOWN_DIFFICULTY, 'normal');
-
-    this.box.appendChild(currency.el);
-    this.box.appendChild(location.el);
-    this.box.appendChild(pop.el);
-    this.box.appendChild(difficulty.el);
-    this.box.appendChild(
-      this.confirmButton('BEGIN', () => {
-        this.close();
-        cb({
-          currencySymbol: currency.get(),
-          location: location.get(),
-          startingPop: parseInt(pop.get()) as TownDesign['startingPop'],
-          difficulty: difficulty.get(),
-        });
-      }),
-    );
-    this.open();
   }
 
   showRegionDesign(cb: (d: RegionDesign) => void): void {

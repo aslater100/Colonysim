@@ -1,27 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { Simulation } from '../src/sim/sim';
 import { RegionSim, REGION_MINUTES_PER_TICK, ROUTE_SPECS, RAIL_ERA_YEAR, HIGHWAY_ERA_YEAR, MAGLEV_ERA_YEAR } from '../src/sim/region';
 import { RegionMap, CELL_SCALE } from '../src/sim/worldgen';
 import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
 
-function grow(sim: Simulation): void {
-  while (sim.settlers.length < 22) sim.spawnSettler(48, 50);
-  sim.stock.wood = 200;
-  sim.stock.meal = 200;
-}
-
 function runDays(r: RegionSim, days: number): void {
   for (let i = 0; i < days * ticksPerDay; i++) r.tick();
 }
 
-/** flip and let the first expedition arrive: 2 towns, 1 auto-blazed trail */
+/** Create a colony and launch the first expedition, wait for 2 towns and 1 auto-blazed trail. */
 function flipped(seed: number): RegionSim {
-  const sim = new Simulation(seed);
-  grow(sim);
-  const r = RegionSim.fromTown(sim, 8, 80, 80);
-  runDays(r, 12);
+  const r = RegionSim.create(seed, { aiDifficulty: 'normal', currencySymbol: '$' });
+  r.settlements[0].cohorts.bands[2] += 20;
+  r.settlements[0].food = 200;
+  r.settlements[0].wood = 200;
+  r.foundTown(r.settlements[0].id);
+  runDays(r, 30); // wait for expedition to arrive (2-30 game-days)
   return r;
 }
 
@@ -99,7 +94,7 @@ describe('Region corridors (M6b)', () => {
 
   it('trails are blazed automatically when towns are founded', () => {
     const r = flipped(42);
-    expect(r.settlements).toHaveLength(2);
+    expect(r.settlements.filter((s) => s.factionId === r.playerFactionId)).toHaveLength(2);
     expect(r.routes).toHaveLength(1);
     expect(r.routes[0].kind).toBe('trail');
     expect(r.routes[0].path.length).toBeGreaterThanOrEqual(2);
@@ -464,16 +459,14 @@ describe('Route Network controls (Phase A)', () => {
   });
 
   it('cargoPriority survives a save/load round-trip', () => {
-    const sim = new Simulation(42);
-    grow(sim);
-    const r = RegionSim.fromTown(sim, 8, 80, 80);
-    runDays(r, 12);
+    const r = flipped(42);
     toStatehood(r);
-    const [a, b] = r.settlements;
+    const playerSettlements = r.settlements.filter((s) => s.factionId === r.playerFactionId);
+    const [a, b] = playerSettlements;
     r.treasury = 10000;
     r.buildRoad(a.id, b.id);
     r.setRouteCargoPriority(a.id, b.id, 'industry');
-    const r2 = RegionSim.deserialize(r.serialize(), sim);
+    const r2 = RegionSim.deserialize(r.serialize());
     expect(r2.routeBetween(a.id, b.id)!.cargoPriority).toBe('industry');
   });
 });
