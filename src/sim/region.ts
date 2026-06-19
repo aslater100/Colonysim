@@ -5799,6 +5799,20 @@ export class RegionSim {
     if (kind === 'non_aggression') ask -= 10 - rv.weights.risk; // the cautious want fences
     if (kind === 'defensive_pact') ask -= rv.weights.honor * 1.5;
     if (kind === 'climate_accord') ask += rv.weights.expansion * 2 - rv.weights.commerce * 1.5;
+
+    // Archetype-driven negotiating tactics
+    if (rv.archetype === 'trading_republic' && kind === 'trade_agreement') {
+      ask -= 8; // merchants drive hard bargains on trade
+    } else if (rv.archetype === 'hegemon' && kind === 'defensive_pact') {
+      ask += 10; // hegemons avoid entangling alliances
+    } else if (rv.archetype === 'hermit_kingdom' && kind === 'non_aggression') {
+      ask -= 5; // hermits prize fences
+    } else if (rv.archetype === 'crusader_state' && kind === 'defensive_pact') {
+      ask -= 6; // crusaders build coalitions
+    } else if (rv.archetype === 'opportunist') {
+      ask += 5; // opportunists play hard to get
+    }
+
     // Alliance stance (nation design): a coalition-builder's word is easier
     // to take; an isolationist's signature is worth less to everyone.
     if (this.allianceStance === 'coalition-builder') ask -= 5;
@@ -5811,20 +5825,45 @@ export class RegionSim {
   /** What signing this treaty is worth *to the rival*, in diplomatic points —
    *  positive is appetite, negative is a concession it wants paying for. */
   treatyAppetite(rv: RivalNation, kind: TreatyKind): number {
+    // Base personality-driven appetite
+    let appetite = 0;
     switch (kind) {
       case 'trade_agreement':
-        // fuel access is worth triple to an oil-poor industrializer — here,
-        // markets are worth most to the commerce-minded
-        return rv.weights.commerce * 1.6 - 4;
+        // Markets are most valuable to commerce-minded powers
+        appetite = rv.weights.commerce * 1.6 - 4;
+        // Trading republics and merchants prize this highest
+        if (rv.archetype === 'trading_republic') appetite += 3;
+        break;
       case 'non_aggression':
-        return (10 - rv.weights.risk) * 0.8 + rv.weights.honor * 0.3 - 3;
+        appetite = (10 - rv.weights.risk) * 0.8 + rv.weights.honor * 0.3 - 3;
+        // Hermit kingdoms and defensive-minded powers love these
+        if (rv.archetype === 'hermit_kingdom') appetite += 2;
+        if (rv.archetype === 'crusader_state') appetite += 1; // ideological protection
+        // Hegemons and opportunists less interested
+        if (rv.archetype === 'hegemon') appetite -= 2;
+        if (rv.archetype === 'opportunist') appetite -= 1;
+        break;
       case 'defensive_pact':
-        // an entangling commitment: the honorable mean it, the rash resent it
-        return rv.weights.honor * 0.8 - rv.weights.risk * 0.5 - 5;
+        // An entangling commitment: the honorable mean it, the rash resent it
+        appetite = rv.weights.honor * 0.8 - rv.weights.risk * 0.5 - 5;
+        // Crusader states and trading republics form defensive alliances
+        if (rv.archetype === 'crusader_state') appetite += 2; // ideological alliance
+        if (rv.archetype === 'trading_republic') appetite += 1; // mutual protection
+        // Hegemons avoid entangling alliances
+        if (rv.archetype === 'hegemon') appetite -= 3;
+        // Opportunists avoid commitment
+        if (rv.archetype === 'opportunist') appetite -= 2;
+        break;
       case 'climate_accord':
-        // commerce-driven powers value stable, shared rules; expansion hawks balk
-        return rv.weights.commerce * 1.2 - rv.weights.expansion * 0.8 - 3;
+        // Commerce-driven powers value stable, shared rules; expansion hawks balk
+        appetite = rv.weights.commerce * 1.2 - rv.weights.expansion * 0.8 - 3;
+        // Trading republics support environmental stability for trade
+        if (rv.archetype === 'trading_republic') appetite += 2;
+        // Hegemons resist external constraints
+        if (rv.archetype === 'hegemon') appetite -= 2;
+        break;
     }
+    return appetite;
   }
 
   /** A fixed frontier, valued by temperament: hermits love fences,
