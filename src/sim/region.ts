@@ -198,6 +198,7 @@ export interface RegionalBuildingDef {
   research?: number;     // research rate multiplier add
   satisfaction?: number; // flat satisfaction-target bonus
   sight?: number;        // survey radius bonus for this town
+  coastal_only?: boolean; // if true, only buildable in coastal settlements
   desc: string;
 }
 
@@ -1033,10 +1034,11 @@ export const UNIT_TYPES: Record<ArmyUnitType, {
   militia: { recruitCost: 10, trainingDays: 1, powerPerUnit: 1.0, supplyCost: 0.04 },
   cavalry: { recruitCost: 25, trainingDays: 14, powerPerUnit: 1.5, supplyCost: 0.06 },
   artillery: { recruitCost: 40, trainingDays: 21, powerPerUnit: 2.0, supplyCost: 0.08 },
+  warship: { recruitCost: 80, trainingDays: 45, powerPerUnit: 3.0, supplyCost: 0.10 },
 };
 
 /** Unit types for armies: different training, equipment, supply needs. */
-export type ArmyUnitType = 'militia' | 'cavalry' | 'artillery';
+export type ArmyUnitType = 'militia' | 'cavalry' | 'artillery' | 'warship';
 
 /** Recruited army units: type, count, morale. */
 export interface ArmyUnit {
@@ -3490,6 +3492,7 @@ export class RegionSim {
     this.migrate();
     this.caravans();
     this.traders();
+    this.navalTradeIncome();
     this.ageNotables();
     // The treasury runs even before the Charter: pre-statehood the Mayor still
     // taxes the towns and pays for services/militia, so the player has real
@@ -3764,6 +3767,34 @@ export class RegionSim {
       // visibly builds the treasury toward the Charter's economic gate.
       const effectiveLevyRate = this.stateProclaimed ? baseRate : baseRate * 0.8;
       this.treasury += turnover * effectiveLevyRate;
+    }
+  }
+
+  /** True if the player has a Harbor built in any of their settlements. */
+  hasHarbor(): boolean {
+    return this.settlements.some(
+      (t) => t.factionId === this.playerFactionId && t.buildings.includes('harbor'),
+    );
+  }
+
+  /** Monthly: harbors generate sea-trade income; warships add a naval-supremacy
+   *  premium that also deters coastal rivals. */
+  private navalTradeIncome(): void {
+    const harborTowns = this.settlements.filter(
+      (t) => t.factionId === this.playerFactionId && t.buildings.includes('harbor'),
+    );
+    if (harborTowns.length === 0) return;
+    const warships = this.playerWar?.units.find((u) => u.type === 'warship')?.count ?? 0;
+    // Base income per harbor (£/month) plus a warship escort premium
+    const perHarbor = 12 + warships * 2;
+    const income = harborTowns.length * perHarbor;
+    this.treasury += income;
+    if (this.rng.chance(0.3)) {
+      const town = harborTowns[this.rng.int(harborTowns.length)];
+      this.addLog(
+        `Sea trade earns ${formatCurrency(income)} this month — ${town.name}'s harbor is busy.`,
+        'good',
+      );
     }
   }
 
@@ -4251,6 +4282,7 @@ export class RegionSim {
       const node = TECH_TREE.find((n) => n.id === def.prereq);
       return { ok: false, reason: `requires ${node?.name ?? def.prereq}` };
     }
+    if (def.coastal_only && !t.site.coastal) return { ok: false, reason: 'coastal settlements only' };
     if (this.buildingCount(t, def.id) >= def.max) return { ok: false, reason: 'already built' };
     const cost = this.cityBuildCost(def);
     if (this.treasury < cost) return { ok: false, reason: `needs ` + formatCurrency(cost) + `` };
@@ -6215,6 +6247,10 @@ export class RegionSim {
       return null;
     }
     if (count <= 0) return null;
+    if (type === 'warship' && !this.hasHarbor()) {
+      this.addLog('Warships require a Harbor — build one in a coastal settlement first.', 'info');
+      return null;
+    }
 
     const unitDef = UNIT_TYPES[type];
     const totalCost = count * unitDef.recruitCost;

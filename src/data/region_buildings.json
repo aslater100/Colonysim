@@ -119,6 +119,20 @@
       "sector": "information",
       "bonus": 0.4,
       "desc": "Racks, cables, and cold air: the information economy's freight yard. Information +40%."
+    },
+    {
+      "id": "harbor",
+      "name": "Harbor",
+      "cost": 120,
+      "days": 60,
+      "upkeep": 3,
+      "max": 1,
+      "prereq": "cartography",
+      "coastal_only": true,
+      "sector": "industry",
+      "bonus": 0.15,
+      "satisfaction": 2,
+      "desc": "A deep-water quay for merchant ships — opens the sea lanes and raises coastal industry. Industry +15%, satisfaction +2. Coastal towns only. Enables warship recruitment."
     }
   ]
 }
