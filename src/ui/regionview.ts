@@ -3076,6 +3076,20 @@ export class RegionView {
         refresh();
       };
     }
+    const slider = this.routeNetworkPanel.querySelector<HTMLInputElement>('.rn-budget-slider');
+    if (slider) {
+      // Update the budget + readout live without forcing a full panel rebuild,
+      // so the slider node survives the drag (the rebuild guard would replace it).
+      slider.oninput = () => {
+        const pct = Number(slider.value);
+        r.setRouteBudget(pct / 100);
+        const label = pct === 0 ? 'unfunded' : pct < 100 ? 'lean' : pct === 100 ? 'full' : 'priority';
+        const readout = this.routeNetworkPanel.querySelector<HTMLElement>('.rn-budget-readout');
+        if (readout) readout.textContent = `${pct}% (${label}) · ${formatCurrency(r.routeUpkeepProjected(), 1)}/mo`;
+        const note = this.routeNetworkPanel.querySelector<HTMLElement>('.rn-budget-note');
+        if (note) note.textContent = pct < 100 ? 'Routes degrade — repairs underfunded.' : pct > 100 ? 'Routes mend quickly.' : 'Routes hold and slowly improve.';
+      };
+    }
   }
 
   private routeNetworkHtml(): string {
@@ -3141,9 +3155,23 @@ export class RegionView {
           `</div>`;
       })
       .join('');
+    // Maintenance budget slider (Issue #16): one operational knob instead of
+    // repairing each route by hand. Shows the projected monthly spend.
+    const budgetPct = Math.round(r.routeBudget * 100);
+    const projected = r.routeUpkeepProjected();
+    const budgetLabel = budgetPct === 0 ? 'unfunded' : budgetPct < 100 ? 'lean' : budgetPct === 100 ? 'full' : 'priority';
+    const budgetHtml = built.length > 0
+      ? `<div class="rn-budget">` +
+        `<p class="insp-skills">MAINTENANCE BUDGET — <b class="rn-budget-readout">${budgetPct}% (${budgetLabel}) · ` + formatCurrency(projected, 1) + `/mo</b></p>` +
+        `<input type="range" class="rn-budget-slider" min="0" max="150" step="10" value="${budgetPct}" ` +
+        `title="Below 100% lets roads degrade; above 100% funds rapid repairs">` +
+        `<p class="insp-skills rn-budget-note">${budgetPct < 100 ? 'Routes degrade — repairs underfunded.' : budgetPct > 100 ? 'Routes mend quickly.' : 'Routes hold and slowly improve.'}</p>` +
+        `</div>`
+      : '';
     return (
       `<div class="pal-title">ROUTE NETWORK <button class="mini rn-close" title="close (R)">✕</button></div>` +
-      `<p class="insp-skills">${r.routes.length} links · ${built.length} built · upkeep ` + formatCurrency(upkeep, 1) + `/mo</p>` +
+      `<p class="insp-skills">${r.routes.length} links · ${built.length} built · upkeep ` + formatCurrency(upkeep, 1) + `/mo at full</p>` +
+      budgetHtml +
       `<div class="thoughts">${rows || '<p class="insp-skills">no routes yet</p>'}</div>`
     );
   }

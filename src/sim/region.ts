@@ -1810,6 +1810,13 @@ export class RegionSim {
   passedLaws: Set<string> = new Set();
   /** Trade levy taken from merchant turnover; default 5%, reducible by law. */
   tradeLevyRate = 0.05;
+  /**
+   * Road & rail maintenance funding level (Issue #16): a single budget knob
+   * instead of per-route micromanagement. 1.0 = fully fund upkeep (routes hold
+   * and slowly improve); below 1.0 underfunds (routes degrade); above 1.0
+   * over-funds for rapid catch-up repairs. Range 0–1.5.
+   */
+  routeBudget = 1.0;
   /** Estate Tax law active: monthly wealth levy. */
   estateTaxActive = false;
   // ---- Nation-tier: Constitutional Convention & Proclamation (GDD §2.2) ----
@@ -3087,24 +3094,55 @@ export class RegionSim {
     return (r.path.length / CELL_SCALE) * ROUTE_SPECS[r.kind].maintPerCell * automation;
   }
 
+  /** Set the route maintenance budget level (0–1.5). 1.0 fully funds upkeep. */
+  setRouteBudget(level: number): void {
+    this.routeBudget = Math.max(0, Math.min(1.5, level));
+  }
+
+  /** Projected monthly route-maintenance spend at the current budget level —
+   *  what the slider will actually draw from the treasury this month. */
+  routeUpkeepProjected(): number {
+    let total = 0;
+    for (const r of this.routes) {
+      if (r.kind === 'trail') continue;
+      total += this.maintBill(r) * this.routeBudget;
+    }
+    return total;
+  }
+
   /** Monthly upkeep on built links from the treasury — an unmaintained
-   *  empire rots. Rail crews cost more than road gangs. */
+   *  empire rots. Rail crews cost more than road gangs. The routeBudget knob
+   *  (Issue #16) scales how much the treasury spends and how fast routes mend:
+   *  full funding holds and improves them, underfunding lets them degrade. */
   private maintainRoutes(): void {
     const investmentBonus = this.policyActive('public_investment') ? 2 : 0;
     let rotting = false;
+    let starved = false;
     for (const r of this.routes) {
       if (r.kind === 'trail') continue;
-      const bill = this.maintBill(r);
+      const bill = this.maintBill(r) * this.routeBudget;
       if (this.treasury >= bill) {
         this.treasury -= bill;
-        r.condition = Math.min(100, r.condition + 8 + investmentBonus);
+        // Net condition: at budget 1.0 → +8; at 0 → −6 (no spend, full rot);
+        // capped at +12 when over-funding for rapid repair. Public Investment
+        // adds its bonus only when at least fully funded.
+        const delta = Math.min(12, -6 + 14 * this.routeBudget) + (this.routeBudget >= 1 ? investmentBonus : 0);
+        if (delta >= 0) {
+          r.condition = Math.min(100, r.condition + delta);
+        } else {
+          r.condition = Math.max(ROUTE_CONDITION_FLOOR, r.condition + delta);
+          if (this.routeBudget > 0) rotting = true;
+        }
       } else {
+        // Couldn't afford even the reduced bill — routes rut over regardless.
         r.condition = Math.max(ROUTE_CONDITION_FLOOR, r.condition - 6);
-        rotting = true;
+        starved = true;
       }
     }
-    if (rotting && this.rng.chance(0.3)) {
+    if (starved && this.rng.chance(0.3)) {
       this.addLog('No coin for the road and rail gangs — the built routes are rutting over.', 'bad');
+    } else if (rotting && this.rng.chance(0.2)) {
+      this.addLog('The maintenance budget is lean — roads and rails are slowly degrading.', 'info');
     }
   }
 
@@ -6878,6 +6916,7 @@ export class RegionSim {
       lastElectionYear: this.lastElectionYear,
       passedLaws: [...this.passedLaws],
       tradeLevyRate: this.tradeLevyRate,
+      routeBudget: this.routeBudget,
       estateTaxActive: this.estateTaxActive,
       nationProclaimed: this.nationProclaimed,
       nationName: this.nationName,
@@ -7001,6 +7040,7 @@ export class RegionSim {
     r.lastElectionYear = d.lastElectionYear ?? -1;
     r.passedLaws = new Set(d.passedLaws ?? []);
     r.tradeLevyRate = d.tradeLevyRate ?? 0.05;
+    r.routeBudget = d.routeBudget ?? 1.0;
     r.estateTaxActive = d.estateTaxActive ?? false;
     r.nationProclaimed = d.nationProclaimed ?? false;
     r.nationName = d.nationName ?? '';
