@@ -110,6 +110,13 @@ export class RegionView {
   // Offscreen canvas of water pixels; rebuilt only on canvas resize (biomes are fixed).
   private waterMaskCanvas: HTMLCanvasElement | null = null;
   private waterMaskDims = '';
+  // Cached vignette gradient — rebuilt only when canvas dimensions change.
+  private vignetteGrad: CanvasGradient | null = null;
+  private vignetteDims = '';
+  // DOM update throttles — avoid innerHTML reflows every rAF frame.
+  private lastTopBarFrame = -999;
+  private lastEventLogLen = -1;
+  private lastEventLogFrame = -999;
   // Province list cache: computeProvinces() is O(settlements) but called in two hot paths.
   private _provincesCache: Province[] = [];
   private _provincesCacheFrame = -1;
@@ -432,6 +439,7 @@ export class RegionView {
     const W = canvas.width;
     const H = canvas.height;
 
+    g.imageSmoothingEnabled = false;
     g.fillStyle = '#10141c';
     g.fillRect(0, 0, W, H);
     // Everything from the terrain to the expedition wagons is map-space: apply
@@ -785,7 +793,6 @@ export class RegionView {
     }
 
     this.drawRivalBanners(W, H);
-    this.drawWeather(W, H);
     this.updateTopBar();
     this.updateEventLog();
     this.drawPanel();
@@ -1206,11 +1213,15 @@ export class RegionView {
     // Seasonal wash — faint, so it colours the mood without fighting the map.
     const seasonTint = ['rgba(120,180,96,0.07)', 'rgba(255,206,120,0.06)', 'rgba(208,138,60,0.08)', 'rgba(150,182,224,0.09)'][lit.season] ?? '';
     if (seasonTint) { g.fillStyle = seasonTint; g.fillRect(0, 0, W, H); }
-    // Vignette: a darkened frame that draws the eye inward.
-    const vg = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.36, W / 2, H / 2, Math.max(W, H) * 0.72);
-    vg.addColorStop(0, 'rgba(0,0,0,0)');
-    vg.addColorStop(1, 'rgba(4,6,12,0.5)');
-    g.fillStyle = vg;
+    // Vignette: a darkened frame that draws the eye inward. Gradient is cached per canvas size.
+    const dims = `${W}x${H}`;
+    if (!this.vignetteGrad || this.vignetteDims !== dims) {
+      this.vignetteDims = dims;
+      this.vignetteGrad = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.36, W / 2, H / 2, Math.max(W, H) * 0.72);
+      this.vignetteGrad.addColorStop(0, 'rgba(0,0,0,0)');
+      this.vignetteGrad.addColorStop(1, 'rgba(4,6,12,0.5)');
+    }
+    g.fillStyle = this.vignetteGrad;
     g.fillRect(0, 0, W, H);
   }
 
@@ -1731,33 +1742,6 @@ export class RegionView {
     g.strokeStyle = '#6e4a2f';
     g.lineWidth = 2;
     g.strokeRect(m - 4, m - 4, W - 2 * m + 8, H - 2 * m + 8);
-  }
-
-  /** Cloud cover and rain streaks driven by today's actual weather. */
-  private drawWeather(W: number, H: number): void {
-    const { g, region } = this;
-    const w = region.weather.forDay(region.day);
-    if (w.rainfall < 0.25) return;
-    // drifting cloud shadows
-    g.fillStyle = `rgba(14,16,24,${Math.min(0.35, w.rainfall * 0.4)})`;
-    const drift = this.frame * 0.3;
-    for (let i = 0; i < 6; i++) {
-      const cx = ((i * 977 + drift) % (W + 400)) - 200;
-      const cy = 80 + ((i * 613) % (H - 160));
-      for (let k = 0; k < 5; k++) {
-        g.fillRect(cx + k * 38 - 76, cy + (k % 2) * 14 - 7, 80, 26);
-      }
-    }
-    if (w.sky === 'rain' || w.sky === 'storm' || w.sky === 'snow') {
-      g.fillStyle = w.sky === 'snow' ? 'rgba(230,235,245,0.5)' : 'rgba(160,190,220,0.4)';
-      const n = w.sky === 'storm' ? 220 : 120;
-      for (let i = 0; i < n; i++) {
-        const x = (i * 89 + this.frame * (w.sky === 'snow' ? 1 : 7)) % W;
-        const y = (i * 53 + this.frame * (w.sky === 'snow' ? 2 : 11)) % H;
-        if (w.sky === 'snow') g.fillRect(x, y, 2, 2);
-        else g.fillRect(x, y, 1, 5);
-      }
-    }
   }
 
   /** The promotion-as-moment (GDD §2.2): name the State, choose its lean. */
@@ -3332,6 +3316,8 @@ export class RegionView {
   }
 
   private updateTopBar(): void {
+    if (this.frame - this.lastTopBarFrame < 8) return;
+    this.lastTopBarFrame = this.frame;
     const r = this.region;
     const year = Math.floor(r.minute / (60 * 24 * 365));
     const dayOfYear = Math.floor((r.minute / (60 * 24)) % 365);
@@ -3366,6 +3352,10 @@ export class RegionView {
 
   private updateEventLog(): void {
     const r = this.region;
+    const logLen = r.log.length;
+    if (logLen === this.lastEventLogLen && this.frame - this.lastEventLogFrame < 30) return;
+    this.lastEventLogLen = logLen;
+    this.lastEventLogFrame = this.frame;
     const last3 = r.log.slice(-3).reverse();
     const entries = last3.map((entry) => {
       const className = `log-entry log-${entry.kind}`;
