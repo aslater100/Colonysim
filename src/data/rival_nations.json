@@ -1,0 +1,332 @@
+[
+  {
+    "id": "vasterholm",
+    "name": "Vasterholm",
+    "leader": "Chancellor Aldric the Consolidated",
+    "archetype": "hegemon",
+    "regimeId": "AbsoluteMonarchy",
+    "description": "An ancient empire forged in mountain warfare, seeking to unite the river basins under one crown.",
+    "flag": {
+      "primary": "#8B0000",
+      "secondary": "#FFD700",
+      "emblem": "⚜️",
+      "symbol": "Golden Crown over Twin Rivers"
+    },
+    "startingBonuses": {
+      "treasury": 1.2,
+      "warriors": 8,
+      "settlers": 2,
+      "techUnlock": "fortifications"
+    },
+    "traits": ["militaristic", "expansionist", "honorable"],
+    "agenda": "Unite the river basins under one crown",
+    "personality": {
+      "expansion": 9,
+      "commerce": 4,
+      "ideology": 5,
+      "honor": 4,
+      "risk": 7,
+      "grudge": 5
+    }
+  },
+  {
+    "id": "kalimera",
+    "name": "Kalimera",
+    "leader": "Doge Maren the Shrewd",
+    "archetype": "trading_republic",
+    "regimeId": "MerchantRepublic",
+    "description": "A coastal maritime federation seeking to corner the carrying trade from north to south.",
+    "flag": {
+      "primary": "#0066CC",
+      "secondary": "#FFFFFF",
+      "emblem": "⚓",
+      "symbol": "Crossed Anchors over Waves"
+    },
+    "startingBonuses": {
+      "treasury": 1.5,
+      "traders": 5,
+      "harbors": 1,
+      "techUnlock": "cartography"
+    },
+    "traits": ["mercantile", "diplomatic", "flexible"],
+    "agenda": "Corner the coastal carrying trade",
+    "personality": {
+      "expansion": 3,
+      "commerce": 9,
+      "ideology": 3,
+      "honor": 7,
+      "risk": 3,
+      "grudge": 3
+    }
+  },
+  {
+    "id": "tyrennia",
+    "name": "Tyrennia",
+    "leader": "High Prelate Oswyn the Zealous",
+    "archetype": "crusader_state",
+    "regimeId": "Theocracy",
+    "description": "A theocratic crusade spreading ideological fervor across the continent.",
+    "flag": {
+      "primary": "#1A1A2E",
+      "secondary": "#FF6B35",
+      "emblem": "✦",
+      "symbol": "Flame over Holy Book"
+    },
+    "startingBonuses": {
+      "treasury": 0.9,
+      "clergy": 3,
+      "culturalInfluence": 1.3,
+      "techUnlock": "divinity"
+    },
+    "traits": ["ideological", "zealous", "uncompromising"],
+    "agenda": "Spread the one true creed across the lands",
+    "personality": {
+      "expansion": 6,
+      "commerce": 3,
+      "ideology": 9,
+      "honor": 5,
+      "risk": 6,
+      "grudge": 6
+    }
+  },
+  {
+    "id": "karelia",
+    "name": "Karelia",
+    "leader": "Jarl Torsten the Steadfast",
+    "archetype": "hermit_kingdom",
+    "regimeId": "ConstitutionalMonarchy",
+    "description": "Mountain-dwelling peoples fiercely guarding their independence and pass-roads.",
+    "flag": {
+      "primary": "#2F4F4F",
+      "secondary": "#C0C0C0",
+      "emblem": "⛏",
+      "symbol": "Mountain Peak with Snow"
+    },
+    "startingBonuses": {
+      "defensiveBonus": 1.4,
+      "mountainResourcesBonus": 1.25,
+      "walls": 3,
+      "techUnlock": "masonry"
+    },
+    "traits": ["isolationist", "defensive", "resourceful"],
+    "agenda": "Keep the mountain passes closed and proud",
+    "personality": {
+      "expansion": 2,
+      "commerce": 2,
+      "ideology": 6,
+      "honor": 6,
+      "risk": 2,
+      "grudge": 8
+    }
+  },
+  {
+    "id": "sundered_communes",
+    "name": "The Sundered Communes",
+    "leader": "Architect-Council Alexi (Rotating)",
+    "archetype": "opportunist",
+    "regimeId": "PeoplesRepublic",
+    "description": "A loose federation of city-states profiting from every conflict while avoiding direct confrontation.",
+    "flag": {
+      "primary": "#4B0082",
+      "secondary": "#00FF00",
+      "emblem": "◆",
+      "symbol": "Interconnected Circles"
+    },
+    "startingBonuses": {
+      "treasury": 0.8,
+      "diplomaciBonus": 1.2,
+      "spies": 4,
+      "techUnlock": "espionage"
+    },
+    "traits": ["pragmatic", "cunning", "adaptable"],
+    "agenda": "Profit from every conflict but commit to none",
+    "personality": {
+      "expansion": 6,
+      "commerce": 6,
+      "ideology": 2,
+      "honor": 2,
+      "risk": 9,
+      "grudge": 4
+    }
+  },
+  {
+    "id": "northern_league",
+    "name": "The Northern League",
+    "leader": "Admiral Soren the Navigator",
+    "archetype": "trading_republic",
+    "regimeId": "Parliamentary",
+    "description": "A seafaring confederation commanding the northern shipping lanes and ice trade routes.",
+    "flag": {
+      "primary": "#003D7A",
+      "secondary": "#FFFFFF",
+      "emblem": "⛵",
+      "symbol": "Ship under Northern Star"
+    },
+    "startingBonuses": {
+      "navalPower": 1.3,
+      "harbors": 2,
+      "ships": 4,
+      "techUnlock": "advanced_cartography"
+    },
+    "traits": ["maritime", "exploratory", "commercial"],
+    "agenda": "Command the northern seas and routes",
+    "personality": {
+      "expansion": 4,
+      "commerce": 8,
+      "ideology": 4,
+      "honor": 6,
+      "risk": 5,
+      "grudge": 2
+    }
+  },
+  {
+    "id": "highland_federation",
+    "name": "The Highland Federation",
+    "leader": "Clan Mother Grania the Wise",
+    "archetype": "hermit_kingdom",
+    "regimeId": "ConstitutionalMonarchy",
+    "description": "Highland clans unified by shared culture and resilience in harsh mountain terrain.",
+    "flag": {
+      "primary": "#556B2F",
+      "secondary": "#DAA520",
+      "emblem": "🏔",
+      "symbol": "Crossed Claymores over Heather"
+    },
+    "startingBonuses": {
+      "scarcityResilience": 1.3,
+      "clanUnity": 1.25,
+      "population": 1.2,
+      "techUnlock": "pastoral_economy"
+    },
+    "traits": ["communal", "hardy", "independent"],
+    "agenda": "Preserve highland freedom and tradition",
+    "personality": {
+      "expansion": 1,
+      "commerce": 3,
+      "ideology": 7,
+      "honor": 7,
+      "risk": 3,
+      "grudge": 7
+    }
+  },
+  {
+    "id": "crescent_sultanate",
+    "name": "The Crescent Sultanate",
+    "leader": "Sultan Jahangir the Magnificent",
+    "archetype": "crusader_state",
+    "regimeId": "AbsoluteMonarchy",
+    "description": "A vast Islamic empire spreading faith, learning, and order across desert and river lands.",
+    "flag": {
+      "primary": "#00AA00",
+      "secondary": "#FFD700",
+      "emblem": "☪",
+      "symbol": "Star and Crescent over Dome"
+    },
+    "startingBonuses": {
+      "populationGrowth": 1.3,
+      "goldenAge": 0.8,
+      "scholars": 4,
+      "techUnlock": "advanced_mathematics"
+    },
+    "traits": ["populous", "learned", "ordered"],
+    "agenda": "Expand the caliphate with faith and reason",
+    "personality": {
+      "expansion": 7,
+      "commerce": 5,
+      "ideology": 8,
+      "honor": 6,
+      "risk": 5,
+      "grudge": 4
+    }
+  },
+  {
+    "id": "iron_republics",
+    "name": "The Iron Republics",
+    "leader": "Chief Magistrate Petra Eisenmann",
+    "archetype": "hegemon",
+    "regimeId": "OnePartyState",
+    "description": "Industrial city-states fused into an iron republic, dominating manufacturing and raw materials.",
+    "flag": {
+      "primary": "#1C1C1C",
+      "secondary": "#FF4500",
+      "emblem": "⚙",
+      "symbol": "Hammer over Cog and Factory"
+    },
+    "startingBonuses": {
+      "manufacturing": 1.4,
+      "ironProduction": 1.3,
+      "factories": 2,
+      "techUnlock": "industrial_revolution"
+    },
+    "traits": ["industrial", "organized", "materialist"],
+    "agenda": "Control the means of production",
+    "personality": {
+      "expansion": 8,
+      "commerce": 6,
+      "ideology": 6,
+      "honor": 3,
+      "risk": 6,
+      "grudge": 5
+    }
+  },
+  {
+    "id": "forest_collective",
+    "name": "The Forest Collective",
+    "leader": "Keeper-Sage Aelindor the Green",
+    "archetype": "opportunist",
+    "regimeId": "PeoplesRepublic",
+    "description": "Forest-dwellers and woodland protectors profiting from sustainable timber and natural resources.",
+    "flag": {
+      "primary": "#228B22",
+      "secondary": "#FFD700",
+      "emblem": "🌲",
+      "symbol": "Ancient Oak over Green Land"
+    },
+    "startingBonuses": {
+      "timberProduction": 1.4,
+      "forestResilience": 1.2,
+      "environment": 1.3,
+      "techUnlock": "sustainable_forestry"
+    },
+    "traits": ["ecological", "sustainable", "prosperous"],
+    "agenda": "Thrive in harmony with the green lands",
+    "personality": {
+      "expansion": 5,
+      "commerce": 7,
+      "ideology": 4,
+      "honor": 5,
+      "risk": 4,
+      "grudge": 3
+    }
+  },
+  {
+    "id": "sunset_empire",
+    "name": "The Sunset Empire",
+    "leader": "Emperor Marcos the Eternal",
+    "archetype": "hegemon",
+    "regimeId": "AbsoluteMonarchy",
+    "description": "Ancient empire clinging to faded glory, seeking to reclaim lost dominions.",
+    "flag": {
+      "primary": "#8B4513",
+      "secondary": "#FFD700",
+      "emblem": "👑",
+      "symbol": "Crescent Moon over Sunset"
+    },
+    "startingBonuses": {
+      "culture": 1.3,
+      "treasury": 1.1,
+      "aristocracy": 1.2,
+      "techUnlock": "classical_philosophy"
+    },
+    "traits": ["traditional", "proud", "cultured"],
+    "agenda": "Restore imperial glory and dominion",
+    "personality": {
+      "expansion": 8,
+      "commerce": 5,
+      "ideology": 4,
+      "honor": 8,
+      "risk": 4,
+      "grudge": 6
+    }
+  }
+]

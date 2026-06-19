@@ -18,6 +18,7 @@ import type { Lender, Loan } from './economy';
 import { createInitialLenders } from './lenders';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
+import rivalNationsJson from '../data/rival_nations.json';
 
 export interface TechNode {
   id: string;
@@ -922,6 +923,28 @@ export interface ForeignWar {
   b: number;
   startedDay: number;
   endsDay: number;
+}
+
+/** Named rival nation definition (loaded from rival_nations.json). */
+export interface RivalNationDef {
+  id: string;
+  name: string;
+  leader: string;
+  archetype: RivalArchetype;
+  regimeId: string;
+  description: string;
+  flag: {
+    primary: string;
+    secondary: string;
+    emblem: string;
+    symbol: string;
+  };
+  startingBonuses: {
+    [key: string]: number | string;
+  };
+  traits: string[];
+  agenda: string;
+  personality: RivalPersonality;
 }
 
 /** An AI-initiated treaty offer, waiting in the diplomacy panel. */
@@ -1830,6 +1853,8 @@ export class RegionSim {
   activePolicies: (string | null)[] = [];
   // ---- Rival nations & diplomacy (GDD §5.4, §6.2–6.4) ----
   rivals: RivalNation[] = [];
+  /** Named rival nations that have been used (to avoid duplicates). */
+  usedNamedRivals: Set<string> = new Set();
   /** AI-initiated treaty offers awaiting the player's signature. */
   offers: TreatyOffer[] = [];
   /** Counter-offers from the bargaining table, awaiting signature (§6.3). */
@@ -5654,40 +5679,82 @@ export class RegionSim {
   }
 
   /** A new great power proclaims itself at the edge of the map (GDD §6.2).
-   *  Public so scenarios and tests can seed the world directly. */
+   *  Public so scenarios and tests can seed the world directly.
+   *  Prefers named rival nations from the roster, falls back to procedural generation. */
   spawnRival(archetype?: RivalArchetype): RivalNation | null {
     if (this.rivals.length >= MAX_RIVALS) return null;
-    const kinds = Object.keys(RIVAL_ARCHETYPES) as RivalArchetype[];
-    const arch = archetype ?? kinds[this.rng.int(kinds.length)];
-    const base = RIVAL_ARCHETYPES[arch].weights;
-    const jitter = (v: number) => Math.max(0, Math.min(10, v + this.rng.int(3) - 1));
-    const weights: RivalPersonality = {
-      expansion: jitter(base.expansion),
-      commerce: jitter(base.commerce),
-      ideology: jitter(base.ideology),
-      risk: jitter(base.risk),
-      honor: jitter(base.honor),
-      grudge: jitter(base.grudge),
-    };
-    const regime = this.pickRegime(weights);
-    const names = RIVAL_NAMES.filter((n) => !this.rivals.some((rv) => rv.name === n));
-    const leaders = RIVAL_LEADERS.filter((n) => !this.rivals.some((rv) => rv.leader === n));
+
+    // Try to pick a named rival nation first
+    let namedDef: RivalNationDef | null = null;
+    const availableNamed = (rivalNationsJson as unknown as RivalNationDef[]).filter(
+      (n) => !this.usedNamedRivals.has(n.id),
+    );
+    if (availableNamed.length > 0) {
+      namedDef = availableNamed[this.rng.int(availableNamed.length)];
+      this.usedNamedRivals.add(namedDef.id);
+    }
+
+    // Use named nation data if available, otherwise procedural
+    let arch: RivalArchetype;
+    let weights: RivalPersonality;
+    let regime: RivalRegimeDef;
+    let name: string;
+    let leader: string;
+    let agenda: string;
+
+    if (namedDef) {
+      arch = namedDef.archetype as RivalArchetype;
+      weights = namedDef.personality;
+      regime = RIVAL_REGIMES.find((r) => r.id === namedDef.regimeId) || this.pickRegime(namedDef.personality);
+      name = namedDef.name;
+      leader = namedDef.leader;
+      agenda = namedDef.agenda;
+    } else {
+      // Fallback to procedural generation
+      const kinds = Object.keys(RIVAL_ARCHETYPES) as RivalArchetype[];
+      arch = archetype ?? kinds[this.rng.int(kinds.length)];
+      const base = RIVAL_ARCHETYPES[arch].weights;
+      const jitter = (v: number) => Math.max(0, Math.min(10, v + this.rng.int(3) - 1));
+      weights = {
+        expansion: jitter(base.expansion),
+        commerce: jitter(base.commerce),
+        ideology: jitter(base.ideology),
+        risk: jitter(base.risk),
+        honor: jitter(base.honor),
+        grudge: jitter(base.grudge),
+      };
+      regime = this.pickRegime(weights);
+      const names = RIVAL_NAMES.filter((n) => !this.rivals.some((rv) => rv.name === n));
+      const leaders = RIVAL_LEADERS.filter((n) => !this.rivals.some((rv) => rv.leader === n));
+      name = names[this.rng.int(names.length)] ?? `Power ${this.rivals.length + 1}`;
+      leader = leaders[this.rng.int(leaders.length)] ?? 'the Directorate';
+      agenda = RIVAL_AGENDAS[arch];
+    }
+
     // banners stack, but spread the powers around the horizon first
     const counts = { north: 0, east: 0, south: 0, west: 0 };
     for (const rv of this.rivals) counts[rv.compass]++;
     const compass = (['north', 'east', 'south', 'west'] as const)
       .reduce((a, b) => (counts[b] < counts[a] ? b : a));
-    const origin = RIVAL_ORIGINS[this.rng.int(RIVAL_ORIGINS.length)];
+
+    const origin = namedDef ? namedDef.description : RIVAL_ORIGINS[this.rng.int(RIVAL_ORIGINS.length)];
+
+    // Apply starting bonuses to initial population
+    let popBonus = 1.0;
+    if (namedDef && namedDef.startingBonuses.treasury) {
+      popBonus = (namedDef.startingBonuses.treasury as number) || 1.0;
+    }
+
     const rv: RivalNation = {
       id: this.nextId++,
-      name: names[this.rng.int(names.length)] ?? `Power ${this.rivals.length + 1}`,
-      leader: leaders[this.rng.int(leaders.length)] ?? 'the Directorate',
+      name,
+      leader,
       archetype: arch,
       weights,
       regime: regime.id,
-      agenda: RIVAL_AGENDAS[arch],
+      agenda,
       compass,
-      pop: 2500 + this.rng.int(3000),
+      pop: Math.round((2500 + this.rng.int(3000)) * popBonus),
       relations: this.clampRel(10 + weights.commerce - weights.expansion - weights.grudge + this.rng.int(11) - 5),
       treaties: [],
       borderSettled: false,
@@ -5696,6 +5763,7 @@ export class RegionSim {
       lastEnvoyDay: -999,
       lastGiftDay: -999,
     };
+
     // The newcomer arrives into a world with opinions already formed
     for (const other of this.rivals) {
       const ob = this.regimeOf(other).bloc;
@@ -6936,6 +7004,7 @@ export class RegionSim {
       ministers: this.ministers,
       activePolicies: this.activePolicies,
       rivals: this.rivals,
+      usedNamedRivals: [...this.usedNamedRivals],
       offers: this.offers,
       counters: this.counters,
       treatiesBroken: this.treatiesBroken,
@@ -7066,6 +7135,7 @@ export class RegionSim {
     }
     // pre-diplomacy saves carry no rivals: the world is still empty
     r.rivals = (d.rivals ?? []).map((rv: RivalNation) => ({ ...rv, borderSettled: rv.borderSettled ?? false }));
+    r.usedNamedRivals = new Set(d.usedNamedRivals ?? []);
     r.offers = d.offers ?? [];
     r.counters = d.counters ?? [];
     r.treatiesBroken = d.treatiesBroken ?? 0;
