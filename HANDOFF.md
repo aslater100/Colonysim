@@ -1,6 +1,6 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-18 · **Tests:** 917 passing · **Version:** v0.43.0
+**Last updated:** 2026-06-19 · **Tests:** 243 passing · **Version:** v1.0.1
 
 ## The game: a standalone 4X campaign
 
@@ -82,35 +82,75 @@ npm install
 npm run dev        # http://localhost:5173/core.html  ← the 4X game
 npm run build      # tsc + vite build (must pass)
 npx tsc --noEmit
-npx vitest run --exclude '**/.claude/**'   # 917 tests
+npx vitest run --exclude '**/.claude/**'   # 243 tests
 npm run sim:macro  # nation-tier monetary harness — keep "ON TARGET"
 ```
 
-## Recent completions (PRs #189–#204)
+## Recent completions (PRs #218–#225)
 
-- ✓ **#189** — 4X foundation: `foundColony()`, clean shell, HUD + log, draggable panels
-- ✓ **#190** — Terrain: fog of war + sea bathymetry
-- ✓ **#191** — Atmosphere: day/night, city lights, seasonal tints, vignette
-- ✓ **#192** — Tech & civics depth: +12 nodes (32→44 total)
-- ✓ **#193** — Modern UI: cool-ink dark theme (`.cv-app` scoped)
-- ✓ **#194** — "Path to Nationhood" objectives panel
-- ✓ **#195** — Event toasts (log highlights as transient cards)
-- ✓ **#196** — Save/load: autosave + continue + localStorage
-- ✓ **#197** — Welcome overlay: first-run guide + ? button
-- ✓ **#199–#200** — Recovery: UI stack + events/governance depth (stacked PR consolidation)
-- ✓ **#201** — Handoff refresh: deleted stale PLAN.md
-- ✓ **#202** — Technical docs: HANDOFF_TECHNICAL, BALANCE_KNOBS, TICK_CYCLE
-- ✓ **#203** — Main menu + sparklines + minimap + settlement tooltips
-- ✓ **#204** — Richer rival behavior: personality-driven diplomacy + rare special events
-- ✓ **#205** — Performance polish: O(1) collection lookups in hot simulation paths
+- ✓ **#218** — Fix labor_law grievance test: measurement window and strike masking
+- ✓ **#219** — Tech tree rebuilt as visual DAG: SVG edges, node state coloring, click-to-research
+- ✓ **#220** — Naval system: harbor building (coastal_only), warship unit, sea-trade income method
+- ✓ **#221** — Route maintenance budget: `routeBudget` knob (0–1.5), budget slider in UI, `maintainRoutes()` scaled
+- ✓ **#222** — Harbor building added to `region_buildings.json`; warship in UNIT_TYPES
+- ✓ **#223** — Tech tree visual layout fixes; research panel widened to `min(720px, calc(100vw - 240px))`
+- ✓ **#224** — Route budget slider wired: live readout update without panel rebuild; 4 new budget tests
+- ✓ **#225** — Phase 3 polish: dynamic panel sizing (Issue #14), treasury milestone events (Issue #15), music volume reduced 0.5→0.4 (Issue #13)
+
+## UI Architecture Notes (updated 2026-06-19)
+
+**Dynamic panel sizing** — `.settlement-list-panel` and `.economy-panel` use `min-width: 260px` / `max-width: min(600px, calc(100vw - 380px))` so they expand to content without overflowing the viewport. Added `overflow-x: hidden`, `word-wrap: break-word`, `overflow-wrap: break-word` for long settlement names.
+
+**Research panel** — rewritten as a visual SVG-overlay DAG (`drawResearchPanel()`). Column layout via `techTreeLayout()` (depth-first, barycenter row sort); bezier edges via the SVG overlay `.tt-edges`; node states `.tt-done`, `.tt-active`, `.tt-avail`, `.tt-locked`. Width `min(720px, calc(100vw - 240px))`.
+
+**Route budget slider** — `oninput` updates `.rn-budget-readout` and `.rn-budget-note` spans in-place (no full panel rebuild). Calls `r.setRouteBudget(v)`. See `drawRouteNetworkPanel()`.
+
+**Keyboard shortcuts** — ESC closes current panel; S=settlements, E=economy, R=research, N=route network.
+
+## Event Logging Coverage (updated 2026-06-19)
+
+`addLog(text, kind)` is the central log method. Events currently tracked:
+
+| Category | Triggers |
+|---|---|
+| Population | Milestones: 50, 100, 200, 500, 1000, 2000 (per town) |
+| Economy | Treasury milestones: £1k, £5k, £10k, £25k, £50k; treasury empty → services cut; strikes |
+| Buildings | Completion: `The ${def.name} opens at ${t.name}` |
+| Research | Tech breakthrough with description |
+| Disasters | River floods, drought, sea-rise tidal events |
+| Immigration | Waves of 3+ settlers drawn to content towns |
+| Diplomacy | Treaty offers, rival emergence, regime change, war declaration, peace terms |
+| Routes | Repair, washout, maintenance budget warnings |
+| Rivals | New rival proclaimed; mischief; border friction; foreign wars |
+
+## Audio System (updated 2026-06-19)
+
+**Music** (`src/ui/music.ts`): procedural WebAudio, 6 era windows (ragtime 1900 → future 2040). Master volume target `0.4` (reduced from 0.5 for mid-game immersion). Variety comes from 3–4 hand-written melodic motifs per era that cycle bar-by-bar, with 25% chance of octave-up restatement. Tension scalar: paused → pad only (intensity 0); raid/conflict → full kit (intensity 1). Toggle stored in `localStorage['centuria-music']`.
+
+**Soundscape** (`src/ui/soundscape.ts`): diegetic ambience — hammering (builders), train whistle (rail condition >50), crowd (grievance >50), birds (calm).
+
+## Route Maintenance Budget
+
+`r.routeBudget` (0–1.5, default 1.0) scales the monthly condition delta for all non-trail routes:
+
+```
+delta = min(12, -6 + 14 × budget)   // 0 = −6/mo; 1.0 = +8/mo; 1.5 = +15/mo
+```
+
+`r.routeUpkeepProjected()` returns the projected monthly spend at the current budget. UI slider in Route Network panel updates live without panel rebuild.
+
+## Naval System
+
+`hasHarbor(t)` — true if settlement has a 'harbor' building. `navalTradeIncome()` runs monthly: each harbor settlement earns `0.8 × sectorOutputOf(t) × 0.05` per month as sea-trade income to treasury. Harbor is `coastal_only: true`, prereq: `cartography`. Warship unit in `UNIT_TYPES` with `recruitCost: 80`, `trainingDays: 45`, `powerPerUnit: 3.0`, `supplyCost: 0.10`.
 
 ## Good next candidates
 
-- **World view / province layer** — continental map for nation-tier play (procedural province
-  borders, trade routes, capitals, military deployment).
-- **Per-faction visibility** in settlement founding (currently uses global exploration map).
-- **Advanced diplomacy UI** — treaty editor, trade bloc negotiation, espionage/sabotage.
-- **Late-game flavor** — era-branching cinematics, victory cinematics, post-2100 epilogue states.
+- **Rivals national identity** (Issue #18) — 10+ distinct rival nations with named personalities, unique starting bonuses, flag/emblem data; improve AI goal variety
+- **Land purchase mechanics** (Issue #26) — allow buying unclaimed land tiles directly; require diplomatic agreement for rival land
+- **Installer description** (Issue #1) — update `package.json` description to reflect 1919 post-WWI start
+- **World view / province layer** — continental map for nation-tier play (procedural province borders, trade routes, capitals, military deployment)
+- **Advanced diplomacy UI** — treaty editor, trade bloc negotiation, espionage/sabotage
+- **Late-game flavor** — era-branching cinematics, victory cinematics, post-2100 epilogue states
 
 ## Known weak areas
 
@@ -123,6 +163,17 @@ npm run sim:macro  # nation-tier monetary harness — keep "ON TARGET"
   typical play (1–3 month-per-second tick rate).
 - **Migration and trade calculations** — use `.reduce()` to recompute avgWageOf() per settlement
   once per month; low impact but could cache during the monthly update phase.
+- **Treasury milestone double-firing** — if treasury drops below a milestone and then re-crosses it,
+  the milestone event fires again. Low impact (rare in practice), but could track `loggedMilestones`
+  Set in serialized state if this proves noisy.
+- **Tech tree DAG layout** — `techTreeLayout()` uses barycenter heuristic; doesn't minimize crossings
+  optimally for large sparse trees. Acceptable for current tree size (~40 nodes).
+
+## Deferred to v1.1
+
+- **Issue #25: 1919 start year** — cascade change requiring audit of tech tree unlock times, building
+  availability, world generation start conditions, GDD/README/installer docs. Defer until core
+  mechanics are stable.
 
 ## Design reference
 

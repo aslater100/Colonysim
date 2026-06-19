@@ -503,7 +503,8 @@ export class Music {
     const era = eraForYear(c.year);
     // Ease master volume up from silence, and the lead/drum intensity toward a
     // target set by pause and tension. Paused → pad only; tension → full kit.
-    const targetMaster = 0.5;
+    // Volume slightly reduced for mid-game immersion (0.4 is subtle but present).
+    const targetMaster = 0.4;
     this.master.gain.value += (targetMaster - this.master.gain.value) * 0.02;
     const targetIntensity = c.paused ? 0 : 0.45 + 0.55 * Math.min(1, Math.max(0, c.tension));
     this.intensity += (targetIntensity - this.intensity) * 0.03;

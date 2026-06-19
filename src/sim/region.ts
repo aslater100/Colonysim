@@ -3953,8 +3953,19 @@ export class RegionSim {
     // Your own war contests the lanes (GDD §7.3) — and your own blockade
     // requisitions the merchantmen that would have carried the exports
     if (this.playerWar) this.exportEarningsLastMonth *= this.playerWar.blockade ? 0.6 : 0.7;
+    const treasuryBefore = this.treasury;
     this.treasury += revenue - spending + incomeTaxBonus + centralBankingBonus + estateLevyBonus +
       progressiveTaxBonus + protectionismBonus + austerityBonus + bankInterest + carbonLevyBonus + this.exportEarningsLastMonth;
+
+    // Treasury milestone events
+    if (this.treasury > 0) {
+      for (const milestone of [1000, 5000, 10000, 25000, 50000]) {
+        if (treasuryBefore < milestone && this.treasury >= milestone) {
+          this.addLog(`Treasury reaches ${formatCurrency(milestone)} — a growing power.`, 'good');
+        }
+      }
+    }
+
     if (this.treasury < 0) {
       this.treasury = 0;
       if (this.servicesLevel > 0) {

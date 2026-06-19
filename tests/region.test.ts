@@ -213,6 +213,18 @@ describe('RegionSim (aggregate model)', () => {
     expect(r.treasury).not.toBe(before);
   });
 
+  it('treasury milestones trigger events as wealth accumulates', () => {
+    const r = flipped(42);
+    toStatehood(r);
+    r.taxRate = 0.25;
+    r.treasury = 500; // start just under the first milestone
+    expect(r.log.filter((l) => l.text.includes('Treasury reaches')).length).toBe(0);
+    runDays(r, 360); // wait for treasury to cross £1000
+    const milestoneLogs = r.log.filter((l) => l.text.includes('Treasury reaches'));
+    expect(milestoneLogs.length).toBeGreaterThan(0);
+    expect(r.treasury).toBeGreaterThan(1000);
+  });
+
   it('statehood brings money: taxes fill the treasury, spending drains it', () => {
     const r = flipped(42);
     toStatehood(r);
