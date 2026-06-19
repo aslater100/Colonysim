@@ -6,8 +6,8 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      background: #141a14;
-      color: #c8d4a0;
+      background: linear-gradient(135deg, #0f2838 0%, #1a3a52 50%, #0f2838 100%);
+      color: #e0f2ff;
       font-family: 'Courier New', monospace;
       display: flex;
       flex-direction: column;
@@ -20,18 +20,24 @@
     h1 {
       font-size: 2.5rem;
       letter-spacing: 0.3em;
-      color: #e8d88a;
+      color: #5fd0ff;
       margin-bottom: 0.4rem;
+      text-shadow: 0 0 20px rgba(95, 208, 255, 0.5);
+      animation: glow 2s ease-in-out infinite;
+    }
+    @keyframes glow {
+      0%, 100% { text-shadow: 0 0 20px rgba(95, 208, 255, 0.5); }
+      50% { text-shadow: 0 0 30px rgba(95, 208, 255, 0.8); }
     }
     .subtitle {
       font-size: 0.7rem;
-      color: #5a7a5a;
+      color: #a8d5ff;
       letter-spacing: 0.2em;
       margin-bottom: 3rem;
     }
     .status {
       font-size: 0.75rem;
-      color: #8aaa70;
+      color: #ffc857;
       margin-bottom: 0.75rem;
       min-height: 1.1em;
       letter-spacing: 0.05em;
@@ -39,25 +45,27 @@
     .progress-track {
       width: 260px;
       height: 3px;
-      background: #253025;
+      background: rgba(95, 208, 255, 0.2);
       border-radius: 2px;
       overflow: hidden;
       opacity: 0;
       transition: opacity 0.3s;
+      box-shadow: 0 0 10px rgba(95, 208, 255, 0.2);
     }
     .progress-track.visible { opacity: 1; }
     .progress-fill {
       height: 100%;
-      background: #c8b850;
+      background: linear-gradient(90deg, #ffc857, #5fd0ff);
       width: 0%;
       transition: width 0.25s ease-out;
+      box-shadow: 0 0 10px rgba(95, 208, 255, 0.8);
     }
     .version {
       position: fixed;
       bottom: 0.8rem;
       right: 1rem;
       font-size: 0.6rem;
-      color: #304030;
+      color: #5a8fb8;
       letter-spacing: 0.05em;
     }
   </style>
