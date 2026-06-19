@@ -18,6 +18,7 @@ import type { Lender, Loan } from './economy';
 import { createInitialLenders } from './lenders';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
+import rivalNationsJson from '../data/rival_nations.json';
 
 export interface TechNode {
   id: string;
@@ -691,12 +692,32 @@ export type RivalArchetype =
   | 'hegemon' | 'trading_republic' | 'hermit_kingdom' | 'crusader_state' | 'opportunist';
 
 /** The GDD §6.3 archetypes, verbatim as presets over the weights. */
-export const RIVAL_ARCHETYPES: Record<RivalArchetype, { name: string; weights: RivalPersonality }> = {
-  hegemon: { name: 'the Hegemon', weights: { expansion: 9, commerce: 4, ideology: 5, honor: 4, risk: 7, grudge: 5 } },
-  trading_republic: { name: 'the Trading Republic', weights: { expansion: 3, commerce: 9, ideology: 3, honor: 7, risk: 3, grudge: 3 } },
-  hermit_kingdom: { name: 'the Hermit Kingdom', weights: { expansion: 2, commerce: 2, ideology: 6, honor: 6, risk: 2, grudge: 8 } },
-  crusader_state: { name: 'the Crusader State', weights: { expansion: 6, commerce: 3, ideology: 9, honor: 5, risk: 6, grudge: 6 } },
-  opportunist: { name: 'the Opportunist', weights: { expansion: 6, commerce: 6, ideology: 2, honor: 2, risk: 9, grudge: 4 } },
+export const RIVAL_ARCHETYPES: Record<RivalArchetype, { name: string; desc: string; weights: RivalPersonality }> = {
+  hegemon: {
+    name: 'the Hegemon',
+    desc: 'Seeks regional dominance through military might and territorial expansion. Risks conflict to strengthen position.',
+    weights: { expansion: 9, commerce: 4, ideology: 5, honor: 4, risk: 7, grudge: 5 },
+  },
+  trading_republic: {
+    name: 'the Trading Republic',
+    desc: 'Values commerce and stable trade routes above all else. Prefers negotiation and mutual prosperity over conflict.',
+    weights: { expansion: 3, commerce: 9, ideology: 3, honor: 7, risk: 3, grudge: 3 },
+  },
+  hermit_kingdom: {
+    name: 'the Hermit Kingdom',
+    desc: 'Fiercely independent and isolationist. Holds grudges deeply and avoids entanglement with foreign powers.',
+    weights: { expansion: 2, commerce: 2, ideology: 6, honor: 6, risk: 2, grudge: 8 },
+  },
+  crusader_state: {
+    name: 'the Crusader State',
+    desc: 'Driven by ideology and cultural mission. Builds alliances with like-minded powers to spread influence.',
+    weights: { expansion: 6, commerce: 3, ideology: 9, honor: 5, risk: 6, grudge: 6 },
+  },
+  opportunist: {
+    name: 'the Opportunist',
+    desc: 'Adaptable and unpredictable. Profits from others\' misfortunes while avoiding direct commitment.',
+    weights: { expansion: 6, commerce: 6, ideology: 2, honor: 2, risk: 9, grudge: 4 },
+  },
 };
 
 export type TreatyKind = 'non_aggression' | 'trade_agreement' | 'defensive_pact' | 'climate_accord';
@@ -914,6 +935,13 @@ export interface RivalNation {
   history: string[];
   lastEnvoyDay: number;
   lastGiftDay: number;
+  /** National flag colors and emblem (from named rival definitions). */
+  flagData?: {
+    primary: string;
+    secondary: string;
+    emblem: string;
+    symbol: string;
+  };
 }
 
 /** A war between two rival powers — the player reads about it, and sells into it. */
@@ -922,6 +950,28 @@ export interface ForeignWar {
   b: number;
   startedDay: number;
   endsDay: number;
+}
+
+/** Named rival nation definition (loaded from rival_nations.json). */
+export interface RivalNationDef {
+  id: string;
+  name: string;
+  leader: string;
+  archetype: RivalArchetype;
+  regimeId: string;
+  description: string;
+  flag: {
+    primary: string;
+    secondary: string;
+    emblem: string;
+    symbol: string;
+  };
+  startingBonuses: {
+    [key: string]: number | string;
+  };
+  traits: string[];
+  agenda: string;
+  personality: RivalPersonality;
 }
 
 /** An AI-initiated treaty offer, waiting in the diplomacy panel. */
@@ -1830,6 +1880,8 @@ export class RegionSim {
   activePolicies: (string | null)[] = [];
   // ---- Rival nations & diplomacy (GDD §5.4, §6.2–6.4) ----
   rivals: RivalNation[] = [];
+  /** Named rival nations that have been used (to avoid duplicates). */
+  usedNamedRivals: Set<string> = new Set();
   /** AI-initiated treaty offers awaiting the player's signature. */
   offers: TreatyOffer[] = [];
   /** Counter-offers from the bargaining table, awaiting signature (§6.3). */
@@ -5573,6 +5625,7 @@ export class RegionSim {
     traits: string[];
     recentHistory: string[];
     approximateStrength: string;
+    comparison: string;
   } | null {
     const rv = this.rival(id);
     if (!rv) return null;
@@ -5592,12 +5645,18 @@ export class RegionSim {
     if (rv.pop > 20000) strength = 'great-power scale';
     if (rv.pop > 40000) strength = 'continental hegemon';
 
+    // Power comparison relative to player's total population
+    const playerPop = this.settlements.reduce((sum, t) => sum + t.cohorts.bands.reduce((a, b) => a + b, 0), 0);
+    let comparison = '≈ equal strength';
+    if (rv.pop > playerPop * 1.3) comparison = '⬆ stronger than you';
+    else if (rv.pop < playerPop * 0.7) comparison = '⬇ weaker than you';
+
     // Show most recent history items
     const recentHistory = rv.history.slice(-3);
 
     const personality = RIVAL_ARCHETYPES[rv.archetype].name;
 
-    return { personality, traits, recentHistory, approximateStrength: strength };
+    return { personality, traits, recentHistory, approximateStrength: strength, comparison };
   }
 
   private clampRel(v: number): number {
@@ -5654,40 +5713,82 @@ export class RegionSim {
   }
 
   /** A new great power proclaims itself at the edge of the map (GDD §6.2).
-   *  Public so scenarios and tests can seed the world directly. */
+   *  Public so scenarios and tests can seed the world directly.
+   *  Prefers named rival nations from the roster, falls back to procedural generation. */
   spawnRival(archetype?: RivalArchetype): RivalNation | null {
     if (this.rivals.length >= MAX_RIVALS) return null;
-    const kinds = Object.keys(RIVAL_ARCHETYPES) as RivalArchetype[];
-    const arch = archetype ?? kinds[this.rng.int(kinds.length)];
-    const base = RIVAL_ARCHETYPES[arch].weights;
-    const jitter = (v: number) => Math.max(0, Math.min(10, v + this.rng.int(3) - 1));
-    const weights: RivalPersonality = {
-      expansion: jitter(base.expansion),
-      commerce: jitter(base.commerce),
-      ideology: jitter(base.ideology),
-      risk: jitter(base.risk),
-      honor: jitter(base.honor),
-      grudge: jitter(base.grudge),
-    };
-    const regime = this.pickRegime(weights);
-    const names = RIVAL_NAMES.filter((n) => !this.rivals.some((rv) => rv.name === n));
-    const leaders = RIVAL_LEADERS.filter((n) => !this.rivals.some((rv) => rv.leader === n));
+
+    // Try to pick a named rival nation first
+    let namedDef: RivalNationDef | null = null;
+    const availableNamed = (rivalNationsJson as unknown as RivalNationDef[]).filter(
+      (n) => !this.usedNamedRivals.has(n.id),
+    );
+    if (availableNamed.length > 0) {
+      namedDef = availableNamed[this.rng.int(availableNamed.length)];
+      this.usedNamedRivals.add(namedDef.id);
+    }
+
+    // Use named nation data if available, otherwise procedural
+    let arch: RivalArchetype;
+    let weights: RivalPersonality;
+    let regime: RivalRegimeDef;
+    let name: string;
+    let leader: string;
+    let agenda: string;
+
+    if (namedDef) {
+      arch = namedDef.archetype as RivalArchetype;
+      weights = namedDef.personality;
+      regime = RIVAL_REGIMES.find((r) => r.id === namedDef.regimeId) || this.pickRegime(namedDef.personality);
+      name = namedDef.name;
+      leader = namedDef.leader;
+      agenda = namedDef.agenda;
+    } else {
+      // Fallback to procedural generation
+      const kinds = Object.keys(RIVAL_ARCHETYPES) as RivalArchetype[];
+      arch = archetype ?? kinds[this.rng.int(kinds.length)];
+      const base = RIVAL_ARCHETYPES[arch].weights;
+      const jitter = (v: number) => Math.max(0, Math.min(10, v + this.rng.int(3) - 1));
+      weights = {
+        expansion: jitter(base.expansion),
+        commerce: jitter(base.commerce),
+        ideology: jitter(base.ideology),
+        risk: jitter(base.risk),
+        honor: jitter(base.honor),
+        grudge: jitter(base.grudge),
+      };
+      regime = this.pickRegime(weights);
+      const names = RIVAL_NAMES.filter((n) => !this.rivals.some((rv) => rv.name === n));
+      const leaders = RIVAL_LEADERS.filter((n) => !this.rivals.some((rv) => rv.leader === n));
+      name = names[this.rng.int(names.length)] ?? `Power ${this.rivals.length + 1}`;
+      leader = leaders[this.rng.int(leaders.length)] ?? 'the Directorate';
+      agenda = RIVAL_AGENDAS[arch];
+    }
+
     // banners stack, but spread the powers around the horizon first
     const counts = { north: 0, east: 0, south: 0, west: 0 };
     for (const rv of this.rivals) counts[rv.compass]++;
     const compass = (['north', 'east', 'south', 'west'] as const)
       .reduce((a, b) => (counts[b] < counts[a] ? b : a));
-    const origin = RIVAL_ORIGINS[this.rng.int(RIVAL_ORIGINS.length)];
+
+    const origin = namedDef ? namedDef.description : RIVAL_ORIGINS[this.rng.int(RIVAL_ORIGINS.length)];
+
+    // Apply starting bonuses to initial population
+    let popBonus = 1.0;
+    if (namedDef && namedDef.startingBonuses.treasury) {
+      popBonus = (namedDef.startingBonuses.treasury as number) || 1.0;
+    }
+
     const rv: RivalNation = {
       id: this.nextId++,
-      name: names[this.rng.int(names.length)] ?? `Power ${this.rivals.length + 1}`,
-      leader: leaders[this.rng.int(leaders.length)] ?? 'the Directorate',
+      name,
+      leader,
       archetype: arch,
       weights,
       regime: regime.id,
-      agenda: RIVAL_AGENDAS[arch],
+      agenda,
       compass,
-      pop: 2500 + this.rng.int(3000),
+      pop: Math.round((2500 + this.rng.int(3000)) * popBonus),
       relations: this.clampRel(10 + weights.commerce - weights.expansion - weights.grudge + this.rng.int(11) - 5),
       treaties: [],
       borderSettled: false,
@@ -5695,7 +5796,9 @@ export class RegionSim {
       history: [`Proclaimed ${this.year}, ${COMPASS_FLAVOR[compass]} — ${origin}.`],
       lastEnvoyDay: -999,
       lastGiftDay: -999,
+      flagData: namedDef ? namedDef.flag : undefined,
     };
+
     // The newcomer arrives into a world with opinions already formed
     for (const other of this.rivals) {
       const ob = this.regimeOf(other).bloc;
@@ -5707,9 +5810,10 @@ export class RegionSim {
       this.rivalPairs[this.pairKey(rv.id, other.id)] = this.clampRel(Math.max(-60, Math.min(40, rel)));
     }
     this.rivals.push(rv);
+    const archetypeData = RIVAL_ARCHETYPES[arch];
     this.addLog(
       `A NEW POWER: ${COMPASS_FLAVOR[rv.compass]}, ${rv.leader} proclaims ${rv.name}, a ${regime.name.toLowerCase()} ` +
-      `${origin} — ${RIVAL_ARCHETYPES[arch].name}. Its agenda, the envoys say: "${rv.agenda}."`,
+      `${origin} — ${archetypeData.name}. The envoys describe them as follows: "${archetypeData.desc}" Their stated agenda: "${rv.agenda}."`,
       'info',
     );
     return rv;
@@ -5723,6 +5827,20 @@ export class RegionSim {
     if (kind === 'non_aggression') ask -= 10 - rv.weights.risk; // the cautious want fences
     if (kind === 'defensive_pact') ask -= rv.weights.honor * 1.5;
     if (kind === 'climate_accord') ask += rv.weights.expansion * 2 - rv.weights.commerce * 1.5;
+
+    // Archetype-driven negotiating tactics
+    if (rv.archetype === 'trading_republic' && kind === 'trade_agreement') {
+      ask -= 8; // merchants drive hard bargains on trade
+    } else if (rv.archetype === 'hegemon' && kind === 'defensive_pact') {
+      ask += 10; // hegemons avoid entangling alliances
+    } else if (rv.archetype === 'hermit_kingdom' && kind === 'non_aggression') {
+      ask -= 5; // hermits prize fences
+    } else if (rv.archetype === 'crusader_state' && kind === 'defensive_pact') {
+      ask -= 6; // crusaders build coalitions
+    } else if (rv.archetype === 'opportunist') {
+      ask += 5; // opportunists play hard to get
+    }
+
     // Alliance stance (nation design): a coalition-builder's word is easier
     // to take; an isolationist's signature is worth less to everyone.
     if (this.allianceStance === 'coalition-builder') ask -= 5;
@@ -5735,20 +5853,45 @@ export class RegionSim {
   /** What signing this treaty is worth *to the rival*, in diplomatic points —
    *  positive is appetite, negative is a concession it wants paying for. */
   treatyAppetite(rv: RivalNation, kind: TreatyKind): number {
+    // Base personality-driven appetite
+    let appetite = 0;
     switch (kind) {
       case 'trade_agreement':
-        // fuel access is worth triple to an oil-poor industrializer — here,
-        // markets are worth most to the commerce-minded
-        return rv.weights.commerce * 1.6 - 4;
+        // Markets are most valuable to commerce-minded powers
+        appetite = rv.weights.commerce * 1.6 - 4;
+        // Trading republics and merchants prize this highest
+        if (rv.archetype === 'trading_republic') appetite += 3;
+        break;
       case 'non_aggression':
-        return (10 - rv.weights.risk) * 0.8 + rv.weights.honor * 0.3 - 3;
+        appetite = (10 - rv.weights.risk) * 0.8 + rv.weights.honor * 0.3 - 3;
+        // Hermit kingdoms and defensive-minded powers love these
+        if (rv.archetype === 'hermit_kingdom') appetite += 2;
+        if (rv.archetype === 'crusader_state') appetite += 1; // ideological protection
+        // Hegemons and opportunists less interested
+        if (rv.archetype === 'hegemon') appetite -= 2;
+        if (rv.archetype === 'opportunist') appetite -= 1;
+        break;
       case 'defensive_pact':
-        // an entangling commitment: the honorable mean it, the rash resent it
-        return rv.weights.honor * 0.8 - rv.weights.risk * 0.5 - 5;
+        // An entangling commitment: the honorable mean it, the rash resent it
+        appetite = rv.weights.honor * 0.8 - rv.weights.risk * 0.5 - 5;
+        // Crusader states and trading republics form defensive alliances
+        if (rv.archetype === 'crusader_state') appetite += 2; // ideological alliance
+        if (rv.archetype === 'trading_republic') appetite += 1; // mutual protection
+        // Hegemons avoid entangling alliances
+        if (rv.archetype === 'hegemon') appetite -= 3;
+        // Opportunists avoid commitment
+        if (rv.archetype === 'opportunist') appetite -= 2;
+        break;
       case 'climate_accord':
-        // commerce-driven powers value stable, shared rules; expansion hawks balk
-        return rv.weights.commerce * 1.2 - rv.weights.expansion * 0.8 - 3;
+        // Commerce-driven powers value stable, shared rules; expansion hawks balk
+        appetite = rv.weights.commerce * 1.2 - rv.weights.expansion * 0.8 - 3;
+        // Trading republics support environmental stability for trade
+        if (rv.archetype === 'trading_republic') appetite += 2;
+        // Hegemons resist external constraints
+        if (rv.archetype === 'hegemon') appetite -= 2;
+        break;
     }
+    return appetite;
   }
 
   /** A fixed frontier, valued by temperament: hermits love fences,
@@ -6936,6 +7079,7 @@ export class RegionSim {
       ministers: this.ministers,
       activePolicies: this.activePolicies,
       rivals: this.rivals,
+      usedNamedRivals: [...this.usedNamedRivals],
       offers: this.offers,
       counters: this.counters,
       treatiesBroken: this.treatiesBroken,
@@ -7066,6 +7210,7 @@ export class RegionSim {
     }
     // pre-diplomacy saves carry no rivals: the world is still empty
     r.rivals = (d.rivals ?? []).map((rv: RivalNation) => ({ ...rv, borderSettled: rv.borderSettled ?? false }));
+    r.usedNamedRivals = new Set(d.usedNamedRivals ?? []);
     r.offers = d.offers ?? [];
     r.counters = d.counters ?? [];
     r.treatiesBroken = d.treatiesBroken ?? 0;

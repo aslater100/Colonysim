@@ -2,7 +2,7 @@
   "name": "centuria",
   "private": true,
   "version": "1.0.1",
-  "description": "Centuria",
+  "description": "CENTURIA — a deep 4X civilization builder spanning 1900–2100, from colonial town to world power",
   "author": "aslater100",
   "type": "module",
   "main": "electron/main.js",
