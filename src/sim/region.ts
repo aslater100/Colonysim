@@ -955,6 +955,10 @@ export interface RivalNation {
   history: string[];
   lastEnvoyDay: number;
   lastGiftDay: number;
+  /** Player's intelligence penetration of this rival, 0..1 (espionage, GDD §5.5). */
+  intel?: number;
+  /** Cooldown gate for covert operations against this rival. */
+  lastEspionageDay?: number;
   /** National flag colors and emblem (from named rival definitions). */
   flagData?: {
     primary: string;
@@ -1010,6 +1014,68 @@ export const RIVAL_EMERGENCE_YEAR = 1922;
 export const MAX_RIVALS = 6;
 /** Each treaty the player breaks raises every future ask (GDD §5.4 reputation). */
 export const TREATY_BREACH_PENALTY = 15;
+
+// ---- Espionage (GDD §5.5: the shadow war) ----
+
+/** Covert operations the player can run against a rival nation. */
+export type EspionageOp = 'gather_intel' | 'steal_tech' | 'sabotage_economy' | 'incite_unrest';
+
+export interface EspionageOpDef {
+  name: string;
+  short: string;
+  cost: number;          // £ to attempt
+  intelRequired: number; // 0..1 minimum intel on the target to attempt
+  baseSuccess: number;   // 0..1 base success before the intel bonus
+  exposureRisk: number;  // 0..1 base chance of being caught
+  desc: string;
+}
+
+export const ESPIONAGE_OPS: Record<EspionageOp, EspionageOpDef> = {
+  gather_intel: {
+    name: 'Gather Intelligence', short: 'spy', cost: 30, intelRequired: 0, baseSuccess: 0.85, exposureRisk: 0.05,
+    desc: 'Plant agents in their chanceries. Raises your intel on the target, improving every later operation.',
+  },
+  steal_tech: {
+    name: 'Steal Technology', short: 'steal', cost: 120, intelRequired: 0.4, baseSuccess: 0.55, exposureRisk: 0.25,
+    desc: 'Industrial espionage: lift their blueprints. Pushes your current research sharply forward (or a treasury windfall).',
+  },
+  sabotage_economy: {
+    name: 'Sabotage Economy', short: 'sabotage', cost: 100, intelRequired: 0.5, baseSuccess: 0.55, exposureRisk: 0.35,
+    desc: 'Burn a warehouse district. Sets the rival nation back — and risks a war if your hand is seen.',
+  },
+  incite_unrest: {
+    name: 'Incite Unrest', short: 'incite', cost: 90, intelRequired: 0.5, baseSuccess: 0.5, exposureRisk: 0.3,
+    desc: 'Fund dissidents and sow discord. Damages the rival and can fracture one of their alliances.',
+  },
+};
+
+/** Days between covert operations against the same rival. */
+export const ESPIONAGE_COOLDOWN_DAYS = 120;
+
+/** Outcome of a covert operation, surfaced to the UI. */
+export interface EspionageResult {
+  ok: boolean;       // was the operation attempted at all
+  success: boolean;  // did it achieve its goal
+  exposed: boolean;  // were we caught (relations fallout)
+  reason: string;    // human-readable outcome or refusal
+}
+
+// ---- Trade blocs (GDD §6.5: economic alliances beyond the bilateral pact) ----
+
+/** A named multi-member economic union the player founds with trade partners. */
+export interface TradeBloc {
+  id: number;
+  name: string;
+  /** Rival ids in the bloc; the player is the implicit founding member. */
+  memberRivalIds: number[];
+  foundedYear: number;
+  /** Shared external tariff 0..0.5: higher = more revenue, slow cooling with outsiders. */
+  sharedTariff: number;
+}
+
+/** A rival must be at least this warm and hold a trade agreement to join a bloc. */
+export const BLOC_RELATIONS_FLOOR = 40;
+export const BLOC_FORM_COST = 200;
 
 // ---- War (GDD §7): casus belli → mobilization → war score → negotiated peace ----
 
@@ -2008,6 +2074,9 @@ export class RegionSim {
   winCondition: WinCondition | null = null;
   /** Track triggered epilogue events (post-2100 flavor) to avoid repeats */
   private triggeredEpilogueEvents = new Set<string>();
+  /** Player-founded economic unions (GDD §6.5). At most one player bloc. */
+  tradeBlocs: TradeBloc[] = [];
+  private nextBlocId = 1;
   private seaRiseAnnounced = false;
   private lastTidalLogDay = -999;
   private droughtAnnounced = false;
@@ -4025,6 +4094,8 @@ export class RegionSim {
     // Your own war contests the lanes (GDD §7.3) — and your own blockade
     // requisitions the merchantmen that would have carried the exports
     if (this.playerWar) this.exportEarningsLastMonth *= this.playerWar.blockade ? 0.6 : 0.7;
+    // A trade bloc (GDD §6.5) layers extra preferential earnings on top.
+    this.exportEarningsLastMonth += this.blocTradeBonus();
     const treasuryBefore = this.treasury;
     this.treasury += revenue - spending + incomeTaxBonus + centralBankingBonus + estateLevyBonus +
       progressiveTaxBonus + protectionismBonus + austerityBonus + bankInterest + carbonLevyBonus + this.exportEarningsLastMonth;
@@ -6292,6 +6363,193 @@ export class RegionSim {
     return true;
   }
 
+  // ---- Espionage (GDD §5.5): the covert track parallel to open diplomacy ----
+
+  /** The player's current intelligence penetration of a rival, 0..1. */
+  intelOf(rivalId: number): number {
+    return this.rival(rivalId)?.intel ?? 0;
+  }
+
+  /** Probability an operation succeeds, given current intel on the target. */
+  espionageSuccessChance(rivalId: number, op: EspionageOp): number {
+    const def = ESPIONAGE_OPS[op];
+    const intel = this.intelOf(rivalId);
+    return Math.max(0.05, Math.min(0.95, def.baseSuccess + (intel - def.intelRequired) * 0.4));
+  }
+
+  /** Whether a covert operation can be attempted right now. */
+  canRunEspionage(rivalId: number, op: EspionageOp): { ok: boolean; reason: string } {
+    const rv = this.rival(rivalId);
+    const def = ESPIONAGE_OPS[op];
+    if (!rv) return { ok: false, reason: 'No such rival' };
+    if (!this.stateProclaimed) return { ok: false, reason: 'Proclaim a State first' };
+    if (this.treasury < def.cost) return { ok: false, reason: `Need ${formatCurrency(def.cost)}` };
+    if (this.day - (rv.lastEspionageDay ?? -ESPIONAGE_COOLDOWN_DAYS) < ESPIONAGE_COOLDOWN_DAYS) {
+      return { ok: false, reason: 'Agents still in the field' };
+    }
+    if ((rv.intel ?? 0) < def.intelRequired) {
+      return { ok: false, reason: `Needs intel ≥ ${Math.round(def.intelRequired * 100)}%` };
+    }
+    return { ok: true, reason: `${formatCurrency(def.cost)} · ${Math.round(this.espionageSuccessChance(rivalId, op) * 100)}% success` };
+  }
+
+  /** Run a covert operation. Rolls success and a separate exposure check; both
+   *  use the AI stream so the open simulation stays reproducible. */
+  runEspionage(rivalId: number, op: EspionageOp): EspionageResult {
+    const can = this.canRunEspionage(rivalId, op);
+    if (!can.ok) return { ok: false, success: false, exposed: false, reason: can.reason };
+    const rv = this.rival(rivalId)!;
+    const def = ESPIONAGE_OPS[op];
+    this.treasury -= def.cost;
+    rv.lastEspionageDay = this.day;
+    const intel = rv.intel ?? 0;
+    const success = this.aiRng.chance(this.espionageSuccessChance(rivalId, op));
+    // Caught more often on a botched job; deep intel buys quieter agents.
+    const exposureP = Math.max(0, Math.min(0.9, def.exposureRisk * (success ? 0.6 : 1.4) * (1 - intel * 0.5)));
+    const exposed = this.aiRng.chance(exposureP);
+
+    let outcome = '';
+    if (success) {
+      switch (op) {
+        case 'gather_intel': {
+          rv.intel = Math.min(1, intel + 0.25);
+          outcome = `Intelligence on ${rv.name} deepens (${Math.round(rv.intel * 100)}%).`;
+          break;
+        }
+        case 'steal_tech': {
+          if (this.activeResearch) {
+            const node = TECH_TREE.find((n) => n.id === this.activeResearch);
+            const boost = node ? this.techCost(node) * 0.4 : 0;
+            this.researchProgress += boost;
+            outcome = `Stolen blueprints from ${rv.name} leap your research forward.`;
+          } else {
+            const windfall = 80 + Math.round(rv.weights.commerce * 12);
+            this.treasury += windfall;
+            outcome = `Lifted trade secrets from ${rv.name} — sold on for ${formatCurrency(windfall)}.`;
+          }
+          break;
+        }
+        case 'sabotage_economy': {
+          rv.pop = Math.round(rv.pop * 0.95);
+          this.noteHistory(rv, `Suffered industrial sabotage, ${this.year}.`);
+          outcome = `A warehouse district of ${rv.name} burns — their economy stumbles.`;
+          break;
+        }
+        case 'incite_unrest': {
+          rv.pop = Math.round(rv.pop * 0.97);
+          // Sow discord: fracture one of the rival's alliances if any exist.
+          const ally = this.alliances.find((k) => k.split(':').map(Number).includes(rv.id));
+          if (ally) {
+            this.alliances = this.alliances.filter((k) => k !== ally);
+            const partner = ally.split(':').map(Number).find((id) => id !== rv.id);
+            const partnerName = partner != null ? this.rival(partner)?.name ?? 'a neighbour' : 'a neighbour';
+            outcome = `Dissident funds split ${rv.name} from ${partnerName} — their alliance fractures.`;
+          } else {
+            outcome = `Unrest spreads through ${rv.name}'s streets.`;
+          }
+          break;
+        }
+      }
+    } else {
+      outcome = `The operation against ${rv.name} fails.`;
+    }
+
+    if (exposed) {
+      const sting = op === 'gather_intel' ? 8 : op === 'steal_tech' ? 16 : 24;
+      rv.relations = this.clampRel(rv.relations - (sting + rv.weights.grudge));
+      this.noteHistory(rv, `Caught ${this.stateName || 'the State'} running agents, ${this.year}.`);
+      this.addLog(`COVERT OP EXPOSED: ${rv.name} catches your hand in the ${def.name.toLowerCase()}. Relations sour.`, 'bad');
+    } else {
+      this.addLog(`${def.name} against ${rv.name}: ${outcome}`, success ? 'good' : 'info');
+    }
+    return { ok: true, success, exposed, reason: outcome };
+  }
+
+  // ---- Trade blocs (GDD §6.5): player-founded economic unions ----
+
+  /** The single trade bloc the player has founded, if any. */
+  playerTradeBloc(): TradeBloc | null {
+    return this.tradeBlocs[0] ?? null;
+  }
+
+  /** Rivals eligible to join a bloc: warm enough and holding a trade agreement. */
+  blocEligibleRivals(): RivalNation[] {
+    return this.rivals.filter(
+      (rv) => rv.relations >= BLOC_RELATIONS_FLOOR && rv.treaties.includes('trade_agreement'),
+    );
+  }
+
+  /** Whether a new bloc can be founded right now. */
+  canFormTradeBloc(): { ok: boolean; reason: string } {
+    if (!this.stateProclaimed) return { ok: false, reason: 'Proclaim a State first' };
+    if (this.playerTradeBloc()) return { ok: false, reason: 'You already lead a bloc' };
+    if (this.treasury < BLOC_FORM_COST) return { ok: false, reason: `Need ${formatCurrency(BLOC_FORM_COST)}` };
+    if (this.blocEligibleRivals().length === 0) {
+      return { ok: false, reason: `Need a trade partner at relations ≥ ${BLOC_RELATIONS_FLOOR}` };
+    }
+    return { ok: true, reason: `Found a bloc (${formatCurrency(BLOC_FORM_COST)})` };
+  }
+
+  /** Found a trade bloc, enrolling every currently-eligible partner. */
+  formTradeBloc(name?: string): boolean {
+    if (!this.canFormTradeBloc().ok) return false;
+    this.treasury -= BLOC_FORM_COST;
+    const members = this.blocEligibleRivals();
+    const bloc: TradeBloc = {
+      id: this.nextBlocId++,
+      name: name?.trim() || `${this.stateName || 'Concordat'} Trade Union`,
+      memberRivalIds: members.map((rv) => rv.id),
+      foundedYear: this.year,
+      sharedTariff: 0.1,
+    };
+    this.tradeBlocs.push(bloc);
+    for (const rv of members) {
+      rv.relations = this.clampRel(rv.relations + 6);
+      this.noteHistory(rv, `Joined the ${bloc.name}, ${this.year}.`);
+    }
+    this.addLog(`TRADE BLOC: the ${bloc.name} is founded with ${members.map((m) => m.name).join(', ')}.`, 'good');
+    return true;
+  }
+
+  /** Invite an eligible rival into the existing bloc. */
+  inviteToBloc(rivalId: number): boolean {
+    const bloc = this.playerTradeBloc();
+    const rv = this.rival(rivalId);
+    if (!bloc || !rv) return false;
+    if (bloc.memberRivalIds.includes(rivalId)) return false;
+    if (rv.relations < BLOC_RELATIONS_FLOOR || !rv.treaties.includes('trade_agreement')) return false;
+    bloc.memberRivalIds.push(rivalId);
+    rv.relations = this.clampRel(rv.relations + 6);
+    this.noteHistory(rv, `Joined the ${bloc.name}, ${this.year}.`);
+    this.addLog(`TRADE BLOC: ${rv.name} accedes to the ${bloc.name}.`, 'good');
+    return true;
+  }
+
+  /** Dissolve the player's bloc. */
+  leaveTradeBloc(): boolean {
+    const bloc = this.playerTradeBloc();
+    if (!bloc) return false;
+    this.tradeBlocs = this.tradeBlocs.filter((b) => b !== bloc);
+    this.addLog(`TRADE BLOC: the ${bloc.name} is dissolved.`, 'info');
+    return true;
+  }
+
+  /** Set the bloc's shared external tariff (0..0.5). */
+  setBlocTariff(v: number): void {
+    const bloc = this.playerTradeBloc();
+    if (!bloc) return;
+    bloc.sharedTariff = Math.max(0, Math.min(0.5, v));
+  }
+
+  /** Monthly extra export earnings the bloc yields beyond the bilateral pacts. */
+  blocTradeBonus(): number {
+    const bloc = this.playerTradeBloc();
+    if (!bloc) return 0;
+    const live = bloc.memberRivalIds.filter((id) => this.rival(id));
+    const per = Math.min(8, this.gdpLastMonth * 0.012);
+    return live.length * per * (1 + bloc.sharedTariff);
+  }
+
   /** Monthly diplomacy tick: emergence, relations drift, AI offers,
    *  hostile mischief, regime change abroad, and foreign wars. */
   private updateDiplomacy(): void {
@@ -7259,6 +7517,8 @@ export class RegionSim {
       militaryDoctrine: this.militaryDoctrine,
       allianceStance: this.allianceStance,
       triggeredEpilogueEvents: [...this.triggeredEpilogueEvents],
+      tradeBlocs: this.tradeBlocs,
+      nextBlocId: this.nextBlocId,
     });
   }
 
@@ -7430,6 +7690,9 @@ export class RegionSim {
     if (typeof d.aiRng === 'number') r.aiRng.setState(d.aiRng);
     // restore epilogue events (post-2100 flavor)
     r.triggeredEpilogueEvents = new Set(d.triggeredEpilogueEvents ?? []);
+    // restore trade blocs (GDD §6.5)
+    r.tradeBlocs = (d.tradeBlocs ?? []).map((b: TradeBloc) => ({ ...b, sharedTariff: b.sharedTariff ?? 0.1 }));
+    r.nextBlocId = d.nextBlocId ?? (r.tradeBlocs.reduce((m, b) => Math.max(m, b.id), 0) + 1);
     return r;
   }
 

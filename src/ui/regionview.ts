@@ -4,7 +4,8 @@
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
 import type { Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType, TechNode } from '../sim/region';
-import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES } from '../sim/region';
+import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES, ESPIONAGE_OPS, BLOC_RELATIONS_FLOOR } from '../sim/region';
+import type { EspionageOp } from '../sim/region';
 import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS, MINUTES_PER_DAY } from '../sim/defs';
 import type { CurrencySymbol } from '../sim/defs';
 import { ANNOUNCE_LEAD_DAYS } from '../sim/currency';
@@ -2052,6 +2053,31 @@ export class RegionView {
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-counter-decline-btn')) {
       btn.onclick = () => r.declineCounter(Number(btn.dataset.rival));
     }
+    // Espionage verbs (GDD §5.5)
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-spy-btn')) {
+      btn.onclick = () => {
+        r.runEspionage(Number(btn.dataset.rival), btn.dataset.op as EspionageOp);
+        this.lastStatePanelBuildFrame = -999; // refresh intel meter + cooldowns
+      };
+    }
+    // Trade bloc verbs (GDD §6.5)
+    this.statePanel.querySelector<HTMLButtonElement>('#bloc-form-btn')?.addEventListener('click', () => {
+      r.formTradeBloc();
+      this.lastStatePanelBuildFrame = -999;
+    });
+    this.statePanel.querySelector<HTMLButtonElement>('#bloc-leave-btn')?.addEventListener('click', () => {
+      r.leaveTradeBloc();
+      this.lastStatePanelBuildFrame = -999;
+    });
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.bloc-invite-btn')) {
+      btn.onclick = () => {
+        r.inviteToBloc(Number(btn.dataset.rival));
+        this.lastStatePanelBuildFrame = -999;
+      };
+    }
+    this.statePanel.querySelector<HTMLInputElement>('#bloc-tariff')?.addEventListener('input', (e) => {
+      r.setBlocTariff(Number((e.target as HTMLInputElement).value) / 100);
+    });
     this.statePanel.querySelector<HTMLButtonElement>('.war-blockade-btn')?.addEventListener('click', () => {
       r.setBlockade(!r.playerWar?.blockade);
     });
@@ -2177,6 +2203,21 @@ export class RegionView {
           `title="Open the bargaining table: compose a multi-item basket (GDD §6.3)">negotiate</button> ` +
           this.quickDealButtons(rv.id) + ` ` +
           proposals + warBtn + `</p>`;
+      // Espionage (GDD §5.5): the covert verbs, gated by intel + treasury + cooldown.
+      const intel = r.intelOf(rv.id);
+      const intelPct = Math.round(intel * 100);
+      const espBtns = (Object.keys(ESPIONAGE_OPS) as EspionageOp[]).map((op) => {
+        const def = ESPIONAGE_OPS[op];
+        const can = r.canRunEspionage(rv.id, op);
+        return `<button class="mini dip-spy-btn" data-rival="${rv.id}" data-op="${op}" ${can.ok ? '' : 'disabled'} ` +
+          `title="${def.desc}\n\n${can.reason}">${def.short}</button>`;
+      }).join(' ');
+      const espionage = r.stateProclaimed
+        ? `<p class="insp-skills" title="Your intelligence penetration of ${rv.name}. Higher intel raises success and lowers exposure.">` +
+          `🕵 intel ${intelPct}% ` +
+          `<span class="bar" style="display:inline-block;width:60px;vertical-align:middle"><span class="bar-fill" style="width:${intelPct}%;background:#9a7fd4"></span></span></p>` +
+          `<p>${espBtns}</p>`
+        : '';
       // Show richer personality information
       const profile = r.rivalProfile(rv.id);
       const personalityInfo = profile
@@ -2194,7 +2235,7 @@ export class RegionView {
         `<span>${rel}</span></div>` +
         `<p class="insp-skills" title="${recentHistory}">${gov}${rv.borderSettled ? ' · border settled' : ''} · ${personalityInfo}${personalityInfo ? ' · ' : ''}${treaties}</p>` +
         offerRow + counterRow +
-        verbs;
+        verbs + espionage;
     }).join('');
     // World affairs: what the powers are doing to each other (GDD §6.4)
     const name = (id: number) => r.rival(id)?.name ?? '?';
@@ -2210,7 +2251,34 @@ export class RegionView {
     const world = wars || pacts ? `<p class="insp-skills">WORLD AFFAIRS</p>` + wars + pacts : '';
     const boom = r.day < r.warBoomUntil ? `<p class="insp-skills">WAR ABROAD — export prices booming</p>` : '';
     const exports = r.exportEarningsLastMonth > 0 ? `<p>exports ` + formatCurrency(Math.floor(r.exportEarningsLastMonth)) + `/mo</p>` : '';
-    return provinceToggleHtml + claimLandHtml + `<p class="insp-skills">DIPLOMACY (relations −100..+100)</p>` + this.warHtml() + boom + exports + rows + world;
+    return provinceToggleHtml + claimLandHtml + `<p class="insp-skills">DIPLOMACY (relations −100..+100)</p>` + this.warHtml() + boom + exports + this.tradeBlocHtml() + rows + world;
+  }
+
+  /** Trade bloc panel (GDD §6.5): found, grow, tune, or dissolve the economic union. */
+  private tradeBlocHtml(): string {
+    const r = this.region;
+    if (!r.stateProclaimed) return '';
+    const bloc = r.playerTradeBloc();
+    if (!bloc) {
+      const can = r.canFormTradeBloc();
+      return `<p class="insp-skills">TRADE BLOC</p>` +
+        `<p><button class="mini" id="bloc-form-btn" ${can.ok ? '' : 'disabled'} ` +
+        `title="A multi-member economic union. Members must hold a trade agreement and relations ≥ ${BLOC_RELATIONS_FLOOR}.\n\n${can.reason}">` +
+        `Found Trade Bloc</button></p>`;
+    }
+    const members = bloc.memberRivalIds.map((id) => r.rival(id)?.name).filter(Boolean).join(', ') || 'none';
+    const invitees = r.blocEligibleRivals().filter((rv) => !bloc.memberRivalIds.includes(rv.id));
+    const inviteBtns = invitees
+      .map((rv) => `<button class="mini bloc-invite-btn" data-rival="${rv.id}" title="Admit ${rv.name} to the bloc">+ ${rv.name}</button>`)
+      .join(' ');
+    const tariffPct = Math.round(bloc.sharedTariff * 100);
+    return `<p class="insp-skills">TRADE BLOC — ${bloc.name}</p>` +
+      `<p>members: <b>${members}</b> · est. ${bloc.foundedYear}</p>` +
+      `<p>bloc trade bonus <b>${formatCurrency(Math.floor(r.blocTradeBonus()))}/mo</b></p>` +
+      `<p>shared tariff ${tariffPct}% ` +
+      `<input type="range" id="bloc-tariff" min="0" max="50" value="${tariffPct}" style="width:90px;vertical-align:middle"></p>` +
+      (inviteBtns ? `<p>${inviteBtns}</p>` : '') +
+      `<p><button class="mini" id="bloc-leave-btn" title="Dissolve the union">Dissolve Bloc</button></p>`;
   }
 
   /** The war room (GDD §7): score, support, mobilization, and the peace table. */
