@@ -29,6 +29,8 @@ export class RegionView {
   /** set true by the view while the Incorporation ceremony is on screen */
   ceremonyOpen = false;
   conventionOpen = false;
+  /** True when player is in "claim land" mode — clicking map cells triggers claimCell(). */
+  claimLandMode = false;
   private g: CanvasRenderingContext2D;
   private panel: HTMLElement;
   private panelTab: 'overview' | 'economy' | 'people' = 'overview';
@@ -247,6 +249,23 @@ export class RegionView {
           this.selectedFactionId = t.factionId;
         }
         return;
+      }
+    }
+
+    // If in claim land mode and no settlement was clicked, try to claim the cell
+    if (this.claimLandMode) {
+      // Convert screen coords to in-game 0..100 coordinates
+      const W = this.canvas.width;
+      const H = this.canvas.height;
+      const m = 60; // same margin as in toPx
+      const inGameX = 100 * (mx - m) / (W - 2 * m);
+      const inGameY = 100 * (my - m) / (H - 2 * m);
+      // Check bounds
+      if (inGameX >= 0 && inGameX <= 100 && inGameY >= 0 && inGameY <= 100) {
+        const cell = this.region.map.coordToCell(inGameX, inGameY);
+        if (cell.x >= 0 && cell.x < 256 && cell.y >= 0 && cell.y < 256) {
+          this.region.claimCell(cell.x, cell.y);
+        }
       }
     }
   }
@@ -1898,6 +1917,10 @@ export class RegionView {
     this.statePanel.querySelector<HTMLButtonElement>('#war-recruit-btn')?.addEventListener('click', () => {
       this.showRecruitmentModal();
     });
+    this.statePanel.querySelector<HTMLButtonElement>('#claim-land-toggle')?.addEventListener('click', () => {
+      this.claimLandMode = !this.claimLandMode;
+      this.lastStatePanelBuildFrame = -999; // force rebuild
+    });
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-sanction-btn')) {
       btn.onclick = () => r.sanctionAccordDefector(Number(btn.dataset.rival));
     }
@@ -1906,7 +1929,15 @@ export class RegionView {
   /** Diplomacy section (GDD §5.4): the rival ledger, treaties, and verbs. */
   private diplomacyHtml(): string {
     const r = this.region;
-    if (r.rivals.length === 0) return '';
+    // Territorial expansion section
+    const claimLandHtml = r.stateProclaimed
+      ? `<p class="insp-skills">TERRITORIAL EXPANSION</p>` +
+        `<p><button id="claim-land-toggle" class="mini" style="${this.claimLandMode ? 'background:#8fc26a;color:#000' : ''}" ` +
+        `title="Click to activate land claim mode, then click on unclaimed hexes adjacent to your territory (£25/cell)">` +
+        `${this.claimLandMode ? '✓ CLAIM LAND MODE' : 'Claim Unclaimed Land'}</button></p>`
+      : '';
+
+    if (r.rivals.length === 0) return claimLandHtml;
     const short: Record<TreatyKind, string> = {
       non_aggression: 'pact: NAP', trade_agreement: 'pact: trade', defensive_pact: 'pact: defense',
       climate_accord: 'pact: climate',

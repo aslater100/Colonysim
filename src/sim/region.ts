@@ -4576,45 +4576,128 @@ export class RegionSim {
    * (treasury < 150). The least-developed non-capital settlement is ceded; player
    * pays £500. Returns true if the purchase completed.
    */
-  buyLand(rivalId: number): boolean {
+  /** Settlement buyout cost based on population and base value. */
+  private settlementBuyoutCost(s: Settlement): number {
+    const pop = this.popOf(s) || 0;
+    const base = 400;
+    return Math.round(base + pop * 2);
+  }
+
+  /** Find the least-populated non-capital settlement a regional faction owns. */
+  private findPurchasableSettlement(factionId: number): Settlement | null {
+    const faction = this.faction(factionId);
+    if (!faction) return null;
+
+    const candidates = faction.settlementIds
+      .map((id) => this.settlement(id))
+      .filter((s): s is Settlement => s !== undefined && s.id !== faction.capital)
+      .sort((a, b) => (this.popOf(a) || 0) - (this.popOf(b) || 0));
+
+    return candidates[0] ?? null;
+  }
+
+  /** Check if player can purchase a settlement from a regional faction. */
+  canBuyLand(factionId: number): { ok: boolean; reason: string } {
+    const faction = this.faction(factionId);
     const playerFaction = this.faction(this.playerFactionId);
-    const rival = this.rival(rivalId);
-    if (!playerFaction || !rival) return false;
 
-    // Check for diplomatic agreement: requires trade agreement or higher relations
-    const hasTradeAgreement = rival.treaties.includes('trade_agreement');
-    const hasFriendlyRelations = rival.relations >= 50;
-    if (!hasTradeAgreement && !hasFriendlyRelations) return false; // no diplomatic ground
+    if (!faction || !playerFaction) return { ok: false, reason: 'Invalid faction' };
 
-    const COST = 500;
-    if (this.treasury < COST) return false;
+    const purchasable = this.findPurchasableSettlement(factionId);
+    if (!purchasable) return { ok: false, reason: 'No purchasable settlements' };
 
-    // Find the rival's least-populated settlement
-    const rivalFaction = this.regionalFactions.find((f) => f.id === rivalId);
-    if (!rivalFaction) return false;
+    const cost = this.settlementBuyoutCost(purchasable);
+    if (this.treasury < cost) return { ok: false, reason: `Need £${cost}` };
 
-    const candidates = rivalFaction.settlementIds
-      .map((id) => ({ id, pop: this.popOf(this.settlement(id)!) || 0 }))
-      .sort((a, b) => a.pop - b.pop);
+    // Diplomatic grounds: trade agreement, friendly relations, or economic pressure
+    // (using regional faction treasury as proxy for relations since regional factions
+    // don't track relations; just check desperation)
+    if (faction.treasury >= 150) {
+      return { ok: false, reason: 'Faction not economically desperate (treasury ≥ £150)' };
+    }
 
-    if (candidates.length === 0) return false;
-    const ceded = candidates[0];
-    const s = this.settlement(ceded.id);
-    if (!s) return false;
+    return { ok: true, reason: formatCurrency(cost) };
+  }
 
-    // Transfer settlement to player
-    s.factionId = this.playerFactionId;
-    rivalFaction.settlementIds = rivalFaction.settlementIds.filter((id) => id !== ceded.id);
-    playerFaction.settlementIds.push(ceded.id);
-    this.treasury -= COST;
-    rivalFaction.treasury += COST;
+  /** Attempt to purchase a non-capital rival settlement. */
+  buyLand(factionId: number): boolean {
+    const can = this.canBuyLand(factionId);
+    if (!can.ok) return false;
 
-    const reason = hasTradeAgreement ? 'honoring their trade agreement' : 'their friendly disposition';
+    const purchasable = this.findPurchasableSettlement(factionId);
+    if (!purchasable) return false;
+
+    const faction = this.faction(factionId)!;
+    const cost = this.settlementBuyoutCost(purchasable);
+    const playerFaction = this.faction(this.playerFactionId)!;
+
+    // Transfer settlement
+    purchasable.factionId = this.playerFactionId;
+    playerFaction.settlementIds.push(purchasable.id);
+    faction.settlementIds = faction.settlementIds.filter((id) => id !== purchasable.id);
+
+    // Financial transaction
+    this.treasury -= cost;
+    faction.treasury += cost;
+
     this.addLog(
-      `LAND PURCHASE: ${rival.name} cedes ${s.name} for ${formatCurrency(COST)}, ` +
-      `${reason}.`,
+      `LAND PURCHASE: ${faction.name} cedes ${purchasable.name} for ${formatCurrency(cost)}.`,
       'good',
     );
+    return true;
+  }
+
+  /** Check if player can claim an unclaimed land cell. Requires Proclamation. */
+  canClaimCell(x: number, y: number): { ok: boolean; reason: string } {
+    if (!this.stateProclaimed) return { ok: false, reason: 'Requires State tier' };
+
+    const r = this.computeTerritoryGrid();
+    const N = REGION_N;
+
+    // Bounds check
+    if (x < 0 || x >= N || y < 0 || y >= N) return { ok: false, reason: 'Out of bounds' };
+
+    const idx = x * N + y;
+
+    // Must be unclaimed land
+    if (r.grid[idx] !== -1) {
+      if (r.grid[idx] === -2) return { ok: false, reason: 'Water cannot be claimed' };
+      return { ok: false, reason: 'Already claimed' };
+    }
+
+    // Must be adjacent to a player-controlled cell
+    const adjacent = [
+      [x - 1, y],
+      [x + 1, y],
+      [x, y - 1],
+      [x, y + 1],
+    ].some(([ax, ay]) => {
+      if (ax < 0 || ax >= N || ay < 0 || ay >= N) return false;
+      return r.grid[ax * N + ay] === this.playerFactionId;
+    });
+    if (!adjacent) return { ok: false, reason: 'Not adjacent to your territory' };
+
+    // Check treasury
+    const COST = 25;
+    if (this.treasury < COST) return { ok: false, reason: `Need £${COST}` };
+
+    return { ok: true, reason: '' };
+  }
+
+  /** Claim an unclaimed land cell adjacent to player territory. */
+  claimCell(x: number, y: number): boolean {
+    const can = this.canClaimCell(x, y);
+    if (!can.ok) return false;
+
+    const r = this.computeTerritoryGrid();
+    const N = REGION_N;
+    const COST = 25;
+
+    r.grid[x * N + y] = this.playerFactionId;
+    this.treasury -= COST;
+    this._territoryCache = null; // invalidate territory cache
+
+    this.addLog(`Claimed land at (${x}, ${y}) for £${COST}`, 'good');
     return true;
   }
 
