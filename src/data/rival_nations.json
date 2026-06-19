@@ -2,10 +2,10 @@
   {
     "id": "vasterholm",
     "name": "Vasterholm",
-    "leader": "Chancellor Aldric the Consolidated",
+    "leader": "Chancellor Aldric von Stahl",
     "archetype": "hegemon",
-    "regimeId": "AbsoluteMonarchy",
-    "description": "An ancient empire forged in mountain warfare, seeking to unite the river basins under one crown.",
+    "regimeId": "OnePartyState",
+    "description": "A militarized federation emerging from wartime defeat, determined to reclaim its river territories and forge a new authoritarian order from the wreckage.",
     "flag": {
       "primary": "#8B0000",
       "secondary": "#FFD700",
@@ -16,10 +16,10 @@
       "treasury": 1.2,
       "warriors": 8,
       "settlers": 2,
-      "techUnlock": "fortifications"
+      "techUnlock": "steel_industry"
     },
     "traits": ["militaristic", "expansionist", "honorable"],
-    "agenda": "Unite the river basins under one crown",
+    "agenda": "Unite the river basins under one iron will",
     "personality": {
       "expansion": 9,
       "commerce": 4,
@@ -32,10 +32,10 @@
   {
     "id": "kalimera",
     "name": "Kalimera",
-    "leader": "Doge Maren the Shrewd",
+    "leader": "President Maren Costa",
     "archetype": "trading_republic",
     "regimeId": "MerchantRepublic",
-    "description": "A coastal maritime federation seeking to corner the carrying trade from north to south.",
+    "description": "A coastal maritime republic grown prosperous on the carrying trade, now positioning itself as the continent's foremost commercial power in the post-war order.",
     "flag": {
       "primary": "#0066CC",
       "secondary": "#FFFFFF",
@@ -62,10 +62,10 @@
   {
     "id": "tyrennia",
     "name": "Tyrennia",
-    "leader": "High Prelate Oswyn the Zealous",
+    "leader": "Supreme Prelate Oswyn Brennan",
     "archetype": "crusader_state",
     "regimeId": "Theocracy",
-    "description": "A theocratic crusade spreading ideological fervor across the continent.",
+    "description": "A theocratic state unbowed by the chaos of the Great War, spreading its doctrines through political pressure and ideological fervour across a disillusioned continent.",
     "flag": {
       "primary": "#1A1A2E",
       "secondary": "#FF6B35",
@@ -76,7 +76,7 @@
       "treasury": 0.9,
       "clergy": 3,
       "culturalInfluence": 1.3,
-      "techUnlock": "divinity"
+      "techUnlock": "common_law"
     },
     "traits": ["ideological", "zealous", "uncompromising"],
     "agenda": "Spread the one true creed across the lands",
@@ -92,10 +92,10 @@
   {
     "id": "karelia",
     "name": "Karelia",
-    "leader": "Jarl Torsten the Steadfast",
+    "leader": "Minister-President Torsten Skau",
     "archetype": "hermit_kingdom",
     "regimeId": "ConstitutionalMonarchy",
-    "description": "Mountain-dwelling peoples fiercely guarding their independence and pass-roads.",
+    "description": "Mountain-dwelling peoples fiercely guarding their independence and pass-roads, having survived the Great War untouched by keeping every great power at arm's length.",
     "flag": {
       "primary": "#2F4F4F",
       "secondary": "#C0C0C0",
@@ -106,7 +106,7 @@
       "defensiveBonus": 1.4,
       "mountainResourcesBonus": 1.25,
       "walls": 3,
-      "techUnlock": "masonry"
+      "techUnlock": "land_survey"
     },
     "traits": ["isolationist", "defensive", "resourceful"],
     "agenda": "Keep the mountain passes closed and proud",
@@ -125,7 +125,7 @@
     "leader": "Architect-Council Alexi (Rotating)",
     "archetype": "opportunist",
     "regimeId": "PeoplesRepublic",
-    "description": "A loose federation of city-states profiting from every conflict while avoiding direct confrontation.",
+    "description": "A loose federation of workers' councils, born from wartime revolution and profiting from every conflict while committing to none.",
     "flag": {
       "primary": "#4B0082",
       "secondary": "#00FF00",
@@ -136,7 +136,7 @@
       "treasury": 0.8,
       "diplomaciBonus": 1.2,
       "spies": 4,
-      "techUnlock": "espionage"
+      "techUnlock": "statecraft"
     },
     "traits": ["pragmatic", "cunning", "adaptable"],
     "agenda": "Profit from every conflict but commit to none",
@@ -155,7 +155,7 @@
     "leader": "Admiral Soren the Navigator",
     "archetype": "trading_republic",
     "regimeId": "Parliamentary",
-    "description": "A seafaring confederation commanding the northern shipping lanes and ice trade routes.",
+    "description": "A seafaring confederation commanding the northern shipping lanes, emerging from the war with its merchant fleet intact and its rivals' navies in ruins.",
     "flag": {
       "primary": "#003D7A",
       "secondary": "#FFFFFF",
@@ -166,7 +166,7 @@
       "navalPower": 1.3,
       "harbors": 2,
       "ships": 4,
-      "techUnlock": "advanced_cartography"
+      "techUnlock": "cartography"
     },
     "traits": ["maritime", "exploratory", "commercial"],
     "agenda": "Command the northern seas and routes",
@@ -182,10 +182,10 @@
   {
     "id": "highland_federation",
     "name": "The Highland Federation",
-    "leader": "Clan Mother Grania the Wise",
+    "leader": "High Chief Grania Mara",
     "archetype": "hermit_kingdom",
     "regimeId": "ConstitutionalMonarchy",
-    "description": "Highland clans unified by shared culture and resilience in harsh mountain terrain.",
+    "description": "Highland clans unified under a federal charter, having traded enough autonomy for collective defence — and intending to trade no more.",
     "flag": {
       "primary": "#556B2F",
       "secondary": "#DAA520",
@@ -196,7 +196,7 @@
       "scarcityResilience": 1.3,
       "clanUnity": 1.25,
       "population": 1.2,
-      "techUnlock": "pastoral_economy"
+      "techUnlock": "land_survey"
     },
     "traits": ["communal", "hardy", "independent"],
     "agenda": "Preserve highland freedom and tradition",
@@ -212,10 +212,10 @@
   {
     "id": "crescent_sultanate",
     "name": "The Crescent Sultanate",
-    "leader": "Sultan Jahangir the Magnificent",
+    "leader": "Sultan Jahangir al-Rashid",
     "archetype": "crusader_state",
     "regimeId": "AbsoluteMonarchy",
-    "description": "A vast Islamic empire spreading faith, learning, and order across desert and river lands.",
+    "description": "A powerful sultanate commanding desert trade routes and nascent oilfields, projecting its influence through faith, commerce, and control of territories the great powers covet.",
     "flag": {
       "primary": "#00AA00",
       "secondary": "#FFD700",
@@ -224,12 +224,11 @@
     },
     "startingBonuses": {
       "populationGrowth": 1.3,
-      "goldenAge": 0.8,
       "scholars": 4,
-      "techUnlock": "advanced_mathematics"
+      "techUnlock": "chemical_industry"
     },
     "traits": ["populous", "learned", "ordered"],
-    "agenda": "Expand the caliphate with faith and reason",
+    "agenda": "Consolidate the sultanate's influence through faith and commerce",
     "personality": {
       "expansion": 7,
       "commerce": 5,
@@ -245,7 +244,7 @@
     "leader": "Chief Magistrate Petra Eisenmann",
     "archetype": "hegemon",
     "regimeId": "OnePartyState",
-    "description": "Industrial city-states fused into an iron republic, dominating manufacturing and raw materials.",
+    "description": "Industrial city-states fused by wartime necessity into an iron republic, now dominating manufacturing and raw materials with a ruthless efficiency the old empires could not match.",
     "flag": {
       "primary": "#1C1C1C",
       "secondary": "#FF4500",
@@ -256,7 +255,7 @@
       "manufacturing": 1.4,
       "ironProduction": 1.3,
       "factories": 2,
-      "techUnlock": "industrial_revolution"
+      "techUnlock": "steel_industry"
     },
     "traits": ["industrial", "organized", "materialist"],
     "agenda": "Control the means of production",
@@ -272,10 +271,10 @@
   {
     "id": "forest_collective",
     "name": "The Forest Collective",
-    "leader": "Keeper-Sage Aelindor the Green",
+    "leader": "Director Aelindor Renn",
     "archetype": "opportunist",
     "regimeId": "PeoplesRepublic",
-    "description": "Forest-dwellers and woodland protectors profiting from sustainable timber and natural resources.",
+    "description": "A timber-rich cooperative commonwealth, quietly prosperous and fiercely protective of its green territories — happy to sell to all sides and answer to none.",
     "flag": {
       "primary": "#228B22",
       "secondary": "#FFD700",
@@ -286,7 +285,7 @@
       "timberProduction": 1.4,
       "forestResilience": 1.2,
       "environment": 1.3,
-      "techUnlock": "sustainable_forestry"
+      "techUnlock": "land_survey"
     },
     "traits": ["ecological", "sustainable", "prosperous"],
     "agenda": "Thrive in harmony with the green lands",
@@ -305,21 +304,21 @@
     "leader": "Emperor Marcos the Eternal",
     "archetype": "hegemon",
     "regimeId": "AbsoluteMonarchy",
-    "description": "Ancient empire clinging to faded glory, seeking to reclaim lost dominions.",
+    "description": "A once-great empire shedding territories after the war, its dynasty clinging to legitimacy while reformers and separatists press from within — and old rivals circle without.",
     "flag": {
       "primary": "#8B4513",
       "secondary": "#FFD700",
       "emblem": "👑",
-      "symbol": "Crescent Moon over Sunset"
+      "symbol": "Setting Sun over Imperial Eagle"
     },
     "startingBonuses": {
       "culture": 1.3,
       "treasury": 1.1,
       "aristocracy": 1.2,
-      "techUnlock": "classical_philosophy"
+      "techUnlock": "statecraft"
     },
     "traits": ["traditional", "proud", "cultured"],
-    "agenda": "Restore imperial glory and dominion",
+    "agenda": "Restore the empire's lost dominions and prestige",
     "personality": {
       "expansion": 8,
       "commerce": 5,
