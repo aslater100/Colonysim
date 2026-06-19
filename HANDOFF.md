@@ -1,6 +1,6 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-19 · **Tests:** 285 passing · **Version:** v1.0.1
+**Last updated:** 2026-06-19 · **Tests:** 285 passing · **Version:** v1.0.1 · **Status:** Phases 1–4 complete (PR #233 merged)
 
 ## The game: a standalone 4X campaign
 
@@ -82,8 +82,8 @@ npm install
 npm run dev        # http://localhost:5173/core.html  ← the 4X game
 npm run build      # tsc + vite build (must pass)
 npx tsc --noEmit
-npx vitest run --exclude '**/.claude/**'   # 243 tests
-npm run sim:macro  # nation-tier monetary harness — keep "ON TARGET"
+npx vitest run --exclude '**/.claude/**'   # 285 tests
+npm run sim:macro  # nation-tier monetary harness — NOTE: script broken (target deleted), stability covered by region-longrun tests
 ```
 
 ## Recent completions (PRs #218–#230)
@@ -99,7 +99,7 @@ npm run sim:macro  # nation-tier monetary harness — keep "ON TARGET"
 - ✓ **#226** — Rivals national identity (Issue #18): 11 named rival nations with unique flags/emblems, archetype-specific AI behavior, power comparison indicators; installer UI brightened (blue gradient, glowing title); package.json description updated
 - ✓ **#229** — Land purchase mechanics (Phase 1): unclaimed land claim (£25/cell, `claimCell`/`canClaimCell`), population-scaled settlement buyout (`buyLand`/`canBuyLand`/`settlementBuyoutCost`), Claim Land Mode toggle in Diplomacy tab; 22 new tests (251 total)
 - ✓ **#230** — Province View (Phase 2): `Province` interface + `computeProvinces()` in region.ts; `drawProvinceOverlay()` canvas layer (faction-colored name labels, pop/GDP/satisfaction stat bars, selection ring); `drawProvincePanel()` inspector DOM panel; click-to-select province; P key shortcut; Province View toggle in Diplomacy tab; 10 new tests (261 total)
-- ✓ **#231** — Advanced Diplomacy (Phase 3) + Late-Game Flavor (Phase 4): espionage (`ESPIONAGE_OPS`, per-rival `intel`, `runEspionage` with exposure), trade blocs (`TradeBloc`, `blocTradeBonus`), era/victory cinematics (`drawCinematic`), post-2100 epilogue scroll (`epilogueBeats`/`drawEpilogueModal`); 24 new tests (285 total)
+- ✓ **#233** — Advanced Diplomacy (Phase 3) + Late-Game Flavor (Phase 4): espionage (`ESPIONAGE_OPS`, per-rival `intel`, `runEspionage` with exposure), trade blocs (`TradeBloc`, `blocTradeBonus`), era/victory cinematics (`drawCinematic`), post-2100 epilogue scroll (`epilogueBeats`/`drawEpilogueModal`); 24 new tests (285 total)
 
 ## UI Architecture Notes (updated 2026-06-19)
 
@@ -147,33 +147,54 @@ delta = min(12, -6 + 14 × budget)   // 0 = −6/mo; 1.0 = +8/mo; 1.5 = +15/mo
 
 `hasHarbor(t)` — true if settlement has a 'harbor' building. `navalTradeIncome()` runs monthly: each harbor settlement earns `0.8 × sectorOutputOf(t) × 0.05` per month as sea-trade income to treasury. Harbor is `coastal_only: true`, prereq: `cartography`. Warship unit in `UNIT_TYPES` with `recruitCost: 80`, `trainingDays: 45`, `powerPerUnit: 3.0`, `supplyCost: 0.10`.
 
-## Good next candidates (prioritized)
+## Roadmap: Completed Phases
 
-### Phase 1 ✓ (PR #229 — Land Purchase Mechanics)
+### Phase 1 ✓ (PR #229 — Land Purchase Mechanics) — COMPLETED
 - ✓ **Unclaimed land purchase** — Players buy unclaimed hexes adjacent to settlements (£25/cell) at State tier
 - ✓ **Settlement buyout** — Enhanced `buyLand()` with population-scaled costs (£400+£2/pop)
 - ✓ **UI integration** — "Claim Land Mode" toggle in Diplomacy tab; click-to-claim map UX
-- ✓ **Tests** — 22 comprehensive tests (all passing); 251/251 overall
+- ✓ **Tests** — 22 comprehensive tests (all passing)
 
-### Phase 2 ✓ (PR #230 — Province View)
+### Phase 2 ✓ (PR #230 — Province View) — COMPLETED
 - ✓ **Province data model** — `Province` interface + `computeProvinces()` in `region.ts`; one province per settlement, keyed by settlement id
 - ✓ **Canvas overlay** — `drawProvinceOverlay()`: faction-colored name labels with shadow, compact pop/GDP/satisfaction stat bars, selection ring for clicked province
 - ✓ **Province inspector panel** — `drawProvincePanel()`: DOM panel with name, faction, population, GDP, satisfaction bar, garrison, buildings list; close button
 - ✓ **Click-to-select** — Province View intercepts settlement clicks to set `selectedProvinceId` instead of opening settlement inspector
 - ✓ **P key shortcut** — Toggle province view from anywhere (`main.ts`)
 - ✓ **Diplomacy tab toggle** — "Province View (P)" button in State → Diplomacy section with active indicator
-- ✓ **Tests** — 10 tests in `tests/province.test.ts`; 261/261 overall
+- ✓ **Tests** — 10 tests in `tests/province.test.ts`
 
-### Phase 3 ✓ (PR #231 — Advanced Diplomacy: Espionage & Trade Blocs)
+### Phase 3 ✓ (PR #233 — Advanced Diplomacy: Espionage & Trade Blocs) — COMPLETED
 - ✓ **Espionage/sabotage** — `EspionageOp` (gather_intel/steal_tech/sabotage_economy/incite_unrest) + `ESPIONAGE_OPS` defs; per-rival `intel` 0..1; `runEspionage()` rolls success + separate exposure on the AI stream; steal_tech vaults research / treasury, sabotage sets rivals back, incite_unrest can fracture alliances; exposure sours relations. UI: per-rival intel meter + covert-op buttons in Diplomacy tab
 - ✓ **Trade blocs** — `TradeBloc` model (named multi-member union, shared tariff); `formTradeBloc`/`inviteToBloc`/`leaveTradeBloc`/`setBlocTariff` + `blocTradeBonus()` layered into monthly export earnings; UI section to found/grow/tune/dissolve
 - ✓ **Treaty editor / trade negotiation** — already shipped earlier as the "bargaining table" deal modal (`DealBasket`, `openDealModal`); espionage + blocs were the genuinely-missing pieces
-- ✓ **Tests** — 18 in `tests/diplomacy-advanced.test.ts`; 279/279 overall
+- ✓ **Tests** — 18 in `tests/diplomacy-advanced.test.ts`
 
-### Phase 4 ✓ (PR #231 — Late-Game Flavor)
+### Phase 4 ✓ (PR #233 — Late-Game Flavor) — COMPLETED
 - ✓ **Era-branching + victory cinematics** — `drawCinematic()`: frame-driven fullscreen canvas sequence (painterly sky, per-variant motif, letterbox, fade-in, title) that plays once when the century forks or a victory lands, before the DOM modal reveals; suppressed on loaded saves where the moment already passed; click / any key skips. Variants for all 3 era branches and all 4 win paths
 - ✓ **Post-2100 epilogue** — `epilogueBeats()` resolves triggered post-2100 events to a narrative scroll (`drawEpilogueModal()`), shown once 3+ beats accumulate; persisted `epilogueShown` flag so it doesn't re-trigger on reload
-- ✓ **Tests** — 6 in `tests/epilogue.test.ts`; 285/285 overall
+- ✓ **Tests** — 6 in `tests/epilogue.test.ts`
+
+---
+
+## Roadmap: Outstanding Features (Beyond Initial Scope)
+
+The four prioritized phases (1–4) are **complete and merged to main**. The following larger features remain unstarted and are recommended for Sonnet/Opus due to architectural complexity:
+
+### Phase 5 ⧗ (Pending — Continental/Hex Province Generation)
+- **Procedural province grid** — Overlay a hexagonal province mesh atop the 256×256 territory grid; each province aggregates settlements and generates region-level policies/resources
+- **AI province governance** — Each rival AI manages its own provinces (splits/merges based on control), builds inter-provincial roads, runs province-level economies
+- **Player province management** — Define custom province boundaries; convert to administrative tier below nation, above settlement
+
+### Phase 6 ⧗ (Pending — AI Espionage & Trade Bloc Activity)
+- **AI runs espionage** — Rivals roll their own intel operations against the player and each other; success/exposure impacts diplomacy and wars
+- **AI joins trade blocs** — Rivals form/compete in trade blocs autonomously; tariff rates shift dynamically based on trade agreement strength
+- **Economic retaliation** — Failed espionage or tariff disputes trigger economic sanctions, trade embargoes, or proxy conflicts
+
+### Phase 7 ⧗ (Pending — Inter-Provincial Unit Movement)
+- **Army/warship movement grid** — Units move between provinces rather than just being stationed; supply lines, forced marches, naval blockades
+- **Tactical battles** — Simplified combat resolution when armies collide in contested provinces
+- **Route-of-march AI** — Rivals plan invasion routes, garrison decisions, logistics
 
 ## Completed in PR #226
 
@@ -181,11 +202,10 @@ delta = min(12, -6 + 14 × budget)   // 0 = −6/mo; 1.0 = +8/mo; 1.5 = +15/mo
 - ✓ **Installer UI** — Brightened from dark green to vibrant blue gradient; cyan glowing title with pulsing animation; gold→cyan gradient progress bar
 - ✓ **Package description** — Updated to reflect 4X civilization builder scope (1900–2100, colonial to nation scale)
 
-## Flagged for Sonnet/Opus (complexity beyond Haiku scope)
+## Model Capability Guidance
 
-- _All four prioritized phases (1–4) are now shipped._ The next big features (continental/hex province
-  generation, AI rivals running their own espionage/blocs, inter-provincial unit movement) remain
-  large architectural efforts best handled by Sonnet/Opus.
+- **Haiku scope:** Unit tests, bug fixes, small feature additions (<500 LOC), content hooks (events/techs/civics)
+- **Opus scope:** Major architecture (Phases 5–7 above), cross-file refactors, large simulation features, integration testing
 
 ## Known weak areas
 
