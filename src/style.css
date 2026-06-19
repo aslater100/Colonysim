@@ -846,6 +846,9 @@ body {
   border-color: #ef4444;
 }
 .route-network-panel button.rn-close { float: right; padding: 0 6px; }
+.rn-budget { margin: 6px 0 8px; padding: 6px 0; border-top: 1px solid rgba(100,150,200,0.15); border-bottom: 1px solid rgba(100,150,200,0.15); }
+.rn-budget .rn-budget-slider { width: 100%; margin: 2px 0; cursor: pointer; }
+.rn-budget-readout { color: #6366f1; }
 
 /* ---- Settlement list + Economy panels (Phase A/B) ---- */
 .settlement-list-panel,

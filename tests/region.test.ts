@@ -1456,6 +1456,64 @@ describe('Route Cargo Visualization (Phase 6)', () => {
   });
 });
 
+describe('Route maintenance budget (Issue #16)', () => {
+  /** Proclaim statehood (built links are State works) and build a road. */
+  function colonyWithRoad(seed: number): RegionSim {
+    const r = twoTownColony(seed);
+    r.stateProclaimed = true; // built links are State works (see buildLink)
+    r.stateName = 'Testonia';
+    r.treasury = 5000;
+    const [a, b] = r.settlements;
+    const built = r.buildRoad(a.id, b.id);
+    expect(built).toBe(true);
+    return r;
+  }
+
+  it('defaults to full funding and clamps to the 0–1.5 range', () => {
+    const r = colonyWithRoad(42);
+    expect(r.routeBudget).toBe(1.0);
+    r.setRouteBudget(2.5);
+    expect(r.routeBudget).toBe(1.5);
+    r.setRouteBudget(-1);
+    expect(r.routeBudget).toBe(0);
+  });
+
+  it('projected upkeep scales with the budget level', () => {
+    const r = colonyWithRoad(42);
+    const full = r.routeUpkeepProjected();
+    expect(full).toBeGreaterThan(0);
+    r.setRouteBudget(0.5);
+    expect(r.routeUpkeepProjected()).toBeCloseTo(full * 0.5, 5);
+    r.setRouteBudget(0);
+    expect(r.routeUpkeepProjected()).toBe(0);
+  });
+
+  it('an unfunded network degrades while a fully funded one holds up', () => {
+    const lean = colonyWithRoad(42);
+    const full = colonyWithRoad(42);
+    // Knock both networks below 100% so there's room to recover or rot.
+    for (const rt of lean.routes) rt.condition = 70;
+    for (const rt of full.routes) rt.condition = 70;
+    lean.setRouteBudget(0);   // spend nothing — routes rut over
+    full.setRouteBudget(1.0); // fully funded — routes mend
+    lean.treasury = 100000;
+    full.treasury = 100000;
+    runDays(lean, 90);
+    runDays(full, 90);
+    const leanCond = Math.min(...lean.routes.filter((r) => r.kind !== 'trail').map((r) => r.condition));
+    const fullCond = Math.min(...full.routes.filter((r) => r.kind !== 'trail').map((r) => r.condition));
+    expect(leanCond).toBeLessThan(fullCond);
+    expect(fullCond).toBeGreaterThan(70); // full funding recovered the road
+  });
+
+  it('survives save/load', () => {
+    const r = colonyWithRoad(42);
+    r.setRouteBudget(0.7);
+    const r2 = RegionSim.deserialize(r.serialize());
+    expect(r2.routeBudget).toBeCloseTo(0.7, 5);
+  });
+});
+
 describe('Phase 0: Territory & resource visualization', () => {
   function flipped(seed: number): RegionSim {
     return twoTownColony(seed);
