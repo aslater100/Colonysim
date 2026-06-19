@@ -162,8 +162,7 @@ describe('Tech tree: research completion', () => {
 
   it('auto-unlocks dependant nodes after prerequisite completes', () => {
     const r = makeRegion();
-    // Advance to year 1912 so electrical_grid's era gate is met
-    r.minute = (1912 - START_YEAR) * DAYS_PER_YEAR * MINUTES_PER_DAY;
+    // With 1919 start, electrical_grid's era (1912) is already met — no clock advance needed
     r.startResearch('steel_industry');
     const node = TECH_TREE.find((n) => n.id === 'steel_industry')!;
     r.researchProgress = node.cost - 0.01;

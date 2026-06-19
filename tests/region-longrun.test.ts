@@ -25,10 +25,8 @@ function nation(seed: number): RegionSim {
 }
 
 function runYears(r: RegionSim, years: number): void {
-  const days = Math.round(years * DAYS_PER_YEAR);
-  for (let d = 0; d < days; d++) {
-    for (let t = 0; t < ticksPerDay; t++) r.tick();
-  }
+  const targetYear = r.year + years;
+  while (r.year < targetYear) r.tick();
 }
 
 /** A snapshot of the scalars that compound over a long run. */
@@ -46,7 +44,7 @@ function snapshot(r: RegionSim) {
 }
 
 describe('Region tier — long-horizon stability (integration)', () => {
-  it('runs the full 1900→2010 nation span with all macro state finite', () => {
+  it('runs the full 1919→2029 nation span with all macro state finite', () => {
     const r = nation(1000);
     expect(() => runYears(r, 110)).not.toThrow();
     const s = snapshot(r);

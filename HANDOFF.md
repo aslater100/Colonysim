@@ -1,11 +1,11 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-19 · **Tests:** 316 passing · **Version:** v1.0.1 · **Status:** Phases 1–7 complete (Phases 5–7 on branch `claude/phases-5-7-continuation-2c1ids`)
+**Last updated:** 2026-06-19 · **Tests:** 316 passing · **Version:** v1.0.1 · **Status:** Phases 1–7 complete (merged to main via PR #236)
 
 ## The game: a standalone 4X campaign
 
 TownCore (the town-detail / per-settler sim) is **dropped**. The shipping game is the
-**4X campaign**, 1900→2100, colony→nation:
+**4X campaign**, 1919→2100, colony→nation:
 
 ```
 core.html → src/coreview.ts (shell)  →  src/ui/regionview.ts (UI)  →  src/sim/region.ts (RegionSim model)
@@ -44,7 +44,7 @@ arc starting from one fogged founding settlement.
 - **Save/load** — autosave + Continue + manual save (Ctrl/⌘-S); `localStorage['centuria-4x-save']`
   stores the world seed + `region.serialize()`; reload via `RegionSim.deserialize` with a
   `{rng, regionMap, weather}` stub.
-- **Content depth** — +12 wired tech/civic nodes filling 1900–2100 gaps; +8 era-gated regional
+- **Content depth** — +12 wired tech/civic nodes filling 1919–2100 gaps; +8 era-gated regional
   events, +5 policy cards, +3 laws, all wired to existing sim hooks.
 - **Main menu & UX** — new-game with terrain preferences (river/coast/highlands/random), continue
   if save exists, classic colony link. Economy sparklines (12-month GDP/treasury/inflation trends).
@@ -83,10 +83,9 @@ npm run dev        # http://localhost:5173/core.html  ← the 4X game
 npm run build      # tsc + vite build (must pass)
 npx tsc --noEmit
 npx vitest run --exclude '**/.claude/**'   # 316 tests
-npm run sim:macro  # nation-tier monetary harness — NOTE: script broken (target deleted), stability covered by region-longrun tests
 ```
 
-## Recent completions (PRs #218–#230)
+## Recent completions (PRs #218–#236)
 
 - ✓ **#218** — Fix labor_law grievance test: measurement window and strike masking
 - ✓ **#219** — Tech tree rebuilt as visual DAG: SVG edges, node state coloring, click-to-research
@@ -100,6 +99,7 @@ npm run sim:macro  # nation-tier monetary harness — NOTE: script broken (targe
 - ✓ **#229** — Land purchase mechanics (Phase 1): unclaimed land claim (£25/cell, `claimCell`/`canClaimCell`), population-scaled settlement buyout (`buyLand`/`canBuyLand`/`settlementBuyoutCost`), Claim Land Mode toggle in Diplomacy tab; 22 new tests (251 total)
 - ✓ **#230** — Province View (Phase 2): `Province` interface + `computeProvinces()` in region.ts; `drawProvinceOverlay()` canvas layer (faction-colored name labels, pop/GDP/satisfaction stat bars, selection ring); `drawProvincePanel()` inspector DOM panel; click-to-select province; P key shortcut; Province View toggle in Diplomacy tab; 10 new tests (261 total)
 - ✓ **#233** — Advanced Diplomacy (Phase 3) + Late-Game Flavor (Phase 4): espionage (`ESPIONAGE_OPS`, per-rival `intel`, `runEspionage` with exposure), trade blocs (`TradeBloc`, `blocTradeBonus`), era/victory cinematics (`drawCinematic`), post-2100 epilogue scroll (`epilogueBeats`/`drawEpilogueModal`); 24 new tests (285 total)
+- ✓ **#236** — 1919 campaign start (Issue #25): `START_YEAR = 1919`, post-Great War founding lore in `foundColony()`; save/load determinism fix (preserve `currentGoal` on deserialize, guard `successCondition` callers with `typeof` so the `aiRng` stream stays aligned across save/load cycles); 3 test fixes (`region-longrun`, `region`, `region-found`) and updated era-gated tech/calendar test expectations for the new epoch; rival nation lore rewritten for post-WWI context (leader titles, descriptions, `techUnlock` refs); Humanitarians `minYear` 1920→1919; Merchant Guilds updated as a 1919–1925 transitional faction
 
 ## UI Architecture Notes (updated 2026-06-19)
 
@@ -209,7 +209,7 @@ The four prioritized phases (1–4) are **complete and merged to main**. The fol
 
 - ✓ **Rivals national identity** (Issue #18) — 11 named rival nations (Vasterholm, Kalimera, Tyrennia, Karelia, Sundered Communes, Northern League, Highland Federation, Crescent Sultanate, Iron Republics, Forest Collective, Sunset Empire) with unique flags/emblems, archetype descriptions, personality-driven treaty behavior, power comparison indicators
 - ✓ **Installer UI** — Brightened from dark green to vibrant blue gradient; cyan glowing title with pulsing animation; gold→cyan gradient progress bar
-- ✓ **Package description** — Updated to reflect 4X civilization builder scope (1900–2100, colonial to nation scale)
+- ✓ **Package description** — Updated to reflect 4X civilization builder scope (1919–2100, colonial to nation scale)
 
 ## Model Capability Guidance
 
@@ -218,31 +218,14 @@ The four prioritized phases (1–4) are **complete and merged to main**. The fol
 
 ## Known weak areas
 
-- **`npm run sim:macro` is broken** — the script points at `src/sim/macro-headless.ts`, which was
-  deleted in "Fix all test failures after Classic Colony removal". Either restore a headless macro
-  harness or drop the script from `package.json`. Macro stability is currently covered by the
-  `region-longrun` integration tests instead.
-
 - **activePolicies lookups** — still uses array `.includes()` in 18 calls. Small impact (policy slots
   are fixed-size, typically 3–4 items), but could convert to Set if microoptimization needed.
 - **sectorProductivity() method** — 23 `.has()` checks per settlement per month now O(1), but could
   cache the multiplier per sector once per month instead of recalculating 4× per settlement.
-- **UI render loop** — not yet profiled. Canvas paint, DOM panel rendering, and event handler
-  performance unknown. Likely less critical than simulation hotpaths but worth measuring under
-  typical play (1–3 month-per-second tick rate).
 - **Migration and trade calculations** — use `.reduce()` to recompute avgWageOf() per settlement
   once per month; low impact but could cache during the monthly update phase.
-- **Treasury milestone double-firing** — if treasury drops below a milestone and then re-crosses it,
-  the milestone event fires again. Low impact (rare in practice), but could track `loggedMilestones`
-  Set in serialized state if this proves noisy.
 - **Tech tree DAG layout** — `techTreeLayout()` uses barycenter heuristic; doesn't minimize crossings
   optimally for large sparse trees. Acceptable for current tree size (~40 nodes).
-
-## Deferred to v1.1
-
-- **Issue #25: 1919 start year** — cascade change requiring audit of tech tree unlock times, building
-  availability, world generation start conditions, GDD/README/installer docs. Defer until core
-  mechanics are stable.
 
 ## Design reference
 

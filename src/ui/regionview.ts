@@ -3,7 +3,7 @@
  * operating altitude after the flip (GDD §2.5). Painterly backdrop, town
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
-import type { Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType, TechNode } from '../sim/region';
+import type { Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType, TechNode, Province } from '../sim/region';
 import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES, ESPIONAGE_OPS, BLOC_RELATIONS_FLOOR } from '../sim/region';
 import type { EspionageOp } from '../sim/region';
 import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS, MINUTES_PER_DAY } from '../sim/defs';
@@ -107,6 +107,12 @@ export class RegionView {
   private mapCache: HTMLCanvasElement | null = null;
   private mapCacheCtx: CanvasRenderingContext2D | null = null;
   private mapCacheSig = '';
+  // Offscreen canvas of water pixels; rebuilt only on canvas resize (biomes are fixed).
+  private waterMaskCanvas: HTMLCanvasElement | null = null;
+  private waterMaskDims = '';
+  // Province list cache: computeProvinces() is O(settlements) but called in two hot paths.
+  private _provincesCache: Province[] = [];
+  private _provincesCacheFrame = -1;
   /** Visible region in base (pre-camera) coords — culls off-screen sprites. */
   private vb = { l: 0, t: 0, r: 0, b: 0 };
   private lastPanelBuildFrame = -999;
@@ -839,11 +845,8 @@ export class RegionView {
     const r = this.region;
     let s = `${this.canvas.width}x${this.canvas.height}|${r.regionalFactions.length}`;
     for (const t of r.settlements) s += `;${t.id},${t.factionId},${Math.round(t.x)},${Math.round(t.y)}`;
-    // Fog-of-war frontier: rebuild the cache as the explored count advances
-    // (reveals are monotonic, so a running count is a sufficient change key).
-    let explored = 0;
-    for (const col of r.explorationMap) for (const v of col) if (v !== 'fogged') explored++;
-    s += `|fog${explored}`;
+    // Fog-of-war frontier: use the pre-tracked counter instead of scanning 10 000 tiles.
+    s += `|fog${r.exploredCount}`;
     return s;
   }
 
@@ -905,11 +908,20 @@ export class RegionView {
     g.globalCompositeOperation = 'source-over';
   }
 
+  /** Return cached province list; recomputed at most once per frame. */
+  private getCachedProvinces(): Province[] {
+    if (this._provincesCacheFrame !== this.frame) {
+      this._provincesCache = this.region.computeProvinces();
+      this._provincesCacheFrame = this.frame;
+    }
+    return this._provincesCache;
+  }
+
   /** Province overlay: rendered on top of city lights (still in map-space).
    *  Draws province name labels, compact stat bars, and a selection ring. */
   private drawProvinceOverlay(): void {
     const { g, region } = this;
-    const provinces = region.computeProvinces();
+    const provinces = this.getCachedProvinces();
     for (const prov of provinces) {
       const faction = region.faction(prov.factionId);
       const color = faction?.color ?? '#aaa';
@@ -1041,7 +1053,7 @@ export class RegionView {
     }
     this.provincePanel.classList.remove('hidden');
 
-    const prov = this.region.computeProvinces().find((p) => p.id === this.selectedProvinceId);
+    const prov = this.getCachedProvinces().find((p) => p.id === this.selectedProvinceId);
     if (!prov) {
       this.provincePanel.classList.add('hidden');
       return;
@@ -1147,31 +1159,39 @@ export class RegionView {
     }
   }
 
-  /** Subtle per-frame water shimmer to suggest flow and life (map-space overlay). */
-  private drawWaterAnimation(): void {
-    const { g, region } = this;
-    const map = region.map;
+  /** Build the offscreen water-pixel mask once per canvas-resize; water tiles never change biome. */
+  private ensureWaterMask(W: number, H: number): void {
+    const dims = `${W}x${H}`;
+    if (this.waterMaskCanvas && this.waterMaskDims === dims) return;
+    if (!this.waterMaskCanvas) this.waterMaskCanvas = document.createElement('canvas');
+    this.waterMaskCanvas.width = W;
+    this.waterMaskCanvas.height = H;
+    const mc = this.waterMaskCanvas.getContext('2d')!;
+    mc.clearRect(0, 0, W, H);
+    const map = this.region.map;
     const N = REGION_N;
-    const wave = Math.sin(this.frame * 0.05) * 0.5 + 0.5; // 0..1, cycles every ~126 frames
     const m = 60;
-    const cw = (this.canvas.width - 2 * m) / N;
-    const ch = (this.canvas.height - 2 * m) / N;
-    const isWater = (x: number, y: number): boolean =>
-      x >= 0 && y >= 0 && x < N && y < N && RegionView.WATER_BIOMES.has(map.at(x, y).biome);
-
-    g.globalCompositeOperation = 'overlay';
-    g.fillStyle = `rgba(200, 220, 240, ${wave * 0.04})`; // very subtle shimmer
+    const cw = (W - 2 * m) / N;
+    const ch = (H - 2 * m) / N;
+    mc.fillStyle = 'rgb(200,220,240)';
     for (let y = 0; y < N; y++) {
       for (let x = 0; x < N; x++) {
-        if (!isWater(x, y)) continue;
-        const bx = Math.floor(m + x * cw);
-        const by = Math.floor(m + y * ch);
-        const bw = Math.ceil(cw);
-        const bh = Math.ceil(ch);
-        g.fillRect(bx, by, bw, bh);
+        if (!RegionView.WATER_BIOMES.has(map.at(x, y).biome)) continue;
+        mc.fillRect(Math.floor(m + x * cw), Math.floor(m + y * ch), Math.ceil(cw), Math.ceil(ch));
       }
     }
-    g.globalCompositeOperation = 'source-over';
+    this.waterMaskDims = dims;
+  }
+
+  /** Subtle per-frame water shimmer — one drawImage instead of 65 536 fillRects. */
+  private drawWaterAnimation(): void {
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+    this.ensureWaterMask(W, H);
+    const wave = Math.sin(this.frame * 0.05) * 0.5 + 0.5; // 0..1
+    this.g.globalAlpha = wave * 0.04; // max 4% opacity — very subtle shimmer
+    this.g.drawImage(this.waterMaskCanvas!, 0, 0);
+    this.g.globalAlpha = 1;
   }
 
   /** Full-screen atmospheric pass (screen-space): a night/golden-hour tint, a

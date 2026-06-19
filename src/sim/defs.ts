@@ -442,7 +442,7 @@ export const SEASONS = ['Spring', 'Summer', 'Autumn', 'Winter'] as const;
 export const DAYS_PER_YEAR = DAYS_PER_SEASON * SEASONS.length;
 export const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'] as const;
 export const DAYS_PER_MONTH = 5; // ~60 days/year ÷ 12 months
-export const START_YEAR = 1800;
+export const START_YEAR = 1919;
 
 // ---- Stockpile / capacity constants ----
 /** Raw-good storage per stockpile zone tile. */
@@ -1061,9 +1061,9 @@ export const FACTION_DEFS: FactionDef[] = [
   {
     id: 'merchant_guilds',
     name: 'Merchant Guilds',
-    desc: 'Trade consortiums pushing commerce and market expansion.',
-    minYear: 1800,
-    maxYear: 1920,
+    desc: 'Old-order trade associations clinging to guild privileges — a pre-war relic dissolving into modern chambers of commerce.',
+    minYear: 1919,
+    maxYear: 1925,
     techModifiers: { finance: 1.1, infrastructure: 1.1 },
     opposes: [],
     promotes: ['free_trade', 'markets'],
@@ -1176,7 +1176,7 @@ export const FACTION_DEFS: FactionDef[] = [
     id: 'humanitarians',
     name: 'Humanitarians',
     desc: 'Social welfare advocates fighting poverty, illness, and human suffering.',
-    minYear: 1920,
+    minYear: 1919,
     techModifiers: { culture: 1.3, agriculture: 1.1 },
     opposes: ['poverty', 'disease', 'inequality'],
     promotes: ['welfare_state', 'public_health', 'education'],

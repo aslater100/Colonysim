@@ -1815,7 +1815,7 @@ const KIND_RANK: Record<RouteKind, number> = { trail: 0, road: 1, rail: 2, highw
 
 /** Railworks (M6c, transportation.md §5): the rail boom opens ~1912 —
  *  deliberately the best value in the game during its window. */
-export const RAIL_ERA_YEAR = 1912;
+export const RAIL_ERA_YEAR = 1924; // post-WWI rail expansion era — new nations lay their first lines in the 1920s
 
 /** The asphalt age (transportation.md §5): cheap paved highways from 1945
  *  erode rail's monopoly — less throughput than steel, a third the upkeep. */
@@ -2105,6 +2105,8 @@ export class RegionSim {
   // ---- Phase 0: Regional Gameplay Expansion ----
   /** 100×100 grid tracking tile visibility: fogged/explored/scouted */
   explorationMap: TileVisibility[][] = [];
+  /** Running count of non-fogged tiles; incremented in revealTiles for fast mapCacheSignature. */
+  exploredCount = 0;
   /** One-time latch: player territory (own + vassal) has reached ≥50% of the region.
    *  Set in monthlyUpdate; never cleared after set. Surface "Proclaim Nation" in UI. */
   proclamationReady = false;
@@ -2132,6 +2134,8 @@ export class RegionSim {
   private triggeredEpilogueEvents = new Set<string>();
   /** True once the player has seen the post-2100 epilogue scroll (persisted). */
   epilogueShown = false;
+  /** Treasury milestones already announced — prevents re-firing if treasury dips and recovers. */
+  private loggedTreasuryMilestones = new Set<number>();
   /** Player-founded economic unions (GDD §6.5). At most one player bloc. */
   tradeBlocs: TradeBloc[] = [];
   private nextBlocId = 1;
@@ -2243,6 +2247,7 @@ export class RegionSim {
         const dy = y - centerY;
         if (dx * dx + dy * dy <= radiusSq) {
           if (type === 'scouted' || this.explorationMap[x][y] === 'fogged') {
+            if (this.explorationMap[x][y] === 'fogged') this.exploredCount++;
             this.explorationMap[x][y] = type;
           }
         }
@@ -3403,7 +3408,7 @@ export class RegionSim {
       garrisonStrength: 5,
       stationedUnits: [],
       loyaltyToFaction: 100,
-      factionStrengths: new Map(activeFactions(1800).map(f => [f.id, 50] as [NewFactionId, number])),
+      factionStrengths: new Map(activeFactions(START_YEAR).map(f => [f.id, 50] as [NewFactionId, number])),
       sectors: defaultSectors(),
       buildings: [],
       construction: null,
@@ -3424,8 +3429,8 @@ export class RegionSim {
     }
 
     region.addLog(
-      `Wagons halt in a sheltered valley. ${home.name} is founded, 1800 — ` +
-      `the first stone of a nation yet unnamed.`,
+      `The Great War has ended. Empires lie shattered. ${home.name} is founded, ${START_YEAR} — ` +
+      `a small claim in the wreckage, the first stone of a nation yet unnamed.`,
       'good',
     );
     return region;
@@ -4187,10 +4192,11 @@ export class RegionSim {
     this.treasury += revenue - spending + incomeTaxBonus + centralBankingBonus + estateLevyBonus +
       progressiveTaxBonus + protectionismBonus + austerityBonus + bankInterest + carbonLevyBonus + this.exportEarningsLastMonth;
 
-    // Treasury milestone events
+    // Treasury milestone events (fire once per milestone, never on re-crossing)
     if (this.treasury > 0) {
       for (const milestone of [1000, 5000, 10000, 25000, 50000]) {
-        if (treasuryBefore < milestone && this.treasury >= milestone) {
+        if (treasuryBefore < milestone && this.treasury >= milestone && !this.loggedTreasuryMilestones.has(milestone)) {
+          this.loggedTreasuryMilestones.add(milestone);
           this.addLog(`Treasury reaches ${formatCurrency(milestone)} — a growing power.`, 'good');
         }
       }
@@ -7966,6 +7972,7 @@ export class RegionSim {
       allianceStance: this.allianceStance,
       triggeredEpilogueEvents: [...this.triggeredEpilogueEvents],
       epilogueShown: this.epilogueShown,
+      loggedTreasuryMilestones: [...this.loggedTreasuryMilestones],
       tradeBlocs: this.tradeBlocs,
       nextBlocId: this.nextBlocId,
       // Phase 5-7 state
@@ -8116,8 +8123,8 @@ export class RegionSim {
         // Older saves predate vassalage — backfill as independent.
         f.vassals = (f as unknown as { vassals?: number[] }).vassals ?? [];
         f.overlordId = (f as unknown as { overlordId?: number | null }).overlordId ?? null;
-        // Functions don't survive JSON round-trips; null out the goal so it regenerates.
-        if (f.currentGoal && typeof f.currentGoal.successCondition !== 'function') f.currentGoal = null;
+        // successCondition is a function and doesn't survive JSON — the goal object itself
+        // is kept so the rng stream stays aligned; callers guard with typeof before invoking.
       }
       r.playerFactionId = d.playerFactionId ?? 0;
       r.aiDifficulty = d.aiDifficulty ?? 'normal';
@@ -8140,6 +8147,10 @@ export class RegionSim {
       // pre-fog save: what the towns can see today is what's on the maps
       for (const s of r.settlements) r.revealTiles(s.x, s.y, 3, 'explored');
     }
+    // Recompute exploredCount from restored map (revealTiles above already increments for the else branch)
+    if (d.explorationMap) {
+      r.exploredCount = r.explorationMap.reduce((sum, col) => sum + col.filter((v) => v !== 'fogged').length, 0);
+    }
     // last: the constructor consumed a draw scheduling its event day
     r.rng.setState(d.rng);
     // restore the AI stream too (older saves predate it — derive from main seed)
@@ -8147,6 +8158,7 @@ export class RegionSim {
     // restore epilogue events (post-2100 flavor)
     r.triggeredEpilogueEvents = new Set(d.triggeredEpilogueEvents ?? []);
     r.epilogueShown = d.epilogueShown ?? false;
+    r.loggedTreasuryMilestones = new Set(d.loggedTreasuryMilestones ?? []);
     // restore trade blocs (GDD §6.5)
     r.tradeBlocs = (d.tradeBlocs ?? []).map((b: TradeBloc) => ({ ...b, sharedTariff: b.sharedTariff ?? 0.1 }));
     r.nextBlocId = d.nextBlocId ?? (r.tradeBlocs.reduce((m, b) => Math.max(m, b.id), 0) + 1);
@@ -8505,7 +8517,8 @@ export class RegionSim {
     if (!faction.currentGoal || this.day - faction.lastGoalCheckDay >= 365) {
       // Check if previous goal succeeded/failed
       if (faction.currentGoal) {
-        const succeeded = faction.currentGoal.successCondition(faction, this);
+        const sc = faction.currentGoal.successCondition;
+        const succeeded = typeof sc === 'function' ? sc(faction, this) : false;
         if (succeeded) {
           this.addLog(`${faction.name} achieves ambition: "${faction.currentGoal.objective}". Their power grows.`, 'good');
           faction.treasury += 100; // prestige bonus
@@ -8746,7 +8759,8 @@ export class RegionSim {
     if (!faction.currentGoal) return;
 
     const goal = faction.currentGoal;
-    const succeeded = goal.successCondition(faction, this);
+    const sc = goal.successCondition;
+    const succeeded = typeof sc === 'function' ? sc(faction, this) : false;
     const targetYear = goal.targetYear;
     const yearsLeft = targetYear - this.year;
 

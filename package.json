@@ -13,7 +13,6 @@
     "test": "vitest run",
     "sim": "tsx src/sim/headless.ts",
     "sim:town": "tsx src/sim/town-headless.ts",
-    "sim:macro": "tsx src/sim/macro-headless.ts",
     "hf-sprites": "tsx scripts/hf-sprites.ts",
     "app": "npm run build && electron .",
     "app:dist": "npm run build && npx electron-builder"

@@ -27,7 +27,7 @@ describe('RegionSim.foundColony — the 4X day zero', () => {
     expect(home.loyaltyToFaction).toBe(100);
     expect(r.treasury).toBeGreaterThan(0);
     expect(r.lenders.length).toBeGreaterThan(0);
-    expect(r.year).toBe(1800);
+    expect(r.year).toBe(1919);
     expect(r.stateProclaimed).toBe(false);
     expect(r.nationProclaimed).toBe(false);
   });

@@ -33,10 +33,10 @@ describe('Calendar System: Month-Based Display', () => {
 
     // Test a few specific dates
     r.minute = 0;
-    expect(r.dateLabel).toMatch(/January \d+, 1800/);
+    expect(r.dateLabel).toMatch(/January \d+, 1919/);
 
-    r.minute = (1850 - START_YEAR) * DAYS_PER_YEAR * MINUTES_PER_DAY + 30 * MINUTES_PER_DAY;
-    expect(r.dateLabel).toMatch(/July \d+, 1850/);
+    r.minute = (1950 - START_YEAR) * DAYS_PER_YEAR * MINUTES_PER_DAY + 30 * MINUTES_PER_DAY;
+    expect(r.dateLabel).toMatch(/July \d+, 1950/);
 
     r.minute = (2000 - START_YEAR) * DAYS_PER_YEAR * MINUTES_PER_DAY + 55 * MINUTES_PER_DAY;
     expect(r.dateLabel).toMatch(/December \d+, 2000/);
@@ -64,7 +64,7 @@ describe('Calendar System: Month-Based Display', () => {
     r.minute = 60 * MINUTES_PER_DAY;
     expect(r.month).toBe(0); // Back to January
     expect(r.monthName).toBe('January');
-    expect(r.year).toBe(1801);
+    expect(r.year).toBe(1920);
   });
 });
 
@@ -107,7 +107,7 @@ describe('Calendar System: Acceleration & Pacing', () => {
     const r = RegionSim.create(42);
     const getAccel = () => (r as any).calendarAcceleration();
 
-    r.minute = (1850 - START_YEAR) * DAYS_PER_YEAR * MINUTES_PER_DAY;
+    r.minute = (1930 - START_YEAR) * DAYS_PER_YEAR * MINUTES_PER_DAY;
     const earlyAccel = getAccel();
 
     r.minute = (2050 - START_YEAR) * DAYS_PER_YEAR * MINUTES_PER_DAY;
@@ -119,34 +119,20 @@ describe('Calendar System: Acceleration & Pacing', () => {
     expect(earlyAccel).toBeLessThanOrEqual(lateAccel);
   });
 
-  it('300-year span completes in ~4-6 hours at base speed + typical player multiplier', () => {
+  it('181-year span (1919-2100) completes in reasonable time at base speed', () => {
     // This is a calculation test, not a real-time test
-    // 300 years = 18,000 days
+    // 181 years = 10,860 days
     // Acceleration phases:
-    //   1800-1950 (150 yrs = 9,000 days): 1× = 9,000 ticks
-    //   1950-2000 (50 yrs = 3,000 days): 2× = 6,000 ticks
-    //   2000-2100 (100 yrs = 6,000 days): 1.5× = 9,000 ticks
-    // Total: 24,000 ticks
+    //   1919-1950 (31 yrs = 1,860 days): 1× = 1,860 ticks
+    //   1950-2000 (50 yrs = 3,000 days): 2× = 6,000 ticks (ticks are fewer, advance faster)
+    //   2000-2100 (100 yrs = 6,000 days): 1.5× = 9,000 ticks (fewer ticks, faster advance)
+    // Effective real ticks: 1860 + 3000/2 + 6000/1.5 = 1860 + 1500 + 4000 = 7360 ticks
 
-    // At 30 minutes per tick: 24,000 × 30 = 720,000 game-minutes = 500 game-hours at 1× speed
-    // But with calendar acceleration the actual game-time scales:
-    //   - Ticks still happen at fixed rate
-    //   - Each tick advances more game-minutes (due to acceleration multiplier)
-    //   - Total game-minutes: 9,000 + 6,000 + 9,000 = 24,000 ticks
-    //   - At base rate (30 min/tick with accel): ~500 hrs at 1× speed? That's wrong.
+    // Weighted average acceleration: 1919-1950 at 1×, 1950-2000 at 2×, 2000-2100 at 1.5×
+    // Avg = (31*1 + 50*2 + 100*1.5) / 181 = (31 + 100 + 150) / 181 = 281/181 ≈ 1.55×
 
-    // Actually, let me recalculate. The calendar acceleration is applied in tick():
-    // this.minute += REGION_MINUTES_PER_TICK * this.calendarAcceleration()
-    // So more minutes advance per tick in late game.
-
-    // Weighted average acceleration: (150 + 150 + 150) / 300 = varies by period
-    // Before 1950: 150 years at 1× = 150 unit-years
-    // 1950-2000: 50 years at 2× = 100 unit-years
-    // 2000-2100: 100 years at 1.5× = 150 unit-years
-    // Total: 400 unit-years per 300 real years = 1.33× average
-
-    const totalYears = 300;
-    const avgAcceleration = 1.33; // weighted average
+    const totalYears = 181;
+    const avgAcceleration = 1.55; // weighted average
     const expectedGameMinutesAt1x = totalYears * avgAcceleration;
 
     // At typical player speed of 3-5×, it's much faster
@@ -164,16 +150,16 @@ describe('Calendar System: Acceleration & Pacing', () => {
 });
 
 describe('Calendar: Year Display Consistency', () => {
-  it('START_YEAR is correctly set to 1800', () => {
+  it('START_YEAR is correctly set to 1919', () => {
     const r = RegionSim.create(42);
-    expect(START_YEAR).toBe(1800);
-    expect(r.year).toBe(1800);
+    expect(START_YEAR).toBe(1919);
+    expect(r.year).toBe(1919);
   });
 
-  it('all years from 1800 to 2100 display correctly', () => {
+  it('all years from 1919 to 2100 display correctly', () => {
     const r = RegionSim.create(42);
 
-    const testYears = [1800, 1850, 1900, 1950, 2000, 2050, 2100];
+    const testYears = [1919, 1950, 2000, 2050, 2100];
     for (const y of testYears) {
       r.minute = (y - START_YEAR) * DAYS_PER_YEAR * MINUTES_PER_DAY;
       expect(r.year).toBe(y);
