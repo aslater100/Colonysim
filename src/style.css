@@ -762,12 +762,43 @@ body {
 .research-panel {
   left: 216px;
   top: 36px;
-  width: 210px;
+  width: min(720px, calc(100vw - 240px));
   max-height: calc(100vh - 60px);
   overflow-y: auto;
 }
 
 .research-panel p { margin: 2px 0; font-size: 12px; }
+
+/* ---- Visual tech tree (Issue #17) ---- */
+.tt-scroll { overflow-x: auto; overflow-y: hidden; padding-bottom: 6px; }
+.tt-canvas { position: relative; }
+.tt-edges { position: absolute; left: 0; top: 0; pointer-events: none; }
+.tt-edge { fill: none; stroke: #cbd5e1; stroke-width: 1.5; }
+.tt-edge-on { stroke: #16a34a; stroke-width: 2; }
+.tt-node-wrap { position: absolute; }
+.tt-node {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 4px 6px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+.tt-node .tt-name { font-size: 11px; font-weight: 600; line-height: 1.1; position: relative; z-index: 1; }
+.tt-node .tt-cost { font-size: 10px; opacity: 0.8; position: relative; z-index: 1; }
+.tt-fill { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(99, 102, 241, 0.18); z-index: 0; }
+.tt-done  { border-color: #16a34a; background: #f0fdf4; color: #15803d; }
+.tt-active { border-color: #6366f1; background: #eef2ff; color: #4338ca; }
+.tt-avail { border-color: #6366f1; background: #fff; color: #1e293b; cursor: pointer; }
+.tt-avail:hover { background: #eef2ff; border-color: #4338ca; box-shadow: 0 2px 8px rgba(99,102,241,0.25); }
+.tt-locked { border-color: #e2e8f0; background: #f1f5f9; color: #94a3b8; }
 
 /* ---- Route Network panel (Phase A) ---- */
 .route-network-panel {
@@ -1594,6 +1625,17 @@ body {
 .cv-app .res-active { background: rgba(90,169,216,0.10) !important; border-left-color: var(--accent) !important; color: #eaf4fb !important; }
 .cv-app .res-done  { color: var(--good) !important; border-left-color: var(--good) !important; }
 .cv-app .res-bar-fill { background: linear-gradient(90deg, var(--accent2), var(--accent)) !important; }
+
+/* ---- Visual tech tree (Issue #17): dark-theme node colouring ---- */
+.cv-app .tt-edge { stroke: var(--line) !important; }
+.cv-app .tt-edge-on { stroke: var(--good) !important; }
+.cv-app .tt-node { background: var(--ink2) !important; border-color: var(--line) !important; color: var(--text) !important; }
+.cv-app .tt-fill { background: rgba(90,169,216,0.22) !important; }
+.cv-app .tt-done  { border-color: var(--good) !important; color: var(--good) !important; }
+.cv-app .tt-active { border-color: var(--accent) !important; color: #eaf4fb !important; }
+.cv-app .tt-avail { border-color: var(--accent) !important; color: var(--text) !important; }
+.cv-app .tt-avail:hover { background: rgba(90,169,216,0.12) !important; }
+.cv-app .tt-locked { opacity: 0.6; }
 
 /* ---- Top HUD ---- */
 .cv-app .topbar {
