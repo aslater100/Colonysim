@@ -89,6 +89,14 @@ export class RegionView {
   /** Era-branch reveal modal: shown once when the century forks (GDD §3.2). */
   private eraModal: HTMLElement;
   private eraDismissed = false;
+  /** Post-2100 epilogue scroll: the accumulated legacy beats (GDD §8.5). */
+  private epilogueModal: HTMLElement;
+  /** Cinematic state machine: a frame-driven canvas sequence under the era/win
+   *  modal. While active, the DOM reveal is held back so the animation reads. */
+  private cinematic: { kind: 'era' | 'win'; variant: string; startFrame: number } | null = null;
+  /** View-only latches so each cinematic plays at most once per session. */
+  private playedEraCinematic = false;
+  private playedWinCinematic = false;
   /** Unit recruitment modal (GDD §7.1: military depth). */
   private recruitmentModal: HTMLElement;
   private frame = 0;
@@ -124,6 +132,10 @@ export class RegionView {
     // If the era was already decided in a prior session (loaded save), treat the
     // reveal as already dismissed — only fire for a fork that happens live here.
     this.eraDismissed = region.eraBranch !== null;
+    // Same for the cinematics: a save loaded mid/late-game skips the animation
+    // for moments that already happened, so they only play on a live transition.
+    this.playedEraCinematic = region.eraBranch !== null;
+    this.playedWinCinematic = region.winCondition !== null;
     this.panel = document.createElement('div');
     this.panel.className = 'inspector region-panel hidden';
     root.appendChild(this.panel);
@@ -163,6 +175,9 @@ export class RegionView {
     this.eraModal = document.createElement('div');
     this.eraModal.className = 'win-modal hidden';
     root.appendChild(this.eraModal);
+    this.epilogueModal = document.createElement('div');
+    this.epilogueModal.className = 'ceremony hidden';
+    root.appendChild(this.epilogueModal);
     this.recruitmentModal = document.createElement('div');
     this.recruitmentModal.className = 'ceremony hidden';
     root.appendChild(this.recruitmentModal);
@@ -223,6 +238,7 @@ export class RegionView {
     this.centuryModal.remove();
     this.winModal.remove();
     this.eraModal.remove();
+    this.epilogueModal.remove();
     this.rivalPanel.remove();
     this.provincePanel.remove();
   }
@@ -245,6 +261,8 @@ export class RegionView {
   }
 
   click(px: number, py: number): void {
+    // A click skips a running cinematic and consumes the event.
+    if (this.cinematic) { this.skipCinematic(); return; }
     this.selectedId = null;
     this.selectedFactionId = null;
     // Convert the screen click into map-space (undo the camera) so hit-testing
@@ -777,7 +795,42 @@ export class RegionView {
     this.drawCenturyReport();
     this.drawEraModal();
     this.drawWinModal();
+    this.drawEpilogueModal();
+    // Cinematics paint last, fullscreen, above every panel and modal.
+    this.updateCinematicTriggers();
+    this.drawCinematic(W, H);
   }
+
+  /** Detect the first frame an era fork or victory lands and queue its
+   *  cinematic. Latches are view-only so each plays at most once per session. */
+  private updateCinematicTriggers(): void {
+    if (this.cinematic) return;
+    const branch = this.region.eraBranch;
+    if (branch && !this.playedEraCinematic) {
+      this.playedEraCinematic = true;
+      this.cinematic = { kind: 'era', variant: branch, startFrame: this.frame };
+      return;
+    }
+    const wc = this.region.winCondition;
+    if (wc && !this.playedWinCinematic) {
+      this.playedWinCinematic = true;
+      this.cinematic = { kind: 'win', variant: wc.path, startFrame: this.frame };
+    }
+  }
+
+  /** True while a cinematic is playing — used to hold back the DOM reveal and
+   *  to let a click skip the animation. */
+  isCinematicPlaying(): boolean {
+    return this.cinematic !== null;
+  }
+
+  /** Skip the running cinematic (click / key). */
+  skipCinematic(): void {
+    this.cinematic = null;
+  }
+
+  /** How many frames a cinematic runs before the DOM modal takes over (~4s). */
+  private static readonly CINEMATIC_FRAMES = 240;
 
   /** Cheap fingerprint of everything the cached terrain+territory layer depends
    *  on. Terrain is fixed after worldgen; territory shifts only when a settlement
@@ -1719,6 +1772,8 @@ export class RegionView {
   private drawEraModal(): void {
     const branch = this.region.eraBranch;
     if (!branch || this.eraDismissed) { this.eraModal.classList.add('hidden'); return; }
+    // Hold the reveal back while the era cinematic is still playing.
+    if (this.cinematic?.kind === 'era') { this.eraModal.classList.add('hidden'); return; }
     if (!this.eraModal.classList.contains('hidden')) return; // already showing — leave it until dismissed
     this.eraModal.classList.remove('hidden');
     const titles: Record<string, string> = {
@@ -1755,6 +1810,8 @@ export class RegionView {
       this.winModal.classList.add('hidden');
       return;
     }
+    // Hold the reveal back while the victory cinematic is still playing.
+    if (this.cinematic?.kind === 'win') { this.winModal.classList.add('hidden'); return; }
     if (!this.winModal.classList.contains('hidden')) return;
     this.winModal.classList.remove('hidden');
     const pathLabels: Record<string, string> = {
@@ -1779,6 +1836,183 @@ export class RegionView {
     this.winModal.querySelector<HTMLButtonElement>('#win-play-on')!.onclick = () => {
       this.winDismissed = true;
       this.winModal.classList.add('hidden');
+    };
+  }
+
+  /** Per-cinematic palette + title: a painterly sky and a headline that the
+   *  animated scene is built around. Keyed by era branch or victory path. */
+  private cinematicTheme(kind: 'era' | 'win', variant: string): {
+    sky: [string, string]; accent: string; title: string; subtitle: string;
+  } {
+    const eraThemes: Record<string, { sky: [string, string]; accent: string; title: string; subtitle: string }> = {
+      solarpunk: { sky: ['#0b3d2e', '#7fd6a8'], accent: '#ffe08a', title: 'THE GARDEN CENTURY', subtitle: 'The grid hums clean' },
+      dystopia:  { sky: ['#1a0e2a', '#5a2a6a'], accent: '#ff3da6', title: 'THE NEON CENTURY',   subtitle: 'Order, bought at a price' },
+      drowned:   { sky: ['#0a1c33', '#26618a'], accent: '#7fd3ff', title: 'THE DROWNED CENTURY', subtitle: 'The sea comes for the coast' },
+    };
+    const winThemes: Record<string, { sky: [string, string]; accent: string; title: string; subtitle: string }> = {
+      unification: { sky: ['#241405', '#a9711f'], accent: '#ffd874', title: 'UNIFICATION', subtitle: 'One nation, one flag' },
+      legacy:      { sky: ['#1a1733', '#4a3f8a'], accent: '#ffe08a', title: 'LEGACY',      subtitle: 'History speaks your name' },
+      domination:  { sky: ['#2a0808', '#7a1f1f'], accent: '#ff6a4a', title: 'DOMINATION',  subtitle: 'Sovereign, unchallenged' },
+      solarpunk:   { sky: ['#0b3d2e', '#7fd6a8'], accent: '#ffe08a', title: 'THE GARDEN PATH', subtitle: 'A better century begins' },
+    };
+    const table = kind === 'era' ? eraThemes : winThemes;
+    return table[variant] ?? { sky: ['#10131a', '#2a3550'], accent: '#e8d27a', title: 'A NEW CENTURY', subtitle: '' };
+  }
+
+  /** The cinematic: a frame-driven fullscreen canvas sequence that plays once
+   *  when the century forks or a victory lands, before the DOM modal reveals.
+   *  Tasteful and screen-space; a click (handled in click()) skips it. */
+  private drawCinematic(W: number, H: number): void {
+    if (!this.cinematic) return;
+    const { kind, variant, startFrame } = this.cinematic;
+    const elapsed = this.frame - startFrame;
+    const dur = RegionView.CINEMATIC_FRAMES;
+    if (elapsed >= dur) { this.cinematic = null; return; }
+    const t = elapsed / dur; // 0..1 progress
+    const g = this.g;
+    const theme = this.cinematicTheme(kind, variant);
+
+    g.save();
+    // Sky: a vertical gradient that lightens as the scene resolves.
+    const sky = g.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, theme.sky[0]);
+    sky.addColorStop(1, theme.sky[1]);
+    g.fillStyle = sky;
+    g.fillRect(0, 0, W, H);
+
+    const cx = W / 2;
+    const horizon = H * 0.62;
+
+    // ---- Per-variant foreground motif ----
+    if (variant === 'solarpunk') {
+      // A sun rising over the horizon, with drifting pollen motes.
+      const sunY = horizon - (H * 0.28) * Math.min(1, t * 1.4);
+      const glow = g.createRadialGradient(cx, sunY, 0, cx, sunY, H * 0.4);
+      glow.addColorStop(0, 'rgba(255,224,138,0.9)');
+      glow.addColorStop(1, 'rgba(255,224,138,0)');
+      g.fillStyle = glow;
+      g.fillRect(0, 0, W, H);
+      g.fillStyle = theme.accent;
+      g.beginPath(); g.arc(cx, sunY, H * 0.08, 0, Math.PI * 2); g.fill();
+      for (let i = 0; i < 40; i++) {
+        const px = (i * 97 + this.frame * 0.6) % W;
+        const py = (i * 53 + this.frame * 0.4) % H;
+        g.fillStyle = `rgba(180,240,200,${0.2 + 0.2 * Math.sin(this.frame * 0.05 + i)})`;
+        g.fillRect(px, py, 2, 2);
+      }
+    } else if (variant === 'dystopia' || variant === 'domination') {
+      // A skyline silhouette with sweeping searchlights.
+      g.fillStyle = 'rgba(0,0,0,0.55)';
+      for (let i = 0; i < 14; i++) {
+        const bw = W / 14;
+        const bx = i * bw;
+        const bh = (H * 0.18) + ((i * 137) % Math.floor(H * 0.28));
+        g.fillRect(bx + 2, horizon - bh, bw - 4, bh + (H - horizon));
+        // window glints
+        for (let wy = horizon - bh + 6; wy < horizon; wy += 10) {
+          if ((i + wy) % 3 === 0) { g.fillStyle = `rgba(255,90,180,0.5)`; g.fillRect(bx + 6, wy, 3, 3); g.fillStyle = 'rgba(0,0,0,0.55)'; }
+        }
+      }
+      const beam = (this.frame * 0.02);
+      for (let b = 0; b < 2; b++) {
+        const ang = -Math.PI / 2 + Math.sin(beam + b * 2) * 0.6;
+        g.strokeStyle = `rgba(255,61,166,${0.18 + 0.1 * Math.sin(beam)})`;
+        g.lineWidth = 28;
+        g.beginPath(); g.moveTo(cx + (b ? 120 : -120), H); g.lineTo(cx + Math.cos(ang) * H, H + Math.sin(ang) * H); g.stroke();
+      }
+    } else if (variant === 'drowned') {
+      // A rising waterline with rain streaks.
+      const waterY = H - (H * 0.5) * Math.min(1, t * 1.2);
+      g.fillStyle = 'rgba(20,70,110,0.7)';
+      g.fillRect(0, waterY, W, H - waterY);
+      for (let i = 0; i < 6; i++) {
+        const ry = waterY + Math.sin(this.frame * 0.06 + i) * 4 + i * 3;
+        g.strokeStyle = `rgba(180,220,255,${0.15 - i * 0.02})`;
+        g.lineWidth = 1; g.beginPath(); g.moveTo(0, ry); g.lineTo(W, ry); g.stroke();
+      }
+      for (let i = 0; i < 80; i++) {
+        const px = (i * 71 + this.frame * 6) % W;
+        const py = (i * 113 + this.frame * 14) % H;
+        g.strokeStyle = 'rgba(200,225,255,0.25)';
+        g.beginPath(); g.moveTo(px, py); g.lineTo(px - 2, py + 8); g.stroke();
+      }
+    } else {
+      // unification / legacy: expanding rings + golden motes around a banner.
+      for (let r = 0; r < 4; r++) {
+        const rad = ((this.frame * 2 + r * 60) % (H * 0.6));
+        g.strokeStyle = `rgba(255,216,116,${0.25 * (1 - rad / (H * 0.6))})`;
+        g.lineWidth = 2; g.beginPath(); g.arc(cx, horizon, rad, 0, Math.PI * 2); g.stroke();
+      }
+      // a simple rising banner
+      const bannerY = horizon - (H * 0.2) * Math.min(1, t * 1.5);
+      g.fillStyle = theme.accent;
+      g.fillRect(cx - 30, bannerY, 60, 80);
+      g.fillStyle = 'rgba(0,0,0,0.25)';
+      g.fillRect(cx - 30, bannerY + 26, 60, 14);
+      for (let i = 0; i < 30; i++) {
+        const px = cx + Math.cos(i * 1.7 + this.frame * 0.03) * (60 + i * 6);
+        const py = horizon - Math.abs(Math.sin(i * 1.1 + this.frame * 0.04)) * (i * 5);
+        g.fillStyle = `rgba(255,224,138,${0.4})`;
+        g.fillRect(px, py, 2, 2);
+      }
+    }
+
+    // ---- Title: fade in over the first third, hold, then prompt ----
+    const titleAlpha = Math.min(1, Math.max(0, (t - 0.15) / 0.25));
+    g.textAlign = 'center';
+    g.fillStyle = `rgba(255,255,255,${titleAlpha})`;
+    g.font = `bold ${Math.round(H * 0.06)}px serif`;
+    g.fillText(theme.title, cx, horizon + H * 0.16);
+    g.fillStyle = `rgba(255,255,255,${titleAlpha * 0.75})`;
+    g.font = `${Math.round(H * 0.025)}px serif`;
+    g.fillText(theme.subtitle, cx, horizon + H * 0.16 + H * 0.05);
+
+    // Letterbox bars for the cinematic feel.
+    g.fillStyle = '#000';
+    const bar = H * 0.08;
+    g.fillRect(0, 0, W, bar);
+    g.fillRect(0, H - bar, W, bar);
+
+    // Opening fade-from-black and a closing "click to continue" hint.
+    if (t < 0.12) { g.fillStyle = `rgba(0,0,0,${1 - t / 0.12})`; g.fillRect(0, 0, W, H); }
+    if (t > 0.75) {
+      g.fillStyle = `rgba(255,255,255,${0.4 + 0.3 * Math.sin(this.frame * 0.1)})`;
+      g.font = `${Math.round(H * 0.02)}px monospace`;
+      g.fillText('click to continue', cx, H - bar - 16);
+    }
+    g.restore();
+    g.textAlign = 'left';
+  }
+
+  /** The post-2100 epilogue scroll (GDD §8.5): once a few legacy beats have
+   *  accumulated after the Century Report, gather them into one narrative. */
+  private drawEpilogueModal(): void {
+    const r = this.region;
+    const beats = r.year >= 2100 ? r.epilogueBeats() : [];
+    if (r.epilogueShown || beats.length < 3) {
+      this.epilogueModal.classList.add('hidden');
+      return;
+    }
+    if (!this.epilogueModal.classList.contains('hidden')) return; // already on screen
+    this.epilogueModal.classList.remove('hidden');
+    const branchTitle =
+      r.eraBranch === 'solarpunk' ? 'THE GARDEN ENDURES'
+      : r.eraBranch === 'dystopia' ? 'THE NEON ENDURES'
+      : r.eraBranch === 'drowned' ? 'THE WATERS RISE' : 'THE YEARS ROLL ON';
+    const beatHtml = beats
+      .map((b) => `<p style="text-align:left;border-left:3px solid ${b.kind === 'good' ? '#4e9' : b.kind === 'bad' ? '#e55' : '#88a'};padding-left:10px">${b.text}</p>`)
+      .join('');
+    this.epilogueModal.innerHTML =
+      `<div class="ceremony-box">` +
+      `<h2>EPILOGUE · ${r.year} — ${branchTitle}</h2>` +
+      `<p class="insp-skills">The century closed, but the story did not. What your choices wrote into the decades after:</p>` +
+      beatHtml +
+      `<p class="insp-skills">The sandbox is yours for as long as you care to play.</p>` +
+      `<button id="epilogue-close-btn">Close the chapter</button>` +
+      `</div>`;
+    this.epilogueModal.querySelector<HTMLButtonElement>('#epilogue-close-btn')!.onclick = () => {
+      r.epilogueShown = true;
+      this.epilogueModal.classList.add('hidden');
     };
   }
 

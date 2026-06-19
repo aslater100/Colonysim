@@ -150,6 +150,8 @@ const keys = new Set<string>();
 
 window.addEventListener('keydown', (e) => {
   keys.add(e.key);
+  // A cinematic is playing: any key skips it and consumes the event.
+  if (regionView?.isCinematicPlaying()) { regionView.skipCinematic(); e.preventDefault(); return; }
   if (e.key === ' ') {
     if (!pauseMenuOpen) {
       paused = !paused;

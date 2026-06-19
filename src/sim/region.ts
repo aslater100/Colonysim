@@ -2074,6 +2074,8 @@ export class RegionSim {
   winCondition: WinCondition | null = null;
   /** Track triggered epilogue events (post-2100 flavor) to avoid repeats */
   private triggeredEpilogueEvents = new Set<string>();
+  /** True once the player has seen the post-2100 epilogue scroll (persisted). */
+  epilogueShown = false;
   /** Player-founded economic unions (GDD §6.5). At most one player bloc. */
   tradeBlocs: TradeBloc[] = [];
   private nextBlocId = 1;
@@ -3811,6 +3813,13 @@ export class RegionSim {
 
     this.triggeredEpilogueEvents.add(event.id);
     this.addLog(event.text, event.kind);
+  }
+
+  /** The epilogue beats that have actually fired since 2100, for the epilogue
+   *  scroll (GDD §8.5). Resolves triggered ids back to their narrative text. */
+  epilogueBeats(): Array<{ id: string; text: string; kind: 'good' | 'info' | 'bad' }> {
+    const pool = this.getEpilogueEventPool();
+    return pool.filter((e) => this.triggeredEpilogueEvents.has(e.id));
   }
 
   /** Get era-specific epilogue events. */
@@ -7517,6 +7526,7 @@ export class RegionSim {
       militaryDoctrine: this.militaryDoctrine,
       allianceStance: this.allianceStance,
       triggeredEpilogueEvents: [...this.triggeredEpilogueEvents],
+      epilogueShown: this.epilogueShown,
       tradeBlocs: this.tradeBlocs,
       nextBlocId: this.nextBlocId,
     });
@@ -7690,6 +7700,7 @@ export class RegionSim {
     if (typeof d.aiRng === 'number') r.aiRng.setState(d.aiRng);
     // restore epilogue events (post-2100 flavor)
     r.triggeredEpilogueEvents = new Set(d.triggeredEpilogueEvents ?? []);
+    r.epilogueShown = d.epilogueShown ?? false;
     // restore trade blocs (GDD §6.5)
     r.tradeBlocs = (d.tradeBlocs ?? []).map((b: TradeBloc) => ({ ...b, sharedTariff: b.sharedTariff ?? 0.1 }));
     r.nextBlocId = d.nextBlocId ?? (r.tradeBlocs.reduce((m, b) => Math.max(m, b.id), 0) + 1);

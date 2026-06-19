@@ -1,6 +1,6 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-19 · **Tests:** 261 passing · **Version:** v1.0.1
+**Last updated:** 2026-06-19 · **Tests:** 285 passing · **Version:** v1.0.1
 
 ## The game: a standalone 4X campaign
 
@@ -99,6 +99,7 @@ npm run sim:macro  # nation-tier monetary harness — keep "ON TARGET"
 - ✓ **#226** — Rivals national identity (Issue #18): 11 named rival nations with unique flags/emblems, archetype-specific AI behavior, power comparison indicators; installer UI brightened (blue gradient, glowing title); package.json description updated
 - ✓ **#229** — Land purchase mechanics (Phase 1): unclaimed land claim (£25/cell, `claimCell`/`canClaimCell`), population-scaled settlement buyout (`buyLand`/`canBuyLand`/`settlementBuyoutCost`), Claim Land Mode toggle in Diplomacy tab; 22 new tests (251 total)
 - ✓ **#230** — Province View (Phase 2): `Province` interface + `computeProvinces()` in region.ts; `drawProvinceOverlay()` canvas layer (faction-colored name labels, pop/GDP/satisfaction stat bars, selection ring); `drawProvincePanel()` inspector DOM panel; click-to-select province; P key shortcut; Province View toggle in Diplomacy tab; 10 new tests (261 total)
+- ✓ **#231** — Advanced Diplomacy (Phase 3) + Late-Game Flavor (Phase 4): espionage (`ESPIONAGE_OPS`, per-rival `intel`, `runEspionage` with exposure), trade blocs (`TradeBloc`, `blocTradeBonus`), era/victory cinematics (`drawCinematic`), post-2100 epilogue scroll (`epilogueBeats`/`drawEpilogueModal`); 24 new tests (285 total)
 
 ## UI Architecture Notes (updated 2026-06-19)
 
@@ -163,15 +164,16 @@ delta = min(12, -6 + 14 × budget)   // 0 = −6/mo; 1.0 = +8/mo; 1.5 = +15/mo
 - ✓ **Diplomacy tab toggle** — "Province View (P)" button in State → Diplomacy section with active indicator
 - ✓ **Tests** — 10 tests in `tests/province.test.ts`; 261/261 overall
 
-### Phase 3 — Advanced Diplomacy UI
-- **Treaty editor** — Visual multi-item basket for offer/counter composition
-- **Trade bloc negotiation** — Form economic alliances with shared tariff policies
-- **Espionage/sabotage** — Secret actions (steal tech, sabotage buildings, propaganda)
+### Phase 3 ✓ (PR #231 — Advanced Diplomacy: Espionage & Trade Blocs)
+- ✓ **Espionage/sabotage** — `EspionageOp` (gather_intel/steal_tech/sabotage_economy/incite_unrest) + `ESPIONAGE_OPS` defs; per-rival `intel` 0..1; `runEspionage()` rolls success + separate exposure on the AI stream; steal_tech vaults research / treasury, sabotage sets rivals back, incite_unrest can fracture alliances; exposure sours relations. UI: per-rival intel meter + covert-op buttons in Diplomacy tab
+- ✓ **Trade blocs** — `TradeBloc` model (named multi-member union, shared tariff); `formTradeBloc`/`inviteToBloc`/`leaveTradeBloc`/`setBlocTariff` + `blocTradeBonus()` layered into monthly export earnings; UI section to found/grow/tune/dissolve
+- ✓ **Treaty editor / trade negotiation** — already shipped earlier as the "bargaining table" deal modal (`DealBasket`, `openDealModal`); espionage + blocs were the genuinely-missing pieces
+- ✓ **Tests** — 18 in `tests/diplomacy-advanced.test.ts`; 279/279 overall
 
-### Phase 4 — Late-Game Flavor
-- **Era-branching cinematics** — Animated sequences at 2040 fork (solarpunk/cyberpunk/drowned)
-- **Victory cinematics** — Unique end-game cinematics per win condition
-- **Post-2100 epilogue** — Optional sandbox play past the calendar end; legacy narratives
+### Phase 4 ✓ (PR #231 — Late-Game Flavor)
+- ✓ **Era-branching + victory cinematics** — `drawCinematic()`: frame-driven fullscreen canvas sequence (painterly sky, per-variant motif, letterbox, fade-in, title) that plays once when the century forks or a victory lands, before the DOM modal reveals; suppressed on loaded saves where the moment already passed; click / any key skips. Variants for all 3 era branches and all 4 win paths
+- ✓ **Post-2100 epilogue** — `epilogueBeats()` resolves triggered post-2100 events to a narrative scroll (`drawEpilogueModal()`), shown once 3+ beats accumulate; persisted `epilogueShown` flag so it doesn't re-trigger on reload
+- ✓ **Tests** — 6 in `tests/epilogue.test.ts`; 285/285 overall
 
 ## Completed in PR #226
 
@@ -181,9 +183,16 @@ delta = min(12, -6 + 14 × budget)   // 0 = −6/mo; 1.0 = +8/mo; 1.5 = +15/mo
 
 ## Flagged for Sonnet/Opus (complexity beyond Haiku scope)
 
-- **Phase 3: Advanced Diplomacy UI** — Treaty editor (multi-item basket), trade bloc negotiation, espionage/sabotage system. Significant UI and sim work. **Recommended model:** Sonnet or Opus.
+- _All four prioritized phases (1–4) are now shipped._ The next big features (continental/hex province
+  generation, AI rivals running their own espionage/blocs, inter-provincial unit movement) remain
+  large architectural efforts best handled by Sonnet/Opus.
 
 ## Known weak areas
+
+- **`npm run sim:macro` is broken** — the script points at `src/sim/macro-headless.ts`, which was
+  deleted in "Fix all test failures after Classic Colony removal". Either restore a headless macro
+  harness or drop the script from `package.json`. Macro stability is currently covered by the
+  `region-longrun` integration tests instead.
 
 - **activePolicies lookups** — still uses array `.includes()` in 18 calls. Small impact (policy slots
   are fixed-size, typically 3–4 items), but could convert to Set if microoptimization needed.
