@@ -1077,6 +1077,62 @@ export interface TradeBloc {
 export const BLOC_RELATIONS_FLOOR = 40;
 export const BLOC_FORM_COST = 200;
 
+// ---- Phase 5: Province-level governance (GDD §5.6) ----
+
+/** Administrative policy for a player-controlled province (= settlement). */
+export interface HexProvincePolicy {
+  /** Local tax multiplier 0.5–2.0; scales treasury income collected from this province. */
+  taxMultiplier: number;
+  /** Infrastructure investment 0–2 (low / medium / high); high accelerates garrison growth. */
+  investmentLevel: number;
+  /** Autonomy level 0–2 (administered / semi-autonomous / self-governing);
+   *  higher autonomy raises satisfaction but reduces direct tax efficiency. */
+  autonomyLevel: number;
+}
+export const DEFAULT_PROVINCE_POLICY: HexProvincePolicy = { taxMultiplier: 1.0, investmentLevel: 1, autonomyLevel: 0 };
+
+// ---- Phase 6: Rival-side economic diplomacy ----
+
+/** A trade bloc formed autonomously among rival nations (separate from the player's bloc). */
+export interface RivalTradeBloc {
+  id: number;
+  memberRivalIds: number[];
+  foundedYear: number;
+  /** External tariff 0..0.5 applied to the player's exports into member nations. */
+  tariff: number;
+}
+
+/** An economic sanction between nations: suppresses bilateral trade. */
+export interface Sanction {
+  /** Who imposed it (0 = player, else rivalId). */
+  imposerId: number;
+  /** Who is being sanctioned (0 = player, else rivalId). */
+  targetId: number;
+  startDay: number;
+  /** −1 = indefinite; positive = lifted automatically at this day. */
+  untilDay: number;
+  /** Fraction 0..1 of normal bilateral trade income suppressed. */
+  tradeReduction: number;
+}
+
+// ---- Phase 7: Inter-provincial unit movement ----
+
+/** An army stationed in or marching between provinces (settlement-level geography). */
+export interface ProvincialArmy {
+  id: number;
+  /** 0 = player; else the rival's id. */
+  ownerId: number;
+  /** Current province (settlement id). */
+  provinceId: number;
+  /** Province the army is marching toward; null = stationed in place. */
+  destinationId: number | null;
+  /** Days remaining until the army arrives at its destination. */
+  transitDays: number;
+  units: ArmyUnit[];
+  /** Food/ammo remaining (months of supply). */
+  supply: number;
+}
+
 // ---- War (GDD §7): casus belli → mobilization → war score → negotiated peace ----
 
 /** Why we fight (GDD §7.1): CB quality sets home-front war support at declaration. */
@@ -2079,6 +2135,19 @@ export class RegionSim {
   /** Player-founded economic unions (GDD §6.5). At most one player bloc. */
   tradeBlocs: TradeBloc[] = [];
   private nextBlocId = 1;
+  // ---- Phase 5: Province governance ----
+  /** Per-province (settlement) administrative policies; keyed by settlement id. */
+  provincePolicies: Record<number, HexProvincePolicy> = {};
+  // ---- Phase 6: Rival-side economic diplomacy ----
+  /** Trade blocs formed among rival nations independently of the player. */
+  rivalTradeBlocs: RivalTradeBloc[] = [];
+  private nextRivalBlocId = 1;
+  /** Active economic sanctions (player ↔ rivals). */
+  sanctions: Sanction[] = [];
+  // ---- Phase 7: Inter-provincial army movement ----
+  /** Armies stationed at or marching between provinces. */
+  provincialArmies: ProvincialArmy[] = [];
+  private nextArmyId = 1;
   private seaRiseAnnounced = false;
   private lastTidalLogDay = -999;
   private droughtAnnounced = false;
@@ -3684,6 +3753,9 @@ export class RegionSim {
     if (this.stateProclaimed) this.updateFactions();
     if (this.stateProclaimed) this.updateSettlementFactions();
     this.updateDiplomacy();
+    this.applyProvincePolicyEffects(); // Phase 5: province governance effects
+    this.updateArmyMovement();         // Phase 7: army marching, battles
+    this.tickRivalArmyAI();            // Phase 7: rival army planning
     this.consumeWarSupply(); // deplete supply reserves based on army size and supply consumption rate
     this.updateRivalAI(); // staggered AI updates for rivals (GDD §6.2)
     this.updateScouts(); // update faction scouts: movement, spawning, expiry (GDD §6.2)
@@ -4105,6 +4177,12 @@ export class RegionSim {
     if (this.playerWar) this.exportEarningsLastMonth *= this.playerWar.blockade ? 0.6 : 0.7;
     // A trade bloc (GDD §6.5) layers extra preferential earnings on top.
     this.exportEarningsLastMonth += this.blocTradeBonus();
+    // Phase 6: rival trade blocs and sanctions suppress export income
+    const blocFriction = this.rivalBlocTariffFriction();
+    const sanctionFriction = this.sanctionPressureOnPlayer();
+    if (blocFriction > 0 || sanctionFriction > 0) {
+      this.exportEarningsLastMonth *= Math.max(0, 1 - blocFriction - sanctionFriction);
+    }
     const treasuryBefore = this.treasury;
     this.treasury += revenue - spending + incomeTaxBonus + centralBankingBonus + estateLevyBonus +
       progressiveTaxBonus + protectionismBonus + austerityBonus + bankInterest + carbonLevyBonus + this.exportEarningsLastMonth;
@@ -4819,6 +4897,59 @@ export class RegionSim {
       gdpContribution: Math.round(this.sectorOutputOf(s)),
       keyBuildings: s.buildings ?? [],
     }));
+  }
+
+  // ---- Phase 5: Province-level governance ----
+
+  /** Get (or lazily initialise) the admin policy for a province. */
+  getProvincePolicy(provinceId: number): HexProvincePolicy {
+    if (!this.provincePolicies[provinceId]) {
+      this.provincePolicies[provinceId] = { ...DEFAULT_PROVINCE_POLICY };
+    }
+    return this.provincePolicies[provinceId];
+  }
+
+  /** Update the administrative policy for a player-owned province. */
+  setProvincePolicy(provinceId: number, patch: Partial<HexProvincePolicy>): boolean {
+    const s = this.settlement(provinceId);
+    if (!s || s.factionId !== this.playerFactionId) return false;
+    if (!this.stateProclaimed) return false;
+    const pol = this.getProvincePolicy(provinceId);
+    if (patch.taxMultiplier !== undefined) pol.taxMultiplier = Math.max(0.5, Math.min(2.0, patch.taxMultiplier));
+    if (patch.investmentLevel !== undefined) pol.investmentLevel = Math.max(0, Math.min(2, Math.round(patch.investmentLevel)));
+    if (patch.autonomyLevel !== undefined) pol.autonomyLevel = Math.max(0, Math.min(2, Math.round(patch.autonomyLevel)));
+    return true;
+  }
+
+  /** Monthly: apply province policy effects (autonomy satisfaction, investment garrison, tax multipliers). */
+  private applyProvincePolicyEffects(): void {
+    if (!this.stateProclaimed) return;
+    for (const s of this.settlements) {
+      if (s.factionId !== this.playerFactionId) continue;
+      const pol = this.provincePolicies[s.id];
+      if (!pol) continue;
+      if (pol.autonomyLevel >= 2) {
+        s.satisfaction = Math.min(100, s.satisfaction + 0.3);
+        s.grievance = Math.max(0, s.grievance - 0.5);
+      } else if (pol.autonomyLevel === 0 && s.satisfaction > 40) {
+        s.satisfaction = Math.max(0, s.satisfaction - 0.1);
+      }
+      if (pol.investmentLevel >= 2 && this.treasury > 5) {
+        this.treasury -= 2;
+        s.garrisonStrength = Math.min(this.garrisonCap(s), s.garrisonStrength + 0.5);
+      }
+    }
+  }
+
+  /** Monthly: rival AI builds inter-provincial connections (commerce-weighted). */
+  private tickRivalProvinceGovernance(): void {
+    for (const rv of this.rivals) {
+      if (rv.weights.commerce < 5 || !this.rng.chance(0.04)) continue;
+      rv.pop = Math.round(rv.pop * 1.004);
+      if (this.rng.chance(0.3)) {
+        this.noteHistory(rv, `Improved provincial infrastructure, ${this.year}.`);
+      }
+    }
   }
 
   // ---- Phase 5: Local Policies ----
@@ -6468,6 +6599,8 @@ export class RegionSim {
       rv.relations = this.clampRel(rv.relations - (sting + rv.weights.grudge));
       this.noteHistory(rv, `Caught ${this.stateName || 'the State'} running agents, ${this.year}.`);
       this.addLog(`COVERT OP EXPOSED: ${rv.name} catches your hand in the ${def.name.toLowerCase()}. Relations sour.`, 'bad');
+      // Phase 6: hostile rivals retaliate with sanctions when caught
+      if (rv.relations < -20 && op !== 'gather_intel') this.rivalImposeSanction(rv);
     } else {
       this.addLog(`${def.name} against ${rv.name}: ${outcome}`, success ? 'good' : 'info');
     }
@@ -6626,6 +6759,10 @@ export class RegionSim {
     }
     this.tickForeignRelations();
     this.tickPlayerWar();
+    this.tickRivalEspionage();       // Phase 6: rivals spy on the player
+    this.tickRivalTradeBlocActivity(); // Phase 6: rivals form their own blocs
+    this.tickRivalProvinceGovernance(); // Phase 5: rivals invest in provinces
+    this.tickSanctions();            // Phase 6: expire elapsed sanctions
   }
 
   /** A nation's bio stays readable: cap the beats, keep the founding line. */
@@ -6708,6 +6845,165 @@ export class RegionSim {
       }
       if (this.day >= w.endsDay) this.endForeignWar(w, a, b);
     }
+  }
+
+  // ---- Phase 6: AI espionage (rivals spy on the player) ----
+
+  /** Monthly tick: hostile rivals may run covert operations against the player. */
+  private tickRivalEspionage(): void {
+    if (!this.stateProclaimed) return;
+    for (const rv of this.rivals) {
+      if (this.playerWar?.rivalId === rv.id) continue;
+      if (rv.relations > 10) continue;
+      const chance = 0.04 + rv.weights.risk * 0.006 + Math.abs(Math.min(0, rv.relations)) * 0.001;
+      if (!this.aiRng.chance(chance)) continue;
+      if (this.day - (rv.lastEspionageDay ?? -90) < 90) continue;
+      rv.lastEspionageDay = this.day;
+      // Operation chosen by personality
+      const op = rv.weights.commerce >= 6 ? 'economic_pressure'
+               : rv.weights.expansion >= 7 ? 'military_recon'
+               : 'incite_dissent';
+      const playerIntel = this.intelOf(rv.id);
+      const caught = this.aiRng.chance(0.15 + playerIntel * 0.35);
+      if (!caught) {
+        switch (op) {
+          case 'economic_pressure': {
+            const drain = Math.min(this.treasury, 5 + this.rng.int(15));
+            this.treasury = Math.max(0, this.treasury - drain);
+            this.addLog(`Trade irregularities cost the treasury ${formatCurrency(drain)} — ${rv.name} interference suspected.`, 'bad');
+            break;
+          }
+          case 'military_recon': {
+            // Rival tracks our defences; manifest as a log warning
+            this.addLog(`Military attachés from ${rv.name} are spotted near the frontier — border security alerted.`, 'info');
+            break;
+          }
+          case 'incite_dissent': {
+            const t = this.settlements.length > 0 ? this.settlements[this.rng.int(this.settlements.length)] : null;
+            if (t && t.factionId === this.playerFactionId) {
+              t.grievance = Math.min(100, t.grievance + 5);
+              this.addLog(`Agitators stir trouble in ${t.name} — ${rv.name}'s hand is suspected.`, 'bad');
+            }
+            break;
+          }
+        }
+      } else {
+        // Caught: expose the operation, slight relations hit for them, sanctions threat
+        rv.relations = this.clampRel(rv.relations - 6);
+        this.addLog(`COUNTER-INTEL: ${rv.name}'s agents are caught and expelled. Their operation fails.`, 'good');
+      }
+    }
+  }
+
+  // ---- Phase 6: AI trade blocs ----
+
+  /** Monthly tick: commerce-weighted rivals form independent trade blocs. */
+  private tickRivalTradeBlocActivity(): void {
+    // Clean up blocs whose membership has fallen below 2
+    this.rivalTradeBlocs = this.rivalTradeBlocs.filter(
+      (b) => b.memberRivalIds.filter((id) => this.rival(id)).length >= 2,
+    );
+    for (let i = 0; i < this.rivals.length; i++) {
+      const a = this.rivals[i];
+      if (a.weights.commerce < 5) continue;
+      for (let j = i + 1; j < this.rivals.length; j++) {
+        const b = this.rivals[j];
+        if (b.weights.commerce < 5) continue;
+        if (this.pairRelations(a.id, b.id) < 40) continue;
+        const together = this.rivalTradeBlocs.some(
+          (bl) => bl.memberRivalIds.includes(a.id) && bl.memberRivalIds.includes(b.id),
+        );
+        if (together || !this.rng.chance(0.025)) continue;
+        const aBloc = this.rivalTradeBlocs.find((bl) => bl.memberRivalIds.includes(a.id));
+        const bBloc = this.rivalTradeBlocs.find((bl) => bl.memberRivalIds.includes(b.id));
+        if (aBloc && !aBloc.memberRivalIds.includes(b.id)) {
+          aBloc.memberRivalIds.push(b.id);
+          this.addLog(`${b.name} joins ${a.name}'s trade union — tariff walls rise for outsiders.`, 'info');
+        } else if (bBloc && !bBloc.memberRivalIds.includes(a.id)) {
+          bBloc.memberRivalIds.push(a.id);
+          this.addLog(`${a.name} accedes to ${b.name}'s trade union — the bloc grows.`, 'info');
+        } else if (!aBloc && !bBloc) {
+          const tariff = 0.1 + (a.weights.commerce + b.weights.commerce) * 0.01;
+          this.rivalTradeBlocs.push({
+            id: this.nextRivalBlocId++,
+            memberRivalIds: [a.id, b.id],
+            foundedYear: this.year,
+            tariff: Math.min(0.4, tariff),
+          });
+          this.addLog(`${a.name} and ${b.name} found a trade union — the world organises into blocs.`, 'info');
+        }
+      }
+    }
+  }
+
+  /** Monthly tariff friction applied to player export earnings from rival bloc members. */
+  rivalBlocTariffFriction(): number {
+    let friction = 0;
+    for (const bloc of this.rivalTradeBlocs) {
+      const tradeMembers = bloc.memberRivalIds.filter((id) => {
+        const rv = this.rival(id);
+        return rv && rv.treaties.includes('trade_agreement');
+      });
+      friction += tradeMembers.length * bloc.tariff * 0.25;
+    }
+    return Math.min(0.3, friction);
+  }
+
+  // ---- Phase 6: Economic sanctions ----
+
+  /** Active sanctions the player is either imposing or suffering. */
+  activeSanctions(): Sanction[] {
+    return this.sanctions.filter((s) => s.untilDay < 0 || s.untilDay > this.day);
+  }
+
+  /** Impose an economic sanction on a rival. */
+  imposeSanction(rivalId: number): { ok: boolean; reason: string } {
+    const rv = this.rival(rivalId);
+    if (!rv) return { ok: false, reason: 'No such rival' };
+    if (!this.stateProclaimed) return { ok: false, reason: 'Proclaim a State first' };
+    if (this.sanctions.some((s) => s.imposerId === 0 && s.targetId === rivalId &&
+        (s.untilDay < 0 || s.untilDay > this.day))) {
+      return { ok: false, reason: 'Sanction already active' };
+    }
+    this.sanctions.push({ imposerId: 0, targetId: rivalId, startDay: this.day, untilDay: this.day + 365, tradeReduction: 0.4 });
+    rv.relations = this.clampRel(rv.relations - 10);
+    this.noteHistory(rv, `Subjected to our trade sanctions, ${this.year}.`);
+    this.addLog(`SANCTIONS: Trade sanctions imposed on ${rv.name} — their exports barred from our markets.`, 'info');
+    return { ok: true, reason: 'Sanctions active for 1 year' };
+  }
+
+  /** Lift a player-imposed sanction on a rival. */
+  liftSanction(rivalId: number): boolean {
+    const before = this.sanctions.length;
+    this.sanctions = this.sanctions.filter((s) => !(s.imposerId === 0 && s.targetId === rivalId));
+    if (this.sanctions.length === before) return false;
+    const rv = this.rival(rivalId);
+    if (rv) {
+      rv.relations = this.clampRel(rv.relations + 5);
+      this.addLog(`Sanctions on ${rv.name} are lifted — relations may warm.`, 'info');
+    }
+    return true;
+  }
+
+  /** Fraction 0..1 of export earnings suppressed by rival sanctions against the player. */
+  sanctionPressureOnPlayer(): number {
+    const active = this.sanctions.filter(
+      (s) => s.targetId === 0 && (s.untilDay < 0 || s.untilDay > this.day),
+    );
+    return Math.min(0.5, active.reduce((sum, s) => sum + s.tradeReduction, 0));
+  }
+
+  /** A rival imposes retaliatory sanctions on the player after an espionage exposure. */
+  private rivalImposeSanction(rv: RivalNation): void {
+    if (this.sanctions.some((s) => s.imposerId === rv.id && s.targetId === 0 &&
+        (s.untilDay < 0 || s.untilDay > this.day))) return;
+    this.sanctions.push({ imposerId: rv.id, targetId: 0, startDay: this.day, untilDay: this.day + 180, tradeReduction: 0.25 });
+    this.addLog(`SANCTIONS: ${rv.name} imposes retaliatory trade sanctions on us.`, 'bad');
+  }
+
+  /** Monthly: expire elapsed sanctions. */
+  private tickSanctions(): void {
+    this.sanctions = this.sanctions.filter((s) => s.untilDay < 0 || s.untilDay > this.day);
   }
 
   /** War between two powers (GDD §6.4: "their wars move prices").
@@ -6915,6 +7211,149 @@ export class RegionSim {
       if (w.blockade) p *= 0.85; // supply starves at the quays (GDD §7.3)
     }
     return p;
+  }
+
+  // ---- Phase 7: Inter-provincial unit movement ----
+
+  /** All player armies currently stationed in a province (not in transit). */
+  armiesAt(provinceId: number): ProvincialArmy[] {
+    return this.provincialArmies.filter((a) => a.ownerId === 0 && a.provinceId === provinceId && !a.destinationId);
+  }
+
+  /** Order a player army from one province to march to another.
+   *  Draws units from garrisoned or war-recruited pools. */
+  deployArmy(fromId: number, toId: number, type: ArmyUnitType, count: number): { ok: boolean; reason: string } {
+    if (!this.stateProclaimed) return { ok: false, reason: 'Proclaim a State first' };
+    const from = this.settlement(fromId);
+    const to = this.settlement(toId);
+    if (!from || !to) return { ok: false, reason: 'Province not found' };
+    if (from.factionId !== this.playerFactionId) return { ok: false, reason: 'Not your province' };
+    // Source units: prioritise stationed units, then active war army
+    const stationed = from.stationedUnits.find((u) => u.type === type);
+    let sourced = false;
+    if (stationed && stationed.count >= count) {
+      stationed.count -= count;
+      if (stationed.count <= 0) from.stationedUnits = from.stationedUnits.filter((u) => u.type !== type);
+      sourced = true;
+    } else if (this.playerWar) {
+      const warUnit = this.playerWar.units.find((u) => u.type === type);
+      if (warUnit && warUnit.count >= count) { warUnit.count -= count; sourced = true; }
+    } else if (!sourced) {
+      // Detach from garrison (militia only)
+      if (type === 'militia' && from.garrisonStrength >= count * 2) {
+        from.garrisonStrength -= count;
+        sourced = true;
+      }
+    }
+    if (!sourced) return { ok: false, reason: `Need ${count} ${type} unit(s) stationed here` };
+    const dx = from.x - to.x;
+    const dy = from.y - to.y;
+    const speed = type === 'cavalry' ? 1.4 : type === 'warship' ? 0.7 : 1.0;
+    const days = Math.max(7, Math.round((7 + Math.hypot(dx, dy) * 0.5) / speed));
+    this.provincialArmies.push({
+      id: this.nextArmyId++,
+      ownerId: 0,
+      provinceId: fromId,
+      destinationId: toId,
+      transitDays: days,
+      units: [{ type, count, morale: 90, suppliedDays: 60 }],
+      supply: 2,
+    });
+    this.addLog(`Army marching from ${from.name} to ${to.name} — ${days} days' march.`, 'info');
+    return { ok: true, reason: `Marching to ${to.name} (${days} days)` };
+  }
+
+  /** Cancel a player army's movement order; the force stands fast. */
+  cancelArmyMovement(armyId: number): boolean {
+    const army = this.provincialArmies.find((a) => a.id === armyId && a.ownerId === 0);
+    if (!army || !army.destinationId) return false;
+    army.destinationId = null;
+    army.transitDays = 0;
+    this.addLog('Army movement cancelled — forces hold position.', 'info');
+    return true;
+  }
+
+  /** Monthly: advance armies, resolve battles on arrival, drain supply. */
+  private updateArmyMovement(): void {
+    for (const army of this.provincialArmies) {
+      army.supply = Math.max(0, army.supply - 1 / 30);
+      if (army.supply <= 0) {
+        for (const u of army.units) u.morale = Math.max(0, u.morale - 5);
+      }
+    }
+    for (const army of [...this.provincialArmies]) {
+      if (!army.destinationId) continue;
+      army.transitDays -= 30;
+      if (army.transitDays <= 0) {
+        const toName = this.settlement(army.destinationId)?.name ?? 'destination';
+        const ownerName = army.ownerId === 0 ? 'Our army' : (this.rival(army.ownerId)?.name ?? 'Enemy force');
+        army.provinceId = army.destinationId;
+        army.destinationId = null;
+        army.transitDays = 0;
+        this.addLog(`${ownerName} arrives at ${toName}.`, 'info');
+        this.resolveProvinceBattle(army.provinceId);
+      }
+    }
+    this.provincialArmies = this.provincialArmies.filter(
+      (a) => a.units.reduce((s, u) => s + u.count, 0) > 0,
+    );
+  }
+
+  /** Resolve combat when opposing armies occupy the same province. */
+  private resolveProvinceBattle(provinceId: number): void {
+    const playerArmies = this.provincialArmies.filter((a) => a.ownerId === 0 && a.provinceId === provinceId && !a.destinationId);
+    const rivalArmies = this.provincialArmies.filter((a) => a.ownerId !== 0 && a.provinceId === provinceId && !a.destinationId);
+    if (!playerArmies.length || !rivalArmies.length) return;
+    const sName = this.settlement(provinceId)?.name ?? 'the province';
+    const calcPower = (armies: ProvincialArmy[], rivalBoost = 1) =>
+      armies.reduce((sum, a) => sum + a.units.reduce((s, u) =>
+        s + u.count * UNIT_TYPES[u.type].powerPerUnit * (u.morale / 100), 0) * rivalBoost, 0);
+    const rvId = rivalArmies[0].ownerId;
+    const rv = this.rival(rvId);
+    const rivalBoost = rv ? 0.6 + rv.weights.expansion * 0.04 : 0.6;
+    const playerPower = calcPower(playerArmies);
+    const rivalPower = calcPower(rivalArmies, rivalBoost);
+    const playerWins = playerPower >= rivalPower * (0.8 + this.rng.next() * 0.4);
+    if (playerWins) {
+      this.provincialArmies = this.provincialArmies.filter((a) => !(a.ownerId === rvId && a.provinceId === provinceId));
+      for (const a of playerArmies) {
+        for (const u of a.units) { u.count = Math.max(1, Math.round(u.count * 0.8)); u.morale = Math.max(40, u.morale - 10); }
+      }
+      if (rv) rv.relations = this.clampRel(rv.relations - 5);
+      this.addLog(`BATTLE of ${sName}: our forces rout ${rv?.name ?? 'the enemy'}!`, 'good');
+    } else {
+      const homeId = this.settlements.find((s) => s.factionId === this.playerFactionId)?.id ?? provinceId;
+      for (const a of playerArmies) {
+        a.provinceId = homeId;
+        a.destinationId = null;
+        for (const u of a.units) { u.count = Math.max(1, Math.round(u.count * 0.7)); u.morale = Math.max(20, u.morale - 20); }
+      }
+      this.addLog(`BATTLE of ${sName}: ${rv?.name ?? 'the enemy'} drives our forces back!`, 'bad');
+    }
+  }
+
+  /** Monthly: rival AI spawns and manoeuvres armies (expansion-minded powers threaten borders). */
+  private tickRivalArmyAI(): void {
+    for (const rv of this.rivals) {
+      if (rv.weights.expansion < 6) continue;
+      if (!this.rng.chance(0.025)) continue;
+      const rvArmies = this.provincialArmies.filter((a) => a.ownerId === rv.id);
+      if (rvArmies.length >= 2) continue;
+      const targets = this.settlements.filter((s) => s.factionId === this.playerFactionId);
+      if (!targets.length) continue;
+      const target = targets[this.rng.int(targets.length)];
+      const armySize = 2 + this.rng.int(4);
+      this.provincialArmies.push({
+        id: this.nextArmyId++,
+        ownerId: rv.id,
+        provinceId: target.id,
+        destinationId: null,
+        transitDays: 0,
+        units: [{ type: 'militia', count: armySize, morale: 70, suppliedDays: 60 }],
+        supply: 1.5,
+      });
+      this.addLog(`Intelligence: ${rv.name} is massing troops near ${target.name}!`, 'bad');
+    }
   }
 
   /** Call a defensive-pact ally to the colors (GDD §7.3). Honor weight sets
@@ -7529,6 +7968,13 @@ export class RegionSim {
       epilogueShown: this.epilogueShown,
       tradeBlocs: this.tradeBlocs,
       nextBlocId: this.nextBlocId,
+      // Phase 5-7 state
+      provincePolicies: this.provincePolicies,
+      rivalTradeBlocs: this.rivalTradeBlocs,
+      nextRivalBlocId: this.nextRivalBlocId,
+      sanctions: this.sanctions,
+      provincialArmies: this.provincialArmies,
+      nextArmyId: this.nextArmyId,
     });
   }
 
@@ -7704,6 +8150,13 @@ export class RegionSim {
     // restore trade blocs (GDD §6.5)
     r.tradeBlocs = (d.tradeBlocs ?? []).map((b: TradeBloc) => ({ ...b, sharedTariff: b.sharedTariff ?? 0.1 }));
     r.nextBlocId = d.nextBlocId ?? (r.tradeBlocs.reduce((m, b) => Math.max(m, b.id), 0) + 1);
+    // Phase 5-7 state (pre-Phase5 saves default to empty)
+    r.provincePolicies = d.provincePolicies ?? {};
+    r.rivalTradeBlocs = (d.rivalTradeBlocs ?? []).map((b: RivalTradeBloc) => ({ ...b }));
+    r.nextRivalBlocId = d.nextRivalBlocId ?? (r.rivalTradeBlocs.reduce((m: number, b: RivalTradeBloc) => Math.max(m, b.id), 0) + 1);
+    r.sanctions = d.sanctions ?? [];
+    r.provincialArmies = d.provincialArmies ?? [];
+    r.nextArmyId = d.nextArmyId ?? 1;
     return r;
   }
 

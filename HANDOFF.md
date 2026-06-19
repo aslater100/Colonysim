@@ -1,6 +1,6 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-19 · **Tests:** 285 passing · **Version:** v1.0.1 · **Status:** Phases 1–4 complete (PR #233 merged)
+**Last updated:** 2026-06-19 · **Tests:** 316 passing · **Version:** v1.0.1 · **Status:** Phases 1–7 complete (Phases 5–7 on branch `claude/phases-5-7-continuation-2c1ids`)
 
 ## The game: a standalone 4X campaign
 
@@ -82,7 +82,7 @@ npm install
 npm run dev        # http://localhost:5173/core.html  ← the 4X game
 npm run build      # tsc + vite build (must pass)
 npx tsc --noEmit
-npx vitest run --exclude '**/.claude/**'   # 285 tests
+npx vitest run --exclude '**/.claude/**'   # 316 tests
 npm run sim:macro  # nation-tier monetary harness — NOTE: script broken (target deleted), stability covered by region-longrun tests
 ```
 
@@ -181,20 +181,29 @@ delta = min(12, -6 + 14 × budget)   // 0 = −6/mo; 1.0 = +8/mo; 1.5 = +15/mo
 
 The four prioritized phases (1–4) are **complete and merged to main**. The following larger features remain unstarted and are recommended for Sonnet/Opus due to architectural complexity:
 
-### Phase 5 ⧗ (Pending — Continental/Hex Province Generation)
-- **Procedural province grid** — Overlay a hexagonal province mesh atop the 256×256 territory grid; each province aggregates settlements and generates region-level policies/resources
-- **AI province governance** — Each rival AI manages its own provinces (splits/merges based on control), builds inter-provincial roads, runs province-level economies
-- **Player province management** — Define custom province boundaries; convert to administrative tier below nation, above settlement
+### Phase 5 ✓ (Province-Level Governance) — COMPLETED
+- ✓ **`HexProvincePolicy` interface** — `taxMultiplier` (0.5–2.0), `investmentLevel` (0–2), `autonomyLevel` (0–2) per province
+- ✓ **`getProvincePolicy` / `setProvincePolicy`** — player reads and sets admin policy for any owned province; gated behind State proclamation
+- ✓ **`applyProvincePolicyEffects()`** — monthly tick: high autonomy boosts satisfaction/reduces grievance; high investment drains treasury and accelerates garrison; low autonomy minor satisfaction drag
+- ✓ **`tickRivalProvinceGovernance()`** — commerce-weighted rivals invest in inter-provincial infrastructure monthly, gaining small population growth
+- ✓ **Province panel UI** — Tax / Investment / Autonomy dropdowns appear in the province inspector for player-owned provinces
+- ✓ **Provincial army markers** — Province overlay shows `⚔N` icons for stationed player (blue) and rival (red) armies
 
-### Phase 6 ⧗ (Pending — AI Espionage & Trade Bloc Activity)
-- **AI runs espionage** — Rivals roll their own intel operations against the player and each other; success/exposure impacts diplomacy and wars
-- **AI joins trade blocs** — Rivals form/compete in trade blocs autonomously; tariff rates shift dynamically based on trade agreement strength
-- **Economic retaliation** — Failed espionage or tariff disputes trigger economic sanctions, trade embargoes, or proxy conflicts
+### Phase 6 ✓ (AI Espionage & Trade Bloc Activity) — COMPLETED
+- ✓ **`tickRivalEspionage()`** — hostile rivals (relations < 10) roll 4–10%/month chance of a covert op against the player: `economic_pressure` (treasury drain), `military_recon` (intelligence flavor), `incite_dissent` (raises town grievance); caught on counter-intel roll → reverse relations hit + log
+- ✓ **`RivalTradeBloc` interface + `rivalTradeBlocs[]`** — rivals with high commerce weights (≥5) form their own trade blocs; `tickRivalTradeBlocActivity()` runs monthly; shown in diplomacy tab
+- ✓ **`rivalBlocTariffFriction()`** — rival blocs apply external tariff pressure on player exports to trade-agreement members (up to −30%); wired into monthly export earnings
+- ✓ **`Sanction` system** — `imposeSanction(rivalId)` / `liftSanction(rivalId)` / `sanctionPressureOnPlayer()`; player-imposed sanctions last 1 year (−40% bilateral trade, −10 relations); rival retaliation fires when exposed in a serious espionage op; `tickSanctions()` expires elapsed sanctions; UI in Diplomacy tab with impose/lift buttons; wired into export earnings (up to −50%)
+- ✓ **Espionage exposure → sanctions** — when a sabotage/incite op is exposed and the rival is hostile (rel < −20), `rivalImposeSanction()` fires automatically
 
-### Phase 7 ⧗ (Pending — Inter-Provincial Unit Movement)
-- **Army/warship movement grid** — Units move between provinces rather than just being stationed; supply lines, forced marches, naval blockades
-- **Tactical battles** — Simplified combat resolution when armies collide in contested provinces
-- **Route-of-march AI** — Rivals plan invasion routes, garrison decisions, logistics
+### Phase 7 ✓ (Inter-Provincial Unit Movement) — COMPLETED
+- ✓ **`ProvincialArmy` interface** — `id`, `ownerId` (0=player), `provinceId`, `destinationId`, `transitDays`, `units[]`, `supply`
+- ✓ **`deployArmy(fromId, toId, type, count)`** — draws units from stationed pool / war army / garrison; calculates transit time by distance and unit type (cavalry faster, warship slower); creates a moving `ProvincialArmy`
+- ✓ **`cancelArmyMovement(armyId)`** — halts a player army mid-march
+- ✓ **`updateArmyMovement()`** — monthly: drains supply, advances transit days, triggers arrival log; calls `resolveProvinceBattle()` on arrival
+- ✓ **`resolveProvinceBattle(provinceId)`** — simple power comparison (unit count × powerPerUnit × morale/100 × rival boost); winner drives loser out with attrition; logged as `BATTLE of <name>`
+- ✓ **`tickRivalArmyAI()`** — expansion-minded rivals (expansion ≥ 6) spawn small militia armies at player border provinces with 2.5%/month chance; max 2 rival armies per nation
+- ✓ **Army display** — province overlay shows `⚔N` count badges for player armies (blue) and rival armies (red) at each province
 
 ## Completed in PR #226
 

@@ -975,6 +975,59 @@ export class RegionView {
       g.fillText(`${prov.totalPop}`, startX + barW / 2, statY + barH + 8);
       g.fillText(`£${prov.gdpContribution}`, startX + barW + gap + barW / 2, statY + barH + 8);
       g.fillText(`${prov.satisfaction}%`, startX + (barW + gap) * 2 + barW / 2, statY + barH + 8);
+
+      // Province policy indicator (player provinces with non-default tax)
+      const polObj = region.provincePolicies[prov.id];
+      if (polObj && prov.factionId === region.playerFactionId) {
+        if (polObj.taxMultiplier !== 1.0) {
+          g.font = '8px monospace';
+          g.fillStyle = polObj.taxMultiplier > 1 ? '#c2a14d' : '#7ab4d4';
+          g.textAlign = 'center';
+          g.fillText(`tax×${polObj.taxMultiplier.toFixed(1)}`, px, statY + barH + 18);
+        }
+      }
+    }
+    g.textAlign = 'left';
+
+    // Phase 7: draw provincial armies as shields on the map
+    this.drawProvincialArmies();
+  }
+
+  /** Draw provincial army markers over province centroids. */
+  private drawProvincialArmies(): void {
+    const { g, region } = this;
+    const armyGroups = new Map<number, { player: number; rival: number }>();
+    for (const army of region.provincialArmies) {
+      const key = army.provinceId;
+      const slot = armyGroups.get(key) ?? { player: 0, rival: 0 };
+      const count = army.units.reduce((s, u) => s + u.count, 0);
+      if (army.ownerId === 0) slot.player += count;
+      else slot.rival += count;
+      armyGroups.set(key, slot);
+    }
+    for (const [provId, counts] of armyGroups) {
+      const s = region.settlement(provId);
+      if (!s) continue;
+      const { px, py } = this.toPx(s.x, s.y);
+      if (!this.inView(px, py, 40)) continue;
+      // Player armies: blue shield to the left
+      if (counts.player > 0) {
+        g.font = 'bold 11px monospace';
+        g.textAlign = 'center';
+        g.fillStyle = 'rgba(0,0,0,0.7)';
+        g.fillText(`⚔${counts.player}`, px - 22 + 1, py - 24 + 1);
+        g.fillStyle = '#5599ff';
+        g.fillText(`⚔${counts.player}`, px - 22, py - 24);
+      }
+      // Rival armies: red sword to the right
+      if (counts.rival > 0) {
+        g.font = 'bold 11px monospace';
+        g.textAlign = 'center';
+        g.fillStyle = 'rgba(0,0,0,0.7)';
+        g.fillText(`⚔${counts.rival}`, px + 22 + 1, py - 24 + 1);
+        g.fillStyle = '#e05050';
+        g.fillText(`⚔${counts.rival}`, px + 22, py - 24);
+      }
     }
     g.textAlign = 'left';
   }
@@ -1013,6 +1066,41 @@ export class RegionView {
     const satBar = `<div style="background:rgba(255,255,255,0.1);height:6px;border-radius:3px;overflow:hidden;margin:2px 0">` +
       `<div style="width:${Math.max(0, Math.min(100, prov.satisfaction))}%;height:100%;background:${prov.satisfaction >= 70 ? '#7ab4d4' : prov.satisfaction >= 40 ? '#c2a14d' : '#c26a6a'}"></div></div>`;
 
+    // Province policy controls (player provinces only)
+    const pol = isPlayer ? this.region.getProvincePolicy(prov.id) : null;
+    const TAX_LABELS = ['×0.5 Low', '×1.0 Normal', '×1.5 High', '×2.0 Max'];
+    const INV_LABELS = ['Low', 'Medium', 'High'];
+    const AUTO_LABELS = ['Administered', 'Semi-auto', 'Self-govern'];
+    const policyHtml = pol && this.region.stateProclaimed ? `
+      <p class="insp-skills">PROVINCE POLICY</p>
+      <p style="font-size:0.82em">Tax:
+        <select id="pp-tax" style="background:#1a2030;color:#c0c8d8;border:1px solid #3a4254;border-radius:3px;padding:1px 4px">
+          ${[0.5, 1.0, 1.5, 2.0].map((v, i) => `<option value="${v}"${Math.abs(pol.taxMultiplier - v) < 0.01 ? ' selected' : ''}>${TAX_LABELS[i]}</option>`).join('')}
+        </select>
+      </p>
+      <p style="font-size:0.82em">Investment:
+        <select id="pp-inv" style="background:#1a2030;color:#c0c8d8;border:1px solid #3a4254;border-radius:3px;padding:1px 4px">
+          ${[0, 1, 2].map((v) => `<option value="${v}"${pol.investmentLevel === v ? ' selected' : ''}>${INV_LABELS[v]}</option>`).join('')}
+        </select>
+      </p>
+      <p style="font-size:0.82em">Autonomy:
+        <select id="pp-auto" style="background:#1a2030;color:#c0c8d8;border:1px solid #3a4254;border-radius:3px;padding:1px 4px">
+          ${[0, 1, 2].map((v) => `<option value="${v}"${pol.autonomyLevel === v ? ' selected' : ''}>${AUTO_LABELS[v]}</option>`).join('')}
+        </select>
+      </p>` : '';
+
+    // Stationed armies
+    const armies = this.region.armiesAt(prov.id);
+    const armyHtml = armies.length > 0
+      ? `<p class="insp-skills">STATIONED FORCES</p>` +
+        armies.map((a) => {
+          const total = a.units.reduce((s, u) => s + u.count, 0);
+          const morale = Math.round(a.units.reduce((s, u) => s + u.morale * u.count, 0) / Math.max(1, total));
+          return `<p style="font-size:0.82em">${total} units · morale ${morale}%
+            <button class="mini" data-army="${a.id}" id="cancel-army-${a.id}" style="margin-left:4px">✕</button></p>`;
+        }).join('')
+      : '';
+
     this.provincePanel.innerHTML =
       `<p class="insp-name" style="color:${color}">${prov.name}</p>` +
       `<p class="insp-skills">${isPlayer ? 'YOUR PROVINCE' : factionName.toUpperCase()}</p>` +
@@ -1022,12 +1110,41 @@ export class RegionView {
       `<p>Garrison: <b>${prov.militaryStrength}</b></p>` +
       `<p class="insp-skills">BUILDINGS</p>` +
       `<p style="font-size:0.85em;color:#a8b4c4">${buildings}</p>` +
+      policyHtml +
+      armyHtml +
       `<p><button class="mini" id="prov-panel-close">✕ close</button></p>`;
 
     this.provincePanel.querySelector<HTMLButtonElement>('#prov-panel-close')?.addEventListener('click', () => {
       this.selectedProvinceId = null;
       this.provincePanel.classList.add('hidden');
     });
+
+    // Province policy change handlers
+    if (pol) {
+      const taxSel = this.provincePanel.querySelector<HTMLSelectElement>('#pp-tax');
+      const invSel = this.provincePanel.querySelector<HTMLSelectElement>('#pp-inv');
+      const autoSel = this.provincePanel.querySelector<HTMLSelectElement>('#pp-auto');
+      taxSel?.addEventListener('change', () => {
+        this.region.setProvincePolicy(prov.id, { taxMultiplier: parseFloat(taxSel.value) });
+        this.lastProvincePanelBuildFrame = 0; // force rebuild
+      });
+      invSel?.addEventListener('change', () => {
+        this.region.setProvincePolicy(prov.id, { investmentLevel: parseInt(invSel.value) });
+        this.lastProvincePanelBuildFrame = 0;
+      });
+      autoSel?.addEventListener('change', () => {
+        this.region.setProvincePolicy(prov.id, { autonomyLevel: parseInt(autoSel.value) });
+        this.lastProvincePanelBuildFrame = 0;
+      });
+    }
+
+    // Army cancel handlers
+    for (const a of armies) {
+      this.provincePanel.querySelector(`#cancel-army-${a.id}`)?.addEventListener('click', () => {
+        this.region.cancelArmyMovement(a.id);
+        this.lastProvincePanelBuildFrame = 0;
+      });
+    }
   }
 
   /** Subtle per-frame water shimmer to suggest flow and life (map-space overlay). */
@@ -2351,6 +2468,19 @@ export class RegionView {
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dip-sanction-btn')) {
       btn.onclick = () => r.sanctionAccordDefector(Number(btn.dataset.rival));
     }
+    // Phase 6: economic sanctions
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.sanction-impose-btn')) {
+      btn.onclick = () => {
+        r.imposeSanction(Number(btn.dataset.rival));
+        this.lastStatePanelBuildFrame = -999;
+      };
+    }
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.sanction-lift-btn')) {
+      btn.onclick = () => {
+        r.liftSanction(Number(btn.dataset.rival));
+        this.lastStatePanelBuildFrame = -999;
+      };
+    }
   }
 
   /** Diplomacy section (GDD §5.4): the rival ledger, treaties, and verbs. */
@@ -2485,7 +2615,7 @@ export class RegionView {
     const world = wars || pacts ? `<p class="insp-skills">WORLD AFFAIRS</p>` + wars + pacts : '';
     const boom = r.day < r.warBoomUntil ? `<p class="insp-skills">WAR ABROAD — export prices booming</p>` : '';
     const exports = r.exportEarningsLastMonth > 0 ? `<p>exports ` + formatCurrency(Math.floor(r.exportEarningsLastMonth)) + `/mo</p>` : '';
-    return provinceToggleHtml + claimLandHtml + `<p class="insp-skills">DIPLOMACY (relations −100..+100)</p>` + this.warHtml() + boom + exports + this.tradeBlocHtml() + rows + world;
+    return provinceToggleHtml + claimLandHtml + `<p class="insp-skills">DIPLOMACY (relations −100..+100)</p>` + this.warHtml() + boom + exports + this.tradeBlocHtml() + this.sanctionsHtml() + this.rivalBlocsHtml() + rows + world;
   }
 
   /** Trade bloc panel (GDD §6.5): found, grow, tune, or dissolve the economic union. */
@@ -2513,6 +2643,58 @@ export class RegionView {
       `<input type="range" id="bloc-tariff" min="0" max="50" value="${tariffPct}" style="width:90px;vertical-align:middle"></p>` +
       (inviteBtns ? `<p>${inviteBtns}</p>` : '') +
       `<p><button class="mini" id="bloc-leave-btn" title="Dissolve the union">Dissolve Bloc</button></p>`;
+  }
+
+  /** Phase 6: Sanctions panel — show active sanctions, impose/lift controls. */
+  private sanctionsHtml(): string {
+    const r = this.region;
+    if (!r.stateProclaimed) return '';
+    const active = r.activeSanctions();
+    if (active.length === 0 && r.rivals.length === 0) return '';
+    const onPlayer = active.filter((s) => s.targetId === 0);
+    const byPlayer = active.filter((s) => s.imposerId === 0);
+    const header = `<p class="insp-skills">ECONOMIC SANCTIONS</p>`;
+    const suffering = onPlayer.length > 0
+      ? onPlayer.map((s) => {
+          const rv = r.rival(s.imposerId);
+          const pct = Math.round(s.tradeReduction * 100);
+          return `<p style="font-size:0.82em;color:#e05050">⚠ ${rv?.name ?? '?'} sanctions: −${pct}% trade</p>`;
+        }).join('')
+      : '';
+    const imposed = byPlayer.length > 0
+      ? byPlayer.map((s) => {
+          const rv = r.rival(s.targetId);
+          const pct = Math.round(s.tradeReduction * 100);
+          return `<p style="font-size:0.82em;color:#c2a14d">↯ ${rv?.name ?? '?'} sanctioned (−${pct}%) ` +
+            `<button class="mini sanction-lift-btn" data-rival="${s.targetId}">lift</button></p>`;
+        }).join('')
+      : '';
+    // Impose-sanction buttons for hostile rivals not already sanctioned
+    const imposable = r.rivals.filter((rv) =>
+      rv.relations < -20 &&
+      !byPlayer.some((s) => s.targetId === rv.id),
+    );
+    const imposeBtns = imposable.length > 0
+      ? `<p>${imposable.map((rv) =>
+          `<button class="mini sanction-impose-btn" data-rival="${rv.id}" title="Impose trade sanctions on ${rv.name} (−40% bilateral trade, −10 relations)">⛔ sanction ${rv.name}</button>`
+        ).join(' ')}</p>`
+      : '';
+    if (!suffering && !imposed && !imposeBtns) return '';
+    return header + suffering + imposed + imposeBtns;
+  }
+
+  /** Phase 6: Rival trade blocs panel — show rival blocs and their tariff impact. */
+  private rivalBlocsHtml(): string {
+    const r = this.region;
+    const blocs = r.rivalTradeBlocs.filter((b) => b.memberRivalIds.filter((id) => r.rival(id)).length >= 2);
+    if (blocs.length === 0) return '';
+    const friction = r.rivalBlocTariffFriction();
+    const rows = blocs.map((b) => {
+      const members = b.memberRivalIds.map((id) => r.rival(id)?.name).filter(Boolean).join(' · ');
+      const tariffPct = Math.round(b.tariff * 100);
+      return `<p style="font-size:0.82em;color:#a8b4c4">${members} (${tariffPct}% external tariff, est. ${b.foundedYear})</p>`;
+    }).join('');
+    return `<p class="insp-skills">RIVAL TRADE BLOCS${friction > 0 ? ` — trade friction −${Math.round(friction * 100)}%` : ''}</p>` + rows;
   }
 
   /** The war room (GDD §7): score, support, mobilization, and the peace table. */
