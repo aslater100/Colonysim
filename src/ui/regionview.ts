@@ -3,7 +3,7 @@
  * operating altitude after the flip (GDD §2.5). Painterly backdrop, town
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
-import type { Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType } from '../sim/region';
+import type { Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType, TechNode } from '../sim/region';
 import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES } from '../sim/region';
 import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS, MINUTES_PER_DAY } from '../sim/defs';
 import type { CurrencySymbol } from '../sim/defs';
@@ -3326,7 +3326,77 @@ export class RegionView {
     );
   }
 
-  /** Research panel: tech + civics tree progress, node browser, start/cancel. */
+  /** Why a node can't be researched right now — shown on hover for locked nodes. */
+  private techLockReason(node: TechNode): string {
+    const r = this.region;
+    const unmet = node.prereqs.filter((p) => !r.has(p));
+    if (unmet.length > 0) {
+      const names = unmet.map((p) => TECH_TREE.find((n) => n.id === p)?.name ?? p);
+      return `Requires: ${names.join(', ')}`;
+    }
+    if (node.requiresState && !r.stateProclaimed) return 'Requires statehood';
+    if (r.year < node.era) return `Available from ${node.era}`;
+    return 'Locked';
+  }
+
+  /**
+   * DAG layout for one research tree: columns = longest prerequisite chain depth,
+   * rows packed within each column with a barycenter sort to reduce edge crossings.
+   * Returns pixel positions plus the canvas size needed to hold them.
+   */
+  private techTreeLayout(nodes: TechNode[]): {
+    pos: Map<string, { x: number; y: number }>;
+    width: number;
+    height: number;
+  } {
+    const NODE_W = 124, NODE_H = 42, COL_PITCH = 168, ROW_PITCH = 56, PAD = 14;
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const depthMemo = new Map<string, number>();
+    const depth = (id: string): number => {
+      if (depthMemo.has(id)) return depthMemo.get(id)!;
+      const n = byId.get(id);
+      if (!n) return 0;
+      depthMemo.set(id, 0); // guard against cycles
+      const ps = n.prereqs.filter((p) => byId.has(p));
+      const d = ps.length === 0 ? 0 : 1 + Math.max(...ps.map(depth));
+      depthMemo.set(id, d);
+      return d;
+    };
+    let maxCol = 0;
+    const colOf = new Map<string, number>();
+    for (const n of nodes) { const c = depth(n.id); colOf.set(n.id, c); maxCol = Math.max(maxCol, c); }
+    const colMembers: TechNode[][] = Array.from({ length: maxCol + 1 }, () => []);
+    for (const n of nodes) colMembers[colOf.get(n.id)!].push(n);
+
+    const rowOf = new Map<string, number>();
+    let maxRows = 0;
+    for (let c = 0; c <= maxCol; c++) {
+      const members = colMembers[c];
+      const bary = (n: TechNode): number => {
+        const ps = n.prereqs.filter((p) => rowOf.has(p));
+        if (ps.length === 0) return n.era; // col-0 (and orphans): chronological order
+        return ps.reduce((s, p) => s + rowOf.get(p)!, 0) / ps.length;
+      };
+      members.sort((a, b) => bary(a) - bary(b) || a.name.localeCompare(b.name));
+      members.forEach((n, i) => rowOf.set(n.id, i));
+      maxRows = Math.max(maxRows, members.length);
+    }
+
+    const pos = new Map<string, { x: number; y: number }>();
+    for (const n of nodes) {
+      pos.set(n.id, {
+        x: PAD + colOf.get(n.id)! * COL_PITCH,
+        y: PAD + rowOf.get(n.id)! * ROW_PITCH,
+      });
+    }
+    return {
+      pos,
+      width: PAD * 2 + maxCol * COL_PITCH + NODE_W,
+      height: PAD * 2 + Math.max(0, maxRows - 1) * ROW_PITCH + NODE_H,
+    };
+  }
+
+  /** Research panel: visual tech/civics tree with prerequisite lines, start/cancel. */
   private drawResearchPanel(): void {
     const r = this.region;
     if (!this.researchOpen) {
@@ -3335,53 +3405,86 @@ export class RegionView {
     }
     this.researchPanel.classList.remove('hidden');
     // DOM-stability guard (see drawStatePanel): rebuild on a ~1s timer, not every
-    // frame, or the "research"/"cancel" buttons are replaced mid-click and never fire.
+    // frame, or the node/cancel buttons are replaced mid-click and never fire.
     if (this.frame - this.lastResearchBuildFrame < 60) return;
     this.lastResearchBuildFrame = this.frame;
     const forceResearchRebuild = () => { this.lastResearchBuildFrame = -999; };
     const rate = r.researchRate().toFixed(1);
     const active = r.activeResearch ? TECH_TREE.find((n) => n.id === r.activeResearch) : null;
     const progressPct = active ? Math.min(100, Math.round((r.researchProgress / r.techCost(active)) * 100)) : 0;
-
-    const nodeRow = (id: string): string => {
-      const node = TECH_TREE.find((n) => n.id === id)!;
-      const done = r.has(id);
-      const available = !done && r.availableToResearch().find((n) => n.id === id);
-      const isActive = r.activeResearch === id;
-      const label = node.tree === 'tech' ? 'T' : 'C';
-      let cls = done ? 'res-done' : available ? 'res-avail' : 'res-locked';
-      if (isActive) cls = 'res-active';
-      let btn = '';
-      if (available && !isActive) {
-        btn = `<button class="mini res-start-btn" data-id="${id}">research</button>`;
-      } else if (isActive) {
-        btn = `<button class="mini res-cancel-btn">cancel</button>`;
-      }
-      const pctStr = isActive ? ` ${progressPct}%` : '';
-      return `<div class="res-row ${cls}" title="${node.desc}">[${label}] ${node.name} (${r.techCost(node) || '✓'} RP)${pctStr}${btn}</div>`;
-    };
-
-    const techNodes = TECH_TREE.filter((n) => n.tree === 'tech').map((n) => nodeRow(n.id)).join('');
-    const civicNodes = TECH_TREE.filter((n) => n.tree === 'civics').map((n) => nodeRow(n.id)).join('');
     const rtab = this.researchTab;
+
+    const NODE_W = 124, NODE_H = 42;
+    const availIds = new Set(r.availableToResearch().map((n) => n.id));
+
+    const renderTree = (tree: 'tech' | 'civics'): string => {
+      const nodes = TECH_TREE.filter((n) => n.tree === tree);
+      const { pos, width, height } = this.techTreeLayout(nodes);
+
+      // Edges first (behind the nodes): a path from each prereq's right edge to
+      // the node's left edge, colored by whether the prereq is satisfied.
+      let edges = '';
+      for (const n of nodes) {
+        const np = pos.get(n.id)!;
+        for (const p of n.prereqs) {
+          const pp = pos.get(p);
+          if (!pp) continue;
+          const x1 = pp.x + NODE_W, y1 = pp.y + NODE_H / 2;
+          const x2 = np.x, y2 = np.y + NODE_H / 2;
+          const mx = (x1 + x2) / 2;
+          const cls = r.has(p) ? 'tt-edge tt-edge-on' : 'tt-edge';
+          edges += `<path class="${cls}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" />`;
+        }
+      }
+
+      // Nodes on top.
+      let boxes = '';
+      for (const n of nodes) {
+        const np = pos.get(n.id)!;
+        const done = r.has(n.id);
+        const isActive = r.activeResearch === n.id;
+        const available = !done && availIds.has(n.id);
+        let cls = 'tt-node ';
+        cls += done ? 'tt-done' : isActive ? 'tt-active' : available ? 'tt-avail' : 'tt-locked';
+        const tip = done ? `${n.name} — researched` :
+          available ? `${n.name} (${r.techCost(n)} RP)\n${n.desc}` :
+          isActive ? `${n.name} — researching (${progressPct}%)` :
+          `${n.name}\n${this.techLockReason(n)}`;
+        const cost = done ? '✓' : isActive ? `${progressPct}%` : `${r.techCost(n)}`;
+        const fill = isActive ? `<div class="tt-fill" style="width:${progressPct}%"></div>` : '';
+        boxes += `<div class="tt-node-wrap" style="left:${np.x}px;top:${np.y}px;width:${NODE_W}px;height:${NODE_H}px">` +
+          `<div class="${cls}" data-id="${n.id}" data-state="${done ? 'done' : isActive ? 'active' : available ? 'avail' : 'locked'}" title="${this.escapeAttr(tip)}">` +
+          `${fill}<span class="tt-name">${n.name}</span><span class="tt-cost">${cost}</span></div></div>`;
+      }
+
+      return `<div class="tt-canvas" style="width:${width}px;height:${height}px">` +
+        `<svg class="tt-edges" width="${width}" height="${height}">${edges}</svg>${boxes}</div>`;
+    };
 
     this.researchPanel.innerHTML =
       `<div class="pal-title">RESEARCH</div>` +
-      `<p class="insp-skills">${rate} RP/day${active ? ` → <b>${active.name}</b>` : ' (idle)'}</p>` +
+      `<p class="insp-skills">${rate} RP/day${active ? ` → <b>${active.name}</b>` : ' (idle)'}` +
+      (active ? ` <button class="mini res-cancel-btn">cancel</button>` : '') + `</p>` +
       (active ? `<div class="res-bar"><div class="res-bar-fill" style="width:${progressPct}%"></div></div>` : '') +
       `<div class="pal-tabs">` +
       `<button class="pal-tab${rtab === 'tech' ? ' active' : ''}" data-ptab="tech">Technology</button>` +
       `<button class="pal-tab${rtab === 'civics' ? ' active' : ''}" data-ptab="civics">Civics</button>` +
       `</div>` +
-      `<div class="pal-section${rtab === 'tech' ? '' : ' hidden'}" data-psection="tech">${techNodes}</div>` +
-      `<div class="pal-section${rtab === 'civics' ? '' : ' hidden'}" data-psection="civics">${civicNodes}</div>`;
+      `<div class="pal-section tt-scroll${rtab === 'tech' ? '' : ' hidden'}" data-psection="tech">${renderTree('tech')}</div>` +
+      `<div class="pal-section tt-scroll${rtab === 'civics' ? '' : ' hidden'}" data-psection="civics">${renderTree('civics')}</div>`;
 
     this.wireTabs(this.researchPanel, (t) => { this.researchTab = t as 'tech' | 'civics'; });
-    for (const btn of this.researchPanel.querySelectorAll<HTMLButtonElement>('.res-start-btn')) {
-      btn.onclick = () => { r.startResearch(btn.dataset.id!); forceResearchRebuild(); };
+    for (const node of this.researchPanel.querySelectorAll<HTMLElement>('.tt-node')) {
+      if (node.dataset.state !== 'avail') continue;
+      node.onclick = () => { r.startResearch(node.dataset.id!); forceResearchRebuild(); };
     }
     const cancelBtn = this.researchPanel.querySelector<HTMLButtonElement>('.res-cancel-btn');
     if (cancelBtn) cancelBtn.onclick = () => { r.cancelResearch(); forceResearchRebuild(); };
+  }
+
+  /** Escape a string for safe use inside an HTML attribute (e.g. title tooltips). */
+  private escapeAttr(s: string): string {
+    return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   private panelHtml(t: Settlement): string {
