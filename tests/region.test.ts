@@ -762,7 +762,7 @@ describe('Constitutional Convention & Nation Proclamation (v0.15.0)', () => {
     expect(r2.nationName).toBe('Saved Nation');
     expect(r2.govType).toBe('monarchy');
     expect(r2.legitimacy).toBe(72);
-    expect(r2.ministers).toHaveLength(3);
+    expect(r2.ministers).toHaveLength(6);
   });
 
   it('treasury minister boosts tax revenue', () => {

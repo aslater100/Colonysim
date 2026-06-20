@@ -604,7 +604,7 @@ export const GOV_TYPES: GovTypeDef[] = [
   },
 ];
 
-export type MinisterRoleId = 'interior' | 'treasury' | 'defence';
+export type MinisterRoleId = 'interior' | 'treasury' | 'defence' | 'foreign' | 'science' | 'information';
 
 export interface MinisterAssignment {
   role: MinisterRoleId;
@@ -616,6 +616,9 @@ export const MINISTER_ROLES: { id: MinisterRoleId; title: string; bonus: string 
   { id: 'interior', title: 'Interior Minister', bonus: 'services 15% more effective' },
   { id: 'treasury', title: 'Treasury Secretary', bonus: 'tax collection +10%' },
   { id: 'defence', title: 'Defence Minister', bonus: 'militia 20% stronger' },
+  { id: 'foreign', title: 'Foreign Secretary', bonus: 'envoy relations +5; treaty costs −15%' },
+  { id: 'science', title: 'Science Minister', bonus: 'research rate +15%' },
+  { id: 'information', title: 'Press Secretary', bonus: 'legitimacy decay −25% slower' },
 ];
 
 // ---- Nation-tier: policy slots (GDD §5.3) ----
@@ -2084,6 +2087,14 @@ export class RegionSim {
   exchangeRate = 1.0;
   /** Prevents the 1929-analog crash from firing twice. */
   private crashFired = false;
+  /** 0→1 measure of depression severity; set to 1.0 when crash fires, decays ~5%/month. */
+  depressionDepth = 0;
+  /** Months since the crash fired — drives the recovery-crossroads timing. */
+  private crashMonthCounter = 0;
+  /** Player's chosen recovery path once the crossroads event fires. */
+  crashRecoveryChoice: 'pending' | 'stimulus' | 'austerity' | null = null;
+  /** Months of stimulus spending remaining (set to 24 on stimulus choice). */
+  private stimulusMonthsLeft = 0;
   /** Prevents the 1936–1948 world-war anchor from firing twice. */
   private worldWarFired = false;
   /** Prevents the 1970s oil-shock anchor from firing twice. */
@@ -2726,6 +2737,7 @@ export class RegionSim {
     if (this.has('artificial_intelligence')) mult *= 1.25;
     if (this.passedLaws.has('national_education_act')) mult *= 1.3;
     if (this.policyActive('research_grants')) mult *= 1.2;
+    if (this.ministerFor('science')) mult *= 1.15;
     // Phase 2: every university adds its laboratories to the effort
     for (const t of this.settlements) {
       for (const id of t.buildings) {
@@ -3793,6 +3805,28 @@ export class RegionSim {
         );
       }
     }
+    // Great Depression depth: decay ~5%/month, trigger recovery crossroads at month 12.
+    if (this.depressionDepth > 0.01) {
+      this.depressionDepth = Math.max(0, this.depressionDepth * 0.95);
+      if (this.depressionDepth < 0.01) this.depressionDepth = 0;
+      this.crashMonthCounter++;
+      // Stimulus path: drain treasury each month for 24 months
+      if (this.crashRecoveryChoice === 'stimulus' && this.stimulusMonthsLeft > 0) {
+        this.treasury -= 8;
+        this.stimulusMonthsLeft--;
+      }
+      // At 12 months post-crash, invite the player to choose a recovery path
+      if (this.crashMonthCounter === 12 && this.crashRecoveryChoice === null) {
+        this.crashRecoveryChoice = 'pending';
+        this.addLog(
+          'RECOVERY CROSSROADS: The depression is deep but not endless. Two paths open: ' +
+          'Stimulus — deficit spending and public works restart the engine faster, but cost the treasury £8/month for two years. ' +
+          'Austerity — balance the budget; services take a hit but the books stay clean. Choose in the State panel.',
+          'info',
+        );
+      }
+    }
+
     // Record monthly history for sparklines (last 12 months)
     const gdp = this.settlements.reduce((s, t) => s + SECTOR_IDS.reduce((ss, id) => ss + t.sectors[id].output, 0), 0);
     this.monthlyHistory.push({ gdp, treasury: this.treasury, inflation: this.inflationRate * 100, employment: 100 });
@@ -4195,6 +4229,11 @@ export class RegionSim {
     if (blocFriction > 0 || sanctionFriction > 0) {
       this.exportEarningsLastMonth *= Math.max(0, 1 - blocFriction - sanctionFriction);
     }
+    // Great Depression: global trade volumes suppressed while depressionDepth > 0.
+    // At depth=1.0 trade is at ~45% of normal; recovers as depth fades over ~30 months.
+    if (this.depressionDepth > 0.01) {
+      this.exportEarningsLastMonth *= Math.max(0.3, 1 - this.depressionDepth * 0.55);
+    }
     const treasuryBefore = this.treasury;
     this.treasury += revenue - spending + incomeTaxBonus + centralBankingBonus + estateLevyBonus +
       progressiveTaxBonus + protectionismBonus + austerityBonus + bankInterest + carbonLevyBonus + this.exportEarningsLastMonth;
@@ -4298,7 +4337,15 @@ export class RegionSim {
     const leveragePressure = Math.max(0, debtService - LEVERAGE_FRAGILITY) * 80;
     const inflPressure = Math.max(0, this.inflationRate - 0.08) * 40;
     const fragilityPressure = Math.max(0, this.privateLeverage - LEVERAGE_FRAGILE) * FRAGILITY_GAIN;
-    const confTarget = Math.max(5, 70 - leveragePressure - inflPressure - fragilityPressure);
+    // Depression ceiling: while depressionDepth > 0.05 confidence can't freely recover.
+    // At depth=1.0 ceiling is ~35; it lifts linearly as depth fades.
+    // Stimulus choice grants +10 to the ceiling; austerity +5.
+    const recoveryBonus = this.crashRecoveryChoice === 'stimulus' ? 10
+      : this.crashRecoveryChoice === 'austerity' ? 5 : 0;
+    const depressionCeiling = this.depressionDepth > 0.05
+      ? Math.round(35 + 65 * (1 - this.depressionDepth)) + recoveryBonus
+      : 100;
+    const confTarget = Math.min(depressionCeiling, Math.max(5, 70 - leveragePressure - inflPressure - fragilityPressure));
     this.confidence += (confTarget - this.confidence) * 0.12;
     this.confidence = Math.max(0, Math.min(100, this.confidence));
 
@@ -4310,17 +4357,7 @@ export class RegionSim {
       }
     }
 
-    // 5. 1929-analog crash: fires once when leverage is fragile in the historic window
-    if (!this.crashFired && this.year >= 1927 && this.year <= 1936) {
-      if (this.privateLeverage * this.policyRate > 0.12 && this.confidence < 55) {
-        this.crashFired = true;
-        this.confidence = Math.max(5, this.confidence - 40);
-        this.privateLeverage *= 0.65;
-        this.addLog('THE CRASH — credit markets seize. The world has not seen this before. A generation will remember.', 'bad');
-      }
-    }
-
-    // 6. FX dynamics
+    // 5. FX dynamics
     if (this.monetaryRegime === 'peg') {
       // Peg: hold exchange rate; drain reserves if trade is unfavorable
       const deficit = Math.max(0, this.totalPop() * 0.025 - this.exportEarningsLastMonth);
@@ -4484,7 +4521,50 @@ export class RegionSim {
       }
     }
 
-    // 3. 2020-analog pandemic: a novel pathogen sweeps the globe.
+    // 3. Great Depression analog (1927–1936): credit bubble meets a confidence
+    // collapse. Fires once when leverage is stretched and confidence is already
+    // fragile in the historical window — the sim sets the fuse, the era strikes it.
+    if (!this.crashFired && y >= 1927 && y <= 1936) {
+      if (this.privateLeverage * this.policyRate > 0.12 && this.confidence < 55) {
+        this.crashFired = true;
+        // Credit implosion
+        this.confidence = Math.max(5, this.confidence - 40);
+        this.privateLeverage *= 0.65;
+        // Depression depth: drives ongoing export suppression and confidence ceiling for ~30 months
+        this.depressionDepth = 1.0;
+        this.crashMonthCounter = 0;
+        // Bank failures drain reserves
+        const gdp = this.settlements.reduce(
+          (s, t) => s + SECTOR_IDS.reduce((ss, id) => ss + t.sectors[id].output, 0), 0,
+        );
+        this.treasury -= Math.round(gdp * 0.12 + 80);
+        // Political radicalization: unemployment and hunger push factions to extremes
+        for (const t of this.settlements) {
+          if (t.factionId !== this.playerFactionId) continue;
+          t.grievance = Math.min(100, t.grievance + 25);
+          t.satisfaction = Math.max(0, t.satisfaction - 15);
+          if (!t.activeEvents.some((ev) => ev.kind === 'labor_shortage')) {
+            t.activeEvents.push({ kind: 'labor_shortage', untilDay: this.day + 150, severity: 1 });
+          }
+        }
+        if (this.nationProclaimed) {
+          this.legitimacy = Math.max(0, this.legitimacy - 12);
+        }
+        this.addLog(
+          `THE CRASH: credit markets seize. Banks close their doors overnight — ` +
+          `savings vanish, factories idle, bread lines stretch around city blocks. ` +
+          `The world has not seen this before. A generation will remember.`,
+          'bad',
+        );
+        this.addLog(
+          `DEPRESSION: unemployment surges across every settlement. ` +
+          `Radical movements — left and right — are filling the void that hunger leaves.`,
+          'bad',
+        );
+      }
+    }
+
+    // 4. 2020-analog pandemic: a novel pathogen sweeps the globe.
     // Fires once in the 2012–2027 window; antibiotics tech halves the severity.
     if (!this.pandemicFired && y >= 2012 && y <= 2027 && this.rng.chance(0.04)) {
       this.pandemicFired = true;
@@ -5990,6 +6070,37 @@ export class RegionSim {
 
   /** Per-requirement breakdown for the Constitutional Convention, so the UI
    *  can show exactly which conditions are met and which still block the call. */
+  /** Player commits to a recovery path when the crossroads event fires.
+   *  Stimulus: faster depth decay, treasury drain for 24 months.
+   *  Austerity: slower decay, services cut, grievance spike. */
+  chooseRecoveryPath(path: 'stimulus' | 'austerity'): boolean {
+    if (this.crashRecoveryChoice !== 'pending') return false;
+    this.crashRecoveryChoice = path;
+    if (path === 'stimulus') {
+      this.stimulusMonthsLeft = 24;
+      this.depressionDepth *= 0.5; // immediate recovery boost
+      this.addLog(
+        'STIMULUS: The state opens the treasury — public works, emergency credits, deficit bonds. ' +
+        'Factories begin to stir. The recovery will cost; it is the correct cost.',
+        'good',
+      );
+    } else {
+      this.depressionDepth *= 0.8; // smaller immediate boost
+      this.servicesLevel = Math.max(0, this.servicesLevel - 0.5);
+      for (const t of this.settlements) {
+        if (t.factionId !== this.playerFactionId) continue;
+        t.grievance = Math.min(100, t.grievance + 15);
+        t.satisfaction = Math.max(0, t.satisfaction - 10);
+      }
+      this.addLog(
+        'AUSTERITY: The budget is balanced. Services cut, wages held. Markets stabilize ' +
+        'slowly, painfully. The books are clean; the streets are not.',
+        'info',
+      );
+    }
+    return true;
+  }
+
   canCallConventionGates(): { label: string; met: boolean; detail: string }[] {
     const totalGarrison = this.settlements.reduce((sum, s) => sum + this.garrisonOf(s), 0);
     const combined = totalGarrison + (this.militiaLevel || 0) * 3;
@@ -6043,8 +6154,10 @@ export class RegionSim {
   /** Monthly legitimacy tick (GDD §5.3). */
   private tickLegitimacy(): void {
     if (!this.nationProclaimed) return;
-    // Press Freedom Act law slows legitimacy decay by 30%
-    const decayRate = this.passedLaws.has('press_freedom_act') ? 0.35 : 0.5;
+    // Press Freedom Act law slows decay by 30%; Information minister adds a further 25%
+    const pressBonus = this.passedLaws.has('press_freedom_act') ? 0.7 : 1.0;
+    const infoBonus = this.ministerFor('information') ? 0.75 : 1.0;
+    const decayRate = 0.5 * pressBonus * infoBonus;
     this.legitimacy = Math.max(0, this.legitimacy - decayRate);
     if (this.govType === 'junta') {
       const ws = this.factions.find((f) => f.id === 'workers')?.support ?? 50;
@@ -6528,7 +6641,8 @@ export class RegionSim {
     rv.lastEnvoyDay = this.day;
     // Alliance stance (nation design): coalition-builders' letters land warmer
     const stanceBonus = this.allianceStance === 'coalition-builder' ? 2 : this.allianceStance === 'isolationist' ? -2 : 0;
-    const gain = Math.max(1, 4 + Math.round(rv.weights.commerce * 0.3) + stanceBonus);
+    const foreignBonus = this.ministerFor('foreign') ? 5 : 0;
+    const gain = Math.max(1, 4 + Math.round(rv.weights.commerce * 0.3) + stanceBonus + foreignBonus);
     rv.relations = this.clampRel(rv.relations + gain);
     // Record this diplomatic outreach in rival history if it's a turning point
     if (rv.relations < -30 && rv.relations + gain >= -30) {
@@ -8061,6 +8175,10 @@ export class RegionSim {
       creditRating: this.creditRating,
       exchangeRate: this.exchangeRate,
       crashFired: this.crashFired,
+      depressionDepth: this.depressionDepth,
+      crashMonthCounter: this.crashMonthCounter,
+      crashRecoveryChoice: this.crashRecoveryChoice,
+      stimulusMonthsLeft: this.stimulusMonthsLeft,
       worldWarFired: this.worldWarFired,
       oilShockFired: this.oilShockFired,
       pandemicFired: this.pandemicFired,
@@ -8167,7 +8285,9 @@ export class RegionSim {
     r.nationName = d.nationName ?? '';
     r.govType = d.govType ?? null;
     r.legitimacy = d.legitimacy ?? 0;
-    r.ministers = d.ministers ?? MINISTER_ROLES.map((x) => ({ role: x.id, title: x.title, notableId: null }));
+    // Backfill any minister roles added after the save was written (old saves only had 3 roles)
+    const savedMinisters: MinisterAssignment[] = d.ministers ?? [];
+    r.ministers = MINISTER_ROLES.map((mr) => savedMinisters.find((m) => m.role === mr.id) ?? { role: mr.id, title: mr.title, notableId: null });
     if (d.activePolicies) {
       r.activePolicies = d.activePolicies;
     } else if (d.govType) {
@@ -8214,6 +8334,10 @@ export class RegionSim {
     r.creditRating = d.creditRating ?? 'AA';
     r.exchangeRate = d.exchangeRate ?? 1.0;
     r.crashFired = d.crashFired ?? false;
+    r.depressionDepth = d.depressionDepth ?? 0;
+    r.crashMonthCounter = d.crashMonthCounter ?? 0;
+    r.crashRecoveryChoice = d.crashRecoveryChoice ?? null;
+    r.stimulusMonthsLeft = d.stimulusMonthsLeft ?? 0;
     r.worldWarFired = d.worldWarFired ?? false;
     r.oilShockFired = d.oilShockFired ?? false;
     r.pandemicFired = d.pandemicFired ?? false;

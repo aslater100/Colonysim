@@ -2485,6 +2485,13 @@ export class RegionView {
         this.lastStatePanelBuildFrame = -999;
       };
     }
+    // Depression recovery crossroads
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.recovery-btn')) {
+      btn.onclick = () => {
+        r.chooseRecoveryPath(btn.dataset.choice as 'stimulus' | 'austerity');
+        this.lastStatePanelBuildFrame = -999;
+      };
+    }
   }
 
   /** Diplomacy section (GDD §5.4): the rival ledger, treaties, and verbs. */
@@ -2902,7 +2909,22 @@ export class RegionView {
         `title="${card ? card.desc : 'Choose a policy card for this slot'}">${label}${upkeepNote}</button></p>`;
     }).join('') : '';
 
+    // Recovery crossroads: shown when the player must choose how to exit the depression
+    const crossroadsHtml = r.crashRecoveryChoice === 'pending'
+      ? `<div class="crisis-banner" style="border:1px solid #c84;background:rgba(180,100,20,0.18);padding:6px;margin:4px 0;border-radius:4px">` +
+        `<p class="insp-skills" style="color:#f4b942">▲ RECOVERY CROSSROADS</p>` +
+        `<p class="insp-skills">Stimulus: deficit spending restarts the engine — £8/month for 2 years, faster recovery.</p>` +
+        `<p class="insp-skills">Austerity: balance the budget — services cut, slower recovery, treasury preserved.</p>` +
+        `<button class="mini recovery-btn" data-choice="stimulus" style="margin-right:6px">Stimulus</button>` +
+        `<button class="mini recovery-btn" data-choice="austerity">Austerity</button>` +
+        `</div>`
+      : r.depressionDepth > 0.01
+        ? `<p class="insp-skills" style="color:#c84">Depression depth: ${Math.round(r.depressionDepth * 100)}% ` +
+          `(${r.crashRecoveryChoice ?? 'no path chosen'})</p>`
+        : '';
+
     return `<p class="insp-skills">NATION</p>` +
+      crossroadsHtml +
       `<div class="bar-row" title="Legitimacy — the regime's right to rule (GDD §5.3)">` +
       `<span style="width:80px;display:inline-block">legitimacy</span>` +
       legBar + `<span>${legPct}</span></div>` +
