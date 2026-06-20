@@ -2084,6 +2084,12 @@ export class RegionSim {
   exchangeRate = 1.0;
   /** Prevents the 1929-analog crash from firing twice. */
   private crashFired = false;
+  /** Prevents the 1936–1948 world-war anchor from firing twice. */
+  private worldWarFired = false;
+  /** Prevents the 1970s oil-shock anchor from firing twice. */
+  private oilShockFired = false;
+  /** Prevents the 2020-analog pandemic anchor from firing twice. */
+  private pandemicFired = false;
   // ---- Lender system: NPC bankers and merchants offering loans ----
   lenders: Lender[] = [];
   /** Player's active loans from lenders. */
@@ -3766,6 +3772,7 @@ export class RegionSim {
     this.updateScouts(); // update faction scouts: movement, spawning, expiry (GDD §6.2)
     this.tickClimate(); // the ledger runs from the first decade (GDD §8.2)
     if (this.passedLaws.has('central_bank_charter')) this.tickMonetary();
+    this.tickHistoricalAnchors(); // scripted world-events that rhyme with history (GDD §1)
     this.updateLoans(); // process loan interest and check for defaults
     if (this.stateProclaimed) this.collectVassalTribute();
     this.checkProclamationGate();
@@ -4393,6 +4400,116 @@ export class RegionSim {
         pf.centralBank.interestRate = this.policyRate;
         pf.centralBank.inflationRate = this.inflationRate;
       }
+    }
+  }
+
+  // ---- Historical Anchors (GDD §1) ----
+
+  /** Scripted world-events that rhyme with history without reciting it.
+   *  Each fires at most once, gated on world-state conditions and era window. */
+  private tickHistoricalAnchors(): void {
+    const y = this.year;
+
+    // 1. World-war window (GDD §1, 1936–1948): great-power tensions ignite.
+    // Fires when rival powers are hostile to each other AND an expansionist is in the mix.
+    if (!this.worldWarFired && y >= 1936 && y <= 1948 && this.rivals.length >= 2) {
+      // Find the most hostile pair among rivals
+      let worstRel = -35;
+      let warA = -1;
+      let warB = -1;
+      for (let i = 0; i < this.rivals.length; i++) {
+        for (let j = i + 1; j < this.rivals.length; j++) {
+          const rel = this.pairRelations(this.rivals[i].id, this.rivals[j].id);
+          if (rel < worstRel) {
+            worstRel = rel;
+            warA = this.rivals[i].id;
+            warB = this.rivals[j].id;
+          }
+        }
+      }
+      const hasExpansionist = this.rivals.some((rv) => rv.weights.expansion >= 6);
+      // Needs at least one hostile pair + an expansionist drive + era roll
+      if (warA >= 0 && hasExpansionist && this.rng.chance(0.08)) {
+        this.worldWarFired = true;
+        // Escalate the most hostile pair into open war if not already fighting
+        if (!this.warBetween(warA, warB)) this.startForeignWar(warA, warB);
+        // The wider world tenses: all rival-player relations drift more hostile
+        for (const rv of this.rivals) {
+          if (rv.relations > -10) rv.relations -= 8;
+        }
+        // Confidence takes a hit — war news shakes markets
+        this.confidence = Math.max(5, this.confidence - 12);
+        const aName = this.rival(warA)?.name ?? 'one power';
+        const bName = this.rival(warB)?.name ?? 'another';
+        this.addLog(
+          `THE CONFLAGRATION: ${aName} and ${bName} are no longer trading ultimatums — ` +
+          `they are trading artillery. The great powers are choosing sides. ` +
+          `Will you hold the line, or join the storm?`,
+          'bad',
+        );
+      }
+    }
+
+    // 2. Oil shock (1970s-equivalent): fossil dependency meets a supply embargo.
+    // Fires when combustion-engine tech is researched but no clean energy exists yet.
+    if (!this.oilShockFired && y >= 1970 && y <= 1985) {
+      const hasFossil = this.has('combustion_engine');
+      const hasCleanEnergy = this.has('renewables') || this.has('fusion_power');
+      if (hasFossil && !hasCleanEnergy && this.rng.chance(0.06)) {
+        this.oilShockFired = true;
+        // Economic hit: treasury drain + inflation spike + currency devaluation
+        const gdp = this.settlements.reduce(
+          (s, t) => s + SECTOR_IDS.reduce((ss, id) => ss + t.sectors[id].output, 0), 0,
+        );
+        const hit = Math.round(gdp * 0.14 + 150);
+        this.treasury -= hit;
+        this.inflationRate = Math.min(0.28, this.inflationRate + 0.07);
+        this.exchangeRate = Math.max(0.3, this.exchangeRate - 0.14);
+        this.confidence = Math.max(5, this.confidence - 18);
+        // Add a brief industry slump event to each player settlement
+        for (const t of this.settlements) {
+          if (t.factionId !== this.playerFactionId) continue;
+          if (!t.activeEvents.some((ev) => ev.kind === 'labor_shortage')) {
+            t.activeEvents.push({ kind: 'labor_shortage', untilDay: this.day + 90, severity: 1 });
+            t.satisfaction = Math.max(0, t.satisfaction - 5);
+            t.grievance = Math.min(100, t.grievance + 6);
+          }
+        }
+        this.addLog(
+          `OIL EMBARGO: Exporting nations choke the supply lines. Fuel prices triple overnight — ` +
+          `${formatCurrency(hit)} drained from reserves, inflation surges, industry stalls. ` +
+          `The answer is in the renewables labs.`,
+          'bad',
+        );
+      }
+    }
+
+    // 3. 2020-analog pandemic: a novel pathogen sweeps the globe.
+    // Fires once in the 2012–2027 window; antibiotics tech halves the severity.
+    if (!this.pandemicFired && y >= 2012 && y <= 2027 && this.rng.chance(0.04)) {
+      this.pandemicFired = true;
+      const hasAntibiotics = this.has('antibiotics') || this.has('welfare_state');
+      const duration = hasAntibiotics ? 60 : 120;
+      const mult = hasAntibiotics ? 0.86 : 0.72;
+      // Push a severe pandemic_wave onto every settlement
+      for (const t of this.settlements) {
+        t.activeEvents = t.activeEvents.filter((ev) => ev.kind !== 'pandemic_wave');
+        t.activeEvents.push({ kind: 'pandemic_wave', untilDay: this.day + duration, severity: 1 });
+        const satHit = hasAntibiotics ? 6 : 14;
+        const grHit = hasAntibiotics ? 5 : 11;
+        t.satisfaction = Math.max(0, t.satisfaction - satHit);
+        t.grievance = Math.min(100, t.grievance + grHit);
+        // Manually apply output multiplier to current sector outputs
+        for (const id of SECTOR_IDS) {
+          t.sectors[id].output = Math.max(0.1, t.sectors[id].output * mult);
+        }
+      }
+      this.confidence = Math.max(5, this.confidence - (hasAntibiotics ? 12 : 28));
+      this.exportEarningsLastMonth *= 0.65;
+      const msg = hasAntibiotics
+        ? `PANDEMIC: A novel pathogen spreads across the world. Modern medicine blunts the worst — cities lock down for weeks, not years. Trade slows; recovery is measured in months.`
+        : `PANDEMIC: A novel pathogen sweeps the globe. Without modern medical infrastructure the toll is heavy — cities shutter, commerce stops, the dead are counted in silence.`;
+      this.addLog(msg, 'bad');
     }
   }
 
@@ -7944,6 +8061,9 @@ export class RegionSim {
       creditRating: this.creditRating,
       exchangeRate: this.exchangeRate,
       crashFired: this.crashFired,
+      worldWarFired: this.worldWarFired,
+      oilShockFired: this.oilShockFired,
+      pandemicFired: this.pandemicFired,
       nextId: this.nextId,
       nextEventDay: this.nextEventDay,
       townNamePool: this.townNamePool,
@@ -8094,6 +8214,9 @@ export class RegionSim {
     r.creditRating = d.creditRating ?? 'AA';
     r.exchangeRate = d.exchangeRate ?? 1.0;
     r.crashFired = d.crashFired ?? false;
+    r.worldWarFired = d.worldWarFired ?? false;
+    r.oilShockFired = d.oilShockFired ?? false;
+    r.pandemicFired = d.pandemicFired ?? false;
     // Lender system: initialize lenders if not in save, or load existing ones
     r.lenders = d.lenders ?? createInitialLenders();
     r.loans = d.loans ?? [];

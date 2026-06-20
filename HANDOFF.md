@@ -1,6 +1,6 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-19 · **Tests:** 316 passing · **Version:** v1.0.1 · **Status:** Phases 1–7 complete (merged to main via PR #236)
+**Last updated:** 2026-06-19 · **Tests:** 334 passing · **Version:** v1.0.1 · **Status:** Phases 1–7 complete + historical anchors (merged to main via PR #236)
 
 ## The game: a standalone 4X campaign
 
@@ -85,7 +85,7 @@ npx tsc --noEmit
 npx vitest run --exclude '**/.claude/**'   # 316 tests
 ```
 
-## Recent completions (PRs #218–#236)
+## Recent completions (PRs #218–#238)
 
 - ✓ **#218** — Fix labor_law grievance test: measurement window and strike masking
 - ✓ **#219** — Tech tree rebuilt as visual DAG: SVG edges, node state coloring, click-to-research
@@ -100,6 +100,7 @@ npx vitest run --exclude '**/.claude/**'   # 316 tests
 - ✓ **#230** — Province View (Phase 2): `Province` interface + `computeProvinces()` in region.ts; `drawProvinceOverlay()` canvas layer (faction-colored name labels, pop/GDP/satisfaction stat bars, selection ring); `drawProvincePanel()` inspector DOM panel; click-to-select province; P key shortcut; Province View toggle in Diplomacy tab; 10 new tests (261 total)
 - ✓ **#233** — Advanced Diplomacy (Phase 3) + Late-Game Flavor (Phase 4): espionage (`ESPIONAGE_OPS`, per-rival `intel`, `runEspionage` with exposure), trade blocs (`TradeBloc`, `blocTradeBonus`), era/victory cinematics (`drawCinematic`), post-2100 epilogue scroll (`epilogueBeats`/`drawEpilogueModal`); 24 new tests (285 total)
 - ✓ **#236** — 1919 campaign start (Issue #25): `START_YEAR = 1919`, post-Great War founding lore in `foundColony()`; save/load determinism fix (preserve `currentGoal` on deserialize, guard `successCondition` callers with `typeof` so the `aiRng` stream stays aligned across save/load cycles); 3 test fixes (`region-longrun`, `region`, `region-found`) and updated era-gated tech/calendar test expectations for the new epoch; rival nation lore rewritten for post-WWI context (leader titles, descriptions, `techUnlock` refs); Humanitarians `minYear` 1920→1919; Merchant Guilds updated as a 1919–1925 transitional faction
+- ✓ **#238** — Historical anchors (GDD §1): three scripted world-events that rhyme with history without reciting it — **world-war window** (1936–1948: fires when rival tensions peak + an expansionist is in the mix; escalates the most hostile rival pair into open war, shakes player confidence); **oil shock** (1970–1985: fires when combustion_engine is researched but no renewables exist; treasury drain + inflation spike + currency hit + industry slump in player settlements); **2020-analog pandemic** (2012–2027: 4%/month roll; pushes a 60–120 day pandemic_wave onto all settlements, with severity halved if `antibiotics` is researched); each fires at most once, is fully serialized, and backfills `false` on old saves; 18 new tests (`tests/historical-anchors.test.ts`, 334 total)
 
 ## UI Architecture Notes (updated 2026-06-19)
 
