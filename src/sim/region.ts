@@ -604,7 +604,7 @@ export const GOV_TYPES: GovTypeDef[] = [
   },
 ];
 
-export type MinisterRoleId = 'interior' | 'treasury' | 'defence';
+export type MinisterRoleId = 'interior' | 'treasury' | 'defence' | 'foreign' | 'science' | 'information';
 
 export interface MinisterAssignment {
   role: MinisterRoleId;
@@ -616,6 +616,9 @@ export const MINISTER_ROLES: { id: MinisterRoleId; title: string; bonus: string 
   { id: 'interior', title: 'Interior Minister', bonus: 'services 15% more effective' },
   { id: 'treasury', title: 'Treasury Secretary', bonus: 'tax collection +10%' },
   { id: 'defence', title: 'Defence Minister', bonus: 'militia 20% stronger' },
+  { id: 'foreign', title: 'Foreign Secretary', bonus: 'envoy relations +5; treaty costs −15%' },
+  { id: 'science', title: 'Science Minister', bonus: 'research rate +15%' },
+  { id: 'information', title: 'Press Secretary', bonus: 'legitimacy decay −25% slower' },
 ];
 
 // ---- Nation-tier: policy slots (GDD §5.3) ----
@@ -2726,6 +2729,7 @@ export class RegionSim {
     if (this.has('artificial_intelligence')) mult *= 1.25;
     if (this.passedLaws.has('national_education_act')) mult *= 1.3;
     if (this.policyActive('research_grants')) mult *= 1.2;
+    if (this.ministerFor('science')) mult *= 1.15;
     // Phase 2: every university adds its laboratories to the effort
     for (const t of this.settlements) {
       for (const id of t.buildings) {
@@ -4310,17 +4314,7 @@ export class RegionSim {
       }
     }
 
-    // 5. 1929-analog crash: fires once when leverage is fragile in the historic window
-    if (!this.crashFired && this.year >= 1927 && this.year <= 1936) {
-      if (this.privateLeverage * this.policyRate > 0.12 && this.confidence < 55) {
-        this.crashFired = true;
-        this.confidence = Math.max(5, this.confidence - 40);
-        this.privateLeverage *= 0.65;
-        this.addLog('THE CRASH — credit markets seize. The world has not seen this before. A generation will remember.', 'bad');
-      }
-    }
-
-    // 6. FX dynamics
+    // 5. FX dynamics
     if (this.monetaryRegime === 'peg') {
       // Peg: hold exchange rate; drain reserves if trade is unfavorable
       const deficit = Math.max(0, this.totalPop() * 0.025 - this.exportEarningsLastMonth);
@@ -4484,7 +4478,49 @@ export class RegionSim {
       }
     }
 
-    // 3. 2020-analog pandemic: a novel pathogen sweeps the globe.
+    // 3. Great Depression analog (1927–1936): credit bubble meets a confidence
+    // collapse. Fires once when leverage is stretched and confidence is already
+    // fragile in the historical window — the sim sets the fuse, the era strikes it.
+    if (!this.crashFired && y >= 1927 && y <= 1936) {
+      if (this.privateLeverage * this.policyRate > 0.12 && this.confidence < 55) {
+        this.crashFired = true;
+        // Credit implosion
+        this.confidence = Math.max(5, this.confidence - 40);
+        this.privateLeverage *= 0.65;
+        // Export markets seize — trade volumes collapse
+        this.exportEarningsLastMonth *= 0.55;
+        // Bank failures drain reserves
+        const gdp = this.settlements.reduce(
+          (s, t) => s + SECTOR_IDS.reduce((ss, id) => ss + t.sectors[id].output, 0), 0,
+        );
+        this.treasury -= Math.round(gdp * 0.12 + 80);
+        // Political radicalization: unemployment and hunger push factions to extremes
+        for (const t of this.settlements) {
+          if (t.factionId !== this.playerFactionId) continue;
+          t.grievance = Math.min(100, t.grievance + 25);
+          t.satisfaction = Math.max(0, t.satisfaction - 15);
+          if (!t.activeEvents.some((ev) => ev.kind === 'labor_shortage')) {
+            t.activeEvents.push({ kind: 'labor_shortage', untilDay: this.day + 150, severity: 1 });
+          }
+        }
+        if (this.nationProclaimed) {
+          this.legitimacy = Math.max(0, this.legitimacy - 12);
+        }
+        this.addLog(
+          `THE CRASH: credit markets seize. Banks close their doors overnight — ` +
+          `savings vanish, factories idle, bread lines stretch around city blocks. ` +
+          `The world has not seen this before. A generation will remember.`,
+          'bad',
+        );
+        this.addLog(
+          `DEPRESSION: unemployment surges across every settlement. ` +
+          `Radical movements — left and right — are filling the void that hunger leaves.`,
+          'bad',
+        );
+      }
+    }
+
+    // 4. 2020-analog pandemic: a novel pathogen sweeps the globe.
     // Fires once in the 2012–2027 window; antibiotics tech halves the severity.
     if (!this.pandemicFired && y >= 2012 && y <= 2027 && this.rng.chance(0.04)) {
       this.pandemicFired = true;
@@ -6043,8 +6079,10 @@ export class RegionSim {
   /** Monthly legitimacy tick (GDD §5.3). */
   private tickLegitimacy(): void {
     if (!this.nationProclaimed) return;
-    // Press Freedom Act law slows legitimacy decay by 30%
-    const decayRate = this.passedLaws.has('press_freedom_act') ? 0.35 : 0.5;
+    // Press Freedom Act law slows decay by 30%; Information minister adds a further 25%
+    const pressBonus = this.passedLaws.has('press_freedom_act') ? 0.7 : 1.0;
+    const infoBonus = this.ministerFor('information') ? 0.75 : 1.0;
+    const decayRate = 0.5 * pressBonus * infoBonus;
     this.legitimacy = Math.max(0, this.legitimacy - decayRate);
     if (this.govType === 'junta') {
       const ws = this.factions.find((f) => f.id === 'workers')?.support ?? 50;
@@ -6528,7 +6566,8 @@ export class RegionSim {
     rv.lastEnvoyDay = this.day;
     // Alliance stance (nation design): coalition-builders' letters land warmer
     const stanceBonus = this.allianceStance === 'coalition-builder' ? 2 : this.allianceStance === 'isolationist' ? -2 : 0;
-    const gain = Math.max(1, 4 + Math.round(rv.weights.commerce * 0.3) + stanceBonus);
+    const foreignBonus = this.ministerFor('foreign') ? 5 : 0;
+    const gain = Math.max(1, 4 + Math.round(rv.weights.commerce * 0.3) + stanceBonus + foreignBonus);
     rv.relations = this.clampRel(rv.relations + gain);
     // Record this diplomatic outreach in rival history if it's a turning point
     if (rv.relations < -30 && rv.relations + gain >= -30) {
@@ -8167,7 +8206,9 @@ export class RegionSim {
     r.nationName = d.nationName ?? '';
     r.govType = d.govType ?? null;
     r.legitimacy = d.legitimacy ?? 0;
-    r.ministers = d.ministers ?? MINISTER_ROLES.map((x) => ({ role: x.id, title: x.title, notableId: null }));
+    // Backfill any minister roles added after the save was written (old saves only had 3 roles)
+    const savedMinisters: MinisterAssignment[] = d.ministers ?? [];
+    r.ministers = MINISTER_ROLES.map((mr) => savedMinisters.find((m) => m.role === mr.id) ?? { role: mr.id, title: mr.title, notableId: null });
     if (d.activePolicies) {
       r.activePolicies = d.activePolicies;
     } else if (d.govType) {
