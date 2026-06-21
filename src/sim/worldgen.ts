@@ -8,6 +8,8 @@
  * every other system spends against.
  */
 
+import { hexNeighbors, hexDistance } from './hex';
+
 export const REGION_N = 256; // region is REGION_N × REGION_N cells over 0..100 coords
 // Higher resolution = a larger, more detailed continent that fits more towns
 // (spacing is cell-based). Map-gen is O(N²) but one-time (~160ms for 256x256); the strategic
@@ -168,13 +170,14 @@ export class RegionMap {
         let bx = x;
         let by = y;
         let be = c.elevation;
-        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-          const nb = this.at(x + dx, y + dy);
+        for (const [nc, nr] of hexNeighbors(x, y)) {
+          if (nc < 0 || nc >= REGION_N || nr < 0 || nr >= REGION_N) continue;
+          const nb = this.at(nc, nr);
           const eff = nb.elevation - (nb.river ? 0.03 : 0);
           if (eff < be) {
             be = eff;
-            bx = x + dx;
-            by = y + dy;
+            bx = nc;
+            by = nr;
           }
         }
         if (bx === x && by === y) {
@@ -254,8 +257,8 @@ export class RegionMap {
 
   private neighbors(x: number, y: number): Cell[] {
     const out: Cell[] = [];
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-      if (x + dx >= 0 && x + dx < REGION_N && y + dy >= 0 && y + dy < REGION_N) out.push(this.at(x + dx, y + dy));
+    for (const [nc, nr] of hexNeighbors(x, y)) {
+      if (nc >= 0 && nc < REGION_N && nr >= 0 && nr < REGION_N) out.push(this.at(nc, nr));
     }
     return out;
   }
@@ -358,8 +361,8 @@ export class RegionMap {
     const targetK = key(bx, by);
     dist[startK] = 0;
     prev[startK] = startK;
-    // admissible heuristic: manhattan × cheapest possible cell (plains = 1)
-    const hCost = (k: number) => Math.abs((k % N) - bx) + Math.abs(Math.floor(k / N) - by);
+    // admissible heuristic: hex distance × cheapest possible cell (plains = 1)
+    const hCost = (k: number) => hexDistance(k % N, Math.floor(k / N), bx, by);
     const heap: { k: number; d: number; f: number }[] = [{ k: startK, d: 0, f: hCost(startK) }];
     const push = (item: { k: number; d: number; f: number }) => {
       heap.push(item);
@@ -406,9 +409,7 @@ export class RegionMap {
       }
       const cx = cur.k % N;
       const cy = Math.floor(cur.k / N);
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-        const nx = cx + dx;
-        const ny = cy + dy;
+      for (const [nx, ny] of hexNeighbors(cx, cy)) {
         if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
         const step = this.cellCost(nx, ny);
         if (!isFinite(step)) continue;
@@ -426,8 +427,8 @@ export class RegionMap {
 
   /** Travel cost between two cells: rough country and water crossings are slow. */
   travelDays(ax: number, ay: number, bx: number, by: number): number {
-    const dist = Math.hypot(bx - ax, by - ay);
-    const steps = Math.max(1, Math.ceil(dist));
+    const dist = hexDistance(ax, ay, bx, by);
+    const steps = Math.max(1, dist);
     let cost = 0;
     for (let i = 0; i <= steps; i++) {
       const x = Math.round(ax + ((bx - ax) * i) / steps);

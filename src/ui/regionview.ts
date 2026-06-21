@@ -10,9 +10,19 @@ import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS, MINUTES_PER_DAY } 
 import type { CurrencySymbol } from '../sim/defs';
 import { ANNOUNCE_LEAD_DAYS } from '../sim/currency';
 import { REGION_N } from '../sim/worldgen';
+import { hexNeighbors, hexNeighborDir, hexCenter, hexCorners, hexLayoutParams, screenToHex } from '../sim/hex';
 import { DesignScreen } from './designscreen';
 import { Minimap } from './minimap';
 import { sparklineGrid } from './sparklines';
+
+/** Fill a hex polygon from precomputed corners (no stroke). */
+function fillHexPath(g: CanvasRenderingContext2D, corners: { x: number; y: number }[]): void {
+  g.beginPath();
+  g.moveTo(corners[0].x, corners[0].y);
+  for (let i = 1; i < 6; i++) g.lineTo(corners[i].x, corners[i].y);
+  g.closePath();
+  g.fill();
+}
 
 /** Parse a #rrggbb (or #rgb) hex string to {r,g,b}; falls back to grey. */
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
@@ -313,20 +323,14 @@ export class RegionView {
       }
     }
 
-    // If in claim land mode and no settlement was clicked, try to claim the cell
+    // If in claim land mode and no settlement was clicked, try to claim the hex
     if (this.claimLandMode) {
-      // Convert screen coords to in-game 0..100 coordinates
       const W = this.canvas.width;
       const H = this.canvas.height;
-      const m = 60; // same margin as in toPx
-      const inGameX = 100 * (mx - m) / (W - 2 * m);
-      const inGameY = 100 * (my - m) / (H - 2 * m);
-      // Check bounds
-      if (inGameX >= 0 && inGameX <= 100 && inGameY >= 0 && inGameY <= 100) {
-        const cell = this.region.map.coordToCell(inGameX, inGameY);
-        if (cell.x >= 0 && cell.x < 256 && cell.y >= 0 && cell.y < 256) {
-          this.region.claimCell(cell.x, cell.y);
-        }
+      const { size, ox, oy } = hexLayoutParams(W, H, REGION_N, 60);
+      const { col, row } = screenToHex(mx, my, size, ox, oy);
+      if (col >= 0 && col < REGION_N && row >= 0 && row < REGION_N) {
+        this.region.claimCell(col, row);
       }
     }
   }
@@ -1179,13 +1183,13 @@ export class RegionView {
     const map = this.region.map;
     const N = REGION_N;
     const m = 60;
-    const cw = (W - 2 * m) / N;
-    const ch = (H - 2 * m) / N;
+    const { size, ox, oy } = hexLayoutParams(W, H, N, m);
     mc.fillStyle = 'rgb(200,220,240)';
     for (let y = 0; y < N; y++) {
       for (let x = 0; x < N; x++) {
         if (!RegionView.WATER_BIOMES.has(map.at(x, y).biome)) continue;
-        mc.fillRect(Math.floor(m + x * cw), Math.floor(m + y * ch), Math.ceil(cw), Math.ceil(ch));
+        const { x: cx, y: cy } = hexCenter(x, y, size, ox, oy);
+        fillHexPath(mc, hexCorners(cx, cy, size));
       }
     }
     this.waterMaskDims = dims;
@@ -1235,33 +1239,28 @@ export class RegionView {
   private drawFog(g: CanvasRenderingContext2D, W: number, H: number): void {
     const N = REGION_N;
     const m = 60;
-    const cw = (W - 2 * m) / N;
-    const ch = (H - 2 * m) / N;
-    const known = (cx: number, cy: number): boolean => {
-      if (cx < 0 || cy < 0 || cx >= N || cy >= N) return false;
-      return this.revealedAt((cx / N) * 100, (cy / N) * 100);
+    const { size, ox, oy } = hexLayoutParams(W, H, N, m);
+    const known = (col: number, row: number): boolean => {
+      if (col < 0 || row < 0 || col >= N || row >= N) return false;
+      return this.revealedAt((col / N) * 100, (row / N) * 100);
     };
     for (let y = 0; y < N; y++) {
       for (let x = 0; x < N; x++) {
         if (known(x, y)) continue;
-        // Feather toward the frontier: any known neighbour thins the veil.
-        const frontier =
-          known(x - 1, y) || known(x + 1, y) || known(x, y - 1) || known(x, y + 1) ||
-          known(x - 1, y - 1) || known(x + 1, y - 1) || known(x - 1, y + 1) || known(x + 1, y + 1);
-        const bx = Math.floor(m + x * cw);
-        const by = Math.floor(m + y * ch);
-        const bw = Math.ceil(cw);
-        const bh = Math.ceil(ch);
+        // Feather toward the frontier: any known hex neighbour thins the veil.
+        const frontier = hexNeighbors(x, y).some(([nc, nr]) => known(nc, nr));
+        const { x: cx, y: cy } = hexCenter(x, y, size, ox, oy);
+        const corners = hexCorners(cx, cy, size);
         // Painterly cloud mottle so the shroud reads as drifting fog, not a slab.
         const hash = (x * 374761393 ^ y * 668265263) >>> 0;
         const mottle = ((hash % 7) - 3) * 0.012;
         const base = frontier ? 0.48 : 0.9;
         g.fillStyle = `rgba(9,13,21,${Math.max(0, Math.min(0.96, base + mottle))})`;
-        g.fillRect(bx, by, bw, bh);
+        fillHexPath(g, corners);
         // A cool, sparse cloud highlight catching light over the deep unknown.
         if (!frontier && (hash >> 4) % 6 === 0) {
           g.fillStyle = 'rgba(74,88,116,0.10)';
-          g.fillRect(bx, by, bw, bh);
+          fillHexPath(g, corners);
         }
       }
     }
@@ -1281,8 +1280,7 @@ export class RegionView {
     const N = REGION_N;
     const { grid } = region.computeTerritoryGrid();
     const m = 60;
-    const cw = (W - 2 * m) / N; // cell footprint in px
-    const ch = (H - 2 * m) / N;
+    const { size, ox, oy } = hexLayoutParams(W, H, N, m);
     const colorCache = new Map<number, { r: number; g: number; b: number } | null>();
     const rgbOf = (fid: number): { r: number; g: number; b: number } | null => {
       if (fid < 0) return null;
@@ -1293,36 +1291,36 @@ export class RegionView {
       return rgb;
     };
     // 1) translucent interior fills
-    for (let x = 0; x < N; x++) {
-      for (let y = 0; y < N; y++) {
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
         const rgb = rgbOf(grid[x * N + y]);
         if (!rgb) continue;
-        const p = this.toPx((x / N) * 100, (y / N) * 100);
+        const { x: cx, y: cy } = hexCenter(x, y, size, ox, oy);
         g.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},0.12)`;
-        g.fillRect(p.px, p.py, Math.ceil(cw) + 1, Math.ceil(ch) + 1);
+        fillHexPath(g, hexCorners(cx, cy, size));
       }
     }
-    // 2) frontier lines: any edge where a claimed cell meets a different owner
+    // 2) frontier lines: each hex edge where the neighbor belongs to a different faction
     g.lineWidth = 2;
-    for (let x = 0; x < N; x++) {
-      for (let y = 0; y < N; y++) {
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
         const fid = grid[x * N + y];
         const rgb = rgbOf(fid);
         if (!rgb) continue;
-        const p = this.toPx((x / N) * 100, (y / N) * 100);
+        const { x: cx, y: cy } = hexCenter(x, y, size, ox, oy);
+        const corners = hexCorners(cx, cy, size);
         g.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},0.85)`;
-        const edge = (nx: number, ny: number, x0: number, y0: number, x1: number, y1: number): void => {
-          const nb = nx >= 0 && nx < N && ny >= 0 && ny < N ? grid[nx * N + ny] : -9;
-          if (nb === fid) return;
+        for (let d = 0; d < 6; d++) {
+          const [nc, nr] = hexNeighborDir(x, y, d);
+          const nb = nc >= 0 && nc < N && nr >= 0 && nr < N ? grid[nc * N + nr] : -9;
+          if (nb === fid) continue;
+          const a = corners[d];
+          const b = corners[(d + 1) % 6];
           g.beginPath();
-          g.moveTo(p.px + x0, p.py + y0);
-          g.lineTo(p.px + x1, p.py + y1);
+          g.moveTo(a.x, a.y);
+          g.lineTo(b.x, b.y);
           g.stroke();
-        };
-        edge(x + 1, y, cw, 0, cw, ch); // right
-        edge(x - 1, y, 0, 0, 0, ch); // left
-        edge(x, y + 1, 0, ch, cw, ch); // bottom
-        edge(x, y - 1, 0, 0, cw, 0); // top
+        }
       }
     }
   }
@@ -1601,27 +1599,31 @@ export class RegionView {
 
   private static readonly WATER_BIOMES = new Set(['sea', 'lake', 'river']);
 
-  /** The generated land itself, in 8-bit blocks: this map IS the world. */
+  /** The generated land itself, in hexagonal tiles: this map IS the world. */
   private drawTerrain(g: CanvasRenderingContext2D, W: number, H: number): void {
     const { region } = this;
     const map = region.map;
     const N = REGION_N;
     const m = 60;
-    const cw = (W - 2 * m) / N;
-    const ch = (H - 2 * m) / N;
+    const { size, ox, oy } = hexLayoutParams(W, H, N, m);
+    // Hex bounding box half-dimensions (for texture positioning)
+    const hw = Math.sqrt(3) * size / 2; // half-width of hex
     const isWater = (x: number, y: number): boolean =>
       x >= 0 && y >= 0 && x < N && y < N && RegionView.WATER_BIOMES.has(map.at(x, y).biome);
     const touchesLand = (x: number, y: number): boolean =>
-      !isWater(x - 1, y) || !isWater(x + 1, y) || !isWater(x, y - 1) || !isWater(x, y + 1);
+      hexNeighbors(x, y).some(([nc, nr]) => !isWater(nc, nr));
     const touchesWater = (x: number, y: number): boolean =>
-      isWater(x - 1, y) || isWater(x + 1, y) || isWater(x, y - 1) || isWater(x, y + 1);
+      hexNeighbors(x, y).some(([nc, nr]) => isWater(nc, nr));
     for (let y = 0; y < N; y++) {
       for (let x = 0; x < N; x++) {
         const c = map.at(x, y);
-        const bx = Math.floor(m + x * cw);
-        const by = Math.floor(m + y * ch);
-        const bw = Math.ceil(cw);
-        const bh = Math.ceil(ch);
+        const { x: cx, y: cy } = hexCenter(x, y, size, ox, oy);
+        const corners = hexCorners(cx, cy, size);
+        // Bounding box for texture details (stays within the hex)
+        const bx = cx - hw;
+        const by = cy - size;
+        const bw = hw * 2;
+        const bh = size * 2;
         // Base biome colour
         let col: string;
         switch (c.biome) {
@@ -1642,19 +1644,19 @@ export class RegionView {
           default:          col = '#46563a';
         }
         g.fillStyle = col;
-        g.fillRect(bx, by, bw, bh);
+        fillHexPath(g, corners);
 
         const water = RegionView.WATER_BIOMES.has(c.biome);
         // Coastal shallows: water cells touching land get a turquoise rim — the
         // single biggest readability win, giving the map a real coastline.
         if (water && c.biome !== 'river' && touchesLand(x, y)) {
           g.fillStyle = 'rgba(86,150,160,0.5)';
-          g.fillRect(bx, by, bw, bh);
+          fillHexPath(g, corners);
         }
         // Beach: land cells at the water's edge get a sandy lip.
         if (!water && c.biome !== 'mountains' && touchesWater(x, y)) {
           g.fillStyle = 'rgba(196,176,120,0.5)';
-          g.fillRect(bx, by, bw, Math.max(1, Math.ceil(bh * 0.55)));
+          fillHexPath(g, corners);
         }
         // Subtle per-cell dither so flat colour bands read as textured ground.
         if (!water) {
@@ -1662,20 +1664,20 @@ export class RegionView {
           const n = (hash % 5) - 2; // -2..+2
           if (n !== 0) {
             g.fillStyle = n > 0 ? `rgba(255,250,235,${n * 0.018})` : `rgba(0,0,0,${-n * 0.022})`;
-            g.fillRect(bx, by, bw, bh);
+            fillHexPath(g, corners);
           }
         }
 
-        // Elevation-based lighting: NW-lit hillshade
+        // Elevation-based lighting: NW-lit hillshade (approximated via row/col above)
         const north = y > 0 ? map.at(x, y - 1).elevation : c.elevation;
         const west  = x > 0 ? map.at(x - 1, y).elevation : c.elevation;
         const shade = (c.elevation - north + c.elevation - west) * 1.4;
         if (shade > 0.01) {
           g.fillStyle = `rgba(255,255,240,${Math.min(0.32, shade * 0.6)})`;
-          g.fillRect(bx, by, bw, bh);
+          fillHexPath(g, corners);
         } else if (shade < -0.01) {
           g.fillStyle = `rgba(0,0,0,${Math.min(0.30, -shade * 0.5)})`;
-          g.fillRect(bx, by, bw, bh);
+          fillHexPath(g, corners);
         }
 
         // Forest canopy: layered blobs — dark trunks under lit crowns — so
@@ -1684,12 +1686,12 @@ export class RegionView {
           const r = Math.max(2, bw * 0.26);
           for (let k = 0; k < 3; k++) {
             const h = (x * 17 + y * 31 + k * 101) >>> 0;
-            const ox = bx + (h % Math.max(1, Math.floor(bw - r)));
-            const oy = by + ((h >> 4) % Math.max(1, Math.floor(bh - r)));
+            const tx = bx + (h % Math.max(1, Math.floor(bw - r)));
+            const ty = by + ((h >> 4) % Math.max(1, Math.floor(bh - r)));
             g.fillStyle = 'rgba(18,36,14,0.5)';
-            g.fillRect(ox, oy + 1, r, r); // shadow
+            g.fillRect(tx, ty + 1, r, r); // shadow
             g.fillStyle = 'rgba(58,96,46,0.55)';
-            g.fillRect(ox, oy, r, r); // lit crown
+            g.fillRect(tx, ty, r, r); // lit crown
           }
         }
         // Plains: sparse grass tufts for a meadow texture.
@@ -1705,12 +1707,12 @@ export class RegionView {
         // Mountain snow caps on highest peaks
         if (c.biome === 'mountains' && c.elevation > 0.82) {
           g.fillStyle = `rgba(230,230,240,${(c.elevation - 0.82) * 2.5})`;
-          g.fillRect(bx, by, bw, Math.max(1, bh * 0.5));
+          fillHexPath(g, corners);
         }
         // River shimmer
         if (c.biome === 'river' && (x + y + Math.floor(this.frame / 12)) % 5 === 0) {
           g.fillStyle = 'rgba(180,220,240,0.22)';
-          g.fillRect(bx, by, bw, bh);
+          fillHexPath(g, corners);
         }
         // Marsh reeds texture
         if (c.biome === 'marsh' && (x * 5 + y * 7) % 11 < 3) {
@@ -1719,22 +1721,28 @@ export class RegionView {
         }
       }
     }
-    // Contour lines: thin strokes where elevation crosses 0.2/0.4/0.6/0.8
+    // Contour lines: draw shared hex edge when elevation crosses 0.2/0.4/0.6/0.8.
+    // Check only directions 0/1/2 (E, SE, SW) so each edge is drawn once.
     g.strokeStyle = 'rgba(0,0,0,0.12)';
     g.lineWidth = 1;
     for (const level of [0.2, 0.4, 0.6, 0.8]) {
-      for (let y = 0; y < N - 1; y++) {
-        for (let x = 0; x < N - 1; x++) {
+      for (let y = 0; y < N; y++) {
+        for (let x = 0; x < N; x++) {
           const a = map.at(x, y).elevation;
-          const b2 = map.at(x + 1, y).elevation;
-          const c2 = map.at(x, y + 1).elevation;
-          if ((a < level) !== (b2 < level) || (a < level) !== (c2 < level)) {
-            const bx = Math.floor(m + x * cw);
-            const by2 = Math.floor(m + y * ch);
-            g.beginPath();
-            g.moveTo(bx, by2);
-            g.lineTo(bx + Math.ceil(cw), by2 + Math.ceil(ch));
-            g.stroke();
+          const { x: cx, y: cy } = hexCenter(x, y, size, ox, oy);
+          const corners = hexCorners(cx, cy, size);
+          for (const d of [0, 1, 2] as const) {
+            const [nc, nr] = hexNeighborDir(x, y, d);
+            if (nc < 0 || nr < 0 || nc >= N || nr >= N) continue;
+            const b2 = map.at(nc, nr).elevation;
+            if ((a < level) !== (b2 < level)) {
+              const p0 = corners[d];
+              const p1 = corners[(d + 1) % 6];
+              g.beginPath();
+              g.moveTo(p0.x, p0.y);
+              g.lineTo(p1.x, p1.y);
+              g.stroke();
+            }
           }
         }
       }
