@@ -13,6 +13,7 @@ import { computePenalty, transitionEfficiency, ANNOUNCE_LEAD_DAYS } from './curr
 import type { CurrencyChangeCause, CurrencyAnnouncement, CurrencyTransition } from './currency';
 import { RegionMap, REGION_N, CELL_SCALE } from './worldgen';
 import type { TownSite } from './worldgen';
+import { hexNeighbors } from './hex';
 import { Weather } from './weather';
 import type { Lender, Loan } from './economy';
 import { createInitialLenders } from './lenders';
@@ -5094,13 +5095,8 @@ export class RegionSim {
       return { ok: false, reason: 'Already claimed' };
     }
 
-    // Must be adjacent to a player-controlled cell
-    const adjacent = [
-      [x - 1, y],
-      [x + 1, y],
-      [x, y - 1],
-      [x, y + 1],
-    ].some(([ax, ay]) => {
+    // Must be adjacent to a player-controlled cell (6 hex neighbors)
+    const adjacent = hexNeighbors(x, y).some(([ax, ay]) => {
       if (ax < 0 || ax >= N || ay < 0 || ay >= N) return false;
       return r.grid[ax * N + ay] === this.playerFactionId;
     });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { RegionSim, REGION_MINUTES_PER_TICK, ROUTE_SPECS, RAIL_ERA_YEAR, HIGHWAY_ERA_YEAR, MAGLEV_ERA_YEAR } from '../src/sim/region';
 import { RegionMap, CELL_SCALE } from '../src/sim/worldgen';
 import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
+import { hexNeighbors, hexDistance } from '../src/sim/hex';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
 
@@ -84,12 +85,15 @@ describe('Region corridors (M6b)', () => {
     expect(c.path[0]).toEqual({ x: a.cellX, y: a.cellY });
     expect(c.path[c.path.length - 1]).toEqual({ x: b.cellX, y: b.cellY });
     for (let i = 1; i < c.path.length; i++) {
-      const step = Math.abs(c.path[i].x - c.path[i - 1].x) + Math.abs(c.path[i].y - c.path[i - 1].y);
-      expect(step).toBe(1); // 4-dir contiguous
+      const prev = c.path[i - 1];
+      const cur = c.path[i];
+      // Each step must be a valid hex neighbor (one of 6 directions)
+      const isHexStep = hexNeighbors(prev.x, prev.y).some(([nc, nr]) => nc === cur.x && nr === cur.y);
+      expect(isHexStep).toBe(true); // hex-contiguous
       expect(map.isWater(c.path[i].x, c.path[i].y)).toBe(false);
     }
-    const manhattan = Math.abs(b.cellX - a.cellX) + Math.abs(b.cellY - a.cellY);
-    expect(c.cost).toBeGreaterThanOrEqual(manhattan); // cheapest cell costs 1
+    const hDist = hexDistance(a.cellX, a.cellY, b.cellX, b.cellY);
+    expect(c.cost).toBeGreaterThanOrEqual(hDist); // cheapest cell costs 1
   });
 
   it('trails are blazed automatically when towns are founded', () => {
