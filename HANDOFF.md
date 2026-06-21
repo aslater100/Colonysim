@@ -1,6 +1,6 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-21 · **Tests:** 368 passing · **Version:** v1.0.1 · **Status:** Phases 1–7 complete + historical anchors + Depression anchor/depth/response toolkit + cabinet expansion + hex-grid migration + memory fog (rendering follow-ups open, see below)
+**Last updated:** 2026-06-21 · **Tests:** 368 passing · **Version:** v1.0.1 · **Status:** Phases 1–7 complete + historical anchors + Depression anchor/depth/response toolkit + cabinet expansion + hex-grid migration + memory fog + rendering layer fully unified on hex geometry (PR #244)
 
 ## The game: a standalone 4X campaign
 
@@ -82,10 +82,10 @@ npm install
 npm run dev        # http://localhost:5173/core.html  ← the 4X game
 npm run build      # tsc + vite build (must pass)
 npx tsc --noEmit
-npx vitest run --exclude '**/.claude/**'   # 316 tests
+npx vitest run --exclude '**/.claude/**'   # 368 tests
 ```
 
-## Recent completions (PRs #218–#238)
+## Recent completions (PRs #218–#244)
 
 - ✓ **#218** — Fix labor_law grievance test: measurement window and strike masking
 - ✓ **#219** — Tech tree rebuilt as visual DAG: SVG edges, node state coloring, click-to-research
@@ -105,31 +105,18 @@ npx vitest run --exclude '**/.claude/**'   # 316 tests
 - ✓ **#239 (follow-up)** — Depression depth + response toolkit: `depressionDepth` (0→1, set 1.0 on crash, decays ~5%/mo over ~30 months) drives multi-year export suppression (`× max(0.3, 1 − depth×0.55)`) and a confidence-recovery ceiling (`35 + 65×(1−depth)`). Month-12 **recovery crossroads** (`chooseRecoveryPath`): stimulus (halves depth, −£8/mo × 24) vs austerity (−20% depth, services cut, grievance spike). New **emergency measures** (`enactDepressionMeasure`, once each while a slump is active, GDD §8.1): **QE** (rate cut, depth ×0.80, +inflation, needs Central Bank), **Leave Gold Standard** (float + devalue, depth ×0.78, export surge via existing fxBoost), **Public Works** (treasury cost, depth ×0.82, grievance −12 / clears labor_shortage). Each measure adds a `depressionCeilingBonus` so the recovery cap lifts. UI: redesigned **Depression Response panel** in `nationHtml` → `depressionResponseHtml()` (depth meter bar, crossroads fork cards, measure cards with used/blocked states) with dedicated `.crisis-banner`/`.depth-meter`/`.dep-measure-btn` CSS. All 5 depression-depth fields + `depressionMeasuresUsed`/`depressionCeilingBonus` serialize with old-save backfill. 34 tests in `tests/depression-cabinet.test.ts` (368 total)
 - ✓ **#241** — Hex grid migration: square→pointy-top hexes (odd-r offset). New `src/sim/hex.ts` module: `hexNeighbors`, `hexCenter`, `hexCorners`, `hexLayoutParams`, `screenToHex`, `hexDistance`, `offsetToCube`. Updated: 6-dir neighbors + cube-distance A* in `worldgen.ts`; `canClaimCell` adjacency in `region.ts`; hex polygon rendering in `regionview.ts` (`drawTerrain`, `drawTerritories`, `drawFog`, `ensureWaterMask`, click hit-test). Tests: `hexNeighbors`/`hexDistance` in `tests/routes.test.ts`. Sim tests green (368) — but tests are sim-only, so the rendering layer shipped with known gaps:
 - ✓ **#242** — Three-tier memory fog: explored-but-not-visible cells now show a cool-grey wash (`drawMemoryFog`, live overlay outside map cache) instead of full-colour terrain. Live rivals hidden in grey areas via `isVisibleToFaction` guard added at `regionview.ts:600,642`. Player scouts always shown; AI scouts hidden when not in current sight.
+- ✓ **#244** — Rendering layer unified on hex geometry (all follow-ups from #241/#242 resolved):
+  1. `toPx` rewritten to use `hexLayoutParams + hexCenter` — ALL map-space markers (settlements, routes, scouts, expeditions, rival diamonds, province labels, city lights, resource icons, army badges, trade-flow arrows) now land on the correct hex cell; drift ≥½ hex at high zoom is eliminated and click hit-tests match what is drawn.
+  2. Rival fog hiding fixed as a consequence — marker positions now align with the fog hex coordinate.
+  3. Expedition `isVisibleToFaction` guard added (mirrors scout guard pattern) so non-player expeditions are hidden in memory fog.
+  4. Forest, plains, hills, and marsh terrain textures wrapped in `g.save/g.clip/g.restore` so `fillRect` details cannot bleed past hex edges; marsh reeds get their own clip block.
+  5. Hillshade now samples hex-direction NW (`hexNeighborDir` dir 4) and W (dir 3) instead of square-grid `at(x,y-1)` / `at(x-1,y)`, removing the row-parity inconsistency on odd rows.
+  6. `travelDays` (worldgen.ts) now lerps in cube coordinates (`offsetToCube` → lerp → round → convert back) so each sampled step lands on an actual hex neighbor.
 
-### ⚠️ Rendering follow-ups (correct before further map work)
+### Remaining low-priority rendering notes
 
-1. **CRITICAL — overlays still use `toPx`, terrain uses hex geometry.** Terrain/territory/fog moved
-   to `hexLayoutParams`+`hexCenter` (hex space with odd-row shift + √3/1.5 spacing), but
-   settlements (`regionview.ts:559`), routes (`cellToCoord→toPx`, lines 474–481/1373), scouts
-   (line 643), expeditions (lines 665–666), rival/province markers, selection hit-tests, and the
-   border vignette all still use linear `toPx`. Markers no longer register against the hex grid
-   (routes miss their towns; settlements drift ≥½ hex at large grid sizes).
-   Fix: unify on one hex-consistent projection — project cell paths via `hexCenter`; settlement
-   logical x,y via `coordToCell→hexCenter` (or redefine `toPx` to match the hex layout).
-2. **Fog no longer reliably hides rivals** — fog hexes (hex space) vs rival markers (`toPx`). Fixed
-   by #1. The `isVisibleToFaction` hide-guard uses logical coords (correct), but the drawn position
-   drifts, so a visible rival may draw over the wrong hex.
-3. **Expeditions not hidden in memory fog** — no `isVisibleToFaction` guard at lines 664–680; enemy
-   expeditions bleed through the grey wash. Add the same pattern used for scouts (line 642).
-4. **Terrain textures not clipped to the hex** — forest/plains/hills/marsh `fillRect`s bleed past
-   hex edges; add `g.save(); g.clip()` to the hex path (planned in PR #241 but not implemented).
-5. **Hillshade samples square N/W neighbors** — `drawTerrain` uses `map.at(x,y-1)` / `map.at(x-1,y)`;
-   switch to `hexNeighborDir` samples for NW/NE lighting (low severity).
-6. **`travelDays` interpolates in offset space** — uses `hexDistance` for step count but lerps in
-   offset coords; sample along a cube-coordinate lerp for accuracy (low severity, sim deterministic).
-7. **Memory fog refreshes weekly** — `isVisibleToFaction` rebuilds its cache every 7 days, so the
-   grey boundary lags unit movement. Acceptable for now; could rebuild on scout/settlement events.
-8. **Minimap left on square dots** — intentional per plan (1px dots); note the extra mapping.
+- **Memory fog refreshes weekly** — `isVisibleToFaction` rebuilds its cache every 7 days; grey boundary lags fast unit movement. Acceptable; could rebuild on scout/settlement events if needed.
+- **Minimap on square dots** — intentional per plan (1px dots); no change needed.
 
 ## UI Architecture Notes (updated 2026-06-19)
 
@@ -248,14 +235,10 @@ The four prioritized phases (1–4) are **complete and merged to main**. The fol
 
 ## Known weak areas
 
-- **activePolicies lookups** — still uses array `.includes()` in 18 calls. Small impact (policy slots
-  are fixed-size, typically 3–4 items), but could convert to Set if microoptimization needed.
-- **sectorProductivity() method** — 23 `.has()` checks per settlement per month now O(1), but could
-  cache the multiplier per sector once per month instead of recalculating 4× per settlement.
-- **Migration and trade calculations** — use `.reduce()` to recompute avgWageOf() per settlement
-  once per month; low impact but could cache during the monthly update phase.
 - **Tech tree DAG layout** — `techTreeLayout()` uses barycenter heuristic; doesn't minimize crossings
   optimally for large sparse trees. Acceptable for current tree size (~40 nodes).
+
+*(All previously noted performance weak spots — `activePolicies` array `.includes()`, `sectorProductivity()` per-settlement recalculation, `avgWageOf()` per-settle reduce — were resolved in PR #240 via `activePolicySet`, `sectorProdCache`, and `wageCache` respectively.)*
 
 ## Design reference
 
