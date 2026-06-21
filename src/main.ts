@@ -127,6 +127,7 @@ pauseMenu.onResume = () => {
   paused = false;
   updateUIState();
 };
+pauseMenu.onSave = () => { save(); };
 pauseMenu.onQuit = () => {
   pauseMenuOpen = false;
   showTitleScreen();

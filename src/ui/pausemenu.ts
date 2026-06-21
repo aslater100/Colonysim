@@ -37,6 +37,7 @@ export class PauseMenu {
   private view: 'main' | 'save' | 'load' = 'main';
 
   onResume: (() => void) | null = null;
+  onSave: (() => void) | null = null;
   onQuit: (() => void) | null = null;
   onLoadGame: ((regionJson: string) => void) | null = null;
 
@@ -98,11 +99,12 @@ export class PauseMenu {
         this.onQuit?.();
         break;
       case 'save-slot': {
-        // Save triggered from main.ts with regionJson
         const btn = target as HTMLButtonElement;
         btn.disabled = true;
-        btn.textContent = 'Saving...';
-        // Event will be triggered after save completes
+        btn.textContent = 'Saving…';
+        this.onSave?.();
+        btn.textContent = 'Saved ✓';
+        setTimeout(() => { this.view = 'main'; this.render(); }, 800);
         break;
       }
       case 'load-slot': {
