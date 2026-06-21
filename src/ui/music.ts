@@ -264,6 +264,11 @@ export class Music {
   // Smoothed mix targets so layers fade in and out instead of clicking.
   private intensity = 0; // lead/perc presence, eased toward a target
   private seed = 0x2545f491; // tiny LCG state for melodic choice
+  // Pre-generated noise buffers for percussion — avoids per-hit allocation.
+  private noisePool: AudioBuffer[] = [];
+  private noisePoolIdx = 0;
+  private static readonly NOISE_DUR = 0.04;
+  private static readonly NOISE_POOL_SIZE = 8;
 
   constructor() {
     let on = true;
@@ -301,6 +306,16 @@ export class Music {
       this.master.gain.value = 0;
       this.master.connect(this.ctx.destination);
       this.nextNoteTime = this.ctx.currentTime + 0.1;
+      // Pre-generate noise buffers so percussion hits don't allocate on the main thread.
+      const hatLen = Math.max(1, Math.floor(this.ctx.sampleRate * Music.NOISE_DUR));
+      this.noisePool = [];
+      for (let b = 0; b < Music.NOISE_POOL_SIZE; b++) {
+        const buf = this.ctx.createBuffer(1, hatLen, this.ctx.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < hatLen; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / hatLen);
+        this.noisePool.push(buf);
+      }
+      this.noisePoolIdx = 0;
     } catch {
       this.ctx = null;
     }
@@ -350,21 +365,26 @@ export class Music {
     osc.stop(time + durS + 0.02);
   }
 
-  /** A short noise burst for hats; built from a buffer source. */
-  private noise(time: number, durS: number, vol: number): void {
+  /** A short noise burst for hats; uses pre-generated pooled buffers to avoid allocation. */
+  private noise(time: number, _durS: number, vol: number): void {
     const ctx = this.ctx!;
-    const len = Math.max(1, Math.floor(ctx.sampleRate * durS));
-    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const buf = this.noisePool.length > 0
+      ? this.noisePool[this.noisePoolIdx++ % Music.NOISE_POOL_SIZE]
+      : (() => {
+          const len = Math.max(1, Math.floor(ctx.sampleRate * Music.NOISE_DUR));
+          const b = ctx.createBuffer(1, len, ctx.sampleRate);
+          const d = b.getChannelData(0);
+          for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+          return b;
+        })();
     const src = ctx.createBufferSource();
     src.buffer = buf;
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(vol, time);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + durS);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + Music.NOISE_DUR);
     src.connect(gain).connect(this.master!);
     src.start(time);
-    src.stop(time + durS);
+    src.stop(time + Music.NOISE_DUR);
   }
 
   /** Pick the bar's motif and decide whether to restate it an octave up. */

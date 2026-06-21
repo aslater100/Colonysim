@@ -118,12 +118,24 @@ export class RegionView {
   private mapCache: HTMLCanvasElement | null = null;
   private mapCacheCtx: CanvasRenderingContext2D | null = null;
   private mapCacheSig = '';
+  // Memory-fog cache: explored-but-not-visible tiles. Same idea as mapCache but
+  // keyed on exploredCount + visibilityVersion so it rebuilds when scouts move.
+  private memFogCanvas: HTMLCanvasElement | null = null;
+  private memFogCtx: CanvasRenderingContext2D | null = null;
+  private memFogSig = '';
   // Offscreen canvas of water pixels; rebuilt only on canvas resize (biomes are fixed).
   private waterMaskCanvas: HTMLCanvasElement | null = null;
   private waterMaskDims = '';
   // Cached vignette gradient — rebuilt only when canvas dimensions change.
   private vignetteGrad: CanvasGradient | null = null;
   private vignetteDims = '';
+  // Cached hex layout params (size/ox/oy) — only depend on canvas dimensions.
+  private cachedHexLayout: { size: number; ox: number; oy: number } | null = null;
+  // Cached pixel-coord arrays for route paths — stable until canvas resize.
+  private routePtsCache = new WeakMap<object, { px: number; py: number }[]>();
+  // Canvas dims from last frame — detects resize so caches above can be cleared.
+  private prevCanvasW = 0;
+  private prevCanvasH = 0;
   // DOM update throttles — avoid innerHTML reflows every rAF frame.
   private lastTopBarFrame = -999;
   private lastEventLogLen = -1;
@@ -282,13 +294,39 @@ export class RegionView {
   }
 
   private toPx(rx: number, ry: number): { px: number; py: number } {
-    const W = this.canvas.width;
-    const H = this.canvas.height;
-    const { size, ox, oy } = hexLayoutParams(W, H, REGION_N, 60);
+    if (!this.cachedHexLayout) {
+      this.cachedHexLayout = hexLayoutParams(this.canvas.width, this.canvas.height, REGION_N, 60);
+    }
+    const { size, ox, oy } = this.cachedHexLayout;
     const col = Math.max(0, Math.min(REGION_N - 1, Math.floor((rx / 100) * REGION_N)));
     const row = Math.max(0, Math.min(REGION_N - 1, Math.floor((ry / 100) * REGION_N)));
     const { x: px, y: py } = hexCenter(col, row, size, ox, oy);
     return { px, py };
+  }
+
+  private getRoutePts(r: { path: { x: number; y: number }[] }): { px: number; py: number }[] {
+    let pts = this.routePtsCache.get(r);
+    if (!pts) {
+      pts = r.path.map((cell) => {
+        const c = this.region.map.cellToCoord(cell.x, cell.y);
+        return this.toPx(c.rx, c.ry);
+      });
+      this.routePtsCache.set(r, pts);
+    }
+    return pts;
+  }
+
+  private setInnerHtml(el: HTMLElement, html: string, scrollSelectors: string[] = ['']): void {
+    const saved: { sel: string; top: number; left: number }[] = [];
+    for (const sel of scrollSelectors) {
+      const target = sel === '' ? el : el.querySelector<HTMLElement>(sel);
+      if (target) saved.push({ sel, top: target.scrollTop, left: target.scrollLeft });
+    }
+    el.innerHTML = html;
+    for (const { sel, top, left } of saved) {
+      const target = sel === '' ? el : el.querySelector<HTMLElement>(sel);
+      if (target) { target.scrollTop = top; target.scrollLeft = left; }
+    }
   }
 
   /** Has the player explored or scouted the tile under this region coord
@@ -498,6 +536,14 @@ export class RegionView {
     const W = canvas.width;
     const H = canvas.height;
 
+    // Detect canvas resize: clear position caches that depend on canvas dimensions.
+    if (W !== this.prevCanvasW || H !== this.prevCanvasH) {
+      this.prevCanvasW = W;
+      this.prevCanvasH = H;
+      this.cachedHexLayout = null;
+      this.routePtsCache = new WeakMap();
+    }
+
     g.imageSmoothingEnabled = false;
     g.fillStyle = '#10141c';
     g.fillRect(0, 0, W, H);
@@ -516,7 +562,9 @@ export class RegionView {
     // Terrain + territory (the O(N²) layers) come from the static cache as one blit.
     this.ensureMapCache(W, H);
     g.drawImage(this.mapCache!, 0, 0);
-    this.drawMemoryFog(g, W, H);
+    // Memory fog (explored-but-not-visible) from its own cache — O(1) per frame.
+    this.ensureMemFogCache(W, H);
+    if (this.memFogCanvas) g.drawImage(this.memFogCanvas, 0, 0);
 
     // Routes along their actual corridors (M6b/6c): dotted trails, solid
     // roads, cross-tied rail; line brightness is the route's condition.
@@ -531,10 +579,7 @@ export class RegionView {
           g.fillRect(Math.round(p.px) - 1, Math.round(p.py) - 1, 2, 2);
         }
       } else {
-        const pts = r.path.map((cell) => {
-          const c = region.map.cellToCoord(cell.x, cell.y);
-          return this.toPx(c.rx, c.ry);
-        });
+        const pts = this.getRoutePts(r);
         g.strokeStyle = r.kind === 'rail' ? `rgba(150,156,168,${alpha})`
           : r.kind === 'highway' ? `rgba(62,66,74,${Math.min(1, alpha + 0.2)})`
           : r.kind === 'maglev' ? `rgba(110,200,214,${alpha})`
@@ -982,6 +1027,25 @@ export class RegionView {
     this.mapCacheSig = sig;
   }
 
+  /** Cache the memory-fog (explored-but-not-visible) layer into an offscreen canvas.
+   *  Rebuilt only when exploredCount or visibilityVersion changes. */
+  private ensureMemFogCache(W: number, H: number): void {
+    const r = this.region;
+    const sig = `${W}x${H}|exp${r.exploredCount}|vis${r.visibilityVersion}`;
+    if (this.memFogCanvas && this.memFogSig === sig &&
+        this.memFogCanvas.width === W && this.memFogCanvas.height === H) return;
+    if (!this.memFogCanvas) this.memFogCanvas = document.createElement('canvas');
+    if (this.memFogCanvas.width !== W || this.memFogCanvas.height !== H) {
+      this.memFogCanvas.width = W;
+      this.memFogCanvas.height = H;
+      this.memFogCtx = this.memFogCanvas.getContext('2d');
+    }
+    const mg = this.memFogCtx!;
+    mg.clearRect(0, 0, W, H);
+    this.drawMemoryFog(mg, W, H);
+    this.memFogSig = sig;
+  }
+
   /** Lighting state for atmospheric rendering. Day/night cycle disabled — always daytime. */
   private atmosphere(): { night: number; golden: number; season: number } {
     return { night: 0, golden: 0, season: this.region.seasonIndex };
@@ -1192,7 +1256,8 @@ export class RegionView {
         }).join('')
       : '';
 
-    this.provincePanel.innerHTML =
+    this.setInnerHtml(
+      this.provincePanel,
       `<p class="insp-name" style="color:${color}">${prov.name}</p>` +
       `<p class="insp-skills">${isPlayer ? 'YOUR PROVINCE' : factionName.toUpperCase()}</p>` +
       `<p>Population: <b>${prov.totalPop.toLocaleString()}</b></p>` +
@@ -1203,7 +1268,8 @@ export class RegionView {
       `<p style="font-size:0.85em;color:#a8b4c4">${buildings}</p>` +
       policyHtml +
       armyHtml +
-      `<p><button class="mini" id="prov-panel-close">✕ close</button></p>`;
+      `<p><button class="mini" id="prov-panel-close">✕ close</button></p>`,
+    );
 
     this.provincePanel.querySelector<HTMLButtonElement>('#prov-panel-close')?.addEventListener('click', () => {
       this.selectedProvinceId = null;
@@ -2405,7 +2471,8 @@ export class RegionView {
       : r.stateProclaimed
         ? r.stateName.toUpperCase()
         : (r.stateName || 'REGION').toUpperCase();
-    this.statePanel.innerHTML =
+    this.setInnerHtml(
+      this.statePanel,
       `<div class="pal-title">${panelTitle}</div>` +
       `<p class="insp-skills">${r.nationProclaimed && r.govType
         ? GOV_TYPES.find((g) => g.id === r.govType)!.name
@@ -2426,7 +2493,8 @@ export class RegionView {
         : sec('finance', financeBody)) +
       // Politics & Diplomacy are nation-tier — only once the State is proclaimed.
       (preState ? '' : sec('politics', politicsBody)) +
-      (preState ? '' : sec('diplomacy', this.diplomacyHtml()));
+      (preState ? '' : sec('diplomacy', this.diplomacyHtml())),
+    );
 
     this.wireTabs(this.statePanel, (t) => { this.statePanelTab = t as 'finance' | 'politics' | 'diplomacy'; });
     this.wireTabs(this.statePanel, (t) => { this.financeSubTab = t as 'treasury' | 'credit'; }, 'pal-subtab', 'pal-subsection');
@@ -3557,13 +3625,8 @@ export class RegionView {
     const selected = r.settlements.find((s) => s.id === this.selectedId);
     const pop = selected ? Math.floor(selected.cohorts.bands.reduce((a, b) => a + b, 0)) : 0;
 
-    // Calculate total food and wood across all settlements
-    let totalFood = 0;
-    let totalWood = 0;
-    for (const settlement of r.settlements) {
-      totalFood += settlement.food;
-      totalWood += settlement.wood;
-    }
+    const totalFood = r.totalFood;
+    const totalWood = r.totalWood;
 
     const treasury = formatCurrency(r.treasury);
     const w = window as any;
@@ -3724,7 +3787,8 @@ export class RegionView {
     const canBuyLand = faction.treasury < 150 && faction.settlementIds.length > 1 && (playerFaction?.treasury ?? 0) >= 500;
     const atWar = r.playerRegionalWars.has(fid);
 
-    this.rivalPanel.innerHTML =
+    this.setInnerHtml(
+      this.rivalPanel,
       `<h3><span style="color:${faction.color}">■</span> ${faction.name}</h3>` +
       `<p class="insp-skills">${regimeName} · ${faction.regime}</p>` +
       (isVassal ? `<p style="color:#8fc26a">★ Vassal of your state</p>` : '') +
@@ -3745,7 +3809,8 @@ export class RegionView {
           ? `<button id="rival-war-btn" class="mini">✦ Offer Ceasefire</button><br>`
           : `<button id="rival-war-btn" class="mini danger">⚔ Declare War</button><br>`)
         : '') +
-      `<button id="rival-close-btn" class="mini" style="margin-top:6px">Close</button>`;
+      `<button id="rival-close-btn" class="mini" style="margin-top:6px">Close</button>`,
+    );
 
     this.rivalPanel.querySelector<HTMLButtonElement>('#rival-close-btn')!.onclick = () => {
       this.selectedFactionId = null;
@@ -4001,7 +4066,7 @@ export class RegionView {
     // every frame, so a button node survives between mousedown and click.
     if (this.frame - this.lastNetworkBuildFrame < 60) return;
     this.lastNetworkBuildFrame = this.frame;
-    this.routeNetworkPanel.innerHTML = this.routeNetworkHtml();
+    this.setInnerHtml(this.routeNetworkPanel, this.routeNetworkHtml());
     const refresh = () => { this.lastNetworkBuildFrame = -999; };
     for (const b of this.routeNetworkPanel.querySelectorAll<HTMLButtonElement>('.rn-close')) {
       b.onclick = () => { this.routeNetworkOpen = false; };
@@ -4140,7 +4205,7 @@ export class RegionView {
     this.settlementListPanel.classList.remove('hidden');
     if (this.frame - this.lastSettlementListBuildFrame < 60) return;
     this.lastSettlementListBuildFrame = this.frame;
-    this.settlementListPanel.innerHTML = this.settlementListHtml();
+    this.setInnerHtml(this.settlementListPanel, this.settlementListHtml());
     for (const b of this.settlementListPanel.querySelectorAll<HTMLButtonElement>('.sl-close')) {
       b.onclick = () => { this.settlementListOpen = false; };
     }
@@ -4206,7 +4271,7 @@ export class RegionView {
     this.economyPanel.classList.remove('hidden');
     if (this.frame - this.lastEconomyBuildFrame < 60) return;
     this.lastEconomyBuildFrame = this.frame;
-    this.economyPanel.innerHTML = this.economyPanelHtml();
+    this.setInnerHtml(this.economyPanel, this.economyPanelHtml());
     const refresh = () => { this.lastEconomyBuildFrame = -999; };
     this.wireTabs(this.economyPanel, (t) => { this.economyTab = t as 'overview' | 'settlements'; });
     for (const b of this.economyPanel.querySelectorAll<HTMLButtonElement>('.ep-close')) {
@@ -4383,7 +4448,7 @@ export class RegionView {
     this.researchPanel.classList.remove('hidden');
     // DOM-stability guard (see drawStatePanel): rebuild on a ~1s timer, not every
     // frame, or the node/cancel buttons are replaced mid-click and never fire.
-    if (this.frame - this.lastResearchBuildFrame < 60) return;
+    if (this.frame - this.lastResearchBuildFrame < 120) return;
     this.lastResearchBuildFrame = this.frame;
     const forceResearchRebuild = () => { this.lastResearchBuildFrame = -999; };
     const rate = r.researchRate().toFixed(1);
@@ -4438,7 +4503,8 @@ export class RegionView {
         `<svg class="tt-edges" width="${width}" height="${height}">${edges}</svg>${boxes}</div>`;
     };
 
-    this.researchPanel.innerHTML =
+    this.setInnerHtml(
+      this.researchPanel,
       `<div class="pal-title">RESEARCH</div>` +
       `<p class="insp-skills">${rate} RP/day${active ? ` → <b>${active.name}</b>` : ' (idle)'}` +
       (active ? ` <button class="mini res-cancel-btn">cancel</button>` : '') + `</p>` +
@@ -4448,7 +4514,9 @@ export class RegionView {
       `<button class="pal-tab${rtab === 'civics' ? ' active' : ''}" data-ptab="civics">Civics</button>` +
       `</div>` +
       `<div class="pal-section tt-scroll${rtab === 'tech' ? '' : ' hidden'}" data-psection="tech">${renderTree('tech')}</div>` +
-      `<div class="pal-section tt-scroll${rtab === 'civics' ? '' : ' hidden'}" data-psection="civics">${renderTree('civics')}</div>`;
+      `<div class="pal-section tt-scroll${rtab === 'civics' ? '' : ' hidden'}" data-psection="civics">${renderTree('civics')}</div>`,
+      ['.pal-section[data-psection="tech"]', '.pal-section[data-psection="civics"]'],
+    );
 
     this.wireTabs(this.researchPanel, (t) => { this.researchTab = t as 'tech' | 'civics'; });
     for (const node of this.researchPanel.querySelectorAll<HTMLElement>('.tt-node')) {

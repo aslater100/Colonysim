@@ -235,6 +235,8 @@ let frameMsEma = 16.7;
 
 function loop(now: number): void {
   const rawMs = now - last;
+  // Soft-cap at ~70 FPS: skip render if frame arrived too soon (120 Hz+).
+  if (rawMs < 14) { requestAnimationFrame(loop); return; }
   const dt = Math.min(0.25, rawMs / 1000);
   last = now;
   if (rawMs > 0 && rawMs < 1000) frameMsEma += (rawMs - frameMsEma) * 0.1;
@@ -264,8 +266,8 @@ function loop(now: number): void {
     paused,
     year,
     activeBuildWorkers: 0,
-    activeRailRoutes: region ? region.routes.filter((r) => r.kind === 'rail' && r.condition > 50).length : 0,
-    maxGrievance: region ? Math.max(0, ...region.settlements.map((s) => s.grievance)) : 0,
+    activeRailRoutes: region ? region.activeRailRoutes : 0,
+    maxGrievance: region ? region.maxGrievance : 0,
     tension: 0,
   });
 

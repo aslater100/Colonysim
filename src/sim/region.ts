@@ -2164,6 +2164,16 @@ export class RegionSim {
   explorationMap: TileVisibility[][] = [];
   /** Running count of non-fogged tiles; incremented in revealTiles for fast mapCacheSignature. */
   exploredCount = 0;
+  /** Incremented whenever faction visibility cache is rebuilt; lets RegionView detect fog changes. */
+  visibilityVersion = 0;
+  /** Cached count of rail routes with condition > 50 — updated at route mutation sites. */
+  activeRailRoutes = 0;
+  /** Cached maximum grievance across all settlements — updated daily. */
+  maxGrievance = 0;
+  /** Cached sum of food across all settlements — updated daily. */
+  totalFood = 0;
+  /** Cached sum of wood across all settlements — updated daily. */
+  totalWood = 0;
   /** One-time latch: player territory (own + vassal) has reached ≥50% of the region.
    *  Set in monthlyUpdate; never cleared after set. Surface "Proclaim Nation" in UI. */
   proclamationReady = false;
@@ -3205,6 +3215,7 @@ export class RegionSim {
     } else {
       this.routes.push({ a: aId, b: bId, kind, condition: 100, path: c.path, terrainCost: c.cost, freight: 0, cargoType: null });
     }
+    this.activeRailRoutes = this.routes.filter((r) => r.kind === 'rail' && r.condition > 50).length;
     this.addLog(
       kind === 'road'
         ? `A wagon road opens between ${a.name} and ${b.name} — ` + formatCurrency(cost.total) + ` of grading and bridgework.`
@@ -3270,6 +3281,7 @@ export class RegionSim {
     const a = this.settlement(aId)?.name ?? '?';
     const b = this.settlement(bId)?.name ?? '?';
     this.addLog(`The ${was} between ${a} and ${b} is torn up — only a trail remains.`, 'bad');
+    this.activeRailRoutes = this.routes.filter((rt) => rt.kind === 'rail' && rt.condition > 50).length;
     return true;
   }
 
@@ -3715,6 +3727,17 @@ export class RegionSim {
         'good',
       );
     }
+    // Update per-frame cached values so main loop reads fields instead of allocating.
+    let tf = 0, tw = 0, mg = 0;
+    for (const s of this.settlements) {
+      tf += s.food;
+      tw += s.wood;
+      if (s.grievance > mg) mg = s.grievance;
+    }
+    this.totalFood = tf;
+    this.totalWood = tw;
+    this.maxGrievance = mg;
+
     this.tickResearch();
     this.checkElection();
     if (this.day % 30 === 0) this.monthlyUpdate();
@@ -8246,6 +8269,7 @@ export class RegionSim {
       const faction = this.faction(t.factionId);
       this.settlements = this.settlements.filter((s) => s !== t);
       this.routes = this.routes.filter((r) => r.a !== t.id && r.b !== t.id);
+      this.activeRailRoutes = this.routes.filter((r) => r.kind === 'rail' && r.condition > 50).length;
       this.notables = this.notables.filter((n) => n.settlementId !== t.id);
       if (faction) {
         faction.settlementIds = faction.settlementIds.filter((id) => id !== t.id);
@@ -8590,6 +8614,11 @@ export class RegionSim {
     r.sanctions = d.sanctions ?? [];
     r.provincialArmies = d.provincialArmies ?? [];
     r.nextArmyId = d.nextArmyId ?? 1;
+    // Recompute cached perf fields after full restore.
+    r.activeRailRoutes = r.routes.filter((rt) => rt.kind === 'rail' && rt.condition > 50).length;
+    let tf = 0, tw = 0, mg = 0;
+    for (const s of r.settlements) { tf += s.food; tw += s.wood; if (s.grievance > mg) mg = s.grievance; }
+    r.totalFood = tf; r.totalWood = tw; r.maxGrievance = mg;
     return r;
   }
 
@@ -9903,7 +9932,7 @@ export class RegionSim {
   // ---- Faction Visibility Cache (Phase 2c: deferred per-faction visibility) ----
 
   /** Visibility cache: tiles visible to each faction (lazily computed, weekly rebuild). */
-  private factionVisibilityCache: Map<number, Set<string>> = new Map();
+  private factionVisibilityCache: Map<number, Set<number>> = new Map();
   private lastVisibilityRebuild: Map<number, number> = new Map();
 
   /** Check if a tile is visible to a faction (cache hits are O(1)). */
@@ -9915,7 +9944,7 @@ export class RegionSim {
     }
 
     const cache = this.factionVisibilityCache.get(factionId);
-    return cache ? cache.has(`${Math.round(x)},${Math.round(y)}`) : false;
+    return cache ? cache.has(Math.round(x) * 101 + Math.round(y)) : false;
   }
 
   /** Mark faction visibility cache as dirty (rebuild on next check). */
@@ -9928,7 +9957,7 @@ export class RegionSim {
     const faction = this.faction(factionId);
     if (!faction) return;
 
-    const cache = new Set<string>();
+    const cache = new Set<number>();
     const baseRadius = 2;
 
     // Settlement visibility: 2 + tech bonus
@@ -9943,7 +9972,7 @@ export class RegionSim {
           if (dx * dx + dy * dy <= r2) {
             const nx = settlement.x + dx, ny = settlement.y + dy;
             if (nx >= 0 && nx <= 100 && ny >= 0 && ny <= 100) {
-              cache.add(`${Math.round(nx)},${Math.round(ny)}`);
+              cache.add(Math.round(nx) * 101 + Math.round(ny));
             }
           }
         }
@@ -9960,7 +9989,7 @@ export class RegionSim {
           if (dx * dx + dy * dy <= r2) {
             const nx = scout.x + dx, ny = scout.y + dy;
             if (nx >= 0 && nx <= 100 && ny >= 0 && ny <= 100) {
-              cache.add(`${Math.round(nx)},${Math.round(ny)}`);
+              cache.add(Math.round(nx) * 101 + Math.round(ny));
             }
           }
         }
@@ -9969,5 +9998,6 @@ export class RegionSim {
 
     this.factionVisibilityCache.set(factionId, cache);
     this.lastVisibilityRebuild.set(factionId, this.day);
+    this.visibilityVersion++;
   }
 }
