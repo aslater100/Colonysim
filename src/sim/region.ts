@@ -865,6 +865,11 @@ export interface Scout {
   createdDay: number;
   expireDay: number; // scout auto-removed when day >= expireDay (200 days lifespan)
   targetMode: 'random' | 'objective'; // random walk or move toward goal objective
+  /** Player-scout fields — AI scouts leave these undefined. */
+  name?: string;             // display name ("Fox", "Wren", etc.)
+  autoExplore?: boolean;     // true = move toward unexplored tiles (default for new player scouts)
+  manualTargetX?: number;    // explicit waypoint in 0..100 coords
+  manualTargetY?: number;
 }
 
 /** Central Bank: tracks currency systems, reserves, and monetary policy. */
@@ -2178,6 +2183,8 @@ export class RegionSim {
   globalTradeVolume = 0;
   /** Next scout id for creating new scouts */
   private nextScoutId = 5000;
+  /** Regional faction ids the player has declared war on (Phase C). */
+  playerRegionalWars = new Set<number>();
   /** Faction IDs whose settlement has been revealed through fog (first-contact tracking). */
   private contactedFactionIds = new Set<number>();
   /** Set when any win condition is achieved; sandbox continues but result is displayed. */
@@ -4842,19 +4849,62 @@ export class RegionSim {
     if (active >= 2) return { ok: false, reason: 'already 2 scouts in the field' };
     if (this.treasury < 10) return { ok: false, reason: 'need £10' };
     this.treasury -= 10;
+    const SCOUT_NAMES = ['Fox', 'Wren', 'Ash', 'Bram', 'Rook', 'Jade', 'Cole', 'Fern'];
+    const playerScoutCount = this.scouts.filter((s) => s.factionId === this.playerFactionId).length;
+    const scoutName = SCOUT_NAMES[playerScoutCount % SCOUT_NAMES.length];
     const scout: Scout = {
       id: this.nextScoutId++,
       factionId: this.playerFactionId,
-      x: Math.max(0, Math.min(100, t.x + (Math.random() * 4 - 2))),
-      y: Math.max(0, Math.min(100, t.y + (Math.random() * 4 - 2))),
+      x: Math.max(0, Math.min(100, t.x + (this.rng.int(5) - 2))),
+      y: Math.max(0, Math.min(100, t.y + (this.rng.int(5) - 2))),
       health: 100,
       maintenanceCost: 0,
       createdDay: this.day,
       expireDay: this.day + 200,
-      targetMode: 'random',
+      targetMode: 'objective',
+      name: scoutName,
+      autoExplore: true,
     };
     this.scouts.push(scout);
-    this.addLog(`A scout sets out from ${t.name} to map the surrounding lands.`, 'info');
+    this.addLog(`${scoutName} the scout sets out from ${t.name} to map the surrounding lands.`, 'info');
+    return { ok: true, reason: '' };
+  }
+
+  /** Toggle auto-explore mode for a player scout. */
+  setScoutAutoExplore(scoutId: number, auto: boolean): void {
+    const scout = this.scouts.find((s) => s.id === scoutId && s.factionId === this.playerFactionId);
+    if (!scout) return;
+    scout.autoExplore = auto;
+    if (auto) { scout.manualTargetX = undefined; scout.manualTargetY = undefined; }
+  }
+
+  /** Send a player scout to a specific map coordinate (disables auto-explore). */
+  setScoutTarget(scoutId: number, rx: number, ry: number): void {
+    const scout = this.scouts.find((s) => s.id === scoutId && s.factionId === this.playerFactionId);
+    if (!scout) return;
+    scout.autoExplore = false;
+    scout.manualTargetX = Math.max(0, Math.min(100, rx));
+    scout.manualTargetY = Math.max(0, Math.min(100, ry));
+  }
+
+  /** Declare war on a rival regional faction (Phase C). */
+  declareWarOnFaction(factionId: number): { ok: boolean; reason: string } {
+    const faction = this.faction(factionId);
+    if (!faction || faction.id === this.playerFactionId) return { ok: false, reason: 'invalid target' };
+    if (this.playerRegionalWars.has(factionId)) return { ok: false, reason: 'already at war' };
+    this.playerRegionalWars.add(factionId);
+    faction.aggressiveness = Math.min(100, faction.aggressiveness + 30);
+    this.addLog(`⚔ WAR DECLARED against ${faction.name}. Their settlements are now valid targets for annexation.`, 'danger');
+    return { ok: true, reason: '' };
+  }
+
+  /** Offer a ceasefire to end a regional war. */
+  makeRegionalPeace(factionId: number): { ok: boolean; reason: string } {
+    if (!this.playerRegionalWars.has(factionId)) return { ok: false, reason: 'not at war' };
+    this.playerRegionalWars.delete(factionId);
+    const faction = this.faction(factionId);
+    if (faction) faction.aggressiveness = Math.max(0, faction.aggressiveness - 20);
+    this.addLog(`✦ Ceasefire agreed with ${faction?.name ?? 'the faction'}.`, 'info');
     return { ok: true, reason: '' };
   }
 
@@ -8307,6 +8357,7 @@ export class RegionSim {
       // Phase 0: factions, scouts, currency — the map packs to one char per tile
       explorationMap: this.explorationMap.map((row) => row.map((v) => (v === 'fogged' ? '0' : '1')).join('')),
       scouts: this.scouts,
+      playerRegionalWars: [...this.playerRegionalWars],
       regionalFactions: this.regionalFactions,
       playerFactionId: this.playerFactionId,
       aiDifficulty: this.aiDifficulty,
@@ -8499,6 +8550,7 @@ export class RegionSim {
       r.aiDifficulty = d.aiDifficulty ?? 'normal';
       r.factionAlliances = d.factionAlliances ?? [];
       r.scouts = d.scouts ?? [];
+      r.playerRegionalWars = new Set(d.playerRegionalWars ?? []);
       r.exchangeRates = d.exchangeRates ?? { '0:0': 1.0 };
       r.globalTradeVolume = d.globalTradeVolume ?? 0;
       r.nextScoutId = d.nextScoutId ?? 5000;
@@ -9774,29 +9826,78 @@ export class RegionSim {
 
   /** Update all scouts: move, age, expire. Called during monthly update. */
   private updateScouts(): void {
-    // Move active scouts
     for (const scout of this.scouts) {
       if (this.day < scout.expireDay) {
         const oldX = scout.x, oldY = scout.y;
-        this.moveScout(scout);
-
-        // Invalidate faction visibility if scout moved
+        // Player scouts use deterministic movement (no AI RNG consumed).
+        if (scout.factionId === this.playerFactionId) {
+          this.movePlayerScout(scout);
+        } else {
+          this.moveScout(scout);
+        }
         if (Math.abs(scout.x - oldX) > 0.1 || Math.abs(scout.y - oldY) > 0.1) {
           this.invalidateFactionVisibility(scout.factionId);
         }
       }
     }
-
-    // Remove expired scouts
     this.scouts = this.scouts.filter((s) => this.day < s.expireDay);
-
-    // Attempt to spawn new scouts for factions with budget
+    // Auto-spawn only for rival factions; player hires scouts manually.
     for (const faction of this.regionalFactions) {
-      if (this.rng.chance(0.1)) {
-        // 10% chance per update to spawn a scout if faction has budget
-        this.spawnScout(faction);
+      if (faction.id === this.playerFactionId) continue;
+      if (this.rng.chance(0.1)) this.spawnScout(faction);
+    }
+  }
+
+  /** Deterministic movement for player scouts — no RNG consumed. */
+  private movePlayerScout(scout: Scout): void {
+    // Manual waypoint: move toward it, clear when arrived.
+    if (scout.manualTargetX !== undefined && scout.manualTargetY !== undefined) {
+      const dx = scout.manualTargetX - scout.x;
+      const dy = scout.manualTargetY - scout.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 2) {
+        scout.manualTargetX = undefined;
+        scout.manualTargetY = undefined;
+      } else {
+        scout.x += (dx / dist) * 2.5;
+        scout.y += (dy / dist) * 2.5;
+      }
+      scout.x = Math.max(0, Math.min(100, scout.x));
+      scout.y = Math.max(0, Math.min(100, scout.y));
+      return;
+    }
+    if (scout.autoExplore === false) return; // parked by player
+    const target = this.findNearestUnexplored(scout.x, scout.y);
+    if (target) {
+      const dx = target.x - scout.x;
+      const dy = target.y - scout.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 0) {
+        scout.x += (dx / dist) * 2.5;
+        scout.y += (dy / dist) * 2.5;
+      }
+    } else {
+      scout.x = Math.min(100, scout.x + 1.5);
+    }
+    scout.x = Math.max(0, Math.min(100, scout.x));
+    scout.y = Math.max(0, Math.min(100, scout.y));
+  }
+
+  /** Scan outward from (fromX, fromY) to find the nearest unexplored tile. */
+  private findNearestUnexplored(fromX: number, fromY: number): { x: number; y: number } | null {
+    const E = this.explorationMap.length;
+    for (let step = 4; step <= 64; step += 4) {
+      for (let di = -step; di <= step; di += step === 4 ? 2 : step) {
+        for (let dj = -step; dj <= step; dj += step === 4 ? 2 : step) {
+          const rx = Math.max(0, Math.min(100, fromX + di));
+          const ry = Math.max(0, Math.min(100, fromY + dj));
+          const ex = Math.min(E - 1, Math.floor((rx / 100) * E));
+          const ey = Math.min(E - 1, Math.floor((ry / 100) * E));
+          if (this.explorationMap[ex][ey] === 'fogged') return { x: rx, y: ry };
+        }
       }
     }
+    return null;
   }
 
   // ---- Faction Visibility Cache (Phase 2c: deferred per-faction visibility) ----

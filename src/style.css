@@ -735,8 +735,8 @@ body {
   cursor: not-allowed;
 }
 
-.state-panel { width: 190px; }
-.state-panel p { margin: 4px 0; font-size: 12px; }
+.state-panel { width: 190px; overflow-wrap: break-word; word-break: break-word; }
+.state-panel p { margin: 4px 0; font-size: 12px; overflow-wrap: break-word; word-break: break-word; }
 .state-panel input[type='range'] { width: 100%; }
 
 /* Shared base for floating region/nation panels. Without this the research and
@@ -1600,6 +1600,7 @@ body {
 /* ---- Floating panels: glass with depth ---- */
 .cv-app .inspector,
 .cv-app .palette,
+.cv-app .state-panel,
 .cv-app .route-network-panel,
 .cv-app .settlement-list-panel,
 .cv-app .economy-panel {
@@ -1615,6 +1616,8 @@ body {
   -webkit-backdrop-filter: blur(10px);
   scrollbar-width: thin;
   scrollbar-color: rgba(100, 150, 200, 0.2) transparent;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 /* Panel headings */

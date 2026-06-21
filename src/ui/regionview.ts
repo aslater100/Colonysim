@@ -138,13 +138,15 @@ export class RegionView {
   /** True while the inline town-rename field is open — pauses panel rebuilds so
    *  the once-per-second refresh doesn't destroy the input mid-edit. */
   private editingName = false;
-  // ---- Map camera (zoom + pan). Base view (scale 1, no offset) fits the whole
-  //      region; zoom in to read crowded clusters, drag/keys to roam. ----
-  private camScale = 1;
+  /** Currently selected player scout id (null = none). Click map to send to target. */
+  private selectedScoutId: number | null = null;
+  // ---- Map camera (zoom + pan). Default view starts zoomed on the founding
+  //      settlement (Civ-style); zoom out to see the whole region. ----
+  private camScale = 8;
   private camX = 0; // screen-px offset applied after scaling
   private camY = 0;
-  private static readonly MIN_SCALE = 1;
-  private static readonly MAX_SCALE = 6;
+  private static readonly MIN_SCALE = 4;
+  private static readonly MAX_SCALE = 20;
   // ---- Minimap (corner navigation aid) ----
   private minimap: Minimap;
   // ---- Tooltips (settlement hover info) ----
@@ -227,6 +229,18 @@ export class RegionView {
     eventLog.className = 'eventlog';
     root.appendChild(eventLog);
     this.eventLog = eventLog;
+    // Start zoomed in on the founding settlement (Civ-style entry view).
+    if (region.settlements.length > 0) {
+      const home = region.settlements[0];
+      this.camScale = 8;
+      const { size, ox, oy } = hexLayoutParams(canvas.width, canvas.height, REGION_N, 60);
+      const col = Math.max(0, Math.min(REGION_N - 1, Math.floor((home.x / 100) * REGION_N)));
+      const row = Math.max(0, Math.min(REGION_N - 1, Math.floor((home.y / 100) * REGION_N)));
+      const { x: bx, y: by } = hexCenter(col, row, size, ox, oy);
+      this.camX = canvas.width / 2 - bx * this.camScale;
+      this.camY = canvas.height / 2 - by * this.camScale;
+      this.clampCamera();
+    }
   }
 
   /** Top bar displaying game metrics. */
@@ -313,6 +327,32 @@ export class RegionView {
       return;
     }
 
+    // Scout click — check before settlements so the scout sprite intercepts first.
+    const { region } = this;
+    const playerScouts = region.scouts.filter((s) => s.factionId === region.playerFactionId);
+    for (const scout of playerScouts) {
+      const sp = this.toPx(scout.x, scout.y);
+      if (Math.hypot(sp.px - mx, sp.py - my) < 12) {
+        // Toggle selection
+        this.selectedScoutId = scout.id === this.selectedScoutId ? null : scout.id;
+        return;
+      }
+    }
+    // If a scout is selected, clicking the map sends it to that hex.
+    if (this.selectedScoutId !== null) {
+      const W = this.canvas.width;
+      const H = this.canvas.height;
+      const { size, ox, oy } = hexLayoutParams(W, H, REGION_N, 60);
+      const { col: hc, row: hr } = screenToHex(mx, my, size, ox, oy);
+      if (hc >= 0 && hc < REGION_N && hr >= 0 && hr < REGION_N) {
+        const rx = (hc / REGION_N) * 100;
+        const ry = (hr / REGION_N) * 100;
+        this.region.setScoutTarget(this.selectedScoutId, rx, ry);
+      }
+      this.selectedScoutId = null;
+      return;
+    }
+
     for (const t of this.region.settlements) {
       const p = this.toPx(t.x, t.y);
       if (Math.hypot(p.px - mx, p.py - my) < radius) {
@@ -378,11 +418,20 @@ export class RegionView {
   panTo(regionX: number, regionY: number): void {
     const W = this.canvas.width;
     const H = this.canvas.height;
-    // Convert logical coords to screen center
     const p = this.toPx(regionX, regionY);
-    // Pan so that (p.px, p.py) appears at the screen center
-    this.camX = W / 2 - p.px;
-    this.camY = H / 2 - p.py;
+    this.camX = W / 2 - p.px * this.camScale;
+    this.camY = H / 2 - p.py * this.camScale;
+    this.clampCamera();
+  }
+
+  /** Zoom to a specific scale and center the viewport on a logical coordinate. */
+  centerOn(regionX: number, regionY: number, zoom: number): void {
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+    this.camScale = Math.max(RegionView.MIN_SCALE, Math.min(RegionView.MAX_SCALE, zoom));
+    const p = this.toPx(regionX, regionY);
+    this.camX = W / 2 - p.px * this.camScale;
+    this.camY = H / 2 - p.py * this.camScale;
     this.clampCamera();
   }
 
@@ -637,31 +686,62 @@ export class RegionView {
       }
     }
 
-    // Scouts: tiny moving dots (faction-colored, with animation)
+    // Scouts: clickable character sprites — player scouts have name + auto-explore indicator
     for (const scout of region.scouts) {
       const faction = region.faction(scout.factionId);
       if (!faction) continue;
-      // Player scouts always visible; AI scouts only if currently in sight
       if (faction.id !== region.playerFactionId && !this.region.isVisibleToFaction(Math.round(scout.x), Math.round(scout.y), region.playerFactionId)) continue;
       const { px, py } = this.toPx(scout.x, scout.y);
-      if (!this.inView(px, py, 16)) continue;
-      const bob = Math.floor(this.frame / 20) % 2;
-      // Player scouts: white outline + faction color fill; AI scouts: faction color only
-      if (faction.id === region.playerFactionId) {
-        g.fillStyle = faction.color ?? '#00ff00';
-        g.globalAlpha = 0.9;
-        g.fillRect(px - 3, py - 3 - bob, 6, 6);
-        g.globalAlpha = 1;
-        g.strokeStyle = '#fff';
-        g.lineWidth = 1;
-        g.strokeRect(px - 3, py - 3 - bob, 6, 6);
-      } else {
-        g.fillStyle = faction.color ?? '#aaa';
-        g.globalAlpha = 0.75;
-        g.fillRect(px - 2, py - 2 - bob, 4, 4);
-        g.globalAlpha = 1;
+      if (!this.inView(px, py, 24)) continue;
+      const bob = Math.floor(this.frame / 25) % 2;
+      const isPlayer = faction.id === region.playerFactionId;
+      const isSelected = isPlayer && scout.id === this.selectedScoutId;
+      const color = faction.color ?? (isPlayer ? '#6af' : '#aaa');
+
+      if (isSelected) {
+        g.strokeStyle = 'rgba(255,255,255,0.9)';
+        g.lineWidth = 1.5;
+        g.setLineDash([3, 2]);
+        g.beginPath(); g.arc(px, py - bob, 11, 0, Math.PI * 2); g.stroke();
+        g.setLineDash([]);
+      }
+      // Body
+      g.globalAlpha = isPlayer ? 0.95 : 0.65;
+      g.fillStyle = color;
+      g.beginPath(); g.arc(px, py + 2 - bob, 4, 0, Math.PI * 2); g.fill();
+      // Head
+      g.fillStyle = isPlayer ? '#f5deb3' : color;
+      g.beginPath(); g.arc(px, py - 4 - bob, 3, 0, Math.PI * 2); g.fill();
+      g.globalAlpha = 1;
+
+      if (isPlayer) {
+        const scoutName = (scout as Scout & { name?: string }).name ?? 'Scout';
+        g.fillStyle = '#e8f0ff';
+        g.font = 'bold 9px monospace';
+        g.textAlign = 'center';
+        g.fillText(scoutName, px, py - 10 - bob);
+        // Auto-explore indicator
+        const isAuto = (scout as Scout & { autoExplore?: boolean }).autoExplore !== false;
+        if (isAuto) {
+          g.fillStyle = '#4af';
+          g.font = '9px monospace';
+          g.fillText('⟳', px + 9, py - 3 - bob);
+        }
+        // Target line if manual target set
+        const mt = scout as Scout & { manualTargetX?: number; manualTargetY?: number };
+        if (mt.manualTargetX !== undefined && mt.manualTargetY !== undefined) {
+          const tp = this.toPx(mt.manualTargetX, mt.manualTargetY);
+          g.strokeStyle = 'rgba(255,200,100,0.45)';
+          g.lineWidth = 1;
+          g.setLineDash([4, 3]);
+          g.beginPath(); g.moveTo(px, py - bob); g.lineTo(tp.px, tp.py); g.stroke();
+          g.setLineDash([]);
+          g.fillStyle = 'rgba(255,200,100,0.8)';
+          g.beginPath(); g.arc(tp.px, tp.py, 3, 0, Math.PI * 2); g.fill();
+        }
       }
     }
+    g.textAlign = 'left';
 
     // Expeditions: a wagon dot crawling to its site
     for (const e of region.expeditions) {
@@ -693,7 +773,6 @@ export class RegionView {
 
     // City lights pop on the map as dusk falls (still in map-space).
     const lit = this.atmosphere();
-    this.drawCityLights(lit);
 
     // Province overlay: labels + stat bars + selection ring (Province View mode).
     if (this.provinceViewActive) this.drawProvinceOverlay();
@@ -703,8 +782,18 @@ export class RegionView {
     // Draw the minimap in the corner, showing camera frame.
     this.minimap.draw(this.camX, this.camY, this.camScale, W, H);
 
-    // Time-of-day + seasonal tint and a soft vignette frame the whole scene.
+    // Seasonal wash + vignette (no night tint — day/night cycle disabled).
     this.drawAtmosphere(W, H, lit);
+
+    // Scout info panel — shown in screen-space when a player scout is selected.
+    if (this.selectedScoutId !== null) {
+      const selScout = region.scouts.find((s) => s.id === this.selectedScoutId);
+      if (selScout && selScout.factionId === region.playerFactionId) {
+        this.drawScoutPanel(selScout as Scout & { name?: string; autoExplore?: boolean; manualTargetX?: number; manualTargetY?: number }, W, H);
+      } else {
+        this.selectedScoutId = null;
+      }
+    }
 
     // Charter banner — the path to the State. Each requirement reads as a
     // ✓/✗ chip so the player can see exactly what still blocks Incorporation.
@@ -891,18 +980,9 @@ export class RegionView {
     this.mapCacheSig = sig;
   }
 
-  /** Compute the current lighting state from the in-game clock + season: a
-   *  night factor (0 day … 1 deep night), a warm golden-hour amount at dawn/
-   *  dusk, and the season index. Drives both the city-light glows and the
-   *  full-screen tint so they stay in sync. */
+  /** Lighting state for atmospheric rendering. Day/night cycle disabled — always daytime. */
   private atmosphere(): { night: number; golden: number; season: number } {
-    const dayFrac = (this.region.minute % MINUTES_PER_DAY) / MINUTES_PER_DAY; // 0 = midnight
-    const sun = Math.sin(dayFrac * Math.PI); // 0 at midnight, 1 at noon
-    const night = Math.pow(Math.max(0, 1 - sun), 1.5);
-    // Golden hour peaks mid-morning (~05:00) and mid-evening (~19:00).
-    const bump = (c: number) => Math.max(0, 1 - Math.abs(dayFrac - c) / 0.09);
-    const golden = Math.min(1, bump(0.22) + bump(0.78));
-    return { night, golden, season: this.region.seasonIndex };
+    return { night: 0, golden: 0, season: this.region.seasonIndex };
   }
 
   /** Warm hearth-glow under each known settlement once dusk sets in — scaled by
@@ -1216,15 +1296,9 @@ export class RegionView {
     this.g.globalAlpha = 1;
   }
 
-  /** Full-screen atmospheric pass (screen-space): a night/golden-hour tint, a
-   *  subtle seasonal wash, and a vignette. Cheap — a few rects + one gradient. */
+  /** Full-screen atmospheric pass (screen-space): seasonal wash + vignette. */
   private drawAtmosphere(W: number, H: number, lit: { night: number; golden: number; season: number }): void {
     const { g } = this;
-    // Deep-night cool overlay.
-    if (lit.night > 0.01) {
-      g.fillStyle = `rgba(12,20,46,${(0.5 * lit.night).toFixed(3)})`;
-      g.fillRect(0, 0, W, H);
-    }
     // Seasonal wash — faint, so it colours the mood without fighting the map.
     const seasonTint = ['rgba(120,180,96,0.07)', 'rgba(255,206,120,0.06)', 'rgba(208,138,60,0.08)', 'rgba(150,182,224,0.09)'][lit.season] ?? '';
     if (seasonTint) { g.fillStyle = seasonTint; g.fillRect(0, 0, W, H); }
@@ -1238,6 +1312,44 @@ export class RegionView {
     }
     g.fillStyle = this.vignetteGrad;
     g.fillRect(0, 0, W, H);
+  }
+
+  /** HUD panel drawn in screen-space for a selected player scout. */
+  private drawScoutPanel(
+    scout: Scout & { name?: string; autoExplore?: boolean; manualTargetX?: number; manualTargetY?: number },
+    W: number, H: number,
+  ): void {
+    const { g } = this;
+    const pw = 210, ph = 96;
+    const spx = W - pw - 14;
+    const spy = H - ph - 58;
+    g.fillStyle = 'rgba(10,14,24,0.92)';
+    g.beginPath(); (g as any).roundRect?.(spx, spy, pw, ph, 8) ?? g.rect(spx, spy, pw, ph); g.fill();
+    g.strokeStyle = 'rgba(80,140,220,0.55)';
+    g.lineWidth = 1;
+    g.beginPath(); (g as any).roundRect?.(spx, spy, pw, ph, 8) ?? g.rect(spx, spy, pw, ph); g.stroke();
+    const sname = scout.name ?? 'Scout';
+    const days = Math.max(0, scout.expireDay - this.region.day);
+    g.fillStyle = '#a8c8ff';
+    g.font = 'bold 11px monospace';
+    g.textAlign = 'left';
+    g.fillText(`SCOUT · ${sname}`, spx + 10, spy + 18);
+    g.fillStyle = '#7a9ab8';
+    g.font = '10px monospace';
+    g.fillText(`${days}d remaining  HP ${scout.health}`, spx + 10, spy + 33);
+    const autoOn = scout.autoExplore !== false;
+    g.fillStyle = autoOn ? '#4af' : '#888';
+    g.fillText(autoOn ? '⟳ Auto-Explore ON' : '○ Parked', spx + 10, spy + 48);
+    if (scout.manualTargetX !== undefined) {
+      g.fillStyle = '#fca';
+      g.fillText('→ Moving to waypoint', spx + 10, spy + 63);
+    } else {
+      g.fillStyle = '#888';
+      g.fillText(autoOn ? 'Click map to send to waypoint' : 'Auto-Explore is OFF', spx + 10, spy + 63);
+    }
+    g.fillStyle = '#556';
+    g.font = '9px monospace';
+    g.fillText('Click scout to deselect', spx + 10, spy + 82);
   }
 
   /** Fog of war: the world beyond the explored frontier lies under a soft,
@@ -3633,11 +3745,13 @@ export class RegionView {
 
     const canVassalize = !isVassal && faction.settlementIds.length > 0 && r.stateProclaimed;
     const canBuyLand = faction.treasury < 150 && faction.settlementIds.length > 1 && (playerFaction?.treasury ?? 0) >= 500;
+    const atWar = r.playerRegionalWars.has(fid);
 
     this.rivalPanel.innerHTML =
       `<h3><span style="color:${faction.color}">■</span> ${faction.name}</h3>` +
       `<p class="insp-skills">${regimeName} · ${faction.regime}</p>` +
       (isVassal ? `<p style="color:#8fc26a">★ Vassal of your state</p>` : '') +
+      (atWar ? `<p style="color:#e05050">⚔ AT WAR</p>` : '') +
       `<p>settlements <b>${stats.settlements}</b> · pop <b>${stats.population}</b></p>` +
       `<p>treasury <b>${formatCurrency(stats.treasury)}</b> · military <b>${stats.militaryStrength}</b></p>` +
       `<p>territory <b>${territory}%</b> of region</p>` +
@@ -3649,6 +3763,11 @@ export class RegionView {
       (canBuyLand
         ? `<button id="rival-buy-land-btn">Buy Land (£500)</button><br>`
         : `<button disabled title="Rival treasury must be &lt;£150 and you need £500">Buy Land</button><br>`) +
+      (!isVassal
+        ? (atWar
+          ? `<button id="rival-war-btn" class="mini">✦ Offer Ceasefire</button><br>`
+          : `<button id="rival-war-btn" class="mini danger">⚔ Declare War</button><br>`)
+        : '') +
       `<button id="rival-close-btn" class="mini" style="margin-top:6px">Close</button>`;
 
     this.rivalPanel.querySelector<HTMLButtonElement>('#rival-close-btn')!.onclick = () => {
@@ -3659,16 +3778,27 @@ export class RegionView {
       vassalBtn.onclick = () => {
         const result = r.offerVassalage(fid);
         if (result === 'accepted') {
-          this.selectedFactionId = null; // panel will rebuild next frame
+          this.selectedFactionId = null;
         }
-        this.lastRivalPanelFactionId = null; // force rebuild
+        this.lastRivalPanelFactionId = null;
       };
     }
     const buyBtn = this.rivalPanel.querySelector<HTMLButtonElement>('#rival-buy-land-btn');
     if (buyBtn) {
       buyBtn.onclick = () => {
         r.buyLand(fid);
-        this.lastRivalPanelFactionId = null; // force rebuild
+        this.lastRivalPanelFactionId = null;
+      };
+    }
+    const warBtn = this.rivalPanel.querySelector<HTMLButtonElement>('#rival-war-btn');
+    if (warBtn) {
+      warBtn.onclick = () => {
+        if (r.playerRegionalWars.has(fid)) {
+          r.makeRegionalPeace(fid);
+        } else {
+          r.declareWarOnFaction(fid);
+        }
+        this.lastRivalPanelFactionId = null;
       };
     }
   }
