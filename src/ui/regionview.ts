@@ -3787,6 +3787,20 @@ export class RegionView {
     const canBuyLand = faction.treasury < 150 && faction.settlementIds.length > 1 && (playerFaction?.treasury ?? 0) >= 500;
     const atWar = r.playerRegionalWars.has(fid);
 
+    // While at war, every enemy town is a target: list each with its assault odds.
+    const assaultHtml = atWar
+      ? `<hr><p class="insp-skills">CAMPAIGN — your field army <b>${Math.round(r.playerFieldArmy())}</b></p>` +
+        faction.settlementIds.map((sid) => {
+          const s = r.settlement(sid);
+          if (!s) return '';
+          const od = r.assaultOdds(sid);
+          const pct = Math.round(od.odds * 100);
+          return `<button class="mini danger assault-btn" data-sid="${sid}" ${od.ok ? '' : 'disabled'} ` +
+            `title="${od.ok ? `your ${od.attack} vs garrison ${od.defense}` : od.reason}">` +
+            `⚔ Assault ${s.name} (${pct}%)</button><br>`;
+        }).join('')
+      : '';
+
     this.setInnerHtml(
       this.rivalPanel,
       `<h3><span style="color:${faction.color}">■</span> ${faction.name}</h3>` +
@@ -3809,6 +3823,7 @@ export class RegionView {
           ? `<button id="rival-war-btn" class="mini">✦ Offer Ceasefire</button><br>`
           : `<button id="rival-war-btn" class="mini danger">⚔ Declare War</button><br>`)
         : '') +
+      assaultHtml +
       `<button id="rival-close-btn" class="mini" style="margin-top:6px">Close</button>`,
     );
 
@@ -3843,6 +3858,13 @@ export class RegionView {
         this.lastRivalPanelFactionId = null;
       };
     }
+    this.rivalPanel.querySelectorAll<HTMLButtonElement>('.assault-btn').forEach((btn) => {
+      btn.onclick = () => {
+        const sid = Number(btn.dataset.sid);
+        r.assaultSettlement(sid);
+        this.lastRivalPanelFactionId = null; // rebuild to refresh odds & ownership
+      };
+    });
   }
 
   /** Defence row: this town's garrison plus a button to drill more militia —

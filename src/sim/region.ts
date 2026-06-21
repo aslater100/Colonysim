@@ -1987,6 +1987,11 @@ export const ROLE_BONUS_DESC: Record<NotableRole, string> = {
  *  with the larger REGION_N map (more room) and the viewport-bound renderer. */
 export const MAX_SETTLEMENTS = 24;
 
+/** Minimum Euclidean spacing between settlement centres, in 0–100 map coords.
+ *  Founding is rejected within this radius of any existing town so cities don't
+ *  pile on top of each other. Used by both player expeditions and AI expansion. */
+export const MIN_SETTLEMENT_SPACING = 8;
+
 export class RegionSim {
   rng: Rng;
   /** Separate deterministic stream for rival faction AI decisions. Kept apart
@@ -4929,6 +4934,83 @@ export class RegionSim {
     if (faction) faction.aggressiveness = Math.max(0, faction.aggressiveness - 20);
     this.addLog(`✦ Ceasefire agreed with ${faction?.name ?? 'the faction'}.`, 'info');
     return { ok: true, reason: '' };
+  }
+
+  /** Total strength the player can field in an assault: the summed militia
+   *  garrisons of every player town, plus a bonus from standing militia funding. */
+  playerFieldArmy(): number {
+    let a = this.militiaLevel * 3;
+    for (const t of this.settlements) {
+      if (t.factionId === this.playerFactionId) a += t.garrisonStrength || 0;
+    }
+    return a;
+  }
+
+  /** A settlement's defensive strength against an assault: its garrison plus a
+   *  small contribution from a loyal populace digging in. */
+  private settlementDefense(t: Settlement): number {
+    const loyalPop = this.popOf(t) * 0.01 * (t.loyaltyToFaction / 100);
+    return Math.max(1, (t.garrisonStrength || 0) + loyalPop);
+  }
+
+  /** Preview an assault on an enemy settlement: attacker vs defender strength and
+   *  the win probability, for the UI to surface before the player commits. */
+  assaultOdds(targetId: number): { ok: boolean; reason: string; attack: number; defense: number; odds: number } {
+    const target = this.settlement(targetId);
+    const fail = (reason: string) => ({ ok: false, reason, attack: 0, defense: 0, odds: 0 });
+    if (!target) return fail('no settlement');
+    if (target.factionId === this.playerFactionId) return fail('your own town');
+    if (!this.playerRegionalWars.has(target.factionId)) return fail('not at war with this faction');
+    const attack = this.playerFieldArmy();
+    const defense = this.settlementDefense(target);
+    if (attack < 1) return fail('no garrison to field — drill militia first');
+    return { ok: true, reason: '', attack: Math.round(attack), defense: Math.round(defense), odds: attack / (attack + defense) };
+  }
+
+  /** Distribute militia casualties across the player's town garrisons. */
+  private bleedPlayerArmy(fraction: number): void {
+    for (const t of this.settlements) {
+      if (t.factionId !== this.playerFactionId) continue;
+      t.garrisonStrength = Math.max(0, (t.garrisonStrength || 0) * (1 - fraction));
+    }
+  }
+
+  /** Launch an assault on an enemy settlement during a regional war. A win annexes
+   *  the town into the player's faction (and ends the war if it was their last);
+   *  a loss bloodies the player's garrisons. Either way the defenders take losses
+   *  too, so a determined siege wears a town down over repeated attempts. */
+  assaultSettlement(targetId: number): { ok: boolean; won: boolean; reason: string } {
+    const info = this.assaultOdds(targetId);
+    if (!info.ok) return { ok: false, won: false, reason: info.reason };
+    const target = this.settlement(targetId)!;
+    const enemy = this.faction(target.factionId);
+    const playerFaction = this.faction(this.playerFactionId);
+    if (!enemy || !playerFaction) return { ok: false, won: false, reason: 'invalid faction' };
+
+    const won = this.rng.chance(info.odds);
+    if (won) {
+      this.bleedPlayerArmy(0.12); // even a victory is paid for in blood
+      enemy.settlementIds = enemy.settlementIds.filter((id) => id !== target.id);
+      target.factionId = this.playerFactionId;
+      playerFaction.settlementIds.push(target.id);
+      // A conquered town starts cowed: gutted garrison, resentful, weak loyalty.
+      target.garrisonStrength = 1;
+      target.loyaltyToFaction = 40;
+      target.grievance = Math.min(100, target.grievance + 30);
+      this._territoryCache = null;
+      this.addLog(`VICTORY: your militia storm ${target.name} — it is annexed into your realm.`, 'good');
+      if (enemy.capital === target.id) enemy.capital = enemy.settlementIds[0] ?? -1;
+      if (enemy.settlementIds.length === 0) {
+        this.playerRegionalWars.delete(enemy.id);
+        this.addLog(`${enemy.name} is wiped from the map — the war is won.`, 'good');
+      }
+      return { ok: true, won: true, reason: '' };
+    }
+    // Repelled: the attacker takes the heavier losses, the defenders a lighter one.
+    this.bleedPlayerArmy(0.25);
+    target.garrisonStrength = Math.max(0, (target.garrisonStrength || 0) - 1);
+    this.addLog(`REPELLED: ${target.name}'s defenders throw back your assault — your militia are bloodied.`, 'bad');
+    return { ok: true, won: false, reason: '' };
   }
 
   /** Repaint a town's development focus: labor drifts toward the favored
@@ -9733,10 +9815,10 @@ export class RegionSim {
       const isPlains = site.fertility > 0.9 && site.roughness < 0.2;
       const isForest = site.forest > 0.5;
 
-      // Penalty: too close to any existing settlement
-      for (const settlementId of faction.settlementIds) {
-        const s = this.settlement(settlementId);
-        if (s && Math.abs(s.x - x) < 4 && Math.abs(s.y - y) < 4) { score -= 100; break; }
+      // Penalty: too close to ANY existing settlement (own or foreign) — keep
+      // cities spread out instead of clustering. Euclidean, not per-axis.
+      for (const s of this.settlements) {
+        if (Math.hypot(s.x - x, s.y - y) < MIN_SETTLEMENT_SPACING) { score -= 100; break; }
       }
 
       // Bias matching (goal-driven)
@@ -9793,8 +9875,8 @@ export class RegionSim {
     // Check if placement is valid
     if (x < 0 || x > 100 || y < 0 || y > 100) return null;
 
-    // Don't found where another settlement exists
-    if (this.settlements.some((s) => Math.abs(s.x - x) < 4 && Math.abs(s.y - y) < 4)) {
+    // Don't found within the minimum spacing radius of any existing settlement.
+    if (this.settlements.some((s) => Math.hypot(s.x - x, s.y - y) < MIN_SETTLEMENT_SPACING)) {
       return null;
     }
 

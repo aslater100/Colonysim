@@ -314,11 +314,15 @@ export class RegionMap {
   /** Best unclaimed site within reach — expeditions read the land, not dice. */
   bestSiteNear(fromX: number, fromY: number, claimed: { x: number; y: number }[], range = Math.round(REGION_N * 0.28)): TownSite | null {
     let best: { x: number; y: number; score: number } | null = null;
+    // Minimum gap to any existing/pending town, in cell space: ~8 map units
+    // (matches MIN_SETTLEMENT_SPACING) so player towns don't crowd either.
+    const minGap = REGION_N * 0.08;
+    const minFromOrigin = REGION_N * 0.05;
     for (let y = Math.max(2, fromY - range); y < Math.min(REGION_N - 2, fromY + range); y++) {
       for (let x = Math.max(2, fromX - range); x < Math.min(REGION_N - 2, fromX + range); x++) {
         const d = Math.hypot(x - fromX, y - fromY);
-        if (d < 6 || d > range) continue; // not on top of us, not beyond reach
-        if (claimed.some((c) => Math.hypot(c.x - x, c.y - y) < 7)) continue;
+        if (d < minFromOrigin || d > range) continue; // not on top of us, not beyond reach
+        if (claimed.some((c) => Math.hypot(c.x - x, c.y - y) < minGap)) continue;
         const score = this.siteScore(x, y);
         if (score > 0 && (!best || score > best.score)) best = { x, y, score };
       }
