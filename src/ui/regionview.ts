@@ -462,6 +462,7 @@ export class RegionView {
     // Terrain + territory (the O(N²) layers) come from the static cache as one blit.
     this.ensureMapCache(W, H);
     g.drawImage(this.mapCache!, 0, 0);
+    this.drawMemoryFog(g, W, H);
 
     // Routes along their actual corridors (M6b/6c): dotted trails, solid
     // roads, cross-tied rail; line brightness is the route's condition.
@@ -596,6 +597,7 @@ export class RegionView {
         const s = region.settlement(settlementId);
         if (!s) continue;
         if (!this.revealedAt(s.x, s.y)) continue; // hidden until discovered
+        if (!this.region.isVisibleToFaction(Math.round(s.x), Math.round(s.y), region.playerFactionId)) continue;
         const { px, py } = this.toPx(s.x, s.y);
         if (!this.inView(px, py, 24)) continue;
         const selected = this.selectedFactionId === faction.id;
@@ -636,8 +638,8 @@ export class RegionView {
     for (const scout of region.scouts) {
       const faction = region.faction(scout.factionId);
       if (!faction) continue;
-      // Player scouts always visible; AI scouts only if revealed by player
-      if (faction.id !== region.playerFactionId && !this.revealedAt(scout.x, scout.y)) continue;
+      // Player scouts always visible; AI scouts only if currently in sight
+      if (faction.id !== region.playerFactionId && !this.region.isVisibleToFaction(Math.round(scout.x), Math.round(scout.y), region.playerFactionId)) continue;
       const { px, py } = this.toPx(scout.x, scout.y);
       if (!this.inView(px, py, 16)) continue;
       const bob = Math.floor(this.frame / 20) % 2;
@@ -1262,6 +1264,29 @@ export class RegionView {
           g.fillStyle = 'rgba(74,88,116,0.10)';
           fillHexPath(g, corners);
         }
+      }
+    }
+  }
+
+  private drawMemoryFog(g: CanvasRenderingContext2D, W: number, H: number): void {
+    const N = REGION_N;
+    const m = 60;
+    const { size, ox, oy } = hexLayoutParams(W, H, N, m);
+    const pid = this.region.playerFactionId;
+    for (let row = 0; row < N; row++) {
+      for (let col = 0; col < N; col++) {
+        const lx = Math.round((col / N) * 100);
+        const ly = Math.round((row / N) * 100);
+        if (!this.revealedAt(lx, ly)) continue;
+        if (this.region.isVisibleToFaction(lx, ly, pid)) continue;
+        const frontier = hexNeighbors(col, row).some(([nc, nr]) => {
+          const fx = Math.round((nc / N) * 100);
+          const fy = Math.round((nr / N) * 100);
+          return this.region.isVisibleToFaction(fx, fy, pid);
+        });
+        const { x: cx, y: cy } = hexCenter(col, row, size, ox, oy);
+        g.fillStyle = frontier ? 'rgba(140,150,170,0.32)' : 'rgba(140,150,170,0.58)';
+        fillHexPath(g, hexCorners(cx, cy, size));
       }
     }
   }
