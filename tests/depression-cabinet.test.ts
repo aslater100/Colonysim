@@ -244,10 +244,123 @@ describe('Historical anchor: Great Depression (1927–1936)', () => {
     delete raw.crashMonthCounter;
     delete raw.crashRecoveryChoice;
     delete raw.stimulusMonthsLeft;
+    delete raw.depressionMeasuresUsed;
+    delete raw.depressionCeilingBonus;
     const r2 = RegionSim.deserialize(JSON.stringify(raw));
     expect((r2 as unknown as { crashFired: boolean }).crashFired).toBe(false);
     expect(r2.depressionDepth).toBe(0);
     expect(r2.crashRecoveryChoice).toBeNull();
+    expect(r2.depressionMeasuresUsed).toEqual([]);
+  });
+});
+
+// ---- Emergency depression-response toolkit ----
+
+describe('Depression emergency measures', () => {
+  it('refuses any measure when no depression is active', () => {
+    const r = makeNation();
+    r.depressionDepth = 0;
+    expect(r.enactDepressionMeasure('qe').ok).toBe(false);
+    expect(r.enactDepressionMeasure('gold').ok).toBe(false);
+    expect(r.enactDepressionMeasure('publicworks').ok).toBe(false);
+  });
+
+  it('QE requires the Central Bank Charter', () => {
+    const r = makeNation();
+    r.passedLaws.delete('central_bank_charter');
+    r.depressionDepth = 1.0;
+    const res = r.enactDepressionMeasure('qe');
+    expect(res.ok).toBe(false);
+    expect(res.reason).toContain('Central Bank');
+  });
+
+  it('QE cuts the policy rate, reduces depth, and lifts inflation', () => {
+    const r = makeNation();
+    r.depressionDepth = 1.0;
+    (r as unknown as { policyRate: number }).policyRate = 0.10;
+    (r as unknown as { inflationRate: number }).inflationRate = 0.02;
+    const res = r.enactDepressionMeasure('qe');
+    expect(res.ok).toBe(true);
+    expect(r.depressionDepth).toBeCloseTo(0.8, 5);
+    expect((r as unknown as { policyRate: number }).policyRate).toBeLessThan(0.10);
+    expect((r as unknown as { inflationRate: number }).inflationRate).toBeGreaterThan(0.02);
+    expect(r.depressionMeasuresUsed).toContain('qe');
+  });
+
+  it('leaving the gold standard floats the currency, devalues, and cuts depth most', () => {
+    const r = makeNation();
+    r.depressionDepth = 1.0;
+    (r as unknown as { monetaryRegime: string }).monetaryRegime = 'peg';
+    (r as unknown as { exchangeRate: number }).exchangeRate = 1.0;
+    const res = r.enactDepressionMeasure('gold');
+    expect(res.ok).toBe(true);
+    expect((r as unknown as { monetaryRegime: string }).monetaryRegime).toBe('float');
+    expect((r as unknown as { exchangeRate: number }).exchangeRate).toBeLessThan(1.0);
+    expect(r.depressionDepth).toBeCloseTo(0.78, 5);
+  });
+
+  it('public works costs the treasury, cuts depth, and eases grievance', () => {
+    const r = makeNation();
+    r.depressionDepth = 1.0;
+    r.treasury = 5000;
+    if (r.settlements[0]) r.settlements[0].grievance = 50;
+    const treasBefore = r.treasury;
+    const grBefore = r.settlements[0]?.grievance ?? 0;
+    const res = r.enactDepressionMeasure('publicworks');
+    expect(res.ok).toBe(true);
+    expect(r.treasury).toBeLessThan(treasBefore);
+    expect(r.depressionDepth).toBeCloseTo(0.82, 5);
+    if (r.settlements[0]) {
+      expect(r.settlements[0].grievance).toBeLessThan(grBefore);
+    }
+  });
+
+  it('public works refuses when the treasury cannot cover the cost', () => {
+    const r = makeNation();
+    r.depressionDepth = 1.0;
+    r.treasury = 0;
+    const res = r.enactDepressionMeasure('publicworks');
+    expect(res.ok).toBe(false);
+    expect(res.reason).toContain('treasury');
+  });
+
+  it('each measure can be enacted only once per depression', () => {
+    const r = makeNation();
+    r.depressionDepth = 1.0;
+    expect(r.enactDepressionMeasure('qe').ok).toBe(true);
+    const second = r.enactDepressionMeasure('qe');
+    expect(second.ok).toBe(false);
+    expect(second.reason).toContain('Already');
+  });
+
+  it('measures lift the confidence ceiling above the bare-depth cap', () => {
+    const tickMonths = (r: RegionSim, n: number) => {
+      const ticksPerMonth = 30 * ticksPerDay;
+      for (let i = 0; i < n; i++) for (let j = 0; j < ticksPerMonth; j++) r.tick();
+    };
+    // Baseline: full depression, no measures
+    const a = makeNation();
+    a.depressionDepth = 1.0;
+    (a as unknown as { confidence: number }).confidence = 10;
+    tickMonths(a, 3);
+    const confNoMeasure = (a as unknown as { confidence: number }).confidence;
+    // With QE enacted: ceiling bonus should let confidence climb higher
+    const b = makeNation();
+    b.depressionDepth = 1.0;
+    (b as unknown as { confidence: number }).confidence = 10;
+    b.enactDepressionMeasure('qe');
+    tickMonths(b, 3);
+    const confWithMeasure = (b as unknown as { confidence: number }).confidence;
+    expect(confWithMeasure).toBeGreaterThan(confNoMeasure);
+  });
+
+  it('serialize / deserialize round-trips enacted measures', () => {
+    const r = makeNation();
+    r.depressionDepth = 1.0;
+    r.enactDepressionMeasure('gold');
+    r.enactDepressionMeasure('publicworks');
+    const r2 = RegionSim.deserialize(r.serialize());
+    expect(r2.depressionMeasuresUsed).toEqual(r.depressionMeasuresUsed);
   });
 });
 

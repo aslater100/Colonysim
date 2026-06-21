@@ -3,8 +3,8 @@
  * operating altitude after the flip (GDD §2.5). Painterly backdrop, town
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
-import type { Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType, TechNode, Province } from '../sim/region';
-import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES, ESPIONAGE_OPS, BLOC_RELATIONS_FLOOR } from '../sim/region';
+import type { Settlement, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, DepressionMeasure, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType, TechNode, Province } from '../sim/region';
+import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES, ESPIONAGE_OPS, BLOC_RELATIONS_FLOOR, DEPRESSION_MEASURES } from '../sim/region';
 import type { EspionageOp } from '../sim/region';
 import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS, MINUTES_PER_DAY } from '../sim/defs';
 import type { CurrencySymbol } from '../sim/defs';
@@ -2492,6 +2492,13 @@ export class RegionView {
         this.lastStatePanelBuildFrame = -999;
       };
     }
+    // Depression emergency measures (QE, leave gold, public works)
+    for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.dep-measure-btn')) {
+      btn.onclick = () => {
+        r.enactDepressionMeasure(btn.dataset.measure as DepressionMeasure);
+        this.lastStatePanelBuildFrame = -999;
+      };
+    }
   }
 
   /** Diplomacy section (GDD §5.4): the rival ledger, treaties, and verbs. */
@@ -2909,22 +2916,8 @@ export class RegionView {
         `title="${card ? card.desc : 'Choose a policy card for this slot'}">${label}${upkeepNote}</button></p>`;
     }).join('') : '';
 
-    // Recovery crossroads: shown when the player must choose how to exit the depression
-    const crossroadsHtml = r.crashRecoveryChoice === 'pending'
-      ? `<div class="crisis-banner" style="border:1px solid #c84;background:rgba(180,100,20,0.18);padding:6px;margin:4px 0;border-radius:4px">` +
-        `<p class="insp-skills" style="color:#f4b942">▲ RECOVERY CROSSROADS</p>` +
-        `<p class="insp-skills">Stimulus: deficit spending restarts the engine — £8/month for 2 years, faster recovery.</p>` +
-        `<p class="insp-skills">Austerity: balance the budget — services cut, slower recovery, treasury preserved.</p>` +
-        `<button class="mini recovery-btn" data-choice="stimulus" style="margin-right:6px">Stimulus</button>` +
-        `<button class="mini recovery-btn" data-choice="austerity">Austerity</button>` +
-        `</div>`
-      : r.depressionDepth > 0.01
-        ? `<p class="insp-skills" style="color:#c84">Depression depth: ${Math.round(r.depressionDepth * 100)}% ` +
-          `(${r.crashRecoveryChoice ?? 'no path chosen'})</p>`
-        : '';
-
     return `<p class="insp-skills">NATION</p>` +
-      crossroadsHtml +
+      this.depressionResponseHtml() +
       `<div class="bar-row" title="Legitimacy — the regime's right to rule (GDD §5.3)">` +
       `<span style="width:80px;display:inline-block">legitimacy</span>` +
       legBar + `<span>${legPct}</span></div>` +
@@ -2932,6 +2925,69 @@ export class RegionView {
       `<p>${ministerLines}</p>` +
       `<p class="insp-skills">POLICY SLOTS</p>` +
       policyRows;
+  }
+
+  /** Depression-response panel: a depth meter, the emergency toolkit (available
+   *  from the first month of the slump), and the month-12 recovery crossroads.
+   *  Renders only while a depression is active. */
+  private depressionResponseHtml(): string {
+    const r = this.region;
+    if (r.depressionDepth <= 0.01 && r.crashRecoveryChoice !== 'pending') return '';
+    const depthPct = Math.round(r.depressionDepth * 100);
+    // Depth meter colour: deep red while severe, warming to amber as it lifts.
+    const depthCol = depthPct > 60 ? '#e0563b' : depthPct > 30 ? '#e0913b' : '#d4b54a';
+    const pathLabel = r.crashRecoveryChoice === 'stimulus' ? 'Stimulus'
+      : r.crashRecoveryChoice === 'austerity' ? 'Austerity'
+      : r.crashRecoveryChoice === 'pending' ? 'choosing…'
+      : 'not yet chosen';
+
+    // The month-12 strategic fork — only while the choice is live.
+    const crossroads = r.crashRecoveryChoice === 'pending'
+      ? `<p class="cb-subhead">▲ RECOVERY CROSSROADS — choose the road out</p>` +
+        `<div class="dep-measures">` +
+        `<button class="dep-choice-btn stimulus recovery-btn" data-choice="stimulus" ` +
+        `title="Deficit spending and public works restart the engine faster — but cost the treasury £8/month for two years.">` +
+        `<b>Stimulus</b><span>spend now · faster recovery · £8/mo × 24</span></button>` +
+        `<button class="dep-choice-btn austerity recovery-btn" data-choice="austerity" ` +
+        `title="Balance the budget: services are cut and recovery is slower, but the treasury is preserved.">` +
+        `<b>Austerity</b><span>balance books · slower · services cut</span></button>` +
+        `</div>`
+      : '';
+
+    // The emergency toolkit — usable once each, from the first month of the slump.
+    const tooDeepDone = r.depressionDepth <= 0.05;
+    const measures = DEPRESSION_MEASURES.map((m) => {
+      const used = r.depressionMeasuresUsed.includes(m.id);
+      let blocked = false;
+      let note = m.effect;
+      if (used) {
+        note = 'enacted ✓';
+      } else if (m.id === 'qe' && !r.passedLaws.has('central_bank_charter')) {
+        blocked = true;
+        note = 'needs Central Bank Charter';
+      } else if (m.id === 'publicworks') {
+        const cost = Math.round(r.gdpLastMonth * 0.5 + 60);
+        if (r.treasury < cost) {
+          blocked = true;
+          note = `needs ${formatCurrency(cost)} in treasury`;
+        }
+      }
+      const disabled = used || blocked || tooDeepDone;
+      return `<button class="dep-measure-btn${used ? ' used' : ''}" data-measure="${m.id}" ` +
+        `${disabled ? 'disabled' : ''} title="${m.blurb} (${m.effect})">` +
+        `<b>${m.title}</b><span>${note}</span></button>`;
+    }).join('');
+
+    return `<div class="crisis-banner">` +
+      `<p class="cb-title">⚠ GREAT DEPRESSION</p>` +
+      `<div class="depth-meter" title="Depression depth — drives export collapse and caps confidence recovery. It decays ~5%/month; emergency measures cut it faster.">` +
+      `<div class="depth-meter-fill" style="width:${Math.max(4, depthPct)}%;background:${depthCol}"></div>` +
+      `<span class="depth-meter-label">depth ${depthPct}%</span></div>` +
+      `<p class="cb-status">recovery path: <b>${pathLabel}</b></p>` +
+      crossroads +
+      `<p class="cb-subhead">EMERGENCY MEASURES</p>` +
+      `<div class="dep-measures">${measures}</div>` +
+      `</div>`;
   }
 
   private renderPolicyModal(): void {

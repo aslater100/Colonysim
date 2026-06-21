@@ -748,6 +748,33 @@ export type TreatyKind = 'non_aggression' | 'trade_agreement' | 'defensive_pact'
 // ---- Monetary system types (GDD §5.1) ----
 export type CreditRating = 'AAA' | 'AA' | 'A' | 'BBB' | 'BB' | 'B' | 'CCC' | 'D';
 export type MonetaryRegime = 'float' | 'peg' | 'print';
+/** Emergency tools the player can wield while a depression is active (GDD §8.1). */
+export type DepressionMeasure = 'qe' | 'gold' | 'publicworks';
+
+/** Static descriptors for the depression-response toolkit, so the UI and sim
+ *  share one source of truth for titles, blurbs, and effect summaries. */
+export const DEPRESSION_MEASURES: {
+  id: DepressionMeasure; title: string; blurb: string; effect: string;
+}[] = [
+  {
+    id: 'qe',
+    title: 'Emergency Easing',
+    blurb: 'Slash the policy rate and flood the banks with liquidity.',
+    effect: 'depth −20% · confidence +6 · inflation +3pts · needs Central Bank',
+  },
+  {
+    id: 'gold',
+    title: 'Leave the Gold Standard',
+    blurb: 'Float the currency and let it devalue to reignite exports.',
+    effect: 'depth −22% · exports surge · short confidence dip',
+  },
+  {
+    id: 'publicworks',
+    title: 'Public Works Programme',
+    blurb: 'Hire the idle directly — dams, roads, and power lines.',
+    effect: 'depth −18% · grievance −12 · jobs restored · costs the treasury',
+  },
+];
 
 /** First slice of the GDD §5.4 treaty table. `baseAsk` is the relations
  *  level the rival wants before personality adjusts the price. */
@@ -2095,6 +2122,10 @@ export class RegionSim {
   crashRecoveryChoice: 'pending' | 'stimulus' | 'austerity' | null = null;
   /** Months of stimulus spending remaining (set to 24 on stimulus choice). */
   private stimulusMonthsLeft = 0;
+  /** Emergency depression measures already enacted this slump (once each). */
+  depressionMeasuresUsed: DepressionMeasure[] = [];
+  /** Confidence-ceiling headroom earned by enacting emergency measures. */
+  private depressionCeilingBonus = 0;
   /** Prevents the 1936–1948 world-war anchor from firing twice. */
   private worldWarFired = false;
   /** Prevents the 1970s oil-shock anchor from firing twice. */
@@ -4343,7 +4374,7 @@ export class RegionSim {
     const recoveryBonus = this.crashRecoveryChoice === 'stimulus' ? 10
       : this.crashRecoveryChoice === 'austerity' ? 5 : 0;
     const depressionCeiling = this.depressionDepth > 0.05
-      ? Math.round(35 + 65 * (1 - this.depressionDepth)) + recoveryBonus
+      ? Math.round(35 + 65 * (1 - this.depressionDepth)) + recoveryBonus + this.depressionCeilingBonus
       : 100;
     const confTarget = Math.min(depressionCeiling, Math.max(5, 70 - leveragePressure - inflPressure - fragilityPressure));
     this.confidence += (confTarget - this.confidence) * 0.12;
@@ -4533,6 +4564,8 @@ export class RegionSim {
         // Depression depth: drives ongoing export suppression and confidence ceiling for ~30 months
         this.depressionDepth = 1.0;
         this.crashMonthCounter = 0;
+        this.depressionMeasuresUsed = [];
+        this.depressionCeilingBonus = 0;
         // Bank failures drain reserves
         const gdp = this.settlements.reduce(
           (s, t) => s + SECTOR_IDS.reduce((ss, id) => ss + t.sectors[id].output, 0), 0,
@@ -6099,6 +6132,73 @@ export class RegionSim {
       );
     }
     return true;
+  }
+
+  /** Enact an emergency depression-response measure. Each is available once
+   *  while a depression is active, giving the player real agency from the first
+   *  month of the slump rather than only at the month-12 crossroads.
+   *  Returns { ok, reason } so the UI can explain why a measure is unavailable. */
+  enactDepressionMeasure(measure: DepressionMeasure): { ok: boolean; reason?: string } {
+    if (this.depressionDepth <= 0.05) return { ok: false, reason: 'No active depression' };
+    if (this.depressionMeasuresUsed.includes(measure)) return { ok: false, reason: 'Already enacted' };
+    switch (measure) {
+      case 'qe': {
+        if (!this.passedLaws.has('central_bank_charter')) {
+          return { ok: false, reason: 'Requires Central Bank Charter' };
+        }
+        this.policyRate = Math.max(MIN_POLICY_RATE, this.policyRate * 0.4);
+        this.depressionDepth *= 0.80;
+        this.confidence = Math.min(100, this.confidence + 6);
+        this.inflationRate = Math.min(0.50, this.inflationRate + 0.03);
+        this.depressionCeilingBonus += 8;
+        this.addLog(
+          'EMERGENCY EASING: The Central Bank slashes the policy rate and floods the banks ' +
+          'with liquidity. Credit thaws and the worst of the panic eases — but cheap money ' +
+          'is sowing tomorrow’s inflation.',
+          'good',
+        );
+        break;
+      }
+      case 'gold': {
+        this.setMonetaryRegime('float');
+        this.exchangeRate = Math.max(0.45, this.exchangeRate * 0.75);
+        this.depressionDepth *= 0.78;
+        this.confidence = Math.max(5, this.confidence - 4);
+        this.depressionCeilingBonus += 6;
+        this.addLog(
+          'OFF THE GOLD STANDARD: The currency floats free and devalues. Exporters roar back ' +
+          'to life as their goods undercut the world — the surest road out of the slump, ' +
+          'though savers and foreign creditors howl.',
+          'good',
+        );
+        break;
+      }
+      case 'publicworks': {
+        const cost = Math.round(this.gdpLastMonth * 0.5 + 60);
+        if (this.treasury < cost) {
+          return { ok: false, reason: `Needs ${formatCurrency(cost)} in the treasury` };
+        }
+        this.treasury -= cost;
+        this.depressionDepth *= 0.82;
+        this.confidence = Math.min(100, this.confidence + 4);
+        this.depressionCeilingBonus += 6;
+        for (const t of this.settlements) {
+          if (t.factionId !== this.playerFactionId) continue;
+          t.grievance = Math.max(0, t.grievance - 12);
+          t.satisfaction = Math.min(100, t.satisfaction + 8);
+          t.activeEvents = t.activeEvents.filter((ev) => ev.kind !== 'labor_shortage');
+        }
+        this.addLog(
+          'PUBLIC WORKS: Dams, roads, and power lines rise across the nation. The idle go back ' +
+          'to work — wages flow into dead towns and the bread lines shorten. The treasury pays ' +
+          'the bill, and pays it gladly.',
+          'good',
+        );
+        break;
+      }
+    }
+    this.depressionMeasuresUsed.push(measure);
+    return { ok: true };
   }
 
   canCallConventionGates(): { label: string; met: boolean; detail: string }[] {
@@ -8179,6 +8279,8 @@ export class RegionSim {
       crashMonthCounter: this.crashMonthCounter,
       crashRecoveryChoice: this.crashRecoveryChoice,
       stimulusMonthsLeft: this.stimulusMonthsLeft,
+      depressionMeasuresUsed: this.depressionMeasuresUsed,
+      depressionCeilingBonus: this.depressionCeilingBonus,
       worldWarFired: this.worldWarFired,
       oilShockFired: this.oilShockFired,
       pandemicFired: this.pandemicFired,
@@ -8338,6 +8440,8 @@ export class RegionSim {
     r.crashMonthCounter = d.crashMonthCounter ?? 0;
     r.crashRecoveryChoice = d.crashRecoveryChoice ?? null;
     r.stimulusMonthsLeft = d.stimulusMonthsLeft ?? 0;
+    r.depressionMeasuresUsed = d.depressionMeasuresUsed ?? [];
+    r.depressionCeilingBonus = d.depressionCeilingBonus ?? 0;
     r.worldWarFired = d.worldWarFired ?? false;
     r.oilShockFired = d.oilShockFired ?? false;
     r.pandemicFired = d.pandemicFired ?? false;

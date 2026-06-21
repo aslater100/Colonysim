@@ -917,6 +917,135 @@ body {
   cursor: pointer;
 }
 
+/* ---- Depression-response panel (GDD §8.1) ---- */
+.crisis-banner {
+  margin: 6px 0;
+  padding: 7px 8px;
+  border: 1px solid #a4542a;
+  border-left: 3px solid #e0563b;
+  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(120, 48, 22, 0.22) 0%, rgba(60, 30, 16, 0.12) 100%);
+}
+
+.crisis-banner .cb-title {
+  margin: 0 0 5px 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #f0a24a;
+}
+
+.crisis-banner .cb-status {
+  margin: 4px 0 2px 0;
+  font-size: 10px;
+  color: #b9a986;
+}
+
+.crisis-banner .cb-status b { color: #e0c074; }
+
+.crisis-banner .cb-subhead {
+  margin: 7px 0 3px 0;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #c79566;
+}
+
+/* Depth meter: a labelled severity bar. */
+.depth-meter {
+  position: relative;
+  height: 14px;
+  background: #241c16;
+  border: 1px solid #4d3320;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.depth-meter-fill {
+  height: 100%;
+  transition: width 0.4s ease, background 0.4s ease;
+}
+
+.depth-meter-label {
+  position: absolute;
+  top: 0;
+  left: 6px;
+  line-height: 14px;
+  font-size: 9px;
+  font-weight: 600;
+  color: #f3ecd9;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.7);
+}
+
+/* Measure + crossroads buttons share a card layout. */
+.dep-measures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.dep-measure-btn,
+.dep-choice-btn {
+  flex: 1 1 calc(50% - 4px);
+  min-width: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 5px 7px;
+  text-align: left;
+  background: #2a2620;
+  border: 1px solid #5a3d24;
+  border-radius: 4px;
+  color: #e6dcc4;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.06s ease;
+}
+
+.dep-measure-btn b,
+.dep-choice-btn b {
+  font-size: 10px;
+  font-weight: 600;
+  color: #f0d9a0;
+}
+
+.dep-measure-btn span,
+.dep-choice-btn span {
+  font-size: 9px;
+  line-height: 1.25;
+  color: #a99878;
+}
+
+.dep-measure-btn:hover:not(:disabled),
+.dep-choice-btn:hover:not(:disabled) {
+  background: #363028;
+  border-color: #8a5a32;
+  transform: translateY(-1px);
+}
+
+.dep-measure-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.dep-measure-btn.used {
+  opacity: 0.55;
+  border-color: #3f6b3f;
+  background: #232a22;
+}
+
+.dep-measure-btn.used b { color: #7fc07f; }
+
+/* The two crossroads paths read as a clear fork. */
+.dep-choice-btn.stimulus { border-color: #4e7fa8; }
+.dep-choice-btn.stimulus b { color: #8cc4ec; }
+.dep-choice-btn.stimulus:hover:not(:disabled) { border-color: #6fa3cf; background: #233038; }
+
+.dep-choice-btn.austerity { border-color: #9a7a3a; }
+.dep-choice-btn.austerity b { color: #e0c074; }
+.dep-choice-btn.austerity:hover:not(:disabled) { border-color: #c79a4a; background: #353026; }
+
 /* ---- Palette panel tabs (state/economy/etc. dense panels) ---- */
 .pal-tabs {
   display: flex;
