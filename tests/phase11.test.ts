@@ -14,7 +14,6 @@
  *  - Serialize/deserialize roundtrip of Phase 11 fields
  */
 import { describe, expect, it } from 'vitest';
-import { Simulation } from '../src/sim/sim';
 import {
   RegionSim, REGION_MINUTES_PER_TICK, BRANCH_YEAR, TECH_TREE, REGION_LAWS,
 } from '../src/sim/region';
@@ -22,26 +21,20 @@ import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
 
-function grow(sim: Simulation): void {
-  while (sim.settlers.length < 22) sim.spawnSettler(32, 34);
-  sim.stock.wood = 200;
-  sim.stock.meal = 200;
-}
-
 function runDays(r: RegionSim, days: number): void {
   for (let i = 0; i < days * ticksPerDay; i++) r.tick();
 }
 
-function flippedPair(seed: number): { sim: Simulation; r: RegionSim } {
-  const sim = new Simulation(seed);
-  grow(sim);
-  const r = RegionSim.fromTown(sim, 8, 80, 80);
-  runDays(r, 5);
-  return { sim, r };
+function makeColony(seed = 42): RegionSim {
+  const r = RegionSim.create(seed, { currencySymbol: '$' });
+  r.settlements[0].food = 500;
+  r.settlements[0].wood = 500;
+  r.settlements[0].satisfaction = 60;
+  return r;
 }
 
 function nationReady(seed = 42): RegionSim {
-  const { r } = flippedPair(seed);
+  const r = makeColony(seed);
   r.stateProclaimed = true;
   r.stateName = 'Testonia';
   r.govLean = 'council';
@@ -171,8 +164,8 @@ describe('checkStrandedAssets()', () => {
 
   it('may produce a write-down when solar_wind_parity is researched and fossil tech exists', () => {
     const r = nationReady();
-    r.researched.push('renewables', 'computing', 'solar_wind_parity');
-    r.researched.push('combustion_engine', 'mass_production', 'electrical_grid');
+    r.researched.add('renewables'); r.researched.add('computing'); r.researched.add('solar_wind_parity');
+    r.researched.add('combustion_engine'); r.researched.add('mass_production'); r.researched.add('electrical_grid');
     r.gdpLastMonth = 5000;
     r.treasury = 10000;
     // Run many checks to ensure at least one stranding event fires (25% chance per call)
@@ -185,29 +178,16 @@ describe('checkStrandedAssets()', () => {
   });
 
   it('green_industry_act buffers stranded-asset losses (smaller write-down)', () => {
-    const { sim, r: r1 } = flippedPair(42);
-    void sim;
-    r1.stateProclaimed = true;
-    r1.stateName = 'A';
-    r1.govLean = 'council';
-    r1.treasury = 500;
-    r1.proclaimNation('A', 'democracy', {});
-
-    const { r: r2 } = flippedPair(42);
-    r2.stateProclaimed = true;
-    r2.stateName = 'B';
-    r2.govLean = 'council';
-    r2.treasury = 500;
-    r2.proclaimNation('B', 'democracy', {});
+    const r1 = nationReady(42);
+    const r2 = nationReady(42);
 
     const fossilTechs = ['combustion_engine', 'mass_production', 'electrical_grid', 'renewables', 'computing', 'solar_wind_parity'];
-    r1.researched.push(...fossilTechs);
-    r2.researched.push(...fossilTechs);
+    for (const t of fossilTechs) { r1.researched.add(t); r2.researched.add(t); }
     r1.gdpLastMonth = 5000;
     r2.gdpLastMonth = 5000;
 
     // Only r2 has the buffering law
-    r2.passedLaws.push('green_industry_act');
+    r2.passedLaws.add('green_industry_act');
 
     // Run many checks to get stable averages
     let loss1 = 0;
@@ -236,7 +216,7 @@ describe('enactUniversalBasicSupport()', () => {
 
   it('activates when law is passed', () => {
     const r = nationReady();
-    r.passedLaws.push('universal_basic_support');
+    r.passedLaws.add('universal_basic_support');
     expect(r.enactUniversalBasicSupport()).toBe(true);
     expect(r.ubsActive).toBe(true);
     expect(r.log.some((l) => l.text.includes('UNIVERSAL BASIC SUPPORT'))).toBe(true);
@@ -244,7 +224,7 @@ describe('enactUniversalBasicSupport()', () => {
 
   it('is idempotent: returns false on second call', () => {
     const r = nationReady();
-    r.passedLaws.push('universal_basic_support');
+    r.passedLaws.add('universal_basic_support');
     r.enactUniversalBasicSupport();
     expect(r.enactUniversalBasicSupport()).toBe(false);
   });
@@ -259,8 +239,9 @@ describe('determineSpeculativeBranch()', () => {
     r.co2ppm = 600;
     r.warmingC = 2.8;
     // Phase 11 tech must be present for determineSpeculativeBranch to engage
-    r.researched.push('renewables', 'computing', 'solar_wind_parity', 'battery_storage', 'ai_automation');
-    r.passedLaws.push('universal_basic_support', 'green_industry_act');
+    r.researched.add('renewables'); r.researched.add('computing');
+    r.researched.add('solar_wind_parity'); r.researched.add('battery_storage'); r.researched.add('ai_automation');
+    r.passedLaws.add('universal_basic_support'); r.passedLaws.add('green_industry_act');
     r.determineSpeculativeBranch();
     expect(r.speculativeBranch).toBe('drowned');
     expect(r.eraBranch).toBe('drowned');
@@ -272,8 +253,10 @@ describe('determineSpeculativeBranch()', () => {
     setYear(r, BRANCH_YEAR);
     r.co2ppm = 320;
     r.warmingC = 0.8;
-    r.researched.push('renewables', 'computing', 'solar_wind_parity', 'battery_storage', 'ai_automation', 'welfare_benefits');
-    r.passedLaws.push('universal_basic_support', 'green_industry_act');
+    r.researched.add('renewables'); r.researched.add('computing');
+    r.researched.add('solar_wind_parity'); r.researched.add('battery_storage');
+    r.researched.add('ai_automation'); r.researched.add('welfare_benefits');
+    r.passedLaws.add('universal_basic_support'); r.passedLaws.add('green_industry_act');
     r.determineSpeculativeBranch();
     expect(r.speculativeBranch).toBe('solarpunk');
     expect(r.eraBranch).toBe('solarpunk');
@@ -285,7 +268,8 @@ describe('determineSpeculativeBranch()', () => {
     setYear(r, BRANCH_YEAR);
     r.co2ppm = 380;
     r.warmingC = 1.5;
-    r.researched.push('renewables', 'computing', 'solar_wind_parity', 'battery_storage', 'ai_automation');
+    r.researched.add('renewables'); r.researched.add('computing');
+    r.researched.add('solar_wind_parity'); r.researched.add('battery_storage'); r.researched.add('ai_automation');
     // No UBS, no green_industry_act
     r.determineSpeculativeBranch();
     expect(r.speculativeBranch).toBe('corporatocracy');
@@ -299,13 +283,14 @@ describe('determineSpeculativeBranch()', () => {
     r.co2ppm = 600;
     r.warmingC = 2.8;
     // Phase 11 tech present so the full branch logic engages
-    r.researched.push('renewables', 'computing', 'solar_wind_parity', 'battery_storage', 'ai_automation');
+    r.researched.add('renewables'); r.researched.add('computing');
+    r.researched.add('solar_wind_parity'); r.researched.add('battery_storage'); r.researched.add('ai_automation');
     r.determineSpeculativeBranch();
     expect(r.speculativeBranch).toBe('drowned');
     // Changing conditions should not alter the verdict
     r.co2ppm = 300;
     r.warmingC = 0.1;
-    r.passedLaws.push('universal_basic_support', 'green_industry_act');
+    r.passedLaws.add('universal_basic_support'); r.passedLaws.add('green_industry_act');
     r.determineSpeculativeBranch();
     expect(r.speculativeBranch).toBe('drowned'); // locked in
   });
@@ -316,7 +301,7 @@ describe('determineSpeculativeBranch()', () => {
     r.co2ppm = 380;
     r.warmingC = 1.5;
     r.automationUnemployment = 0.20; // above 12% threshold
-    r.researched.push('solar_wind_parity', 'battery_storage', 'ai_automation');
+    r.researched.add('solar_wind_parity'); r.researched.add('battery_storage'); r.researched.add('ai_automation');
     const grievanceBefore = r.settlements[0].grievance;
     r.determineSpeculativeBranch();
     expect(r.speculativeBranch).toBe('corporatocracy');
@@ -328,8 +313,10 @@ describe('determineSpeculativeBranch()', () => {
     setYear(r, BRANCH_YEAR);
     r.co2ppm = 300;
     r.warmingC = 0.5;
-    r.researched.push('renewables', 'computing', 'solar_wind_parity', 'battery_storage', 'ai_automation', 'welfare_benefits');
-    r.passedLaws.push('universal_basic_support', 'green_industry_act');
+    r.researched.add('renewables'); r.researched.add('computing');
+    r.researched.add('solar_wind_parity'); r.researched.add('battery_storage');
+    r.researched.add('ai_automation'); r.researched.add('welfare_benefits');
+    r.passedLaws.add('universal_basic_support'); r.passedLaws.add('green_industry_act');
     const satBefore = r.settlements[0].satisfaction;
     r.determineSpeculativeBranch();
     expect(r.speculativeBranch).toBe('solarpunk');
@@ -352,7 +339,7 @@ describe('Automation unemployment drift', () => {
 
   it('automationUnemployment drifts upward with ai_automation', () => {
     const r = nationReady();
-    r.researched.push('ai_automation');
+    r.researched.add('ai_automation');
     const monthTick = (reg: RegionSim) => (reg as unknown as { tickAutomation(): void }).tickAutomation();
     for (let i = 0; i < 24; i++) monthTick(r);
     expect(r.automationUnemployment).toBeGreaterThan(0);
@@ -360,10 +347,10 @@ describe('Automation unemployment drift', () => {
 
   it('UBS halves the automation drift rate', () => {
     const r1 = nationReady(1);
-    r1.researched.push('ai_automation');
+    r1.researched.add('ai_automation');
 
     const r2 = nationReady(2);
-    r2.researched.push('ai_automation');
+    r2.researched.add('ai_automation');
     r2.ubsActive = true;
 
     const tick1 = (reg: RegionSim) => (reg as unknown as { tickAutomation(): void }).tickAutomation();
@@ -377,7 +364,7 @@ describe('Automation unemployment drift', () => {
 
   it('automationUnemployment caps at 0.3', () => {
     const r = nationReady();
-    r.researched.push('ai_automation');
+    r.researched.add('ai_automation');
     r.automationUnemployment = 0.29;
     const tick = (reg: RegionSim) => (reg as unknown as { tickAutomation(): void }).tickAutomation();
     for (let i = 0; i < 10; i++) tick(r);
@@ -390,37 +377,39 @@ describe('Automation unemployment drift', () => {
 describe('Phase 11 emissions reductions', () => {
   it('solar_wind_parity reduces player emissions by ~15%', () => {
     const r = nationReady();
-    r.researched.push('renewables');
+    r.researched.add('renewables');
     const before = r.playerEmissions();
-    r.researched.push('computing', 'solar_wind_parity');
+    r.researched.add('computing'); r.researched.add('solar_wind_parity');
     const after = r.playerEmissions();
     expect(after).toBeCloseTo(before * 0.85, 5);
   });
 
   it('ev_adoption further reduces player emissions', () => {
     const r = nationReady();
-    r.researched.push('renewables', 'computing', 'solar_wind_parity');
+    r.researched.add('renewables'); r.researched.add('computing'); r.researched.add('solar_wind_parity');
     const before = r.playerEmissions();
-    r.researched.push('automated_logistics', 'battery_storage', 'ev_adoption');
+    r.researched.add('automated_logistics'); r.researched.add('battery_storage'); r.researched.add('ev_adoption');
     const after = r.playerEmissions();
     expect(after).toBeLessThan(before);
   });
 
   it('carbon_pricing law cuts emissions by ~25%', () => {
     const r = nationReady();
-    r.researched.push('renewables', 'computing', 'solar_wind_parity', 'environmentalism', 'carbon_tax');
+    r.researched.add('renewables'); r.researched.add('computing'); r.researched.add('solar_wind_parity');
+    r.researched.add('environmentalism'); r.researched.add('carbon_tax');
     const before = r.playerEmissions();
-    r.passedLaws.push('carbon_pricing');
+    r.passedLaws.add('carbon_pricing');
     const after = r.playerEmissions();
     expect(after).toBeCloseTo(before * 0.75, 5);
   });
 
   it('cap_trade_law further cuts emissions on top of carbon_pricing', () => {
     const r = nationReady();
-    r.researched.push('renewables', 'computing', 'solar_wind_parity', 'environmentalism', 'carbon_tax', 'statecraft', 'cap_and_trade');
-    r.passedLaws.push('carbon_pricing');
+    r.researched.add('renewables'); r.researched.add('computing'); r.researched.add('solar_wind_parity');
+    r.researched.add('environmentalism'); r.researched.add('carbon_tax'); r.researched.add('statecraft'); r.researched.add('cap_and_trade');
+    r.passedLaws.add('carbon_pricing');
     const before = r.playerEmissions();
-    r.passedLaws.push('cap_trade_law');
+    r.passedLaws.add('cap_trade_law');
     const after = r.playerEmissions();
     expect(after).toBeCloseTo(before * 0.65, 5);
   });
@@ -430,16 +419,13 @@ describe('Phase 11 emissions reductions', () => {
 
 describe('Phase 11 fields persist across saves', () => {
   it('roundtrips automationUnemployment, strandedAssetLoss, speculativeBranch, ubsActive', () => {
-    const { sim, r } = flippedPair(42);
-    r.stateProclaimed = true;
-    r.stateName = 'Testonia';
-    r.govLean = 'council';
+    const r = nationReady();
     r.automationUnemployment = 0.08;
     r.strandedAssetLoss = 1234.5;
     r.speculativeBranch = 'corporatocracy';
     r.ubsActive = true;
 
-    const back = RegionSim.deserialize(r.serialize(), sim);
+    const back = RegionSim.deserialize(r.serialize());
     expect(back.automationUnemployment).toBeCloseTo(0.08);
     expect(back.strandedAssetLoss).toBeCloseTo(1234.5);
     expect(back.speculativeBranch).toBe('corporatocracy');
@@ -447,10 +433,7 @@ describe('Phase 11 fields persist across saves', () => {
   });
 
   it('older saves without Phase 11 fields default correctly', () => {
-    const { sim, r } = flippedPair(42);
-    r.stateProclaimed = true;
-    r.stateName = 'Testonia';
-    r.govLean = 'council';
+    const r = nationReady();
 
     // Manually strip Phase 11 fields from the serialized blob
     const raw = JSON.parse(r.serialize());
@@ -459,7 +442,7 @@ describe('Phase 11 fields persist across saves', () => {
     delete raw.speculativeBranch;
     delete raw.ubsActive;
 
-    const back = RegionSim.deserialize(JSON.stringify(raw), sim);
+    const back = RegionSim.deserialize(JSON.stringify(raw));
     expect(back.automationUnemployment).toBe(0);
     expect(back.strandedAssetLoss).toBe(0);
     expect(back.speculativeBranch).toBeNull();
@@ -473,7 +456,7 @@ describe('Monthly tick integrates Phase 11 systems', () => {
   it('automation unemployment increases over real game time with ai_automation', () => {
     const r = nationReady();
     setYear(r, 2030);
-    r.researched.push('computing', 'automated_logistics', 'ai_automation');
+    r.researched.add('computing'); r.researched.add('automated_logistics'); r.researched.add('ai_automation');
     const before = r.automationUnemployment;
     // Run 2 months of ticks
     runDays(r, 60);
