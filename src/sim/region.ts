@@ -1360,6 +1360,43 @@ export interface ArmyUnit {
   suppliedDays: number; // food/ammo remaining at current supply rate
 }
 
+// ---- Phase 16: Warfare System Depth (GDD §7) ----
+
+/** Casus Belli type for Phase 16 structured CB system. */
+export type CBType = 'border_dispute' | 'treaty_violation' | 'protect_ideology' | 'resource_denial' | 'fabricated';
+
+/** A structured casus belli with effects (Phase 16). */
+export interface CBDef {
+  type: CBType;
+  targetRivalId: number;
+  warSupportBonus: number; // added to warSupport at declaration
+  reputationCost: number;  // 0 for legitimate, 15–30 for fabricated
+}
+
+/** Army Group — higher-resolution unit replacing ProvincialArmy for Phase 16 battles. */
+export interface ArmyGroup {
+  id: number;
+  ownerId: number;         // 0=player, rivalId for rivals
+  provinceId: number;
+  destinationId?: number;
+  transitDays: number;
+  manpower: number;        // number of soldiers
+  equipmentLevel: number;  // 0–100, based on industry output
+  supply: number;          // 0–1; decays in overextended positions
+  doctrine: number;        // 0–100; from tech tree (military_doctrine tech)
+  morale: number;          // 0–100; decays on losses, rallies on victories
+  /** Flag: did this group win a battle this month? */
+  wonBattleThisMonth?: boolean;
+}
+
+/** Peace term for Phase 16 structured peace negotiation. */
+export interface PeaceTermDef {
+  type: 'annex_province' | 'reparations' | 'dmz' | 'puppet' | 'status_quo';
+  provinceId?: number;   // for annex_province
+  amount?: number;       // for reparations tranches
+  warScoreCost: number;
+}
+
 export interface PlayerWar {
   rivalId: number;
   cb: CasusBelli;
@@ -2485,6 +2522,26 @@ export class RegionSim {
   currencyUnionPartnerId?: number;
   /** Temporary export multiplier from devaluation (starts at 1.0 + amount*1.5, decays 10%/month). */
   fxBoost = 1.0;
+  // ---- Phase 16: Warfare System Depth (GDD §7) ----
+  /** Army Groups: high-resolution unit groups for Phase 16 battles. */
+  armyGroups: ArmyGroup[] = [];
+  private nextArmyGroupId = 1;
+  /** Mobilization level: 0=peacetime, 1=partial, 2=total. */
+  mobilizationLevel: 0 | 1 | 2 = 0;
+  /** Months spent at current mobilization level. */
+  mobilizationMonths = 0;
+  /** War support (0–100); starts at 60 at declaration, modified by CB. */
+  warSupport = 60;
+  /** Province occupation data: provinceId → occupying rivalId, resistance, policy. */
+  provincialOccupations: Record<number, {
+    occupiedBy: number;
+    resistanceLevel: number;
+    occupationPolicy: 'conciliatory' | 'normal' | 'brutal';
+    /** Postwar satisfaction penalty accumulated from brutal policy. */
+    brutalPolicyPenalty: number;
+  }> = {};
+  /** Flag: did player win a battle this month? */
+  lastBattleWon = false;
   seaRiseAnnounced = false;
   private lastTidalLogDay = -999;
   private lastExtremeWeatherDay = -999;
@@ -4801,6 +4858,10 @@ export class RegionSim {
     this.updateArmyMovement();         // Phase 7: army marching, battles
     this.tickRivalArmyAI();            // Phase 7: rival army planning
     this.consumeWarSupply(); // deplete supply reserves based on army size and supply consumption rate
+    this.tickMobilization();           // Phase 16: mobilization effects
+    this.tickSupplyLines();            // Phase 16: supply line decay for army groups
+    this.tickOccupation();             // Phase 16: occupation resistance
+    if (this.playerWar) this.tickWarSupport(); // Phase 16: war support
     this.updateRivalAI(); // staggered AI updates for rivals (GDD §6.2)
     this.updateScouts(); // update faction scouts: movement, spawning, expiry (GDD §6.2)
     this.tickClimate(); // the ledger runs from the first decade (GDD §8.2)
@@ -10201,6 +10262,438 @@ export class RegionSim {
     }
   }
 
+  // ---- Phase 16: Warfare System Depth (GDD §7) ----
+
+  /** Generate available casus belli against a rival (Phase 16 CB system). */
+  generateCasusBelli(rivalId: number): CBDef[] {
+    const rv = this.rival(rivalId);
+    if (!rv) return [];
+    const result: CBDef[] = [];
+    // border_dispute: always available if sharing a border province
+    const playerSettlements = this.settlements.filter((s) => s.factionId === this.playerFactionId);
+    const rivalSettlements = this.settlements.filter((s) => s.factionId === rivalId);
+    const sharesBorder = playerSettlements.some((ps) =>
+      rivalSettlements.some((rs) => Math.hypot(ps.x - rs.x, ps.y - rs.y) < 30)
+    ) || rv.relations < 0; // rivals with negative relations have border tensions
+    if (sharesBorder || rivalSettlements.length > 0 || rv.compass !== undefined) {
+      result.push({
+        type: 'border_dispute',
+        targetRivalId: rivalId,
+        warSupportBonus: 5,
+        reputationCost: 0,
+      });
+    }
+    // treaty_violation: if rival has broken a treaty
+    if (rv.treaties.length === 0 && rv.relations < -20 && this.treatiesBroken > 0) {
+      result.push({
+        type: 'treaty_violation',
+        targetRivalId: rivalId,
+        warSupportBonus: 25,
+        reputationCost: 0,
+      });
+    }
+    // protect_ideology: if rival's regime bloc differs greatly from player's
+    const playerBloc = this.playerBloc() ?? 'liberal';
+    const rivalBloc = this.regimeOf(rv).bloc;
+    if (blocAffinity(playerBloc, rivalBloc) < 0) {
+      result.push({
+        type: 'protect_ideology',
+        targetRivalId: rivalId,
+        warSupportBonus: 10,
+        reputationCost: 0,
+      });
+    }
+    // resource_denial: if rival controls a resource-rich province
+    const rivalRich = rivalSettlements.some((s) => s.food > 50 || s.wood > 50 || s.landQuality > 0.7);
+    if (rivalRich || rv.pop > 50) {
+      result.push({
+        type: 'resource_denial',
+        targetRivalId: rivalId,
+        warSupportBonus: 15,
+        reputationCost: 0,
+      });
+    }
+    // fabricated: always available
+    result.push({
+      type: 'fabricated',
+      targetRivalId: rivalId,
+      warSupportBonus: -20,
+      reputationCost: 25,
+    });
+    return result;
+  }
+
+  /** Set mobilization level (Phase 16). Returns true if successful. */
+  setMobilizationLevel(level: 0 | 1 | 2): boolean {
+    if (this.mobilizationLevel === level) return false;
+    const decreasing = level < this.mobilizationLevel;
+    const atWar = this.playerWar !== null;
+    // Can only increase during war
+    if (!decreasing && !atWar) {
+      this.addLog('Mobilization can only be increased during active war.', 'info');
+      return false;
+    }
+    // Decreasing costs war support
+    if (decreasing && atWar) {
+      this.warSupport = Math.max(0, this.warSupport - 10);
+      this.addLog(`Demobilization undermines war morale — war support -10 (now ${Math.round(this.warSupport)}).`, 'bad');
+    }
+    const old = this.mobilizationLevel;
+    this.mobilizationLevel = level;
+    this.mobilizationMonths = 0;
+    if (level === 1 && old === 0) {
+      // Level 0→1: selective draft — militia +2 per settlement; manufacturing output ×1.15
+      for (const s of this.settlements) {
+        if (s.factionId === this.playerFactionId) {
+          s.garrisonStrength += 2;
+          s.sectors.industry.output *= 1.15;
+        }
+      }
+      this.addLog('PARTIAL MOBILIZATION: selective draft called — militia strengthened, manufacturing +15%.', 'info');
+    } else if (level === 2 && old < 2) {
+      // Level 1→2: total mobilization — workforce -15%; manufacturing ×1.4; treasury cost; warSupport drain
+      for (const s of this.settlements) {
+        if (s.factionId === this.playerFactionId) {
+          // Reduce workforce (pull workers into army)
+          s.cohorts.bands[1] *= 0.85;
+          s.cohorts.bands[2] *= 0.85;
+          s.sectors.industry.output *= (old === 0 ? 1.4 : 1.4 / 1.15); // net to ×1.4 from base
+        }
+      }
+      this.addLog('TOTAL MOBILIZATION: the whole economy is the war — workforce -15%, manufacturing ×1.4.', 'bad');
+    } else if (level === 0) {
+      this.addLog('DEMOBILIZATION: forces stand down to peacetime footing.', 'info');
+    }
+    return true;
+  }
+
+  /** Monthly tick: mobilization effects and auto-demobilization (Phase 16). */
+  tickMobilization(): void {
+    if (this.mobilizationLevel === 0) return;
+    this.mobilizationMonths++;
+    const atWar = this.playerWar !== null;
+    // Auto-reduce to 0 if not at war for 6 months
+    if (!atWar && this.mobilizationMonths >= 6) {
+      this.mobilizationLevel = 0;
+      this.mobilizationMonths = 0;
+      this.addLog('Mobilization expires — no active war after 6 months. Forces stand down.', 'info');
+      return;
+    }
+    // Total mobilization costs
+    if (this.mobilizationLevel === 2) {
+      const gdp = this.gdpLastMonth;
+      const cost = gdp * 0.03;
+      this.treasury -= cost;
+      // Satisfaction -3/month
+      for (const s of this.settlements) {
+        if (s.factionId === this.playerFactionId) {
+          s.satisfaction = Math.max(0, s.satisfaction - 3);
+        }
+      }
+      // WarSupport drain from rationing
+      if (atWar && this.playerWar) {
+        this.warSupport = Math.max(0, this.warSupport - 0.5);
+      }
+    }
+  }
+
+  /** Compute combat power for an Army Group (Phase 16 formula). */
+  computeCombatPower(army: ArmyGroup): number {
+    return (
+      Math.pow(army.manpower, 0.6) *
+      (army.equipmentLevel / 100) *
+      army.supply *
+      (army.doctrine / 100 + 0.5) *
+      (army.morale / 100 + 0.3)
+    );
+  }
+
+  /** Resolve a battle between Army Groups at a province (Phase 16). */
+  resolveArmyGroupBattle(provinceId: number): void {
+    const playerArmies = this.armyGroups.filter((a) => a.ownerId === 0 && a.provinceId === provinceId && !a.destinationId);
+    const rivalArmies = this.armyGroups.filter((a) => a.ownerId !== 0 && a.provinceId === provinceId && !a.destinationId);
+    if (!playerArmies.length || !rivalArmies.length) return;
+    const sName = this.settlement(provinceId)?.name ?? `Province ${provinceId}`;
+    const playerPower = playerArmies.reduce((s, a) => s + this.computeCombatPower(a), 0);
+    const rivalPower = rivalArmies.reduce((s, a) => s + this.computeCombatPower(a), 0);
+    const playerWins = playerPower >= rivalPower * (0.8 + this.rng.next() * 0.4);
+    const rvId = rivalArmies[0].ownerId;
+    const rv = this.rival(rvId);
+    const rvName = rv?.name ?? 'rival forces';
+    if (playerWins) {
+      // Loser retreats to adjacent province
+      const retreatTarget = this.settlements.find((s) => s.factionId === rvId)?.id ?? provinceId;
+      for (const a of rivalArmies) {
+        a.manpower = Math.round(a.manpower * 0.7); // loser manpower ×0.7
+        a.morale = Math.max(0, a.morale - 20);     // loser morale -20
+        a.provinceId = retreatTarget;
+      }
+      for (const a of playerArmies) {
+        a.manpower = Math.round(a.manpower * 0.9); // winner manpower ×0.9
+        a.morale = Math.min(100, a.morale + 5);    // winner morale +5
+        a.wonBattleThisMonth = true;
+      }
+      this.lastBattleWon = true;
+      const casualties = Math.round(rivalPower * 0.3 + playerPower * 0.1);
+      this.addLog(`BATTLE OF ${sName.toUpperCase()}: our forces prevail, ${rvName} retreats — ${casualties} casualties.`, 'good');
+    } else {
+      // Player loses — retreat to nearest player province
+      const homeId = this.settlements.find((s) => s.factionId === this.playerFactionId)?.id ?? provinceId;
+      for (const a of playerArmies) {
+        a.manpower = Math.round(a.manpower * 0.7); // loser manpower ×0.7
+        a.morale = Math.max(0, a.morale - 20);     // loser morale -20
+        a.provinceId = homeId;
+      }
+      for (const a of rivalArmies) {
+        a.manpower = Math.round(a.manpower * 0.9); // winner manpower ×0.9
+        a.morale = Math.min(100, a.morale + 5);    // winner morale +5
+      }
+      this.lastBattleWon = false;
+      const casualties = Math.round(playerPower * 0.3 + rivalPower * 0.1);
+      this.addLog(`BATTLE OF ${sName.toUpperCase()}: our forces lose, ${rvName} holds the field — ${casualties} casualties.`, 'bad');
+    }
+    // Remove armies with no manpower
+    this.armyGroups = this.armyGroups.filter((a) => a.manpower > 0);
+  }
+
+  /** Monthly tick: supply line decay for Army Groups (Phase 16). */
+  tickSupplyLines(): void {
+    const playerProvinces = new Set(
+      this.settlements.filter((s) => s.factionId === this.playerFactionId).map((s) => s.id)
+    );
+    for (const army of this.armyGroups) {
+      const atPlayerProvince = playerProvinces.has(army.provinceId);
+      if (atPlayerProvince) {
+        // Supply recovers at player province
+        army.supply = Math.min(1.0, army.supply + 0.05);
+      } else {
+        // Check distance: more than 2 hexes from nearest player province
+        const prov = this.settlement(army.provinceId);
+        if (prov) {
+          const minDist = this.settlements
+            .filter((s) => s.factionId === this.playerFactionId)
+            .reduce((minD, ps) => Math.min(minD, Math.hypot(prov.x - ps.x, prov.y - ps.y)), Infinity);
+          if (minDist > 20) { // ~2 hexes in 0–100 coord space
+            army.supply = Math.max(0, army.supply - 0.08);
+          }
+        }
+      }
+      // Low supply penalties
+      if (army.supply < 0.4) {
+        army.morale = Math.max(0, army.morale - 3);
+        army.equipmentLevel = Math.max(0, army.equipmentLevel - 2);
+      }
+      // Critical supply: forced retreat
+      if (army.supply < 0.2 && army.ownerId === 0) {
+        const home = this.settlements.find((s) => s.factionId === this.playerFactionId);
+        if (home && army.provinceId !== home.id) {
+          army.provinceId = home.id;
+          this.addLog(`Supply critical — army at ${this.settlement(army.provinceId)?.name ?? 'field'} falls back to home territory.`, 'bad');
+        }
+      }
+    }
+  }
+
+  /** Monthly tick: occupation resistance and events (Phase 16). */
+  tickOccupation(): void {
+    for (const [provIdStr, occ] of Object.entries(this.provincialOccupations)) {
+      const provId = Number(provIdStr);
+      const province = this.settlement(provId);
+      if (!province) continue;
+      const rv = this.rival(occ.occupiedBy);
+      // Ideology distance: compare player bloc to occupier bloc
+      const playerBloc = this.playerBloc() ?? 'liberal';
+      const occupierBloc = rv ? this.regimeOf(rv).bloc : 'autocratic';
+      const ideologyDistance = Math.max(0, -blocAffinity(playerBloc, occupierBloc));
+      let resistanceGrowth = 1 + ideologyDistance * 0.5;
+      // Policy modifiers
+      if (occ.occupationPolicy === 'brutal') {
+        resistanceGrowth *= 0.7; // slower now, worse postwar
+        occ.brutalPolicyPenalty = Math.min(100, occ.brutalPolicyPenalty + 1);
+      } else if (occ.occupationPolicy === 'conciliatory') {
+        resistanceGrowth *= 1.4;
+      }
+      occ.resistanceLevel = Math.min(100, occ.resistanceLevel + resistanceGrowth);
+      // Guerrilla events at high resistance
+      if (occ.resistanceLevel > 70 && this.rng.chance(0.4)) {
+        const gdp = this.gdpLastMonth;
+        this.treasury -= gdp * 0.01;
+        // Supply penalty on any army groups at enemy provinces
+        for (const ag of this.armyGroups) {
+          if (ag.ownerId !== 0 && ag.provinceId === provId) {
+            ag.supply = Math.max(0, ag.supply - 0.1);
+          }
+        }
+        this.addLog(`Guerrilla activity in ${province.name} — partisans raid supply lines and drain treasury.`, 'bad');
+      }
+      // Province liberation at extreme resistance
+      if (occ.resistanceLevel > 90) {
+        delete this.provincialOccupations[provId];
+        // Expel occupying armies
+        this.armyGroups = this.armyGroups.filter(
+          (ag) => !(ag.ownerId !== 0 && ag.provinceId === provId)
+        );
+        this.addLog(`LIBERATION: the people of ${province.name} expel the occupying forces — the province is free!`, 'good');
+      }
+    }
+  }
+
+  /** Set occupation policy for a province occupied by the player (Phase 16). */
+  setOccupationPolicyForProvince(provinceId: number, policy: 'conciliatory' | 'normal' | 'brutal'): boolean {
+    const occ = this.provincialOccupations[provinceId];
+    if (!occ) return false;
+    occ.occupationPolicy = policy;
+    if (policy === 'brutal') {
+      this.addLog(`Brutal occupation policy set for ${this.settlement(provinceId)?.name ?? 'province'} — resistance grows faster but garrison costs halved.`, 'bad');
+    } else if (policy === 'conciliatory') {
+      this.addLog(`Conciliatory policy in ${this.settlement(provinceId)?.name ?? 'province'} — resistance grows but locals cooperate more.`, 'info');
+    }
+    return true;
+  }
+
+  /** Monthly tick: war support decay and rally (Phase 16). */
+  tickWarSupport(): void {
+    if (!this.playerWar) return;
+    // Base decay
+    this.warSupport = Math.max(0, this.warSupport - 1);
+    // Decay from mobilization level 2 (rationing)
+    if (this.mobilizationLevel === 2) {
+      this.warSupport = Math.max(0, this.warSupport - 2);
+    }
+    // Decay from casualties (rough estimate from player war casualties)
+    const totalPop = this.totalPop();
+    if (totalPop > 0 && this.playerWar.casualties > 0) {
+      const casualtyRate = this.playerWar.casualties / totalPop;
+      this.warSupport = Math.max(0, this.warSupport - casualtyRate * 50);
+    }
+    // Rally: won a battle this month
+    if (this.lastBattleWon) {
+      this.warSupport = Math.min(100, this.warSupport + 5);
+    }
+    // Rally: rival attacks player home province
+    const playerProvinces = this.settlements.filter((s) => s.factionId === this.playerFactionId).map((s) => s.id);
+    const enemyAtHome = this.armyGroups.some(
+      (ag) => ag.ownerId !== 0 && playerProvinces.includes(ag.provinceId)
+    );
+    if (enemyAtHome) {
+      this.warSupport = Math.min(100, this.warSupport + 10);
+      this.addLog('Enemy forces threaten the homeland — war support surges!', 'bad');
+    }
+    // Events at low war support
+    if (this.warSupport < 20) {
+      // Draft riots
+      for (const s of this.settlements) {
+        if (s.factionId === this.playerFactionId) {
+          s.grievance = Math.min(100, s.grievance + 15);
+          s.satisfaction = Math.max(0, s.satisfaction - 10);
+        }
+      }
+      if (this.rng.chance(0.5)) {
+        this.addLog('DRAFT RIOTS: war weariness boils over — grievance surges in the streets.', 'bad');
+      }
+    }
+    if (this.warSupport < 5) {
+      // Coup risk
+      this.legitimacy = Math.max(0, this.legitimacy - 25);
+      if (this.mobilizationLevel > 0) {
+        this.mobilizationLevel = Math.max(0, this.mobilizationLevel - 1) as 0 | 1 | 2;
+      }
+      this.addLog('COUP RISK: the government teeters — legitimacy collapses, mobilization falters.', 'bad');
+    }
+    // Reset battle flag
+    this.lastBattleWon = false;
+  }
+
+  /** Compute war score from battlefield situation (Phase 16). */
+  computeWarScore(): number {
+    let score = 0;
+    // +5 per rival province under occupation
+    const rivalProvinces = new Set(
+      this.rivals.flatMap((rv) =>
+        this.settlements.filter((s) => s.factionId === rv.id).map((s) => s.id)
+      )
+    );
+    const playerArmiesAtRival = this.armyGroups.filter(
+      (ag) => ag.ownerId === 0 && rivalProvinces.has(ag.provinceId)
+    );
+    score += playerArmiesAtRival.length * 5;
+    // -5 per player province under occupation
+    const playerProvinces = new Set(
+      this.settlements.filter((s) => s.factionId === this.playerFactionId).map((s) => s.id)
+    );
+    const rivalArmiesAtPlayer = this.armyGroups.filter(
+      (ag) => ag.ownerId !== 0 && playerProvinces.has(ag.provinceId)
+    );
+    score -= rivalArmiesAtPlayer.length * 5;
+    // Also count official occupation records
+    for (const [provIdStr, occ] of Object.entries(this.provincialOccupations)) {
+      const provId = Number(provIdStr);
+      if (this.settlements.find((s) => s.id === provId && s.factionId !== this.playerFactionId)) {
+        score += 5; // player occupying rival province
+      } else {
+        score -= 5; // rival occupying player province
+      }
+      void occ; // suppress unused variable warning
+    }
+    // +10 if naval blockade active
+    if (this.playerWar?.blockade) score += 10;
+    // Also include existing war score
+    if (this.playerWar) score += this.playerWar.score / 10;
+    return Math.max(-100, Math.min(100, Math.round(score)));
+  }
+
+  /** Propose peace terms (Phase 16 structured peace). Returns true if accepted. */
+  proposePeace(terms: PeaceTermDef[]): boolean {
+    const w = this.playerWar;
+    const rv = w ? this.rival(w.rivalId) : null;
+    if (!w || !rv) return false;
+    const totalCost = terms.reduce((s, t) => s + t.warScoreCost, 0);
+    const warScore = this.computeWarScore();
+    if (totalCost > warScore) {
+      this.addLog(`Peace terms rejected — war score ${warScore} insufficient for cost ${totalCost}.`, 'bad');
+      return false;
+    }
+    // Apply each term
+    const annexCount = terms.filter((t) => t.type === 'annex_province').length;
+    for (const term of terms) {
+      if (term.type === 'annex_province' && term.provinceId !== undefined) {
+        // Transfer province to player
+        const prov = this.settlement(term.provinceId);
+        if (prov) {
+          prov.factionId = this.playerFactionId;
+          const faction = this.faction(this.playerFactionId);
+          if (faction && !faction.settlementIds.includes(prov.id)) {
+            faction.settlementIds.push(prov.id);
+          }
+        }
+      } else if (term.type === 'reparations') {
+        const amount = term.amount ?? 200;
+        this.treasury += amount;
+        this.addLog(`Reparations: ${rv.name} pays £${amount} in war reparations.`, 'good');
+      } else if (term.type === 'dmz') {
+        rv.borderSettled = true;
+        this.addLog(`DMZ established: demilitarized border zone created with ${rv.name}.`, 'info');
+      } else if (term.type === 'puppet') {
+        rv.relations = this.clampRel(rv.relations - 30);
+        this.addLog(`${rv.name} becomes a vassal state — the puppet strings are tied.`, 'good');
+      } else if (term.type === 'status_quo') {
+        this.addLog('Status quo peace: the guns fall silent; the maps stay as they were.', 'info');
+      }
+    }
+    // Grudge for excessive annexation
+    if (annexCount > 2) {
+      rv.weights.grudge = Math.min(10, rv.weights.grudge + 9);
+      this.addLog(`Revanchism: ${rv.name} seethes — too many provinces taken; a generation will not forget.`, 'bad');
+    }
+    // End the war
+    this.playerWar = null;
+    this.mobilizationLevel = 0;
+    this.mobilizationMonths = 0;
+    rv.relations = this.clampRel(rv.relations + 10);
+    this.addLog(`PEACE TREATY: the war with ${rv.name} ends on agreed terms.`, 'good');
+    return true;
+  }
+
   /** Call a defensive-pact ally to the colors (GDD §7.3). Honor weight sets
    *  whether signed ink survives the shells; refusing a *defensive* call
    *  tears the pact up for all to read. */
@@ -11133,6 +11626,14 @@ export class RegionSim {
       advisorBriefLastDay: this.advisorBriefLastDay,
       lastActionDay: this.lastActionDay,
       researchBottleneckActive: this.researchBottleneckActive,
+      // Phase 16: Warfare System Depth
+      armyGroups: this.armyGroups,
+      nextArmyGroupId: this.nextArmyGroupId,
+      mobilizationLevel: this.mobilizationLevel,
+      mobilizationMonths: this.mobilizationMonths,
+      warSupport: this.warSupport,
+      provincialOccupations: this.provincialOccupations,
+      lastBattleWon: this.lastBattleWon,
       // Phase 17: Historical Scenarios & Alternate Starts
       activeScenario: this.activeScenario ?? null,
       scenarioGoalsCompleted: this.scenarioGoalsCompleted ?? [],
@@ -11394,6 +11895,35 @@ export class RegionSim {
     r.youthquake1968Fired = d.youthquake1968Fired ?? false;
     r.youthquake2030Fired = d.youthquake2030Fired ?? false;
     r.automationUnemployment = d.automationUnemployment ?? 0;
+    // Phase 16: Warfare System Depth — backfill with safe defaults for old saves
+    r.armyGroups = (d.armyGroups ?? []).map((ag: ArmyGroup) => ({
+      ...ag,
+      manpower: ag.manpower ?? 100,
+      equipmentLevel: ag.equipmentLevel ?? 50,
+      supply: ag.supply ?? 1.0,
+      doctrine: ag.doctrine ?? 50,
+      morale: ag.morale ?? 80,
+    }));
+    r.nextArmyGroupId = d.nextArmyGroupId ?? 1;
+    r.mobilizationLevel = d.mobilizationLevel ?? 0;
+    r.mobilizationMonths = d.mobilizationMonths ?? 0;
+    r.warSupport = d.warSupport ?? 60;
+    r.lastBattleWon = d.lastBattleWon ?? false;
+    if (d.provincialOccupations) {
+      r.provincialOccupations = Object.fromEntries(
+        Object.entries(d.provincialOccupations as Record<string, { occupiedBy: number; resistanceLevel: number; occupationPolicy: 'conciliatory' | 'normal' | 'brutal'; brutalPolicyPenalty: number }>).map(([k, v]) => [
+          k,
+          {
+            ...v,
+            resistanceLevel: v.resistanceLevel ?? 0,
+            occupationPolicy: v.occupationPolicy ?? 'normal',
+            brutalPolicyPenalty: v.brutalPolicyPenalty ?? 0,
+          },
+        ])
+      );
+    } else {
+      r.provincialOccupations = {};
+    }
     // Phase 17: Historical Scenarios & Alternate Starts — backfill for old saves
     r.activeScenario = d.activeScenario ?? null;
     r.scenarioGoalsCompleted = d.scenarioGoalsCompleted ?? [];
