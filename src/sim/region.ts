@@ -1792,6 +1792,25 @@ export interface Notable {
   settlementId: number;
   bio: string[]; // accumulated story beats
   alive: boolean;
+  skill: number;          // 0-100
+  health: number;         // 0-100
+  deathYear?: number;
+  children: number[];     // ids of child Notables
+  parentId?: number;      // id of parent Notable
+  loyalty: number;        // 0-100
+  factionAlignment?: string; // 'workers' | 'merchants' | 'landowners' | 'military'
+  backstory?: string;     // founding backstory blurb
+  yearEnteredRole?: number; // year they entered their current role
+  monthsIgnored?: number; // months portfolio has been neglected (for loyalty decay)
+}
+
+export interface DynastyNode {
+  id: number;
+  name: string;
+  parentId?: number;
+  birthYear: number;
+  deathYear?: number;
+  role?: string;
 }
 
 export interface Expedition {
@@ -3659,9 +3678,46 @@ export class RegionSim {
       region.mintNotable(role, home.id);
     }
 
+    // Add extra founding Notables (4-6 total) beyond those mapped from settlers
+    const extraRoles: NotableRole[] = ['Granger', 'Forewoman', 'Reeve'];
+    const extraBackstories = [
+      'A rural landowner facing the agrarian crisis, betting everything on fresh land.',
+      'A labour organizer who survived the Red Scare and sought a new beginning.',
+      'A colonial administrator returned from overseas, seeking to build something lasting.',
+    ];
+    const extraFactions = ['landowners', 'workers', 'merchants'];
+    const extraCount = Math.max(0, 4 - region.notables.length); // ensure at least 4 notables total
+    for (let i = 0; i < extraCount; i++) {
+      const role = extraRoles[i % extraRoles.length];
+      region.notables.push({
+        id: region.nextId++,
+        name: (() => {
+          const first = ['Edda', 'Tomas', 'Sela', 'Bruno', 'Petra', 'Anders', 'Ivy', 'Casimir'][region.rng.int(8)];
+          const last = ['Weller', 'Stroud', 'Halvorsen', 'Quint', 'Mercer', 'Dunmore'][region.rng.int(6)];
+          return `${first} ${last}`;
+        })(),
+        age: 28 + region.rng.int(28),
+        traits: [],
+        role,
+        settlementId: home.id,
+        bio: [`Founding settler, 1900.`, `Named ${role} at the founding.`],
+        alive: true,
+        skill: 40 + region.rng.int(36),
+        health: 80 + region.rng.int(21),
+        children: [],
+        loyalty: 90,
+        factionAlignment: extraFactions[i % extraFactions.length],
+        backstory: extraBackstories[i % extraBackstories.length],
+        yearEnteredRole: region.year,
+        monthsIgnored: 0,
+      });
+    }
+
+    const mayor = region.notables.find((n) => n.role === 'Mayor' && n.alive);
     region.addLog(
       `The Great War has ended. Empires lie shattered. ${home.name} is founded, ${START_YEAR} — ` +
-      `a small claim in the wreckage, the first stone of a nation yet unnamed.`,
+      `a small claim in the wreckage, the first stone of a nation yet unnamed.` +
+      (mayor ? ` ${mayor.name} leads as Mayor.` : ''),
       'good',
     );
     return region;
@@ -3992,7 +4048,7 @@ export class RegionSim {
     this.caravans();
     this.traders();
     this.navalTradeIncome();
-    this.ageNotables();
+    this.tickNotableLifecycle();
     // The treasury runs even before the Charter: pre-statehood the Mayor still
     // taxes the towns and pays for services/militia, so the player has real
     // economic levers to climb out of a deficit toward the £8k Charter gate
@@ -6098,38 +6154,130 @@ export class RegionSim {
     }
   }
 
-  private ageNotables(): void {
+  private tickNotableLifecycle(): void {
+    // --- age, health degradation, death ---
     for (const n of this.notables) {
       if (!n.alive) continue;
       n.age += 1 / 12;
+
+      // Health degrades monthly (scaled from annual rates)
+      const healthDecay = (Math.random() * 2 + (n.age > 70 ? 3 : 0)) / 12;
+      n.health = Math.max(0, (n.health ?? 80) - healthDecay);
+
+      // Death risk blended from age-based mortality and health
       const annualRisk = n.age > 75 ? 0.12 : n.age > 60 ? 0.03 : 0.004;
-      if (this.rng.chance(annualRisk / 12)) {
+      const healthRisk = n.health < 20 ? 0.08 : n.health < 40 ? 0.02 : 0;
+      if (this.rng.chance((annualRisk + healthRisk) / 12)) {
         n.alive = false;
+        n.deathYear = this.year;
         n.bio.push(`Died ${this.year}, aged ${Math.floor(n.age)}.`);
         this.addLog(`${n.name}, ${n.role} of ${this.settlement(n.settlementId)?.name ?? 'the colony'}, has died, aged ${Math.floor(n.age)}.`, 'bad');
-        this.mintNotable(n.role, n.settlementId);
+        // If minister, select a successor
+        const mIdx = this.ministers.findIndex((m) => m.notableId === n.id);
+        if (mIdx >= 0) {
+          this.selectSuccessor(mIdx);
+        } else {
+          this.mintNotable(n.role, n.settlementId);
+        }
+      }
+    }
+
+    // --- birth of heirs (5% annual = ~0.417%/month) ---
+    const alive = this.notables.filter((n) => n.alive);
+    for (const n of alive) {
+      if (n.age >= 25 && n.age <= 50 && this.rng.chance(0.05 / 12)) {
+        const child = this.mintNotable(n.role, n.settlementId, { parentId: n.id, age: 0 });
+        child.bio = [`Born to ${n.name}, ${this.year}.`];
+        child.age = 0;
+        n.children = n.children ?? [];
+        n.children.push(child.id);
+        this.addLog(`${n.name} welcomes a child, ${child.name}, born ${this.year}.`, 'info');
+      }
+    }
+
+    // --- minister loyalty decay and defection ---
+    if (this.nationProclaimed) {
+      for (const m of this.ministers) {
+        if (m.notableId === null) continue;
+        const notable = this.notables.find((n) => n.id === m.notableId && n.alive);
+        if (!notable) continue;
+
+        // Loyalty decays 0.5/month for all ministers
+        notable.loyalty = Math.max(0, (notable.loyalty ?? 80) - 0.5);
+        notable.monthsIgnored = (notable.monthsIgnored ?? 0) + 1;
+
+        // Defection: loyalty < 20 and 5% annual = ~0.4%/month chance
+        if ((notable.loyalty ?? 80) < 20 && this.rng.chance(0.05 / 12)) {
+          const mIdx = this.ministers.indexOf(m);
+          this.addLog(`${notable.name}, ${m.title}, has defected — disillusioned with the government.`, 'bad');
+          this.legitimacy = Math.max(0, this.legitimacy - 5);
+          // Boost rival faction power if one exists
+          const factionId = notable.factionAlignment ?? 'workers';
+          const rivalFaction = this.factions?.find((f) => f.id === factionId);
+          if (rivalFaction) rivalFaction.support = Math.min(100, (rivalFaction.support ?? 0) + 8);
+          m.notableId = null;
+          this.selectSuccessor(mIdx);
+        }
+      }
+
+      // --- scandal: 2% annual per minister in role 5+ years (~0.17%/month) ---
+      for (const m of this.ministers) {
+        if (m.notableId === null) continue;
+        const notable = this.notables.find((n) => n.id === m.notableId && n.alive);
+        if (!notable) continue;
+        const yearsInRole = this.year - (notable.yearEnteredRole ?? this.year);
+        if (yearsInRole >= 5 && this.rng.chance(0.02 / 12)) {
+          this.legitimacy = Math.max(0, this.legitimacy - 3);
+          // Reduce satisfaction in notable's home settlement
+          const t = this.settlement(notable.settlementId);
+          if (t) t.satisfaction = Math.max(0, (t.satisfaction ?? 50) - 5);
+          this.addLog(`SCANDAL: ${notable.name}, ${m.title}, embroiled in scandal. Public trust shaken.`, 'bad');
+        }
       }
     }
   }
 
   /** New Notables rise from the cohorts when a role falls vacant (GDD §2.4). */
-  private mintNotable(role: NotableRole, settlementId: number): void {
+  private mintNotable(
+    role: NotableRole,
+    settlementId: number,
+    overrides?: {
+      skill?: number;
+      health?: number;
+      backstory?: string;
+      parentId?: number;
+      factionAlignment?: string;
+      age?: number;
+      name?: string;
+    },
+  ): Notable {
     const t = this.settlement(settlementId);
-    if (!t || this.popOf(t) < 10) return;
     const first = ['Edda', 'Tomas', 'Sela', 'Bruno', 'Petra', 'Anders', 'Ivy', 'Casimir'][this.rng.int(8)];
     const last = ['Weller', 'Stroud', 'Halvorsen', 'Quint', 'Mercer', 'Dunmore'][this.rng.int(6)];
     const n: Notable = {
       id: this.nextId++,
-      name: `${first} ${last}`,
-      age: 25 + this.rng.int(20),
+      name: overrides?.name ?? `${first} ${last}`,
+      age: overrides?.age ?? (25 + this.rng.int(20)),
       traits: [],
       role,
       settlementId,
-      bio: [`Rose to ${role} of ${t.name}, ${this.year}.`],
+      bio: t ? [`Rose to ${role} of ${t.name}, ${this.year}.`] : [`Rose to ${role}, ${this.year}.`],
       alive: true,
+      skill: overrides?.skill ?? (30 + this.rng.int(50)),
+      health: overrides?.health ?? (60 + this.rng.int(40)),
+      children: [],
+      loyalty: 80,
+      factionAlignment: overrides?.factionAlignment,
+      backstory: overrides?.backstory,
+      yearEnteredRole: this.year,
+      monthsIgnored: 0,
+      parentId: overrides?.parentId,
     };
     this.notables.push(n);
-    this.addLog(`${n.name} rises to ${role} of ${t.name}.`, 'info');
+    if (t) {
+      this.addLog(`${n.name} rises to ${role} of ${t.name}.`, 'info');
+    }
+    return n;
   }
 
   /** The region's incident deck. Wider than the original five (the GDD's
@@ -6909,6 +7057,23 @@ export class RegionSim {
     }
 
     this.addLog(`LAW ENACTED: "${law.name}". ${law.desc.split('.')[0]}.`, 'good');
+
+    // Resignation check: ministers who oppose the law's faction alignment may resign
+    const lawFaction = (law as any).factionAlignment as string | undefined;
+    if (lawFaction) {
+      for (let i = 0; i < this.ministers.length; i++) {
+        const m = this.ministers[i];
+        if (m.notableId === null) continue;
+        const notable = this.notables.find((n) => n.id === m.notableId && n.alive);
+        if (!notable || (notable.skill ?? 0) <= 50) continue;
+        if (notable.factionAlignment && notable.factionAlignment !== lawFaction && this.rng.chance(0.05)) {
+          this.addLog(`${notable.name}, ${m.title}, resigns in protest of "${law.name}".`, 'bad');
+          m.notableId = null;
+          this.selectSuccessor(i);
+        }
+      }
+    }
+
     return true;
   }
 
@@ -7068,6 +7233,77 @@ export class RegionSim {
     const m = this.ministers.find((x) => x.role === role);
     if (!m || m.notableId === null) return null;
     return this.notables.find((n) => n.id === m.notableId && n.alive) ?? null;
+  }
+
+  /** Appoint a new minister when a portfolio becomes vacant (death, defection, or resignation). */
+  selectSuccessor(portfolioIndex: number): void {
+    const portfolio = this.ministers[portfolioIndex];
+    if (!portfolio) return;
+    const occupiedIds = new Set(this.ministers.map((m) => m.notableId).filter((id) => id !== null));
+    const currentMinister = portfolio.notableId !== null
+      ? this.notables.find((n) => n.id === portfolio.notableId)
+      : null;
+    const preferredFaction = currentMinister?.factionAlignment;
+
+    // Find candidates: alive, age >= 25, not already a minister
+    const candidates = this.notables.filter(
+      (n) => n.alive && n.age >= 25 && !occupiedIds.has(n.id),
+    );
+
+    let chosen: Notable | null = null;
+    if (candidates.length > 0) {
+      // Prefer same faction alignment, then highest skill
+      const aligned = preferredFaction
+        ? candidates.filter((c) => c.factionAlignment === preferredFaction)
+        : [];
+      const pool = aligned.length > 0 ? aligned : candidates;
+      chosen = pool.reduce((best, c) => ((c.skill ?? 0) > (best.skill ?? 0) ? c : best));
+    }
+
+    if (!chosen) {
+      // Mint a new notable if no candidates
+      const settlementId = this.settlements[0]?.id ?? 0;
+      chosen = this.mintNotable('Reeve', settlementId);
+    }
+
+    portfolio.notableId = chosen.id;
+    chosen.yearEnteredRole = this.year;
+    chosen.monthsIgnored = 0;
+    this.addLog(`Parliament appoints ${chosen.name} as new ${portfolio.title}.`, 'info');
+  }
+
+  /** Produce a skill-weighted forecast for a portfolio metric.
+   *  Skilled ministers give tighter estimates; vacancies give wide noise. */
+  advisorForecast(portfolioName: string, trueValue: number): number {
+    const roleMap: Record<string, MinisterRoleId> = {
+      Finance: 'treasury',
+      War: 'defence',
+      Interior: 'interior',
+    };
+    const roleId = roleMap[portfolioName];
+    const minister = roleId ? this.ministerFor(roleId) : null;
+    if (minister) {
+      const skill = minister.skill ?? 50;
+      const noiseScale = (1 - skill / 100) * Math.abs(trueValue) * 0.3;
+      const gaussian = (Math.random() + Math.random() + Math.random() - 1.5) * noiseScale;
+      return trueValue + gaussian;
+    }
+    // No minister: wide random noise
+    return trueValue * (0.7 + Math.random() * 0.6);
+  }
+
+  /** Compile dynasty tree from notables that have parent/child relationships. */
+  buildDynastyTree(): DynastyNode[] {
+    return this.notables
+      .filter((n) => n.parentId !== undefined || n.children.length > 0)
+      .map((n) => ({
+        id: n.id,
+        name: n.name,
+        parentId: n.parentId,
+        birthYear: Math.floor(this.year - n.age),
+        deathYear: n.deathYear,
+        role: n.role,
+      }));
   }
 
   /** Monthly legitimacy tick (GDD §5.3). */
@@ -9157,6 +9393,7 @@ export class RegionSim {
       youthquake2030Fired: this.youthquake2030Fired,
       automationUnemployment: this.automationUnemployment,
       pressFreedom: this.pressFreedom,
+      dynastyTree: this.buildDynastyTree(),
     });
   }
 
@@ -9187,7 +9424,13 @@ export class RegionSim {
       activeEvents: s.activeEvents ?? [],
       policies: s.policies ?? { ...DEFAULT_CITY_POLICIES },
     }));
-    r.notables = d.notables;
+    r.notables = (d.notables ?? []).map((n: any) => ({
+      skill: 50,
+      health: 80,
+      children: [],
+      loyalty: 80,
+      ...n,
+    }));
     r.expeditions = d.expeditions;
     r.routes = (d.routes as Route[]).map((rt) => ({ ...rt, cargoType: rt.cargoType ?? null, cargoPriority: rt.cargoPriority ?? null }));
     r.log = d.log;

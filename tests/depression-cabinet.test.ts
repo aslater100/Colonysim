@@ -167,15 +167,23 @@ describe('Historical anchor: Great Depression (1927–1936)', () => {
     const spawnRival = (r as unknown as { spawnRival(): void }).spawnRival.bind(r);
     spawnRival();
     r.rivals[0].treaties.push('trade_agreement');
-    // Run a month without depression
-    r.depressionDepth = 0;
     const ticksPerMonth = 30 * ticksPerDay;
-    for (let i = 0; i < ticksPerMonth; i++) r.tick();
-    const earningsNormal = r.exportEarningsLastMonth;
-    // Now run with full depression
+    // Run 3 months without depression and sum earnings to smooth RNG noise
+    r.depressionDepth = 0;
+    let earningsNormal = 0;
+    for (let m = 0; m < 3; m++) {
+      for (const t of r.settlements) t.activeEvents = [];
+      for (let i = 0; i < ticksPerMonth; i++) r.tick();
+      earningsNormal += r.exportEarningsLastMonth;
+    }
+    // Run 3 months with full depression and sum earnings
     r.depressionDepth = 1.0;
-    for (let i = 0; i < ticksPerMonth; i++) r.tick();
-    const earningsDepressed = r.exportEarningsLastMonth;
+    let earningsDepressed = 0;
+    for (let m = 0; m < 3; m++) {
+      for (const t of r.settlements) t.activeEvents = [];
+      for (let i = 0; i < ticksPerMonth; i++) r.tick();
+      earningsDepressed += r.exportEarningsLastMonth;
+    }
     expect(earningsDepressed).toBeLessThan(earningsNormal);
   });
 

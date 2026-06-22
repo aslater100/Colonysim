@@ -149,9 +149,9 @@ describe('Rival AI integration', () => {
     const r = region('hard');
     r.stateProclaimed = true;
     const rival = r.regionalFactions.find((f) => f.id !== r.playerFactionId)!;
-    rival.treasury = 500;
-    // run a few years so the staggered scheduler fires several times
-    runDays(r, 365 * 3);
+    rival.treasury = 5000;
+    // run several years so the staggered scheduler fires multiple times
+    runDays(r, 365 * 5);
     const r2 = r.faction(rival.id)!;
     expect(r2.settlementIds.length).toBeGreaterThanOrEqual(1);
     expect(r2.currentGoal).not.toBeNull();

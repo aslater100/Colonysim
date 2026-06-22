@@ -3,7 +3,7 @@
  * operating altitude after the flip (GDD §2.5). Painterly backdrop, town
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
-import type { Settlement, Scout, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, DepressionMeasure, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType, TechNode, Province } from '../sim/region';
+import type { Settlement, Scout, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, DepressionMeasure, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType, TechNode, Province, DynastyNode } from '../sim/region';
 import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES, ESPIONAGE_OPS, BLOC_RELATIONS_FLOOR, DEPRESSION_MEASURES } from '../sim/region';
 import type { EspionageOp } from '../sim/region';
 import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS } from '../sim/defs';
@@ -31,6 +31,31 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const n = parseInt(h, 16);
   if (!Number.isFinite(n) || h.length !== 6) return { r: 136, g: 136, b: 136 };
   return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+/** Build an HTML dynasty section for the Century Report.
+ *  Renders parent → children relationships among Notables. */
+function dynastyHtml(r: RegionSim): string {
+  const tree: DynastyNode[] = r.buildDynastyTree();
+  if (tree.length === 0) return '';
+
+  // Group by parent: roots are nodes without a parentId in the tree set
+  const ids = new Set(tree.map((n) => n.id));
+  const roots = tree.filter((n) => n.parentId === undefined || !ids.has(n.parentId));
+  const childrenOf = (parentId: number) => tree.filter((n) => n.parentId === parentId);
+
+  const renderNode = (n: DynastyNode, depth: number): string => {
+    const indent = '&nbsp;'.repeat(depth * 4);
+    const lifespan = n.deathYear
+      ? `${n.birthYear}–${n.deathYear}`
+      : `b. ${n.birthYear}`;
+    const roleTag = n.role ? ` <span class="insp-skills">[${n.role}]</span>` : '';
+    const line = `<p>${indent}<b>${n.name}</b> ${lifespan}${roleTag}</p>`;
+    return line + childrenOf(n.id).map((c) => renderNode(c, depth + 1)).join('');
+  };
+
+  return `<p class="insp-skills">DYNASTIES</p>` +
+    roots.map((root) => renderNode(root, 0)).join('');
 }
 
 export class RegionView {
@@ -2192,6 +2217,7 @@ export class RegionView {
       `<p>stewardship <b>${g.stewardship}</b> · prosperity <b>${g.prosperity}</b> · ` +
       `liberty <b>${g.liberty}</b> · standing <b>${g.standing}</b></p>` +
       `<p class="insp-skills">Endings are graded, not won. The country is still yours.</p>` +
+      dynastyHtml(this.region) +
       `<button id="century-close-btn">Carry on</button>` +
       `</div>`;
     this.centuryModal.querySelector<HTMLButtonElement>('#century-close-btn')!.onclick = () => {
@@ -2514,6 +2540,18 @@ export class RegionView {
           `${Math.max(1, Math.round((r.currencyTransition.endDay - r.day) / 30))}mo to stabilize</p>`
         : '') +
       `<p>GDP ` + formatCurrency(Math.floor(r.gdpLastMonth)) + `/mo · avg wage ${formatCurrency(r.avgDailyWage())}/d</p>` +
+      (() => {
+        // Advisor forecast: project treasury 12 months out using last-month net cash flow
+        const monthlyNet = r.gdpLastMonth * r.taxRate - (r.servicesLevel * 2 + r.militiaLevel * 3);
+        const projected12mo = r.treasury + monthlyNet * 12;
+        const forecast = r.advisorForecast('Finance', projected12mo);
+        const finMin = r.ministerFor('treasury');
+        const advisorName = finMin ? finMin.name : 'your advisors';
+        const forecastCol = forecast >= 0 ? '#4e9' : '#e55';
+        return `<p class="insp-skills" title="Treasury projection 12 months out, based on current tax and spending. Accuracy depends on your Finance minister's skill.">` +
+          `${advisorName} forecasts treasury at ` +
+          `<span style="color:${forecastCol}">${formatCurrency(Math.round(forecast))}</span> in 12 months</p>`;
+      })() +
       `<p title="The global ledger (GDD §8.2): every chimney on earth, projected to 2100. The verdict is read in 2040.">` +
       `CO₂ ${Math.round(r.co2ppm)} ppm · +${r.warmingC.toFixed(1)}°C` +
       `${r.eraBranch ? ` · <b>${r.eraBranch.toUpperCase()}</b>` : ` (→ +${r.projectedWarming().toFixed(1)}°C by 2100)`}` +
@@ -2900,13 +2938,22 @@ export class RegionView {
       const emblemHtml = rv.flagData ? `${rv.flagData.emblem}&nbsp;` : '';
       const archetypeData = RIVAL_ARCHETYPES[rv.archetype];
       const archetypeTooltip = `${archetypeData.name}: ${archetypeData.desc}`;
+      // War minister estimates rival military strength (Phase 8 advisor forecast)
+      const trueRivalStrength = rv.pop;
+      const estStrength = Math.round(r.advisorForecast('War', trueRivalStrength));
+      const defMin = r.ministerFor('defence');
+      const defAdvisorName = defMin ? defMin.name : 'Defence HQ';
+      const rivalIntel = r.nationProclaimed
+        ? `<p class="insp-skills" title="Your war minister's estimate of ${rv.name}'s military strength — accuracy depends on their skill.">` +
+          `${defAdvisorName} estimates ${rv.name} strength: <b>${estStrength}</b></p>`
+        : '';
       return `<div class="bar-row" title="${archetypeTooltip}\n\nAgenda: ${rv.agenda}\n\n${personalityInfo}">` +
         `${flagHtml}<span style="width:70px;display:inline-block">${emblemHtml}<b>${rv.name}</b></span>` +
         `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${pct}%;background:${col}"></div></div>` +
         `<span>${rel}</span></div>` +
         `<p class="insp-skills" title="${recentHistory}">${gov}${rv.borderSettled ? ' · border settled' : ''} · ${personalityInfo}${personalityInfo ? ' · ' : ''}${treaties}</p>` +
         offerRow + counterRow +
-        verbs + espionage;
+        verbs + espionage + rivalIntel;
     }).join('');
     // World affairs: what the powers are doing to each other (GDD §6.4)
     const name = (id: number) => r.rival(id)?.name ?? '?';
