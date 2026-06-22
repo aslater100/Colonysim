@@ -2002,6 +2002,95 @@ export interface CenturyReport {
   verdict: string;
 }
 
+// ---- Phase 17: Historical Scenarios & Alternate Starts (GDD §8.8, §6.1) ----
+
+/** A scenario goal — checked monthly against RegionSim state. */
+export interface ScenarioGoal {
+  id: string;
+  description: string;
+  /** Method name on RegionSim that returns true when this goal is complete. */
+  checkFn: string;
+}
+
+/** A named historical scenario: opening condition + goals + narrative. */
+export interface Scenario {
+  id: string;
+  name: string;
+  description: string;
+  eraStart: '1919' | '1950' | '2000';
+  govLock?: string;       // govType locked for 30 years if set
+  startingGoals: ScenarioGoal[];
+  openingEvent: string;   // flavor log at game start
+  difficulty: 'standard' | 'hard' | 'brutal';
+}
+
+/** All four pre-built historical scenarios (GDD §8.8). */
+export const SCENARIOS: Scenario[] = [
+  {
+    id: 'long_peace',
+    name: 'The Long Peace',
+    description: 'Start in a post-war 1919 region. Can you build a nation that endures to the year 2000 without being conquered?',
+    eraStart: '1919',
+    startingGoals: [
+      { id: 'survive_to_2000', description: 'Reach the year 2000 without being conquered', checkFn: 'goalSurviveTo2000' },
+    ],
+    openingEvent: 'The war is over. The question now is whether the peace will last.',
+    difficulty: 'standard',
+  },
+  {
+    id: 'iron_curtain',
+    name: 'Iron Curtain',
+    description: 'Begin in 1950 as a democracy locked in constitutional law for 30 years. Survive the Cold War and grow to 100,000 population.',
+    eraStart: '1950',
+    govLock: 'democracy',
+    startingGoals: [
+      { id: 'maintain_democracy_1990', description: 'Maintain democracy governance through 1990', checkFn: 'goalMaintainDemocracy1990' },
+      { id: 'reach_100k_pop', description: 'Reach 100,000 population', checkFn: 'goalReach100kPop' },
+    ],
+    openingEvent: 'East and West are watching your every move.',
+    difficulty: 'standard',
+  },
+  {
+    id: 'digital_crossroads',
+    name: 'Digital Crossroads',
+    description: 'Begin in the year 2000 during the information age. Research AI automation before 2030, and resolve the misinformation crisis by 2045.',
+    eraStart: '2000',
+    startingGoals: [
+      { id: 'research_ai_2030', description: 'Research ai_automation before 2030', checkFn: 'goalResearchAI2030' },
+      { id: 'resolve_polarization_2045', description: 'Reduce polarization below 0.3 by 2045', checkFn: 'goalResolvePolarization2045' },
+    ],
+    openingEvent: 'The world changes faster than any government can manage.',
+    difficulty: 'hard',
+  },
+  {
+    id: 'climate_emergency',
+    name: 'Climate Emergency',
+    description: 'The carbon budget is nearly spent. Reach net-zero emissions by 2040, and prevent the Drowned branch.',
+    eraStart: '2000',
+    startingGoals: [
+      { id: 'net_zero_2040', description: 'Achieve net-zero emissions by 2040', checkFn: 'goalNetZero2040' },
+      { id: 'avoid_drowned', description: 'Avoid the Drowned era branch', checkFn: 'goalAvoidDrowned' },
+    ],
+    openingEvent: 'The carbon budget is nearly spent. You inherited the crisis.',
+    difficulty: 'brutal',
+  },
+];
+
+/** Difficulty settings: tune crises, AI, economy volatility, and historical events. */
+export interface DifficultySettings {
+  crisisFrequency: number;       // 0.5 = half as many; 2.0 = twice as many
+  aiAggression: number;         // 0.5–2.0 multiplier on rival expansion chance
+  economicVolatility: number;   // 0.5–2.0 multiplier on boom/bust amplitude
+  historicalAnchors: 'on' | 'emergent' | 'off';
+}
+
+export const DEFAULT_DIFFICULTY_SETTINGS: DifficultySettings = {
+  crisisFrequency: 1.0,
+  aiAggression: 1.0,
+  economicVolatility: 1.0,
+  historicalAnchors: 'on',
+};
+
 const TOWN_NAMES = [
   // Original names
   'Eastvale', 'Norwick', 'Millbrook', 'Ashford', 'Redfort', 'Larkspur',
@@ -2360,6 +2449,15 @@ export class RegionSim {
   private lastTidalLogDay = -999;
   private lastExtremeWeatherDay = -999;
   private droughtAnnounced = false;
+  // ---- Phase 17: Historical Scenarios & Alternate Starts (GDD §8.8, §6.1) ----
+  /** Scenario id currently in play, or null for sandbox. */
+  activeScenario: string | null = null;
+  /** Scenario goal ids that have been achieved. */
+  scenarioGoalsCompleted: string[] = [];
+  /** Year when the govLock expires (null = no lock active). */
+  govLockExpiry: number | null = null;
+  /** Difficulty knobs for this campaign. */
+  difficultySettings: DifficultySettings = { ...DEFAULT_DIFFICULTY_SETTINGS };
   private railAnnounced = false;
   private highwayAnnounced = false;
   private maglevAnnounced = false;
@@ -4008,6 +4106,322 @@ export class RegionSim {
     return region;
   }
 
+  // ---- Phase 17: Era Starts (GDD §8.8) ----
+
+  /**
+   * Build a pre-formed nation starting in 1950 or 2000, skipping the
+   * colony→state arc. The map seed, weather, and rng come in as a design
+   * object so the caller can wire them up to the worldgen pipeline.
+   */
+  static fromEraStart(
+    era: '1950' | '2000',
+    opts: {
+      seed: number;
+      nationName?: string;
+      govType?: string;
+      startingBias?: 'industrial' | 'agrarian' | 'commercial' | 'balanced';
+      scenarioId?: string;
+      difficultySettings?: Partial<DifficultySettings>;
+    },
+  ): RegionSim {
+    const seed = opts.seed;
+    const rng = new Rng(seed);
+    const map = new RegionMap(seed);
+    const weather = new Weather(seed);
+    const bias = opts.startingBias ?? 'balanced';
+
+    // Compute the starting minute offset from 1919 to the desired era year
+    const targetYear = era === '1950' ? 1950 : 2000;
+    const yearOffset = targetYear - START_YEAR;
+    const startMinute = yearOffset * DAYS_PER_YEAR * MINUTES_PER_DAY;
+
+    const r = new RegionSim(rng, startMinute, map, weather);
+
+    // Wire up basic nation-state flags immediately
+    r.stateProclaimed = true;
+    r.ceremonyPending = false;
+    r.nationProclaimed = true;
+    r.stateName = opts.nationName ?? (era === '1950' ? 'The Republic' : 'The Nation');
+    r.nationName = opts.nationName ?? (era === '1950' ? 'The Republic' : 'The Nation');
+    r.govType = (opts.govType ?? 'democracy') as GovType;
+    const govDef = GOV_TYPES.find((g) => g.id === r.govType) ?? GOV_TYPES[0];
+    r.legitimacy = govDef.startingLegitimacy;
+    r.activePolicies = new Array(govDef.policySlots.length).fill(null);
+    r.rebuildPolicySet();
+    r.lenders = createInitialLenders();
+
+    // ---- Build settlements ----
+    const numSettlements = era === '1950' ? 3 : 5;
+    const claimedCells: { x: number; y: number }[] = [];
+
+    // Helper to add a settlement
+    const addSettlement = (name: string, popBands: number[], isMajor: boolean): void => {
+      // Find a suitable site
+      let site: TownSite | null = null;
+      if (claimedCells.length === 0) {
+        site = map.startSite('river-valley');
+      } else {
+        const anchorCell = claimedCells[0];
+        site = map.bestSiteNear(anchorCell.x, anchorCell.y,
+          claimedCells.map((c) => ({ x: c.x, y: c.y })));
+      }
+      if (!site) return;
+
+      claimedCells.push({ x: site.cellX, y: site.cellY });
+      const coord = map.cellToCoord(site.cellX, site.cellY);
+      const totalPop = popBands.reduce((a, b) => a + b, 0);
+      const food = totalPop * 8;
+      const wood = totalPop * 3;
+
+      const townFocus: TownFocus = bias === 'industrial' ? 'industry'
+        : bias === 'agrarian' ? 'agriculture'
+        : bias === 'commercial' ? 'services'
+        : 'balanced';
+
+      const settlement: Settlement = {
+        id: r.nextId++,
+        name,
+        x: coord.rx,
+        y: coord.ry,
+        foundedDay: 0,
+        cohorts: { bands: popBands },
+        food,
+        wood,
+        satisfaction: 65,
+        housing: Math.round(totalPop * 1.4),
+        landQuality: site.fertility,
+        site,
+        lastRaidDay: -99,
+        lastFloodDay: -99,
+        strikeUntil: -1,
+        grievance: 10,
+        prices: defaultPrices(),
+        recentEvents: [],
+        factionId: r.playerFactionId,
+        garrisonStrength: isMajor ? 20 : 10,
+        stationedUnits: [],
+        loyaltyToFaction: 90,
+        factionStrengths: new Map(activeFactions(targetYear).map((f) => [f.id, 50] as [NewFactionId, number])),
+        sectors: defaultSectors(),
+        buildings: [],
+        construction: null,
+        focus: townFocus,
+        activeEvents: [],
+        policies: { ...DEFAULT_CITY_POLICIES },
+      };
+      r.settlements.push(settlement);
+      r.revealTiles(settlement.x, settlement.y, 14, 'explored');
+    };
+
+    if (era === '1950') {
+      // Cold War start: 3 settlements
+      const popMult = bias === 'agrarian' ? 1.2 : bias === 'industrial' ? 0.9 : 1.0;
+      const totalTarget = Math.round((800 + rng.int(401)) * popMult); // 800–1200
+      const smallPop  = Math.round(totalTarget * 0.20);
+      const medPop    = Math.round(totalTarget * 0.30);
+      const largePop  = totalTarget - smallPop - medPop;
+      const distSmall  = [Math.round(smallPop*0.18), Math.round(smallPop*0.32), Math.round(smallPop*0.28), Math.round(smallPop*0.15), Math.round(smallPop*0.07)];
+      const distMed    = [Math.round(medPop*0.18), Math.round(medPop*0.32), Math.round(medPop*0.28), Math.round(medPop*0.15), Math.round(medPop*0.07)];
+      const distLarge  = [Math.round(largePop*0.18), Math.round(largePop*0.32), Math.round(largePop*0.28), Math.round(largePop*0.15), Math.round(largePop*0.07)];
+      addSettlement(opts.nationName ? `${opts.nationName} City` : 'Capital City', distLarge, true);
+      addSettlement('Ironwick', distMed, false);
+      addSettlement('Havenford', distSmall, false);
+
+      // Pre-researched technologies for the 1950 era
+      r.researched = new Set([
+        'steam_power', 'common_law',
+        'agriculture', 'combustion_engine', 'electrification',
+        'mass_production', 'printing_press',
+      ]);
+      r.treasury = 15000 + rng.int(10000); // mid-range Cold War treasury
+
+      // Active rivals (3) with varied relations, reflecting Cold War tensions
+      for (let i = 0; i < 3; i++) r.spawnRival();
+      // Set rival relations to reflect Cold War world (-10 to +20)
+      for (const rv of r.rivals) {
+        rv.relations = r.clampRel(-10 + rng.int(31)); // -10 to +20
+      }
+
+      // Military faction stronger: Cold War tension
+      const mf = r.factions.find((f) => f.id === 'workers');
+      if (mf) mf.power = Math.min(100, mf.power + 15);
+
+      r.addLog(
+        `Scenario: 1950 Cold War Era start. The nation enters a world in tension between superpowers.`,
+        'info',
+      );
+
+    } else {
+      // Information age start: 4-5 settlements
+      const popMult = bias === 'agrarian' ? 1.0 : bias === 'industrial' ? 1.1 : bias === 'commercial' ? 1.2 : 1.05;
+      const totalTarget = Math.round((2000 + rng.int(1501)) * popMult); // 2000–3500
+
+      const shares = [0.35, 0.25, 0.18, 0.12, 0.10]; // largest to smallest
+      const actualNum = numSettlements; // 5
+      const names = ['Capital Metropolitan', 'Northport', 'Eastbridge', 'Millford', 'Southwick'];
+      for (let i = 0; i < actualNum; i++) {
+        const townPop = Math.round(totalTarget * shares[i]);
+        const bands = [
+          Math.round(townPop * 0.18),
+          Math.round(townPop * 0.25),
+          Math.round(townPop * 0.30),
+          Math.round(townPop * 0.18),
+          Math.round(townPop * 0.09),
+        ];
+        addSettlement(names[i], bands, i === 0);
+      }
+
+      // Pre-researched technologies for 2000 era
+      r.researched = new Set([
+        'steam_power', 'common_law',
+        'agriculture', 'electrification', 'mass_production',
+        'computing', 'digital_economy', 'antibiotics', 'renewables',
+        'civil_rights', 'welfare_benefits',
+        // Conditionally include universal_suffrage if it exists in the tech tree
+        ...(TECH_TREE.some((t) => t.id === 'universal_suffrage') ? ['universal_suffrage'] : []),
+      ]);
+
+      // Historical CO₂ and warming for year 2000
+      r.co2ppm = 368;
+      r.warmingC = 0.7;
+
+      // Higher treasury — information age economy
+      r.treasury = 80000 + rng.int(40000);
+
+      // Active rivals (5) with complex relation web
+      for (let i = 0; i < 5; i++) r.spawnRival();
+
+      r.addLog(
+        `Scenario: Year 2000 start. Your nation enters the information age with modern infrastructure.`,
+        'info',
+      );
+    }
+
+    // Initialize the faction system over the first settlement
+    if (r.settlements.length > 0 && r.regionalFactions.length === 0) {
+      r.regionalizeFactionSystem(r.settlements[0]);
+      // Assign all player settlements to player faction
+      const pf = r.faction(r.playerFactionId);
+      if (pf) pf.settlementIds = r.settlements.filter((s) => s.factionId === r.playerFactionId).map((s) => s.id);
+    }
+
+    // Mint notable leaders for the capital
+    if (r.settlements.length > 0) {
+      for (const role of ['Mayor', 'Doctor', 'Captain'] as NotableRole[]) {
+        r.mintNotable(role, r.settlements[0].id);
+      }
+    }
+
+    // Wire up scenario fields
+    r.activeScenario = opts.scenarioId ?? null;
+    if (opts.difficultySettings) {
+      r.difficultySettings = { ...DEFAULT_DIFFICULTY_SETTINGS, ...opts.difficultySettings };
+    }
+
+    // Apply difficulty from scenario
+    const scenario = SCENARIOS.find((s) => s.id === r.activeScenario);
+    if (scenario) {
+      if (scenario.difficulty === 'hard') {
+        r.difficultySettings.crisisFrequency = 1.5;
+        r.difficultySettings.aiAggression = 1.5;
+        r.difficultySettings.economicVolatility = 1.5;
+      } else if (scenario.difficulty === 'brutal') {
+        r.difficultySettings.crisisFrequency = 2.0;
+        r.difficultySettings.aiAggression = 2.0;
+        r.difficultySettings.economicVolatility = 2.0;
+        // Climate emergency: CO₂ already at 400ppm
+        if (scenario.id === 'climate_emergency') {
+          r.co2ppm = 400;
+          r.warmingC = 1.2;
+        }
+      }
+      if (scenario.govLock) {
+        r.beginRegimeLocked(scenario.govLock);
+      }
+      r.addLog(scenario.openingEvent, 'info');
+    }
+
+    return r;
+  }
+
+  // ---- Phase 17: Regime-Locked Challenge Starts ----
+
+  /**
+   * Lock the government type for 30 years — the constitutional guarantee
+   * prevents any regime change until govLockExpiry.
+   */
+  beginRegimeLocked(govType: string): void {
+    this.govLockExpiry = this.year + 30;
+    this.govType = govType as GovType;
+    const govDef = GOV_TYPES.find((g) => g.id === govType);
+    if (govDef) {
+      this.activePolicies = new Array(govDef.policySlots.length).fill(null);
+      this.rebuildPolicySet();
+    }
+    this.addLog(
+      `The ${govType} is established — and constitutionally guaranteed for thirty years.`,
+      'info',
+    );
+  }
+
+  /** Returns true if the government is currently locked by scenario rules. */
+  isGovLocked(): boolean {
+    return this.govLockExpiry !== null && this.year < this.govLockExpiry;
+  }
+
+  // ---- Phase 17: Scenario Goal Checks ----
+
+  /** Called monthly; checks each active scenario goal and marks completions. */
+  checkScenarioGoals(): void {
+    if (!this.activeScenario) return;
+    const scenario = SCENARIOS.find((s) => s.id === this.activeScenario);
+    if (!scenario) return;
+
+    for (const goal of scenario.startingGoals) {
+      if (this.scenarioGoalsCompleted.includes(goal.id)) continue;
+      const checkFn = (this as unknown as Record<string, () => boolean>)[goal.checkFn];
+      if (typeof checkFn === 'function' && checkFn.call(this)) {
+        this.scenarioGoalsCompleted.push(goal.id);
+        this.addLog(
+          `SCENARIO GOAL ACHIEVED: ${goal.description}`,
+          'good',
+        );
+      }
+    }
+  }
+
+  // ---- Scenario goal check functions ----
+
+  goalSurviveTo2000(): boolean {
+    return this.year >= 2000 && !this.gameOver;
+  }
+
+  goalMaintainDemocracy1990(): boolean {
+    return this.year >= 1990 && (this.govType === 'democracy' || this.govType === 'republic');
+  }
+
+  goalReach100kPop(): boolean {
+    return this.totalPop() >= 100000;
+  }
+
+  goalResearchAI2030(): boolean {
+    return this.year < 2030 && this.has('ai_automation');
+  }
+
+  goalResolvePolarization2045(): boolean {
+    // Proxy: high satisfaction + passed civil_rights law = low polarization
+    const avgSat = this.avgSatisfaction();
+    return this.year <= 2045 && avgSat >= 70 && this.passedLaws.has('civil_rights');
+  }
+
+  goalNetZero2040(): boolean {
+    return this.year <= 2040 && this.playerEmissions() <= 0;
+  }
+
+  goalAvoidDrowned(): boolean {
+    return this.eraBranch !== 'drowned';
+  }
+
   /** Site selection and travel time come from the terrain, not dice. */
   private launchExpedition(from: Settlement, pop: number, food: number, wood: number): boolean {
     const fromCell = this.map.coordToCell(from.x, from.y);
@@ -4350,6 +4764,7 @@ export class RegionSim {
     if (this.hasCentralBank()) this.tickMonetary();
     this.tickHistoricalAnchors(); // scripted world-events that rhyme with history (GDD §1)
     this.tickMedia(); // Phase 12: media reach, press freedom, misinformation era
+    this.checkScenarioGoals();   // Phase 17: check active scenario goals monthly
     this.updateLoans(); // process loan interest and check for defaults
     if (this.stateProclaimed) this.collectVassalTribute();
     this.checkProclamationGate();
@@ -5048,11 +5463,17 @@ export class RegionSim {
   /** Scripted world-events that rhyme with history without reciting it.
    *  Each fires at most once, gated on world-state conditions and era window. */
   private tickHistoricalAnchors(): void {
+    // Phase 17: difficulty wiring — skip entirely or use only base probabilities
+    if (this.difficultySettings.historicalAnchors === 'off') return;
+    const anchorsEmergent = this.difficultySettings.historicalAnchors === 'emergent';
+
     const y = this.year;
 
     // 1. World-war window (GDD §1, 1936–1948): great-power tensions ignite.
     // Fires when rival powers are hostile to each other AND an expansionist is in the mix.
-    if (!this.worldWarFired && y >= 1936 && y <= 1948 && this.rivals.length >= 2) {
+    // In 'emergent' mode, drop the year constraint so it can fire at any time.
+    const wwInWindow = anchorsEmergent ? this.rivals.length >= 2 : (y >= 1936 && y <= 1948 && this.rivals.length >= 2);
+    if (!this.worldWarFired && wwInWindow) {
       // Find the most hostile pair among rivals
       let worstRel = -35;
       let warA = -1;
@@ -5092,7 +5513,8 @@ export class RegionSim {
 
     // 2. Oil shock (1970s-equivalent): fossil dependency meets a supply embargo.
     // Fires when combustion-engine tech is researched but no clean energy exists yet.
-    if (!this.oilShockFired && y >= 1970 && y <= 1985) {
+    const oilInWindow = anchorsEmergent ? true : (y >= 1970 && y <= 1985);
+    if (!this.oilShockFired && oilInWindow) {
       const hasFossil = this.has('combustion_engine');
       const hasCleanEnergy = this.has('renewables') || this.has('fusion_power');
       if (hasFossil && !hasCleanEnergy && this.rng.chance(0.06)) {
@@ -5127,7 +5549,8 @@ export class RegionSim {
     // 3. Great Depression analog (1927–1936): credit bubble meets a confidence
     // collapse. Fires once when leverage is stretched and confidence is already
     // fragile in the historical window — the sim sets the fuse, the era strikes it.
-    if (!this.crashFired && y >= 1927 && y <= 1936) {
+    const depressionInWindow = anchorsEmergent ? true : (y >= 1927 && y <= 1936);
+    if (!this.crashFired && depressionInWindow) {
       if (this.privateLeverage * this.policyRate > 0.12 && this.confidence < 55) {
         this.crashFired = true;
         // Credit implosion
@@ -5171,7 +5594,8 @@ export class RegionSim {
 
     // 4. 2020-analog pandemic: a novel pathogen sweeps the globe.
     // Fires once in the 2012–2027 window; antibiotics tech halves the severity.
-    if (!this.pandemicFired && y >= 2012 && y <= 2027 && this.rng.chance(0.04)) {
+    const pandemicInWindow = anchorsEmergent ? this.rng.chance(0.04) : (y >= 2012 && y <= 2027 && this.rng.chance(0.04));
+    if (!this.pandemicFired && pandemicInWindow) {
       this.pandemicFired = true;
       const hasAntibiotics = this.has('antibiotics') || this.has('welfare_state');
       const duration = hasAntibiotics ? 60 : 120;
@@ -6214,9 +6638,11 @@ export class RegionSim {
       // Expire events whose duration has run
       t.activeEvents = t.activeEvents.filter((ev) => ev.untilDay > this.day);
       // Roll each event definition per settlement
+      // Phase 17: scale event probability by crisisFrequency difficulty knob
+      const crisisScale = this.difficultySettings.crisisFrequency;
       for (const def of REGION_EVENT_DEFS) {
         if (def.minYear !== undefined && this.year < def.minYear) continue; // era-gated
-        if (!this.rng.chance(def.probability)) continue;
+        if (!this.rng.chance(def.probability * crisisScale)) continue;
         if (t.activeEvents.some((ev) => ev.kind === def.kind)) continue; // no stacking
         t.activeEvents.push({ kind: def.kind, untilDay: this.day + def.durationDays, severity: 1 });
         // events-depth: one-shot satisfaction/grievance swings (bounded, clamped)
@@ -9370,9 +9796,11 @@ export class RegionSim {
 
   /** Monthly: rival AI spawns and manoeuvres armies (expansion-minded powers threaten borders). */
   private tickRivalArmyAI(): void {
+    // Phase 17: scale expansion chance by aiAggression difficulty knob
+    const aggressionScale = this.difficultySettings.aiAggression;
     for (const rv of this.rivals) {
       if (rv.weights.expansion < 6) continue;
-      if (!this.rng.chance(0.025)) continue;
+      if (!this.rng.chance(0.025 * aggressionScale)) continue;
       const rvArmies = this.provincialArmies.filter((a) => a.ownerId === rv.id);
       if (rvArmies.length >= 2) continue;
       const targets = this.settlements.filter((s) => s.factionId === this.playerFactionId);
@@ -10324,6 +10752,11 @@ export class RegionSim {
       advisorBriefLastDay: this.advisorBriefLastDay,
       lastActionDay: this.lastActionDay,
       researchBottleneckActive: this.researchBottleneckActive,
+      // Phase 17: Historical Scenarios & Alternate Starts
+      activeScenario: this.activeScenario ?? null,
+      scenarioGoalsCompleted: this.scenarioGoalsCompleted ?? [],
+      govLockExpiry: this.govLockExpiry ?? null,
+      difficultySettings: this.difficultySettings ?? { ...DEFAULT_DIFFICULTY_SETTINGS },
     });
   }
 
@@ -10573,6 +11006,14 @@ export class RegionSim {
     r.youthquake1968Fired = d.youthquake1968Fired ?? false;
     r.youthquake2030Fired = d.youthquake2030Fired ?? false;
     r.automationUnemployment = d.automationUnemployment ?? 0;
+    // Phase 17: Historical Scenarios & Alternate Starts — backfill for old saves
+    r.activeScenario = d.activeScenario ?? null;
+    r.scenarioGoalsCompleted = d.scenarioGoalsCompleted ?? [];
+    r.govLockExpiry = d.govLockExpiry ?? null;
+    r.difficultySettings = {
+      ...DEFAULT_DIFFICULTY_SETTINGS,
+      ...(d.difficultySettings ?? {}),
+    };
     // Recompute cached perf fields after full restore.
     r.activeRailRoutes = r.routes.filter((rt) => rt.kind === 'rail' && rt.condition > 50).length;
     let tf = 0, tw = 0, mg = 0;

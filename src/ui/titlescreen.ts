@@ -1,3 +1,5 @@
+import { SCENARIOS } from '../sim/region';
+
 interface AudioHandles {
   sfx: { muted: boolean; toggleMuted(): void } | null;
   music: { enabled: boolean; toggle(): void; unlock(): void } | null;
@@ -6,15 +8,45 @@ interface AudioHandles {
 
 interface Cloud { x: number; y: number; r: number; speed: number; }
 
+/** Selection returned when the player begins a campaign from the scenario screen. */
+export interface ScenarioSelection {
+  scenarioId: string | null; // null = sandbox
+  eraStart: '1919' | '1950' | '2000';
+  difficulty: 'standard' | 'hard' | 'brutal';
+}
+
+/** Pure HTML renderer for the scenario selection panel (can also be used headlessly). */
+export function scenarioSelectHtml(selectedId: string | null): string {
+  const entries = [
+    { id: null, name: 'Sandbox', desc: '1919 — free play, no goals', era: '1919' as const, diff: 'standard' as const },
+    ...SCENARIOS.map((s) => ({ id: s.id, name: s.name, desc: `${s.eraStart} — ${s.description.slice(0, 60)}...`, era: s.eraStart, diff: s.difficulty })),
+  ];
+  const rows = entries.map((e) => {
+    const isSelected = selectedId === e.id;
+    const diffBadge = e.diff === 'brutal' ? '&#9760;&#9760;' : e.diff === 'hard' ? '&#9760;' : '';
+    return `<label class="ts-scenario-row ${isSelected ? 'ts-scenario-selected' : ''}">
+      <input type="radio" name="scenario" value="${e.id ?? '__sandbox__'}" ${isSelected ? 'checked' : ''}>
+      <span class="ts-scenario-name">${e.name}</span>
+      <span class="ts-scenario-era">${e.era}</span>
+      ${diffBadge ? `<span class="ts-scenario-diff">${diffBadge}</span>` : ''}
+      <span class="ts-scenario-desc">${e.desc}</span>
+    </label>`;
+  }).join('');
+  return `<div class="ts-scenario-list">${rows}</div>`;
+}
+
 export class TitleScreen {
   private el: HTMLElement;
-  private view: 'main' | 'options' = 'main';
+  private view: 'main' | 'options' | 'scenario' = 'main';
   private hasSave = false;
   private canvas: HTMLCanvasElement | null = null;
   private animFrame = 0;
   private clouds: Cloud[] = [];
+  private selectedScenario: string | null = null; // null = sandbox
 
   onNewColony: (() => void) | null = null;
+  /** Called when the player begins a scenario campaign. */
+  onBeginScenario: ((sel: ScenarioSelection) => void) | null = null;
   onContinue: (() => void) | null = null;
   onQuit: (() => void) | null = null;
 
@@ -361,9 +393,11 @@ export class TitleScreen {
   // ---- HTML rendering ----
 
   private render(): void {
-    this.el.innerHTML = this.view === 'main' ? this.mainHtml() : this.optionsHtml();
+    if (this.view === 'main') this.el.innerHTML = this.mainHtml();
+    else if (this.view === 'scenario') this.el.innerHTML = this.scenarioHtml();
+    else this.el.innerHTML = this.optionsHtml();
     // innerHTML wiped the prepended background canvas — re-attach it so the
-    // animated scene survives navigation between the main and options views.
+    // animated scene survives navigation between the main, scenario, and options views.
     if (this.canvas) this.el.prepend(this.canvas);
   }
 
@@ -384,11 +418,41 @@ export class TitleScreen {
         <div class="ts-panel">
           <nav class="ts-nav">
             <button class="ts-btn ts-btn-primary" id="ts-new" title="The scale-engine colony sim on procedural terrain — paint walls, rooms, zones, and farms">New Colony</button>
+            <button class="ts-btn" id="ts-scenarios">Historical Scenarios &nbsp;<span class="ts-arrow">›</span></button>
             <button class="ts-btn" id="ts-continue" ${this.hasSave ? '' : 'disabled'}>Continue</button>
             <div class="ts-sep"></div>
             <button class="ts-btn" id="ts-options">Options &nbsp;<span class="ts-arrow">›</span></button>
             <div class="ts-sep"></div>
             <button class="ts-btn ts-btn-quit" id="ts-quit">Quit to Desktop</button>
+          </nav>
+        </div>
+      </div>`;
+  }
+
+  private scenarioHtml(): string {
+    const sel = this.selectedScenario;
+    const scenario = sel ? SCENARIOS.find((s) => s.id === sel) : null;
+    const eraLabel = scenario ? scenario.eraStart : '1919';
+    const diffLabel = scenario ? scenario.difficulty : 'standard';
+    return `
+      <div class="ts-layout">
+        <div class="ts-left">
+          <div class="ts-brand">
+            <h1 class="ts-title">CENTURIA</h1>
+            <p class="ts-tagline">Choose Your Start</p>
+          </div>
+          <blockquote class="ts-quote">
+            ${scenario ? `"${scenario.openingEvent}"` : '"Begin your story on your own terms."'}
+          </blockquote>
+          <p class="ts-version">Era: ${eraLabel} &nbsp;·&nbsp; Difficulty: ${diffLabel}</p>
+        </div>
+        <div class="ts-panel ts-panel-wide">
+          <nav class="ts-nav">
+            <button class="ts-btn ts-btn-back" id="ts-back">‹ &nbsp;Back</button>
+            <div class="ts-sep"></div>
+            ${scenarioSelectHtml(sel)}
+            <div class="ts-sep"></div>
+            <button class="ts-btn ts-btn-primary" id="ts-begin-scenario">&#9654; Begin Campaign</button>
           </nav>
         </div>
       </div>`;
@@ -432,14 +496,34 @@ export class TitleScreen {
   }
 
   private handleClick(e: MouseEvent): void {
+    // Handle scenario radio button changes
+    const radio = (e.target as HTMLElement).closest<HTMLInputElement>('input[type="radio"]');
+    if (radio) {
+      const val = radio.value;
+      this.selectedScenario = val === '__sandbox__' ? null : val;
+      this.render();
+      return;
+    }
+
     const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button');
     if (!btn || btn.disabled) return;
     switch (btn.id) {
       case 'ts-new':      this.onNewColony?.(); break;
       case 'ts-continue': this.onContinue?.();  break;
       case 'ts-quit':     this.onQuit?.();       break;
+      case 'ts-scenarios': this.view = 'scenario'; this.render(); break;
       case 'ts-options':  this.view = 'options'; this.render(); break;
       case 'ts-back':     this.view = 'main';    this.render(); break;
+      case 'ts-begin-scenario': {
+        const scenario = this.selectedScenario ? SCENARIOS.find((s) => s.id === this.selectedScenario) : null;
+        const sel: ScenarioSelection = {
+          scenarioId: this.selectedScenario,
+          eraStart: scenario ? scenario.eraStart : '1919',
+          difficulty: scenario ? scenario.difficulty : 'standard',
+        };
+        this.onBeginScenario?.(sel);
+        break;
+      }
       case 'ts-sound':
         this.audio.sfx?.toggleMuted(); this.render(); break;
       case 'ts-music':

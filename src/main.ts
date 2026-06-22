@@ -9,6 +9,7 @@ import { DesignScreen } from './ui/designscreen';
 import { TitleScreen } from './ui/titlescreen';
 import { PauseMenu } from './ui/pausemenu';
 import { TICKS_PER_SECOND } from './sim/defs';
+import type { ScenarioSelection } from './ui/titlescreen';
 
 const root = document.getElementById('app')!;
 const canvas = document.createElement('canvas');
@@ -115,6 +116,26 @@ titleScreen.onNewColony = () => {
     const r = RegionSim.create(Date.now() % 100000, design);
     enterRegionMode(r);
   });
+};
+titleScreen.onBeginScenario = (sel: ScenarioSelection) => {
+  const seed = Date.now() % 100000;
+  if (sel.eraStart === '1919' && !sel.scenarioId) {
+    // Sandbox 1919: standard new colony flow
+    const r = RegionSim.create(seed, {});
+    enterRegionMode(r);
+  } else if (sel.eraStart === '1919') {
+    // 1919 scenario: standard colony but with scenario wired
+    const r = RegionSim.create(seed, {});
+    r.activeScenario = sel.scenarioId;
+    enterRegionMode(r);
+  } else {
+    // Era start: 1950 or 2000
+    const r = RegionSim.fromEraStart(sel.eraStart as '1950' | '2000', {
+      seed,
+      scenarioId: sel.scenarioId ?? undefined,
+    });
+    enterRegionMode(r);
+  }
 };
 titleScreen.onContinue = () => {
   sessionStorage.setItem('centuria-load-on-boot', '1');
