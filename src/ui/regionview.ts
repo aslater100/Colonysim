@@ -1032,6 +1032,10 @@ export class RegionView {
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.law-btn')) {
       btn.onclick = () => r.enactLaw(btn.dataset.id!);
     }
+    // Phase 18: dismiss advisor briefs
+    this.statePanel.querySelector<HTMLButtonElement>('#dismiss-briefs-btn')?.addEventListener('click', () => {
+      r.dismissAdvisorBriefs();
+    });
     for (const btn of this.statePanel.querySelectorAll<HTMLButtonElement>('.policy-slot-btn')) {
       btn.onclick = () => {
         this.policySlotIndex = Number(btn.dataset.slot);
@@ -1387,7 +1391,23 @@ export class RegionView {
       `<p class="insp-skills">CABINET</p>` +
       `<p>${ministerLines}</p>` +
       `<p class="insp-skills">POLICY SLOTS</p>` +
-      policyRows;
+      policyRows +
+      this.advisorBriefsHtml();
+  }
+
+  /** Phase 18: Render the advisor briefs panel (GDD §8.7). */
+  advisorBriefsHtml(): string {
+    const r = this.region;
+    if (!r.nationProclaimed || r.advisorBriefs.length === 0) return '';
+    const rows = r.advisorBriefs.map((brief) => {
+      const date = `${Math.floor(brief.day / 365) + 1900}`;
+      return `<p class="insp-skills" style="margin:2px 0"><b>[${brief.portfolio}]</b> ${brief.message} <span style="opacity:0.6">(${date})</span></p>`;
+    }).join('');
+    return `<p class="insp-skills">ADVISOR BRIEFS</p>` +
+      `<div style="background:#1a1a2e;border:1px solid #444;padding:4px 6px;max-height:120px;overflow-y:auto;font-size:10px">` +
+      rows +
+      `</div>` +
+      `<p><button class="mini" id="dismiss-briefs-btn">Dismiss all</button></p>`;
   }
 
   private renderPolicyModal(): void {
@@ -1649,7 +1669,25 @@ export class RegionView {
           `</p>`
         : '') +
       this.discountWindowHtml() +
-      this.currencyHtml();
+      this.currencyHtml() +
+      this.financeAdvisorHtml();
+  }
+
+  /** Phase 18: Finance advisor forecast with skill-based noise (GDD §8.7). */
+  private financeAdvisorHtml(): string {
+    const r = this.region;
+    if (!r.nationProclaimed) return '';
+    // Project next year's treasury based on current GDP and tax rate
+    const annualRevenue = r.gdpLastMonth * r.taxRate * 12;
+    const annualSpending = r.totalPop() * 0.05 * r.servicesLevel * 12 +
+      r.totalPop() * 0.03 * r.militiaLevel * 12 +
+      r.settlements.length * 5 * 12;
+    const projectedTreasury = r.treasury + annualRevenue - annualSpending;
+    const advisorEst = r.advisorForecast('Finance', projectedTreasury);
+    const sym = r.currencySymbol;
+    const col = advisorEst > r.treasury ? '#4e9' : '#e55';
+    return `<p class="insp-skills" title="Finance advisor estimate for next year's treasury (skill-based noise — higher-skill ministers give more accurate forecasts).">` +
+      `Finance advisor: <span style="color:${col}">${sym}${Math.round(advisorEst).toLocaleString()}</span> est. next year</p>`;
   }
 
   /** Currency standard controls: announce ahead to soften the eventual switch,
