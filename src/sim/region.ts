@@ -178,6 +178,26 @@ export function defaultPrices(): MarketPrices {
   return { ...BASE_PRICE };
 }
 
+// ---- Phase 15: Intermediate Goods & Supply Chains (GDD §5.2) ----
+
+/** An intermediate manufactured good that requires inputs from other goods/sectors
+ *  to produce. Creates supply chain depth in the economy. */
+export interface IntermediateGood {
+  id: string;
+  name: string;
+  eraUnlock: number;   // year this good becomes producible
+  inputs: string[];    // required input goods (by sector or good id)
+  baseOutput: number;  // monthly units produced with full inputs
+}
+
+export const INTERMEDIATE_GOODS: IntermediateGood[] = [
+  { id: 'chemicals',       name: 'Chemicals',       eraUnlock: 1920, inputs: ['coal'],                    baseOutput: 10 },
+  { id: 'components',      name: 'Components',      eraUnlock: 1930, inputs: ['iron', 'chemicals'],        baseOutput: 8  },
+  { id: 'electronics',     name: 'Electronics',     eraUnlock: 1950, inputs: ['components', 'copper'],     baseOutput: 5  },
+  { id: 'pharmaceuticals', name: 'Pharmaceuticals', eraUnlock: 1940, inputs: ['chemicals'],               baseOutput: 6  },
+  { id: 'vehicles',        name: 'Vehicles',        eraUnlock: 1925, inputs: ['iron', 'components'],      baseOutput: 4  },
+];
+
 // ---- Phase 1: Sectoral economy (GDD §5.2: the century's structural transformation) ----
 
 /** The four sectors every settlement's labor splits across. In 1900 the
@@ -2445,6 +2465,26 @@ export class RegionSim {
   mediaLiteracyYear = -1;
   /** True once the polarization reduction from media literacy has been applied. */
   mediaLiteracyApplied = false;
+  // ---- Phase 15: Extended Economy & FX (GDD §5.2) ----
+  /** Current stock of each intermediate good (units). */
+  intermediateGoodStocks: Record<string, number> = {};
+  /** 0–1 weighted average input availability across all active intermediate goods. */
+  supplyChainHealth = 1.0;
+  /** Active inter-settlement goods flows for price arbitrage. */
+  tradeFlows: Array<{
+    goodId: string;
+    fromSettlementId: number;
+    toSettlementId: number;
+    volume: number;
+    transitDays: number;
+    congestionTariff: number;
+  }> = [];
+  /** Currency regime for Phase 15 FX. Separate from monetary regime (peg/float/print). */
+  currencyRegime: 'gold_standard' | 'fiat' | 'currency_union' = 'fiat';
+  /** Partner rival id if in currency union. */
+  currencyUnionPartnerId?: number;
+  /** Temporary export multiplier from devaluation (starts at 1.0 + amount*1.5, decays 10%/month). */
+  fxBoost = 1.0;
   seaRiseAnnounced = false;
   private lastTidalLogDay = -999;
   private lastExtremeWeatherDay = -999;
@@ -3080,8 +3120,13 @@ export class RegionSim {
         if (def?.research) mult *= 1 + def.research;
       }
     }
+    // Phase 15: electronics supply chain disruption −10% research rate
+    if (this._electronicsDisrupted) mult *= 0.9;
     return base * mult;
   }
+
+  /** Set by tickIntermediateGoods() each month; true when electronics inputs are missing. */
+  private _electronicsDisrupted = false;
 
   /** Development factor for money costs (Baumol's cost disease): public works
    *  track the economy's wage/output level, which climbs as labor moves up the
@@ -4815,6 +4860,11 @@ export class RegionSim {
     // Push education coverage to lag buffer once a year (month 0 = January)
     if (this.month === 0) this.tickEducationLag();
 
+    // Phase 15: Intermediate goods, arbitrage, and FX tick
+    this.tickIntermediateGoods();
+    this.tickPriceArbitrage();
+    this.tickFX();
+
     // Record monthly history for sparklines (last 12 months)
     const gdp = this.settlements.reduce((s, t) => s + SECTOR_IDS.reduce((ss, id) => ss + t.sectors[id].output, 0), 0);
     this.monthlyHistory.push({ gdp, treasury: this.treasury, inflation: this.inflationRate * 100, employment: 100 });
@@ -5251,6 +5301,23 @@ export class RegionSim {
     if (this.depressionDepth > 0.01) {
       this.exportEarningsLastMonth *= Math.max(0.3, 1 - this.depressionDepth * 0.55);
     }
+    // Phase 15: Monetary regime effects on economy
+    // Gold standard: slight deflation pressure
+    if (this.currencyRegime === 'gold_standard') {
+      this.inflationRate = Math.max(-0.05, this.inflationRate - 0.002);
+    }
+    // Fiat at very low rates: inflation creep
+    if (this.currencyRegime === 'fiat' && this.policyRate < 0.02) {
+      this.inflationRate = Math.min(0.50, this.inflationRate + 0.003);
+    }
+    // Currency union: export earnings ×1.15
+    if (this.currencyRegime === 'currency_union') {
+      this.exportEarningsLastMonth *= 1.15;
+    }
+    // fxBoost from devalue(): export earnings ×fxBoost
+    if (this.fxBoost > 1.0) {
+      this.exportEarningsLastMonth *= this.fxBoost;
+    }
     const treasuryBefore = this.treasury;
     this.treasury += revenue - spending + incomeTaxBonus + centralBankingBonus + estateLevyBonus +
       progressiveTaxBonus + protectionismBonus + austerityBonus + bankInterest + carbonLevyBonus + this.exportEarningsLastMonth;
@@ -5455,6 +5522,320 @@ export class RegionSim {
         pf.centralBank.interestRate = this.policyRate;
         pf.centralBank.inflationRate = this.inflationRate;
       }
+    }
+  }
+
+  // ---- Phase 15: Intermediate Goods, Supply Chains, Arbitrage & FX (GDD §5.2) ----
+
+  /** Process all intermediate goods that are unlocked in the current year.
+   *  Goods with all inputs stocked produce their baseOutput; others produce 0.
+   *  Updates supplyChainHealth and fires secondary effects (disease risk, research penalty). */
+  tickIntermediateGoods(): void {
+    const currentYear = this.year;
+    const availableGoods = INTERMEDIATE_GOODS.filter(g => currentYear >= g.eraUnlock);
+    if (availableGoods.length === 0) {
+      this.supplyChainHealth = 1.0;
+      this._electronicsDisrupted = false;
+      return;
+    }
+
+    // Available coal/iron/copper proxied by industry sector output being > 0
+    // Use stocks first, then proxy from industry if stock is zero
+    const getStockOrProxy = (inputId: string): number => {
+      if (this.intermediateGoodStocks[inputId] !== undefined) {
+        return this.intermediateGoodStocks[inputId];
+      }
+      // Proxy: industry-based raw materials assumed if industry output exists
+      if (inputId === 'coal' || inputId === 'iron' || inputId === 'copper') {
+        const industryOutput = this.settlements.reduce((s, t) => s + t.sectors.industry.output, 0);
+        return industryOutput > 0 ? 1 : 0; // 1 = available, 0 = not
+      }
+      return 0;
+    };
+
+    let fullySupplied = 0;
+    let totalActive = 0;
+    let pharmaceuticalsDisrupted = false;
+    this._electronicsDisrupted = false;
+
+    for (const good of availableGoods) {
+      totalActive++;
+      // Check all inputs
+      const allInputsAvailable = good.inputs.every(inputId => getStockOrProxy(inputId) > 0);
+
+      if (allInputsAvailable) {
+        // Produce output
+        this.intermediateGoodStocks[good.id] = (this.intermediateGoodStocks[good.id] ?? 0) + good.baseOutput;
+        // Consume 1 unit of each input
+        for (const inputId of good.inputs) {
+          if (this.intermediateGoodStocks[inputId] !== undefined) {
+            this.intermediateGoodStocks[inputId] = Math.max(0, this.intermediateGoodStocks[inputId] - 1);
+          }
+        }
+        fullySupplied++;
+      } else {
+        // Supply chain disruption
+        if (good.id === 'pharmaceuticals') pharmaceuticalsDisrupted = true;
+        if (good.id === 'electronics') this._electronicsDisrupted = true;
+        // Ensure the stock doesn't go negative
+        if (this.intermediateGoodStocks[good.id] === undefined) {
+          this.intermediateGoodStocks[good.id] = 0;
+        }
+      }
+    }
+
+    this.supplyChainHealth = totalActive > 0 ? fullySupplied / totalActive : 1.0;
+
+    // Secondary effects
+    if (pharmaceuticalsDisrupted && this.settlements.length > 0) {
+      // Health risk: increased disease probability (push a plague event to a random settlement)
+      if (this.rng.chance(0.15)) {
+        const target = this.settlements[this.rng.int(this.settlements.length)];
+        if (target && !target.activeEvents.some(e => e.kind === 'plague')) {
+          target.activeEvents.push({ kind: 'plague', untilDay: this.day + 30, severity: 0.5 });
+          this.addLog(`Pharmaceutical supply chain disruption — disease risk rising in ${target.name}.`, 'bad');
+        }
+      }
+    }
+
+    if (this._electronicsDisrupted && this.rng.chance(0.3)) {
+      this.addLog('Electronics supply chain disrupted — research slows.', 'bad');
+    }
+  }
+
+  /** Returns the current supply chain health (0–1). */
+  getSupplyChainHealth(): number {
+    return this.supplyChainHealth;
+  }
+
+  /** Compute a congestion tariff for a goods route between two settlements.
+   *  tariff = routeDistance × (1 + (1 − routeCondition/100) × 0.5), clamped 0.05–0.3. */
+  computeCongestionTariff(fromId: number, toId: number): number {
+    const route = this.routes.find(
+      (rt) => (rt.a === fromId && rt.b === toId) || (rt.a === toId && rt.b === fromId)
+    );
+    if (!route) return 0.3; // no route = maximum friction
+
+    const routeDistance = route.path.length;
+    const routeCondition = route.condition;
+    const tariff = (routeDistance / 100) * (1 + (1 - routeCondition / 100) * 0.5);
+    return Math.max(0.05, Math.min(0.3, tariff));
+  }
+
+  /** Tick price arbitrage between player settlements.
+   *  Where price differentials exceed congestion costs, spawn trade flows and collect tariff income. */
+  tickPriceArbitrage(): void {
+    // Decay old flows by half each month
+    for (const flow of this.tradeFlows) {
+      flow.volume *= 0.5;
+    }
+    this.tradeFlows = this.tradeFlows.filter(f => f.volume >= 0.5);
+
+    const playerSettlements = this.settlements.filter(s => s.factionId === this.playerFactionId);
+    if (playerSettlements.length < 2) return;
+
+    let arbitrageIncome = 0;
+    const goodIds = INTERMEDIATE_GOODS
+      .filter(g => this.year >= g.eraUnlock)
+      .map(g => g.id);
+
+    for (let i = 0; i < playerSettlements.length; i++) {
+      for (let j = i + 1; j < playerSettlements.length; j++) {
+        const from = playerSettlements[i];
+        const to = playerSettlements[j];
+        const tariff = this.computeCongestionTariff(from.id, to.id);
+        if (tariff >= 0.3) continue; // no route
+
+        // Proxy price differential from wage gap
+        const fromWage = this.avgWageOf(from);
+        const toWage = this.avgWageOf(to);
+        const priceDiff = Math.abs(fromWage - toWage);
+        const threshold = tariff * 10;
+
+        if (priceDiff > threshold) {
+          // Spawn trade flow
+          const volume = Math.min(10, priceDiff * 2);
+          const highWageSide = fromWage > toWage ? to : from;
+          const lowWageSide = fromWage > toWage ? from : to;
+
+          // Check if this flow already exists
+          const existing = this.tradeFlows.find(
+            f => f.fromSettlementId === lowWageSide.id && f.toSettlementId === highWageSide.id && goodIds.includes(f.goodId)
+          );
+
+          const goodId = goodIds.length > 0 ? goodIds[0] : 'components';
+          if (!existing) {
+            this.tradeFlows.push({
+              goodId,
+              fromSettlementId: lowWageSide.id,
+              toSettlementId: highWageSide.id,
+              volume,
+              transitDays: Math.round(tariff * 100),
+              congestionTariff: tariff,
+            });
+          }
+
+          // Income from tariff on flow volume
+          const income = volume * tariff * 5;
+          arbitrageIncome += income;
+
+          if (income >= 1 && this.rng.chance(0.1)) {
+            this.addLog(
+              `Arbitrage: goods flowing ${lowWageSide.name}→${highWageSide.name} (differential ${priceDiff.toFixed(1)}). Tariff income: ${formatCurrency(Math.round(income))}.`,
+              'good'
+            );
+          }
+        }
+      }
+    }
+
+    if (arbitrageIncome > 0) {
+      this.treasury += arbitrageIncome;
+    }
+  }
+
+  /** Compute the exchange rate from trade balance, interest rate, and confidence.
+   *  rate = 1.0 + (tradeBalance / (gdp×100)) + (interestRate − 0.05)×2
+   *  Applies fxBoost if active. Clamped to 0.5–2.0. */
+  computeExchangeRate(): number {
+    const gdp = Math.max(1, this.gdpLastMonth);
+    const exports = this.exportEarningsLastMonth;
+    const imports = this.totalPop() * 0.025; // proxy imports as per-pop spending
+    const tradeBalance = exports - imports;
+    const interestEffect = (this.policyRate - 0.05) * 2;
+    const confidenceFactor = (this.confidence - 50) * 0.002;
+
+    let rate = 1.0 + (tradeBalance / (gdp * 100)) + interestEffect + confidenceFactor;
+
+    // Apply fxBoost (from devalue())
+    if (this.fxBoost > 1.0) {
+      // fxBoost is an export multiplier; its inverse weakens the rate slightly
+      // but the export surge supports it. Net: fxBoost above 1 slightly raises rate
+      rate *= 0.98 + this.fxBoost * 0.02;
+    }
+
+    return Math.max(0.5, Math.min(2.0, rate));
+  }
+
+  /** Devalue the currency by amount (0.1–0.3).
+   *  Sets fxBoost for export surge, spikes inflation, creates diplomatic friction. */
+  devalue(amount: number): void {
+    const clampedAmount = Math.max(0.1, Math.min(0.3, amount));
+
+    // Reduce exchange rate
+    this.exchangeRate = Math.max(0.5, this.exchangeRate - clampedAmount);
+
+    // Export multiplier from competitive pricing
+    this.fxBoost = 1.0 + clampedAmount * 1.5;
+
+    // Inflation spike
+    this.inflationRate = Math.min(0.50, this.inflationRate + clampedAmount * 30);
+
+    // Diplomatic friction: rivals resent the competitive devaluation
+    for (const rv of this.rivals) {
+      rv.relations = Math.max(-100, rv.relations - 5);
+    }
+
+    this.addLog(
+      `CURRENCY DEVALUATION: Exchange rate cut by ${Math.round(clampedAmount * 100)}%. ` +
+      `Exports surge as foreign buyers rush to capitalize on cheap prices — but inflation bites at home.`,
+      'bad'
+    );
+  }
+
+  /** Switch the currency regime.
+   *  gold_standard: fixed rate 1.0, constrained policy rate, deflation risk.
+   *  fiat: full monetary flexibility, inflation risk.
+   *  currency_union: rate locked to partner, trade bonus +15%. */
+  switchCurrencyRegime(regime: 'gold_standard' | 'fiat' | 'currency_union', partnerId?: number): void {
+    const prev = this.currencyRegime;
+    this.currencyRegime = regime;
+
+    if (regime === 'gold_standard') {
+      // Fix exchange rate at par
+      this.exchangeRate = 1.0;
+      // Constrain policy rate to 3–8%
+      this.policyRate = Math.max(0.03, Math.min(0.08, this.policyRate));
+      this.addLog(
+        'Gold Standard adopted: exchange rate fixed at par. Policy rate constrained to 3–8%. ' +
+        'Deflation risk if confidence wavers.',
+        'info'
+      );
+    } else if (regime === 'fiat') {
+      this.currencyUnionPartnerId = undefined;
+      this.addLog(
+        'Fiat currency regime: full monetary independence. Exchange rate floats with trade and confidence.',
+        'info'
+      );
+    } else if (regime === 'currency_union') {
+      if (partnerId !== undefined) {
+        this.currencyUnionPartnerId = partnerId;
+        // Lock exchange rate to partner's rate (approximate at 1.0 for now)
+        this.exchangeRate = this.exchangeRates[`0:${partnerId}`] ?? 1.0;
+        this.addLog(
+          `Currency Union joined with rival ${partnerId}. Exchange rate locked. Trade flows +15%.`,
+          'good'
+        );
+      }
+    }
+
+    if (prev !== regime) {
+      // Confidence shift on regime change
+      this.confidence = Math.max(5, Math.min(100, this.confidence + (regime === 'currency_union' ? 3 : -2)));
+    }
+  }
+
+  /** Monthly FX tick: recompute exchange rate, decay fxBoost, handle regime crises. */
+  tickFX(): void {
+    // Recompute exchange rate based on current conditions
+    const newRate = this.computeExchangeRate();
+
+    if (this.currencyRegime === 'gold_standard') {
+      // Gold standard: rate fixed at 1.0
+      this.exchangeRate = 1.0;
+      // Policy rate constrained to 3–8%
+      this.policyRate = Math.max(0.03, Math.min(0.08, this.policyRate));
+      // Deflation pressure
+      this.inflationRate = Math.max(-0.05, this.inflationRate - 0.002);
+      // Crisis: if confidence drops below 40, gold standard collapses
+      if (this.confidence < 40) {
+        this.currencyRegime = 'fiat';
+        this.exchangeRate = Math.max(0.5, this.exchangeRate - 0.2);
+        this.addLog(
+          'GOLD STANDARD CRISIS: Market confidence collapses. The gold peg is abandoned. ' +
+          'Exchange rate falls sharply.',
+          'bad'
+        );
+      }
+    } else if (this.currencyRegime === 'fiat') {
+      this.exchangeRate = newRate;
+      // Fiat at very low rates: inflation creep
+      if (this.policyRate < 0.02) {
+        this.inflationRate = Math.min(0.50, this.inflationRate + 0.003);
+      }
+    } else if (this.currencyRegime === 'currency_union') {
+      // Auto-exit if partner is at war with us
+      const partnerAtWar = this.currencyUnionPartnerId !== undefined &&
+        (this.playerWar?.rivalId === this.currencyUnionPartnerId ||
+         this.foreignWars.some(w =>
+           (w.a === this.currencyUnionPartnerId || w.b === this.currencyUnionPartnerId)
+         ));
+      if (partnerAtWar) {
+        this.currencyRegime = 'fiat';
+        this.currencyUnionPartnerId = undefined;
+        this.addLog('Currency union dissolved — partner nation at war. Currency floats independently.', 'bad');
+      } else {
+        // Lock rate to partner
+        const partnerRate = this.currencyUnionPartnerId !== undefined
+          ? (this.exchangeRates[`0:${this.currencyUnionPartnerId}`] ?? 1.0)
+          : 1.0;
+        this.exchangeRate = partnerRate;
+      }
+    }
+
+    // Decay fxBoost toward 1.0 by 10%/month
+    if (this.fxBoost > 1.0) {
+      this.fxBoost = Math.max(1.0, 1.0 + (this.fxBoost - 1.0) * 0.9);
     }
   }
 
@@ -10757,6 +11138,13 @@ export class RegionSim {
       scenarioGoalsCompleted: this.scenarioGoalsCompleted ?? [],
       govLockExpiry: this.govLockExpiry ?? null,
       difficultySettings: this.difficultySettings ?? { ...DEFAULT_DIFFICULTY_SETTINGS },
+      // Phase 15: Extended Economy & FX
+      intermediateGoodStocks: this.intermediateGoodStocks,
+      supplyChainHealth: this.supplyChainHealth,
+      tradeFlows: this.tradeFlows,
+      currencyRegime: this.currencyRegime,
+      currencyUnionPartnerId: this.currencyUnionPartnerId,
+      fxBoost: this.fxBoost,
     });
   }
 
@@ -11014,6 +11402,13 @@ export class RegionSim {
       ...DEFAULT_DIFFICULTY_SETTINGS,
       ...(d.difficultySettings ?? {}),
     };
+    // Phase 15: Extended Economy & FX (pre-Phase15 saves default to safe values)
+    r.intermediateGoodStocks = d.intermediateGoodStocks ?? {};
+    r.supplyChainHealth = d.supplyChainHealth ?? 1.0;
+    r.tradeFlows = d.tradeFlows ?? [];
+    r.currencyRegime = d.currencyRegime ?? 'fiat';
+    r.currencyUnionPartnerId = d.currencyUnionPartnerId ?? undefined;
+    r.fxBoost = d.fxBoost ?? 1.0;
     // Recompute cached perf fields after full restore.
     r.activeRailRoutes = r.routes.filter((rt) => rt.kind === 'rail' && rt.condition > 50).length;
     let tf = 0, tw = 0, mg = 0;
