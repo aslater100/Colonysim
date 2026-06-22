@@ -2248,6 +2248,32 @@ export class RegionSim {
   private nextEventDay: number;
   private townNamePool: string[];
 
+  // ---- Phase 13: Population & Society Depth (GDD §5.5) ----
+  /** Demographic phase — computed monthly from era/education/urbanization. */
+  demographicPhase: 'pre_transition' | 'early_transition' | 'late_transition' | 'post_transition' = 'pre_transition';
+  /** True once the aging-crisis pension burden first activates (2050+, post_transition). */
+  agingCrisisActive = false;
+  /** True once a refugee wave is in flight. */
+  refugeeWaveActive = false;
+  /** Settlement id that generated the refugee wave origin. */
+  refugeeWaveOrigin = '';
+  /** Ring buffer of 25 years of school coverage (0–1); newest at index 0. */
+  educationLag: number[] = new Array(25).fill(0);
+  /** Unrest level on the 6-rung ladder (0=calm … 5=revolution). */
+  unrestLevel: 0 | 1 | 2 | 3 | 4 | 5 = 0;
+  /** Months the nation has been at the current unrest level. */
+  unrestMonthsAtLevel = 0;
+  /** Generational ideology drift accumulator (0–1). */
+  generationalDrift = 0;
+  /** True once the 1968-analog youthquake event has fired. */
+  youthquake1968Fired = false;
+  /** True once the 2030s digital-generation youthquake event has fired. */
+  youthquake2030Fired = false;
+  /** Automation unemployment fraction (0–1); rises post-2010 with information-sector dominance. */
+  automationUnemployment = 0;
+  /** Press freedom 0–100; defaults to 60 if Phase 12 (media system) not present. */
+  pressFreedom = 60;
+
   constructor(rng: Rng, minute: number, map: RegionMap, weather: Weather) {
     this.rng = rng;
     // Derive the AI stream deterministically from the main seed so it stays
@@ -4027,6 +4053,14 @@ export class RegionSim {
       }
     }
 
+    // Phase 13: Population & Society Depth
+    this.tickDemographicTransition();
+    this.tickAppealMigration();
+    this.tickUnrestLadder();
+    this.tickOpinionDynamics();
+    // Push education coverage to lag buffer once a year (month 0 = January)
+    if (this.month === 0) this.tickEducationLag();
+
     // Record monthly history for sparklines (last 12 months)
     const gdp = this.settlements.reduce((s, t) => s + SECTOR_IDS.reduce((ss, id) => ss + t.sectors[id].output, 0), 0);
     this.monthlyHistory.push({ gdp, treasury: this.treasury, inflation: this.inflationRate * 100, employment: 100 });
@@ -4965,6 +4999,457 @@ export class RegionSim {
   avgWageOf(t: Settlement): number {
     if (this.wageCache?.has(t.id)) return this.wageCache.get(t.id)!;
     return SECTOR_IDS.reduce((sum, id) => sum + t.sectors[id].share * t.sectors[id].wage, 0);
+  }
+
+  // ---- Phase 13: Demographic Transition (GDD §5.5) ----
+
+  /** How educated is the nation — proxy via tech tree + services (0–100). */
+  private educationLevel(): number {
+    let score = 0;
+    if (this.has('public_education')) score += 25;
+    if (this.has('compulsory_schooling')) score += 20;
+    if (this.has('secondary_education')) score += 15;
+    if (this.passedLaws.has('national_education_act')) score += 20;
+    score += this.servicesLevel * 5;
+    return Math.min(100, score);
+  }
+
+  /** Fraction of player settlements that have a school or university building (0–1). */
+  currentSchoolCoverage(): number {
+    const playerSettlements = this.settlements.filter((t) => t.factionId === this.playerFactionId);
+    if (playerSettlements.length === 0) return 0;
+    const withSchool = playerSettlements.filter((t) =>
+      t.buildings.includes('university') || this.has('public_education')
+    ).length;
+    return withSchool / playerSettlements.length;
+  }
+
+  /** Fraction of player settlements that are "urban" (pop > 200 or services-sector dominant). */
+  private urbanizationFraction(): number {
+    const playerSettlements = this.settlements.filter((t) => t.factionId === this.playerFactionId);
+    if (playerSettlements.length === 0) return 0;
+    const urban = playerSettlements.filter((t) =>
+      this.popOf(t) > 200 || t.sectors.services.share > 0.35 || t.sectors.industry.share > 0.4
+    ).length;
+    return urban / playerSettlements.length;
+  }
+
+  /** Compute demographic transition phase from era, education, and urbanization. */
+  private computeDemographicPhase(): 'pre_transition' | 'early_transition' | 'late_transition' | 'post_transition' {
+    const edu = this.educationLevel();
+    const urban = this.urbanizationFraction();
+    const yr = this.year;
+    if (yr >= 2050 && edu >= 60 && urban >= 0.6) return 'post_transition';
+    if (yr >= 1970 && edu >= 40 && urban >= 0.4) return 'late_transition';
+    if (yr >= 1940 && (edu >= 20 || urban >= 0.2)) return 'early_transition';
+    return 'pre_transition';
+  }
+
+  /**
+   * Player nation weighted-average birth rate per 1000 population per year.
+   * Base 35/1000 (1919), falls with education, urbanization, era, health.
+   */
+  globalBirthRate(): number {
+    let rate = 35;
+    const edu = this.educationLevel();
+    // Education reduces birth rate: −5 per 25 points
+    rate -= Math.floor(edu / 25) * 5;
+    // Urbanization reduces birth rate: fraction × −8
+    rate -= this.urbanizationFraction() * 8;
+    // Post-1960 secular decline: −0.3 per year
+    if (this.year > 1960) rate -= (this.year - 1960) * 0.3;
+    // Health spending (services level proxy): −2 per level above baseline
+    rate -= Math.max(0, this.servicesLevel - 1) * 2;
+    // Floor: minimum replacement-level
+    return Math.max(8, rate);
+  }
+
+  /**
+   * Player nation weighted-average death rate per 1000 population per year.
+   * Base 20/1000 (1919), falls with health spending and sanitation.
+   */
+  globalDeathRate(): number {
+    let rate = 20;
+    // Health buildings across player settlements
+    const playerSettlements = this.settlements.filter((t) => t.factionId === this.playerFactionId);
+    const totalHealthBuildings = playerSettlements.reduce((sum, t) =>
+      sum + t.buildings.filter((b) => b === 'hospital').length, 0
+    );
+    const healthPerTown = playerSettlements.length > 0 ? totalHealthBuildings / playerSettlements.length : 0;
+    rate -= healthPerTown * 2;
+    // Sanitation via infrastructure (services level proxy × −3)
+    rate -= this.servicesLevel * 3;
+    // Post-1940 medical advances: −0.3 per year
+    if (this.year > 1940) rate -= (this.year - 1940) * 0.3;
+    // Floor: modern mortality minimum
+    return Math.max(7, rate);
+  }
+
+  /**
+   * Appeal score of a settlement for a given socioeconomic cohort class (0–100 pts).
+   * Drives migration flows toward high-appeal settlements.
+   */
+  appealScore(settlementId: string, cohortClass: 'lower' | 'middle' | 'upper'): number {
+    const t = this.settlements.find((s) => String(s.id) === String(settlementId));
+    if (!t) return 0;
+    const playerSettlements = this.settlements.filter((s) => s.factionId === this.playerFactionId);
+    const maxWage = playerSettlements.reduce((m, s) => Math.max(m, this.avgWageOf(s)), 1);
+
+    // Wages component (0–30 pts)
+    const wageScore = (this.avgWageOf(t) / Math.max(1, maxWage)) * 30;
+
+    // Housing cost component (0–20 pts): inversely proportional to size (bigger = more expensive)
+    const pop = this.popOf(t);
+    const housingScore = Math.max(0, 20 - (pop / Math.max(1, t.housing)) * 20);
+
+    // Services component (0–20 pts): proportion of service buildings
+    const maxBuildings = Math.max(1, REGION_BUILDINGS.length);
+    const serviceScore = Math.min(20, (t.buildings.length / maxBuildings) * 20 * 3);
+
+    // Safety component (0–15 pts): inverse of grievance
+    const safetyScore = (1 - t.grievance / 100) * 15;
+
+    // Liberty fit (0–15 pts): press freedom
+    const libertyScore = (this.pressFreedom / 100) * 15;
+
+    // Class-specific adjustments
+    let classAdj = 0;
+    if (cohortClass === 'upper') {
+      // Upper class prefers low taxes and high services
+      classAdj = this.taxRate < 0.1 ? 5 : -5;
+    } else if (cohortClass === 'lower') {
+      // Lower class weighs safety and services more
+      classAdj = safetyScore > 10 ? 3 : -3;
+    }
+
+    return Math.max(0, Math.min(100, wageScore + housingScore + serviceScore + safetyScore + libertyScore + classAdj));
+  }
+
+  /** Projected skilled workforce fraction N years from now (from education pipeline lag). */
+  projectedSkilledWorkforce(yearsAhead: number): number {
+    const idx = Math.min(Math.max(0, Math.floor(yearsAhead)), 24);
+    return this.educationLag[idx] ?? 0;
+  }
+
+  /**
+   * Gini index (0–1) computed from wage distribution across cohort classes.
+   * Uses income shares of lower and upper 30% approximation.
+   */
+  giniIndex(): number {
+    const playerSettlements = this.settlements.filter((t) => t.factionId === this.playerFactionId);
+    if (playerSettlements.length === 0) return 0;
+    const totalPop = playerSettlements.reduce((s, t) => s + this.popOf(t), 0);
+    if (totalPop === 0) return 0;
+    // Average wage across player settlements
+    const avgWage = playerSettlements.reduce((s, t) => s + this.avgWageOf(t) * this.popOf(t), 0) / totalPop;
+    // Three cohort wage approximation
+    const lowerWage = 0.4 * avgWage;
+    const upperWage = 3.5 * avgWage;
+    // Approximate class fractions: lower 40%, middle 40%, upper 20%
+    const lowerPop = totalPop * 0.4;
+    const middlePop = totalPop * 0.4;
+    const upperPop = totalPop * 0.2;
+    const totalIncome = lowerPop * lowerWage + middlePop * avgWage + upperPop * upperWage;
+    if (totalIncome <= 0) return 0;
+    const lowerIncomeFrac = (lowerPop * lowerWage) / totalIncome;
+    const upperIncomeFrac = (upperPop * upperWage) / totalIncome;
+    return Math.max(0, Math.min(1, upperIncomeFrac - lowerIncomeFrac));
+  }
+
+  /** HTML for the unrest ladder status indicator (used in Politics tab). */
+  unrestLadderHtml(): string {
+    const labels = ['Calm', 'Petitions', 'Strikes', 'Protests', 'Riots', 'Revolution'];
+    const colors = ['#4CAF50', '#8BC34A', '#FFC107', '#FF9800', '#F44336', '#9C27B0'];
+    const lvl = this.unrestLevel;
+    const barItems = labels.map((lbl, i) => {
+      const active = i <= lvl;
+      return `<div class="unrest-rung${active ? ' unrest-active' : ''}" style="background:${active ? colors[i] : '#333'};flex:1;height:8px;margin:1px;border-radius:2px" title="${lbl}"></div>`;
+    }).join('');
+    return `<div style="margin-top:4px"><b>Unrest:</b> ${labels[lvl]} <small>(${this.unrestMonthsAtLevel} months)</small>` +
+      `<div style="display:flex;margin-top:4px">${barItems}</div></div>`;
+  }
+
+  // ---- Phase 13: Monthly tick methods ----
+
+  /** Tick the demographic transition: apply natural population growth to each player settlement. */
+  private tickDemographicTransition(): void {
+    this.demographicPhase = this.computeDemographicPhase();
+    const birthRate = this.globalBirthRate();
+    const deathRate = this.globalDeathRate();
+    const yr = this.year;
+    // Mid-century baby boom multiplier
+    const boomMult = (birthRate > 25 && deathRate < 15 && yr >= 1945 && yr <= 1975) ? 1.2 : 1.0;
+
+    for (const t of this.settlements) {
+      if (t.factionId !== this.playerFactionId) continue;
+      const pop = this.popOf(t);
+      if (pop <= 0) continue;
+      const naturalGrowth = pop * (birthRate - deathRate) / 1000 / 12 * boomMult;
+      if (naturalGrowth > 0) {
+        // Add to young working-age band
+        t.cohorts.bands[1] += naturalGrowth * 0.6;
+        t.cohorts.bands[0] += naturalGrowth * 0.4;
+      } else if (naturalGrowth < 0) {
+        this.removePop(t, -naturalGrowth);
+      }
+    }
+
+    // Aging crisis (2050+, post_transition): pension burden
+    if (this.demographicPhase === 'post_transition' && yr > 2050) {
+      if (!this.agingCrisisActive) {
+        this.agingCrisisActive = true;
+        this.addLog('Aging population placing strain on pension system.', 'bad');
+      }
+      const gdp = Math.max(0, this.gdpLastMonth);
+      const pensionBurden = 0.015 * gdp / 12;
+      this.treasury -= pensionBurden;
+    }
+  }
+
+  /** Tick appeal-score-driven migration between player settlements. */
+  private tickAppealMigration(): void {
+    const playerSettlements = this.settlements.filter((t) => t.factionId === this.playerFactionId);
+    if (playerSettlements.length < 2) return;
+
+    // Compute appeal scores for all player settlements (using 'middle' cohort as default)
+    const scores = new Map<number, number>();
+    for (const t of playerSettlements) {
+      scores.set(t.id, this.appealScore(String(t.id), 'middle'));
+    }
+
+    // For each pair, migrate if appeal difference > 15
+    for (let i = 0; i < playerSettlements.length; i++) {
+      for (let j = i + 1; j < playerSettlements.length; j++) {
+        const a = playerSettlements[i];
+        const b = playerSettlements[j];
+        const scoreA = scores.get(a.id) ?? 0;
+        const scoreB = scores.get(b.id) ?? 0;
+        const diff = scoreA - scoreB;
+        if (Math.abs(diff) <= 15) continue;
+        const [from, to, absDiff] = diff > 0 ? [b, a, diff] : [a, b, -diff];
+        const fromPop = this.popOf(from);
+        if (fromPop <= 5) continue;
+        // Max migration: 1% of sending settlement's pop per tick
+        const maxMove = fromPop * 0.01;
+        const movers = Math.min(maxMove, Math.floor((absDiff / 100) * 2));
+        if (movers < 0.01) continue;
+        this.removePop(from, movers);
+        to.cohorts.bands[1] += movers * 0.7;
+        to.cohorts.bands[2] += movers * 0.3;
+      }
+    }
+  }
+
+  /** Push current school coverage to the education lag ring buffer (once per year). */
+  private tickEducationLag(): void {
+    const coverage = this.currentSchoolCoverage();
+    this.educationLag.unshift(coverage);
+    if (this.educationLag.length > 25) this.educationLag.pop();
+  }
+
+  /** Tick the unrest ladder — escalate or de-escalate based on grievance. */
+  private tickUnrestLadder(): void {
+    const playerSettlements = this.settlements.filter((t) => t.factionId === this.playerFactionId);
+    if (playerSettlements.length === 0) return;
+    const avgGrievance = playerSettlements.reduce((s, t) => s + t.grievance, 0) / playerSettlements.length;
+    const prevLevel = this.unrestLevel;
+
+    // Determine target level from grievance thresholds
+    let targetLevel: 0 | 1 | 2 | 3 | 4 | 5 = 0;
+    if (avgGrievance > 90) targetLevel = 5;
+    else if (avgGrievance > 75) targetLevel = 4;
+    else if (avgGrievance > 60) targetLevel = 3;
+    else if (avgGrievance > 45) targetLevel = 2;
+    else if (avgGrievance > 30) targetLevel = 1;
+
+    // Also check time-based escalation
+    if (this.unrestLevel >= 1 && this.unrestMonthsAtLevel >= 3 && targetLevel < 2) targetLevel = Math.max(targetLevel, 2) as 0 | 1 | 2 | 3 | 4 | 5;
+    if (this.unrestLevel >= 2 && this.unrestMonthsAtLevel >= 2 && targetLevel < 3) targetLevel = Math.max(targetLevel, 3) as 0 | 1 | 2 | 3 | 4 | 5;
+    if (this.unrestLevel >= 3 && this.unrestMonthsAtLevel >= 3 && targetLevel < 4) targetLevel = Math.max(targetLevel, 4) as 0 | 1 | 2 | 3 | 4 | 5;
+    if (this.unrestLevel >= 4 && this.unrestMonthsAtLevel >= 2 && targetLevel < 5) targetLevel = Math.max(targetLevel, 5) as 0 | 1 | 2 | 3 | 4 | 5;
+
+    // Cap: can only move one rung per month (escalate)
+    if (targetLevel > this.unrestLevel) {
+      this.unrestLevel = (this.unrestLevel + 1) as 0 | 1 | 2 | 3 | 4 | 5;
+    } else if (targetLevel < this.unrestLevel) {
+      // De-escalate: require grievance 15+ below threshold, 3-month grace
+      const threshold = [0, 30, 45, 60, 75, 90][this.unrestLevel] ?? 0;
+      if (avgGrievance < threshold - 15) {
+        this.unrestLevel = (this.unrestLevel - 1) as 0 | 1 | 2 | 3 | 4 | 5;
+      }
+    }
+
+    // Track months at current level
+    if (this.unrestLevel !== prevLevel) {
+      this.unrestMonthsAtLevel = 0;
+    } else {
+      this.unrestMonthsAtLevel++;
+    }
+
+    // Apply rung effects
+    const worstSettlement = playerSettlements.reduce((a, b) => a.grievance > b.grievance ? a : b);
+    switch (this.unrestLevel) {
+      case 1:
+        // Petitions: flavor event only
+        if (this.unrestLevel !== prevLevel) {
+          this.addLog('Workers petition for better conditions.', 'info');
+        }
+        break;
+      case 2:
+        // Strikes: sector output −15% in highest-grievance settlement (via strikeUntil)
+        if (this.unrestLevel !== prevLevel) {
+          worstSettlement.strikeUntil = this.day + 30;
+          this.addLog(`Strike wave begins at ${worstSettlement.name}.`, 'bad');
+        }
+        break;
+      case 3:
+        // Protests: trigger decision for player
+        if (this.unrestLevel !== prevLevel) {
+          this.addLog(
+            `PROTESTS erupt in ${worstSettlement.name}. Choose: Crackdown (workers relations −10) or Concede (cost 2% GDP, unrest −1) via the Politics tab.`,
+            'bad',
+          );
+        }
+        break;
+      case 4:
+        // Riots: infrastructure damage, approval hit
+        if (this.unrestLevel !== prevLevel) {
+          // Damage a random building in the worst settlement
+          if (worstSettlement.buildings.length > 0) {
+            // Just log — we don't have per-building condition tracking yet, so we apply grievance hit
+            worstSettlement.grievance = Math.min(100, worstSettlement.grievance + 5);
+          }
+          if (this.nationProclaimed && this.legitimacy > 0) {
+            this.legitimacy = Math.max(0, this.legitimacy - 8);
+          }
+          this.addLog(`Riots erupt in ${worstSettlement.name}. Infrastructure damaged. Legitimacy −8.`, 'bad');
+          for (const t of playerSettlements) t.satisfaction = Math.max(0, t.satisfaction - 10);
+        }
+        break;
+      case 5: {
+        // Revolution threat: monthly chance of government collapse
+        const grevFrac = avgGrievance / 100;
+        const revolChance = 0.03 * grevFrac;
+        if (this.rng.chance(revolChance)) {
+          const capital = playerSettlements[0];
+          this.addLog(
+            `Revolutionary movement seizes ${capital?.name ?? 'the capital'}! The government is overthrown — a successor faction rises. Regime change event pending.`,
+            'bad',
+          );
+          // Legitimacy collapse
+          if (this.nationProclaimed) this.legitimacy = Math.max(0, this.legitimacy - 30);
+          // Drop unrest a bit after the release
+          this.unrestLevel = 2;
+          this.unrestMonthsAtLevel = 0;
+          for (const t of playerSettlements) {
+            t.grievance = Math.max(0, t.grievance - 30);
+            t.satisfaction = Math.max(0, t.satisfaction - 15);
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  /** Player action: crackdown on protests (rung 3). Workers relations −10. */
+  crackdownProtests(): void {
+    const workers = this.factions.find((f) => f.id === 'workers');
+    if (workers) workers.support = Math.max(0, workers.support - 10);
+    this.addLog('Crackdown ordered. Workers\' movement suppressed — for now.', 'info');
+    // Briefly pause escalation
+    this.unrestMonthsAtLevel = Math.max(0, this.unrestMonthsAtLevel - 1);
+  }
+
+  /** Player action: concede to protesters (rung 3). Cost 2% GDP, unrest −1 rung. */
+  concedeToProtesters(): boolean {
+    const gdp = Math.max(0, this.gdpLastMonth);
+    const cost = gdp * 0.02;
+    if (this.treasury < cost) return false;
+    this.treasury -= cost;
+    if (this.unrestLevel > 0) {
+      this.unrestLevel = (this.unrestLevel - 1) as 0 | 1 | 2 | 3 | 4 | 5;
+      this.unrestMonthsAtLevel = 0;
+    }
+    this.addLog(`Concessions granted. ${formatCurrency(Math.round(cost))} spent — unrest eases.`, 'good');
+    return true;
+  }
+
+  /** Tick opinion dynamics: material drift, generational replacement, youthquakes. */
+  tickOpinionDynamics(): void {
+    const playerSettlements = this.settlements.filter((t) => t.factionId === this.playerFactionId);
+    if (playerSettlements.length === 0) return;
+    const totalPop = playerSettlements.reduce((s, t) => s + this.popOf(t), 0);
+    if (totalPop === 0) return;
+
+    // Estimate unemployment from strike/satisfaction proxy
+    const avgSat = playerSettlements.reduce((s, t) => s + t.satisfaction * this.popOf(t), 0) / totalPop;
+    // Proxy unemployment: low satisfaction + depression depth maps to unemployment
+    const unemployment = Math.min(1, Math.max(0, (1 - avgSat / 100) * 0.3 + this.depressionDepth * 0.4));
+
+    // 1. Material experience drift: unemployment → lower class ideology drifts to extremes
+    const opinionVelocity = typeof (this as Record<string, unknown>).opinionVelocityFn === 'function'
+      ? 1.0 : 1.0; // default 1.0 if Phase 12 not present
+    if (unemployment > 0.15) {
+      const drift = 0.5 * (unemployment) * opinionVelocity;
+      // Apply as grievance pressure (proxy for ideology radicalization)
+      for (const t of playerSettlements) {
+        t.grievance = Math.min(100, t.grievance + drift * 0.3);
+      }
+    }
+
+    // 2. Generational replacement: 1/40th of pop turns over each year (1/480 per month)
+    const techResearchRate = this.researchRate();
+    const genDriftInc = (1 / 480); // 1/40 per year / 12 months
+    if (techResearchRate > 1.5) {
+      this.generationalDrift = Math.min(1, this.generationalDrift + genDriftInc * 0.10); // 10% more progressive
+    }
+
+    // 3. 1968-analog youthquake (1965–1975, fires once)
+    if (!this.youthquake1968Fired && this.year >= 1965 && this.year <= 1975) {
+      if (this.generationalDrift > 0.3) {
+        this.youthquake1968Fired = true;
+        if (this.nationProclaimed) this.legitimacy = Math.max(0, this.legitimacy - 5);
+        // Progressive faction surge
+        const workers = this.factions.find((f) => f.id === 'workers');
+        if (workers) workers.power = Math.min(100, workers.power + 8);
+        this.addLog(
+          'Youth movement reshapes national consciousness. A generation demands change — establishment legitimacy shaken.',
+          'bad',
+        );
+      }
+    }
+
+    // 4. 2030s digital-generation youthquake (2028–2038, fires once)
+    if (!this.youthquake2030Fired && this.year >= 2028 && this.year <= 2038) {
+      if (this.automationUnemployment > 0.2) {
+        this.youthquake2030Fired = true;
+        if (this.nationProclaimed) this.legitimacy = Math.max(0, this.legitimacy - 5);
+        const workers = this.factions.find((f) => f.id === 'workers');
+        if (workers) {
+          workers.power = Math.min(100, workers.power + 10);
+          workers.support = Math.min(100, workers.support + 15);
+        }
+        this.addLog(
+          'Digital generation demands restructuring. Automation-displaced workers demand a new social contract.',
+          'bad',
+        );
+      }
+    }
+
+    // Update automation unemployment: rises post-2010 with information dominance
+    if (this.year >= 2010) {
+      const infoShare = playerSettlements.reduce((s, t) => s + t.sectors.information.share * this.popOf(t), 0) / Math.max(1, totalPop);
+      this.automationUnemployment = Math.min(0.5, infoShare * 0.6);
+    }
+
+    // Apply Gini-driven unrest pressure
+    const gini = this.giniIndex();
+    if (gini > 0.4) {
+      const extraPressure = Math.floor((gini - 0.4) * 10) * 0.1;
+      for (const t of playerSettlements) {
+        t.grievance = Math.min(100, t.grievance + extraPressure);
+      }
+    }
   }
 
   // ---- Phase 2: civic works & development focus ----
@@ -8659,6 +9144,19 @@ export class RegionSim {
       sanctions: this.sanctions,
       provincialArmies: this.provincialArmies,
       nextArmyId: this.nextArmyId,
+      // Phase 13: Population & Society Depth
+      demographicPhase: this.demographicPhase,
+      agingCrisisActive: this.agingCrisisActive,
+      refugeeWaveActive: this.refugeeWaveActive,
+      refugeeWaveOrigin: this.refugeeWaveOrigin,
+      educationLag: this.educationLag,
+      unrestLevel: this.unrestLevel,
+      unrestMonthsAtLevel: this.unrestMonthsAtLevel,
+      generationalDrift: this.generationalDrift,
+      youthquake1968Fired: this.youthquake1968Fired,
+      youthquake2030Fired: this.youthquake2030Fired,
+      automationUnemployment: this.automationUnemployment,
+      pressFreedom: this.pressFreedom,
     });
   }
 
@@ -8860,6 +9358,19 @@ export class RegionSim {
     r.sanctions = d.sanctions ?? [];
     r.provincialArmies = d.provincialArmies ?? [];
     r.nextArmyId = d.nextArmyId ?? 1;
+    // Phase 13: Population & Society Depth (backfill defaults for older saves)
+    r.demographicPhase = d.demographicPhase ?? 'pre_transition';
+    r.agingCrisisActive = d.agingCrisisActive ?? false;
+    r.refugeeWaveActive = d.refugeeWaveActive ?? false;
+    r.refugeeWaveOrigin = d.refugeeWaveOrigin ?? '';
+    r.educationLag = d.educationLag ?? new Array(25).fill(0);
+    r.unrestLevel = d.unrestLevel ?? 0;
+    r.unrestMonthsAtLevel = d.unrestMonthsAtLevel ?? 0;
+    r.generationalDrift = d.generationalDrift ?? 0;
+    r.youthquake1968Fired = d.youthquake1968Fired ?? false;
+    r.youthquake2030Fired = d.youthquake2030Fired ?? false;
+    r.automationUnemployment = d.automationUnemployment ?? 0;
+    r.pressFreedom = d.pressFreedom ?? 60;
     // Recompute cached perf fields after full restore.
     r.activeRailRoutes = r.routes.filter((rt) => rt.kind === 'rail' && rt.condition > 50).length;
     let tf = 0, tw = 0, mg = 0;

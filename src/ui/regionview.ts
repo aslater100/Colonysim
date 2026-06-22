@@ -2779,6 +2779,15 @@ export class RegionView {
         this.lastStatePanelBuildFrame = -999;
       };
     }
+    // Phase 13: Protest response buttons
+    this.statePanel.querySelector<HTMLButtonElement>('.unrest-crackdown-btn')?.addEventListener('click', () => {
+      r.crackdownProtests();
+      this.lastStatePanelBuildFrame = -999;
+    });
+    this.statePanel.querySelector<HTMLButtonElement>('.unrest-concede-btn')?.addEventListener('click', () => {
+      r.concedeToProtesters();
+      this.lastStatePanelBuildFrame = -999;
+    });
   }
 
   /** Diplomacy section (GDD §5.4): the rival ledger, treaties, and verbs. */
@@ -3163,9 +3172,20 @@ export class RegionView {
       ? `<p class="insp-skills">enacted: ${Array.from(r.passedLaws).map((id) => REGION_LAWS.find((l) => l.id === id)?.name ?? id).join(', ')}</p>`
       : '';
 
+    // Phase 13: Unrest ladder indicator
+    const unrestHtml = r.unrestLadderHtml();
+
+    // Phase 13: Protest action buttons (only at rung 3)
+    const protestActions = r.unrestLevel === 3
+      ? `<div style="margin:4px 0"><button class="mini unrest-crackdown-btn">Crackdown</button> ` +
+        `<button class="mini unrest-concede-btn">Concede (2% GDP)</button></div>`
+      : '';
+
     return `<p class="insp-skills">POLITICS</p>` +
       `<p>political capital: <b>${r.politicalCapital} PC</b></p>` +
       electionLine +
+      unrestHtml +
+      protestActions +
       `<p class="insp-skills">FACTIONS (support bar)</p>` +
       factionBars +
       lawButtons +
@@ -4679,12 +4699,20 @@ export class RegionView {
         `<svg class="tt-edges" width="${width}" height="${height}">${edges}</svg>${boxes}</div>`;
     };
 
+    // Phase 13: Projected skilled workforce note (education pipeline lag)
+    const targetYear = 2045;
+    const yearsAhead = Math.max(0, targetYear - r.year);
+    const projSkilled = r.projectedSkilledWorkforce(yearsAhead);
+    const projSkilledNote = `<p class="insp-note" style="color:#8bc4e0;font-size:0.82em;margin:2px 0 6px 0">` +
+      `Projected skilled workforce in ${targetYear}: <b>${Math.round(projSkilled * 100)}%</b></p>`;
+
     this.setInnerHtml(
       this.researchPanel,
       `<div class="pal-title">RESEARCH</div>` +
       `<p class="insp-skills">${rate} RP/day${active ? ` → <b>${active.name}</b>` : ' (idle)'}` +
       (active ? ` <button class="mini res-cancel-btn">cancel</button>` : '') + `</p>` +
       (active ? `<div class="res-bar"><div class="res-bar-fill" style="width:${progressPct}%"></div></div>` : '') +
+      projSkilledNote +
       `<div class="pal-tabs">` +
       `<button class="pal-tab${rtab === 'tech' ? ' active' : ''}" data-ptab="tech">Technology</button>` +
       `<button class="pal-tab${rtab === 'civics' ? ' active' : ''}" data-ptab="civics">Civics</button>` +
