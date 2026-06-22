@@ -402,6 +402,72 @@
       "prereqs": ["universal_suffrage", "free_press"],
       "era": 1964,
       "desc": "Equal protection under law, won street by street. Satisfaction +3 and grievance builds 15% more slowly."
+    },
+    {
+      "id": "solar_wind_parity",
+      "name": "Solar & Wind Parity",
+      "tree": "tech",
+      "cost": 280,
+      "prereqs": ["renewables", "computing"],
+      "era": 2020,
+      "desc": "Photovoltaics and turbines now undercut coal on pure cost. Stranded fossil assets bleed value; national emissions intensity −15% further."
+    },
+    {
+      "id": "battery_storage",
+      "name": "Grid-Scale Battery Storage",
+      "tree": "tech",
+      "cost": 300,
+      "prereqs": ["solar_wind_parity"],
+      "era": 2025,
+      "desc": "Lithium-iron banks smooth the intermittency problem. The duck curve flattens; the grid runs on renewables around the clock."
+    },
+    {
+      "id": "ev_adoption",
+      "name": "Electric Vehicle Adoption",
+      "tree": "tech",
+      "cost": 260,
+      "prereqs": ["battery_storage", "automated_logistics"],
+      "era": 2030,
+      "desc": "Transport electrifies — oil demand craters. National emissions ×0.85; fuel import costs fall to near zero."
+    },
+    {
+      "id": "ai_automation",
+      "name": "AI & Automation",
+      "tree": "tech",
+      "cost": 340,
+      "prereqs": ["computing", "automated_logistics"],
+      "era": 2028,
+      "desc": "Machine learning replaces routine cognition. Information sector output +40%; industry employment contracts as robots run the lines — displacing workers faster than retraining absorbs them."
+    },
+    {
+      "id": "carbon_tax",
+      "name": "Carbon Tax",
+      "tree": "civics",
+      "cost": 160,
+      "prereqs": ["environmentalism", "solar_wind_parity"],
+      "era": 2022,
+      "requiresState": true,
+      "desc": "A rising floor price on carbon emissions. National emissions ×0.8; treasury receives +1.5% of GDP monthly. Landowners and industry lobby hard against it."
+    },
+    {
+      "id": "cap_and_trade",
+      "name": "Cap-and-Trade",
+      "tree": "civics",
+      "cost": 200,
+      "prereqs": ["carbon_tax", "statecraft"],
+      "era": 2027,
+      "requiresState": true,
+      "desc": "A hard emissions ceiling descends annually. Permits trade at market rates; the efficient decarbonize and sell surplus to the laggard. National emissions ×0.65 by 2040."
+    },
+    {
+      "id": "green_industrial_policy",
+      "name": "Green Industrial Policy",
+      "tree": "civics",
+      "cost": 220,
+      "prereqs": ["cap_and_trade", "battery_storage"],
+      "era": 2032,
+      "requiresState": true,
+      "desc": "State-backed manufacturing of clean-energy hardware. Domestic industry output +20%; stranded-asset losses are absorbed by the treasury rather than borne by workers."
     }
   ]
 }

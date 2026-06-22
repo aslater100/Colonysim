@@ -529,6 +529,47 @@ export const REGION_LAWS: RegionLaw[] = [
     domain: 'economic',
     desc: 'Protective duties on imports. Trade levy raised to 8%. Merchants −10, Landowners +10.',
   },
+  // ---- Phase 11: Renewables, Automation & Carbon Pricing ----
+  {
+    id: 'carbon_pricing',
+    name: 'Carbon Pricing Scheme',
+    cost: 45,
+    prereqs: ['carbon_tax'],
+    requiresState: true,
+    requiresNation: true,
+    domain: 'economic',
+    desc: 'A rising carbon price regime covering the full economy. National emissions ×0.75; treasury +2% GDP monthly. Stranded-asset write-downs begin.',
+  },
+  {
+    id: 'cap_trade_law',
+    name: 'Cap-and-Trade Legislation',
+    cost: 55,
+    prereqs: ['cap_and_trade', 'carbon_pricing'],
+    requiresState: true,
+    requiresNation: true,
+    domain: 'economic',
+    desc: 'Hard ceiling on annual emissions, descending 5%/year. Permits trade at market rates. Fastest decarbonization path — but stranded-asset losses accelerate.',
+  },
+  {
+    id: 'green_industry_act',
+    name: 'Green Industry Act',
+    cost: 60,
+    prereqs: ['green_industrial_policy'],
+    requiresState: true,
+    requiresNation: true,
+    domain: 'economic',
+    desc: 'State-backed clean manufacturing. Industry output +20%; stranded-asset losses buffered by treasury. Unlocks the solarpunk branch at 2040.',
+  },
+  {
+    id: 'universal_basic_support',
+    name: 'Universal Basic Support',
+    cost: 50,
+    prereqs: ['ai_automation', 'welfare_benefits'],
+    requiresState: true,
+    requiresNation: true,
+    domain: 'social',
+    desc: 'A monthly stipend for automation-displaced workers. Satisfaction +4 everywhere; automationUnemployment drift halved. Treasury −£2/month per 100 citizens.',
+  },
 ];
 
 export const GOV_LEANS: Record<GovLean, { name: string; desc: string }> = {
@@ -2112,6 +2153,13 @@ export class RegionSim {
   geoDeployed = false;
   /** Day the aerosols were injected; used to phase the cooling. */
   geoDeployDay = -1;
+  // ---- Phase 11: Renewables, Automation & Carbon Pricing ----
+  /** Cumulative treasury loss from stranded fossil assets (written-off coal/oil infrastructure). */
+  strandedAssetLoss = 0;
+  /** The speculative 2040 branch chosen by Phase 11 logic: Solarpunk / Corporatocracy / Drowned. */
+  speculativeBranch: 'solarpunk' | 'corporatocracy' | 'drowned' | null = null;
+  /** True once Universal Basic Support is enacted (UBS softens automation unemployment). */
+  ubsActive = false;
   // ---- Monetary system (GDD §5.1): central bank, credit cycle, FX ----
   /** True once the nation runs a central bank — reached either by researching the
    *  Central Banking civic (the tech the player expects to "unlock the bank") or by
@@ -2986,6 +3034,11 @@ export class RegionSim {
     if (this.passedLaws.has('carbon_levy')) intensity *= 0.7;
     if (this.policyActive('green_subsidies')) intensity *= 0.85;
     if (this.eraBranch === 'solarpunk') intensity *= 0.8;
+    // Phase 11: additional clean-energy and carbon-pricing multipliers
+    if (this.has('solar_wind_parity')) intensity *= 0.85;
+    if (this.has('ev_adoption')) intensity *= 0.85;
+    if (this.passedLaws.includes('carbon_pricing')) intensity *= 0.75;
+    if (this.passedLaws.includes('cap_trade_law')) intensity *= 0.65;
     return (this.totalPop() / 1000) * intensity * 0.04;
   }
 
@@ -3220,6 +3273,8 @@ export class RegionSim {
       );
     }
     this.eraBranch = branch;
+    // Phase 11: refine the branch with renewables/automation context
+    this.determineSpeculativeBranch();
   }
 
   /** Adaptation, the honest kind (GDD §8.2): province-scale money, poured
@@ -3349,6 +3404,169 @@ export class RegionSim {
     this.addLog(`1 JANUARY 2100 — THE CENTURY REPORT. ${verdict}`, 'info');
     this.addLog('The century is over; the country is not. The sandbox runs on.', 'info');
     this.checkCenturyWins();
+  }
+
+  // ---- Phase 11: Renewables, Automation & Carbon Pricing ----
+
+  /** Check whether fossil-fuel infrastructure has become stranded as clean
+   *  energy undercuts coal and oil on cost. Called monthly once solar_wind_parity
+   *  is researched. Each stranded-asset event deducts a treasury write-down and
+   *  logs the transition. Returns the loss amount (0 if no stranding occurred). */
+  checkStrandedAssets(): number {
+    if (!this.has('solar_wind_parity')) return 0;
+    // Stranding risk scales with how far the energy transition has progressed
+    // and how many fossil-era investments the economy carries.
+    const fossilDepth =
+      (this.has('combustion_engine') ? 1 : 0) +
+      (this.has('mass_production') ? 1 : 0) +
+      (this.has('electrical_grid') ? 1 : 0);
+    if (fossilDepth === 0) return 0;
+
+    // Each clean tech node reduces the stranding risk (assets are already written off or avoided)
+    const cleanDepth =
+      (this.has('solar_wind_parity') ? 1 : 0) +
+      (this.has('battery_storage') ? 1 : 0) +
+      (this.has('ev_adoption') ? 1 : 0);
+
+    // Green Industry Act buffers losses — the state absorbs them via the treasury
+    const buffered = this.passedLaws.includes('green_industry_act');
+
+    // Base write-down: £ per stranded unit of fossil infrastructure
+    const baseWrite = this.gdpLastMonth * 0.015 * (fossilDepth / 3) * (1 - cleanDepth / 4);
+    if (baseWrite <= 0) return 0;
+
+    // Probabilistic: stranding events happen ~quarterly at peak
+    if (!this.rng.chance(0.25)) return 0;
+
+    const loss = buffered ? baseWrite * 0.4 : baseWrite;
+    this.treasury = Math.max(0, this.treasury - loss);
+    this.strandedAssetLoss += loss;
+    const msg = buffered
+      ? `GREEN TRANSITION: a tranche of fossil infrastructure is written down — state policy absorbs ${formatCurrency(loss)} of the stranded-asset loss.`
+      : `STRANDED ASSETS: coal and oil infrastructure loses ${formatCurrency(loss)} of book value as renewables undercut on cost. The write-down lands on the treasury.`;
+    this.addLog(msg, 'bad');
+    return loss;
+  }
+
+  /** Enact Universal Basic Support — a monthly stipend for workers displaced
+   *  by automation. Requires the universal_basic_support law to be passed.
+   *  Returns true if newly activated, false if already active or prerequisites unmet. */
+  enactUniversalBasicSupport(): boolean {
+    if (this.ubsActive) return false;
+    if (!this.passedLaws.includes('universal_basic_support')) return false;
+    this.ubsActive = true;
+    this.addLog(
+      'UNIVERSAL BASIC SUPPORT: the automation dividend is socialized — every displaced worker receives a monthly stipend. ' +
+      'Satisfaction rises; the automation treadmill slows.',
+      'good',
+    );
+    return true;
+  }
+
+  /** Determine the speculative 2040 branch from Phase 11 conditions.
+   *  This runs at BRANCH_YEAR alongside decideBranch() and refines the
+   *  eraBranch toward the three Phase 11 paths, but ONLY if Phase 11 tech
+   *  (solar_wind_parity or ai_automation) is present — without those technologies,
+   *  the original decideBranch() verdict stands and this is a no-op.
+   *
+   *   - 'solarpunk': green tech + civic equity + low warming + democracy
+   *   - 'corporatocracy': automation-heavy without civic equity (maps to 'dystopia')
+   *   - 'drowned': unchecked warming (maps to existing 'drowned')
+   *
+   *  Sets speculativeBranch and may narrow eraBranch accordingly. */
+  determineSpeculativeBranch(): void {
+    if (this.speculativeBranch !== null) return; // verdict already read
+
+    // Phase 11 only activates when the new tech era has arrived
+    const phase11Active = this.has('solar_wind_parity') || this.has('ai_automation');
+    if (!phase11Active) {
+      // Mirror the eraBranch verdict as the speculative path without changing anything
+      this.speculativeBranch = this.eraBranch as 'solarpunk' | 'corporatocracy' | 'drowned' | null === 'drowned'
+        ? 'drowned'
+        : this.eraBranch === 'solarpunk'
+          ? 'solarpunk'
+          : 'corporatocracy';
+      return;
+    }
+
+    const proj = this.projectedWarming();
+    const hasGreen = this.has('solar_wind_parity') && this.has('battery_storage');
+    const hasCivicEquity = this.passedLaws.includes('universal_basic_support') ||
+      this.passedLaws.includes('green_industry_act');
+    const highAutomation = this.automationUnemployment > 0.12;
+    const demGov = (() => {
+      const g = GOV_TYPES.find((x) => x.id === this.govType);
+      return g ? g.electionsRequired : this.has('universal_suffrage');
+    })();
+
+    let branch: 'solarpunk' | 'corporatocracy' | 'drowned';
+    if (proj >= 2.3) {
+      branch = 'drowned';
+    } else if (hasGreen && hasCivicEquity && demGov && this.warmingC < 2.0) {
+      branch = 'solarpunk';
+    } else {
+      branch = 'corporatocracy'; // automation without equity = neon future
+    }
+
+    this.speculativeBranch = branch;
+
+    // Map to existing eraBranch taxonomy
+    if (branch === 'solarpunk') this.eraBranch = 'solarpunk';
+    else if (branch === 'drowned') this.eraBranch = 'drowned';
+    else this.eraBranch = 'dystopia'; // corporatocracy is the dystopia path
+
+    // Epilogue beats — flavored for Phase 11 realities
+    const epilogue: Record<'solarpunk' | 'corporatocracy' | 'drowned', string> = {
+      solarpunk:
+        `SOLARPUNK 2040: the grid runs clean, the panels tile every south-facing roof, and the battery banks ` +
+        `hum through the night. Automation's gains were shared — the UBS stipend freed people to work less and ` +
+        `live more. The stranded-asset write-downs are history now, absorbed by policy and forgotten in the ` +
+        `green of new industry.`,
+      corporatocracy:
+        `CORPORATOCRACY 2040: the economy roars on automation rails — output climbs, but the wages follow ` +
+        `a flatter curve. The city towers belong to the information sector; the displaced sit outside them ` +
+        `with gig contracts and grievances. The sky is not yet on fire, but the political temperature is rising ` +
+        `faster than the thermometer.`,
+      drowned:
+        `DROWNED CENTURY 2040: the projection became a tide table. Fossil infrastructure was never stranded ` +
+        `because the transition never came — now the infrastructure itself goes underwater. Coastal streets ` +
+        `are pumped, not paved; the insurance maps have blank patches where the models refuse to quote.`,
+    };
+
+    this.addLog(epilogue[branch], branch === 'solarpunk' ? 'good' : 'bad');
+
+    // Extra satisfaction/grievance consequence
+    if (branch === 'corporatocracy' && highAutomation) {
+      for (const t of this.settlements) {
+        t.grievance = Math.min(100, t.grievance + 10);
+      }
+    }
+    if (branch === 'solarpunk') {
+      for (const t of this.settlements) {
+        t.satisfaction = Math.min(100, t.satisfaction + 5);
+      }
+    }
+  }
+
+  /** Monthly drift of automation unemployment. Called from monthlyUpdate when
+   *  ai_automation is researched. UBS halves the drift rate. */
+  private tickAutomation(): void {
+    if (!this.has('ai_automation')) return;
+    // Automation steadily displaces workers; UBS softens the drift
+    const rate = this.ubsActive ? 0.001 : 0.002;
+    this.automationUnemployment = Math.min(0.3, this.automationUnemployment + rate);
+
+    // High automation reduces services sector wages and satisfaction
+    if (this.automationUnemployment > 0.05) {
+      const displaceEffect = (this.automationUnemployment - 0.05) * 40;
+      for (const t of this.settlements) {
+        t.satisfaction = Math.max(0, t.satisfaction - displaceEffect * 0.01);
+        t.grievance = Math.min(100, t.grievance + displaceEffect * 0.005);
+      }
+    }
+
+    // Information sector booms (offsetting for those who can access it)
+    // This is a GDP effect, reflected through sector output in updateSectors
   }
 
   /** Built links are State works, paid from the treasury; links only upgrade. */
@@ -4009,6 +4227,8 @@ export class RegionSim {
     this.updateRivalAI(); // staggered AI updates for rivals (GDD §6.2)
     this.updateScouts(); // update faction scouts: movement, spawning, expiry (GDD §6.2)
     this.tickClimate(); // the ledger runs from the first decade (GDD §8.2)
+    this.tickAutomation(); // Phase 11: automation unemployment drift
+    this.checkStrandedAssets(); // Phase 11: fossil write-downs as clean energy arrives
     if (this.hasCentralBank()) this.tickMonetary();
     this.tickHistoricalAnchors(); // scripted world-events that rhyme with history (GDD §1)
     this.updateLoans(); // process loan interest and check for defaults
@@ -6906,6 +7126,18 @@ export class RegionSim {
         }
         break;
       }
+      // Phase 11: carbon pricing laws immediately tighten faction factions
+      case 'carbon_pricing':
+        // Workers faction wary of energy cost increases; Landowners/industry lobby against
+        for (const f of this.factions) {
+          if (f.id === 'workers') f.support = Math.max(0, f.support - 5);
+          if (f.id === 'merchants') f.support = Math.max(0, f.support - 10);
+          if (f.id === 'landowners') f.support = Math.max(0, f.support - 15);
+        }
+        break;
+      case 'universal_basic_support':
+        this.enactUniversalBasicSupport();
+        break;
     }
 
     this.addLog(`LAW ENACTED: "${law.name}". ${law.desc.split('.')[0]}.`, 'good');
@@ -9144,6 +9376,10 @@ export class RegionSim {
       sanctions: this.sanctions,
       provincialArmies: this.provincialArmies,
       nextArmyId: this.nextArmyId,
+      // Phase 11: Renewables, Automation & Carbon Pricing
+      strandedAssetLoss: this.strandedAssetLoss,
+      speculativeBranch: this.speculativeBranch,
+      ubsActive: this.ubsActive,
       // Phase 13: Population & Society Depth
       demographicPhase: this.demographicPhase,
       agingCrisisActive: this.agingCrisisActive,
@@ -9295,6 +9531,10 @@ export class RegionSim {
     r.economicSystem = d.economicSystem ?? 'mixed';
     r.militaryDoctrine = d.militaryDoctrine ?? 'professional';
     r.allianceStance = d.allianceStance ?? 'opportunist';
+    // Phase 11: Renewables, Automation & Carbon Pricing
+    r.strandedAssetLoss = d.strandedAssetLoss ?? 0;
+    r.speculativeBranch = d.speculativeBranch ?? null;
+    r.ubsActive = d.ubsActive ?? false;
     r.nextId = d.nextId;
     r.nextEventDay = d.nextEventDay;
     r.townNamePool = d.townNamePool;
