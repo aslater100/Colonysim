@@ -14,7 +14,7 @@ function runDays(r: RegionSim, days: number): void {
 
 describe('Tech tree: node definitions', () => {
   it('has the expected number of nodes', () => {
-    expect(TECH_TREE.length).toBe(44);
+    expect(TECH_TREE.length).toBe(51); // 44 from main (incl. Phases 12-13) + 7 Phase 11 nodes
   });
 
   it('start nodes have zero cost and no prereqs', () => {
