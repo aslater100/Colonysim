@@ -3037,8 +3037,8 @@ export class RegionSim {
     // Phase 11: additional clean-energy and carbon-pricing multipliers
     if (this.has('solar_wind_parity')) intensity *= 0.85;
     if (this.has('ev_adoption')) intensity *= 0.85;
-    if (this.passedLaws.includes('carbon_pricing')) intensity *= 0.75;
-    if (this.passedLaws.includes('cap_trade_law')) intensity *= 0.65;
+    if (this.passedLaws.has('carbon_pricing')) intensity *= 0.75;
+    if (this.passedLaws.has('cap_trade_law')) intensity *= 0.65;
     return (this.totalPop() / 1000) * intensity * 0.04;
   }
 
@@ -3429,7 +3429,7 @@ export class RegionSim {
       (this.has('ev_adoption') ? 1 : 0);
 
     // Green Industry Act buffers losses — the state absorbs them via the treasury
-    const buffered = this.passedLaws.includes('green_industry_act');
+    const buffered = this.passedLaws.has('green_industry_act');
 
     // Base write-down: £ per stranded unit of fossil infrastructure
     const baseWrite = this.gdpLastMonth * 0.015 * (fossilDepth / 3) * (1 - cleanDepth / 4);
@@ -3453,7 +3453,7 @@ export class RegionSim {
    *  Returns true if newly activated, false if already active or prerequisites unmet. */
   enactUniversalBasicSupport(): boolean {
     if (this.ubsActive) return false;
-    if (!this.passedLaws.includes('universal_basic_support')) return false;
+    if (!this.passedLaws.has('universal_basic_support')) return false;
     this.ubsActive = true;
     this.addLog(
       'UNIVERSAL BASIC SUPPORT: the automation dividend is socialized — every displaced worker receives a monthly stipend. ' +
@@ -3491,8 +3491,8 @@ export class RegionSim {
 
     const proj = this.projectedWarming();
     const hasGreen = this.has('solar_wind_parity') && this.has('battery_storage');
-    const hasCivicEquity = this.passedLaws.includes('universal_basic_support') ||
-      this.passedLaws.includes('green_industry_act');
+    const hasCivicEquity = this.passedLaws.has('universal_basic_support') ||
+      this.passedLaws.has('green_industry_act');
     const highAutomation = this.automationUnemployment > 0.12;
     const demGov = (() => {
       const g = GOV_TYPES.find((x) => x.id === this.govType);
