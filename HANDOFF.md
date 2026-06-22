@@ -1,8 +1,23 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-22 · **Tests:** 375 passing · **Version:** v1.0.1 · **Status:** Phases 1–7 complete + historical anchors + Depression toolkit + cabinet expansion + hex-grid migration + memory fog + rendering unified on hex geometry + **economy rebalance + HUD/zoom/hex-scale/central-bank UX pass (this session)**
+**Last updated:** 2026-06-22 · **Tests:** 448+ passing · **Version:** v1.0.1 · **Status:** Phases 1–17 complete (overnight session: Phases 8–9, 11–17 shipped as draft PRs #251–256)
 
-## This session (2026-06-22) — UX & economy pass
+## Overnight session (2026-06-22) — Phases 8–17 shipped
+
+All the following were implemented as separate draft PRs targeting `main` for review:
+
+| PR | Phase | Status |
+|----|-------|--------|
+| #251 | Phase 13: Population & Society Depth (GDD §5.5) | Draft, CI green |
+| #252 | Phase 12: Media & Misinformation System (GDD §8.3) | Draft, CI green |
+| #253 | Phase 11: Era 7–8 Renewables, Automation & Speculative Branches (GDD §10) | Draft, CI green |
+| #254 | Phase 8: Notable System Depth — lifecycle, dynasty & advisor quality (GDD §2.4) | Draft, CI green |
+| #255 | Phase 9: Full Government Type System — 15 regimes, transitions, policy slots (GDD §9) | Draft, CI green |
+| #256 | Phase 17: Historical Scenarios & Alternate Era Starts (GDD §8.8, §6.1) | Draft, CI green |
+
+Phases 14 (Zoning), 15 (Economy FX), 16 (Warfare Depth), and 18 (Advisor Depth) were also launched and may have PRs by morning.
+
+## Previous session (2026-06-22) — UX & economy pass
 
 User-reported fixes, all shipped on this branch:
 
@@ -97,7 +112,7 @@ npx tsc --noEmit
 npx vitest run --exclude '**/.claude/**'   # 368 tests
 ```
 
-## Recent completions (PRs #218–#249)
+## Recent completions (PRs #218–#256)
 
 - ✓ **#218** — Fix labor_law grievance test: measurement window and strike masking
 - ✓ **#219** — Tech tree rebuilt as visual DAG: SVG edges, node state coloring, click-to-research
@@ -124,6 +139,12 @@ npx vitest run --exclude '**/.claude/**'   # 368 tests
   4. Forest, plains, hills, and marsh terrain textures wrapped in `g.save/g.clip/g.restore` so `fillRect` details cannot bleed past hex edges; marsh reeds get their own clip block.
   5. Hillshade now samples hex-direction NW (`hexNeighborDir` dir 4) and W (dir 3) instead of square-grid `at(x,y-1)` / `at(x-1,y)`, removing the row-parity inconsistency on odd rows.
   6. `travelDays` (worldgen.ts) now lerps in cube coordinates (`offsetToCube` → lerp → round → convert back) so each sampled step lands on an actual hex neighbor.
+- ✓ **#251** — Phase 13: Population & Society Depth — demographic transition (birth/death formulas, baby boom, aging crisis), migration appeal scores, education pipeline lag (25-slot ring buffer), Gini index, 6-rung unrest ladder (petitions→strikes→protests→riots→organized opposition→revolution), opinion dynamics with 1968/2030 youthquakes; 27 tests (428 total)
+- ✓ **#252** — Phase 12: Media & Misinformation System — 6-tier media reach progression, press freedom axis (0–100), propaganda narrative, credibility gap (legitimacy cliff at ≥80 + spark), misinformation era (2015+, polarization growth), platform regulation, public media funding, media literacy investment (15-year lag); 5 new tech nodes; 49 tests (450 total)
+- ✓ **#253** — Phase 11: Era 7–8 Renewables, Automation & Speculative Branches — 7 new tech/civic nodes (solar/wind, battery, EV, AI, carbon tax, cap-and-trade, green industrial policy), 4 new laws, automation unemployment drift, stranded asset write-downs, speculative branch gate at 2040 (solarpunk/corporatocracy/drowned); 38 tests (413 total)
+- ✓ **#254** — Phase 8: Notable System Depth — full lifecycle (age, health, death, heir birth), WWI founding backstories, minister loyalty decay + defection, scandal events, `selectSuccessor()`, `advisorForecast()` with skill-weighted Gaussian noise, `buildDynastyTree()`; 23 tests (436 total)
+- ✓ **#255** — Phase 9: Full Government Type System — 15 regime types, `GovTypeDef` with era gates/decay modifiers/maxSlots, `TransitionChain` system (multi-step authored chains), per-regime fields (planningOptimism, reportedGDP, credibilityGap, schismRisk, shareholderPatience), policy slots, `tickRegimeMechanics()`; 30 tests (431 total)
+- ✓ **#256** — Phase 17: Historical Scenarios & Alternate Era Starts — `fromEraStart('1950'|'2000')`, 4 authored scenarios (The Long Peace, Iron Curtain, Digital Crossroads, Climate Emergency), scenario goals system, regime lock, difficulty knobs (crisisFrequency, aiAggression, historicalAnchors), scenario selection UI in title screen; 47 tests (448 total)
 - ✓ **#249** — Economy rebalance + HUD/zoom/hex-scale/central-bank UX pass: real calendar (year/month/day in top bar), `playerPop()` + `avgSatisfaction()` in HUD, `MIN_SCALE` 4→2, `REGION_N` 256→128 + `glyphScale()`/`withGlyphScale()` hex-sized city sprites, `hasCentralBank()` + dedicated Central Bank window (B key), GDP-scaled public-sector spending (Wagner's law, `publicSector ≈ 9% GDP`), `flatCost()`/`devFactor()` for militia/scout costs, flat policy bonuses made GDP-scaled; 7 new tests (375 total)
 
 ### Remaining low-priority rendering notes
@@ -239,31 +260,24 @@ Phases 1–7 are **complete and merged to main**. The following phases are order
 
 ---
 
-### Phase 8 — Notable System Depth (GDD §2.4) — *Opus scope*
+### Phase 8 ✓ (PR #254 — Notable System Depth) — COMPLETED
+- ✓ Full Notable lifecycle: monthly health decay, age-weighted death risk, heir birth (25–50 age window, 5%/yr)
+- ✓ Minister loyalty decay + defection at loyalty < 20 (rival faction gains power, legitimacy −5)
+- ✓ Scandal events for ministers with 5+ years in role
+- ✓ `selectSuccessor()` prefers faction-aligned candidates
+- ✓ `advisorForecast(portfolio, trueValue)` adds skill-weighted Gaussian noise
+- ✓ `buildDynastyTree()` compiles DynastyNode[] from parent/child Notable links
+- ✓ WWI founding backstories for 4–6 initial Notables in `foundColony()`
+- ✓ 23 tests in `tests/phase8.test.ts`
 
-The sim tracks Notables but they are not yet fully wired as living actors across the full arc. This phase gives them the lifecycle and role depth the GDD describes.
-
-- **Notable lifecycle** — `age` field ticks yearly; death events fire probabilistically (age + health), generating heir/successor selection events; Notable children can be promoted when they come of age (~18 years)
-- **Dynasty tree** — `dynastyTree[]` structure on `RegionSim`; rendered in Century Report as a generational chart (`drawDynastyTree()`)
-- **Role depth** — `cabinet[]` entries (already exist) drive advisor forecast quality: high-skill ministers produce more accurate future-state projections; ideology-biased advice baked in (hawkish War minister undercounts occupation costs; loyalist Press Secretary downplays credibility gaps)
-- **Notable events** — advisor resignation (over a law they oppose), affair/scandal (approval hit), death in office (succession event chain), defection to rival faction (political capital cost)
-- **Founding Notables** — `foundColony()` mints 4–6 named Notables with 1919 post-WWI backstories; their names appear in early event text, creating the emotional through-line
-- **Test targets** — Notable lifecycle (birth/age/death), dynasty serialization, advisor forecast variance by skill level
-
-### Phase 9 — Full Government Type System (GDD §9) — *Opus scope*
-
-Currently the sim has partial regime coverage. This phase completes the 13-regime roster from GDD §9 and adds the policy-slot layer.
-
-- **Missing regime types** to add: Social Democracy, Constitutional Monarchy, Absolute Monarchy, Oligarchy/Plutocracy, Theocracy, Direct Democracy/Syndicalist Commune, Corporatocracy (partial), Fascist/Ultranationalist (period-gated 1925–1955)
-- **Per-regime mechanics** (GDD §9 table):
-  - *Command economy / one-party:* planning minigame — player sets output targets per sector; plan errors cause shortages; `reportedStats` vs `actualStats` diverge at high control (the sim shows you doctored numbers)
-  - *Propaganda / credibility gap:* `credibilityGap` accumulator grows when press control is high; gap > threshold + spark = legitimacy collapse cliff (not gradual decline)
-  - *Fascist:* `legitimacyDecayAtPeace` −5/yr; requires escalating external conflict; period-gated to 1925–1955 window
-  - *Theocracy:* doctrine-gated tech nodes (some science branches locked); `schismRisk` grows with modernization
-  - *Corporatocracy:* `shareholderPatience` is the war-support analog; short profitable wars excellent, long wars trigger hostile-takeover event
-- **Policy slots** (GDD §5.3 — deferred from MVP): `policySlots[]` per government type with category buckets (econ/social/security/diplomatic); researched policy cards socketed into slots, providing passive bonuses. UI: slot rack in Government panel
-- **Government transition event chains**: 3–8 step authored chains per regime pair (e.g. military junta → managed democratization; absolute monarchy → revolution). Each step is a decision with faction resistance, capital cost, possible violence, and international reaction. Store as `transitionChain[]` with step index
-- **Test targets** — all 13 regime types initialize correctly, legitimacy sources fire per type, transition chains run to completion, policy slots serialize
+### Phase 9 ✓ (PR #255 — Full Government Type System) — COMPLETED
+- ✓ 15 regime types: democracy, republic, junta, monarchy, const_monarchy, abs_monarchy, oligarchy, theocracy, direct_democracy, corporatocracy, fascist, social_democracy, autocracy, one_party, technocracy
+- ✓ `GovTypeDef` with `legitimacyDecayModifier`, `allowedLeanings`, `maxSlots`, `minYear?`, `maxYear?`
+- ✓ Per-regime fields: `planningOptimism`, `reportedGDP`, `credibilityGap`, `schismRisk`, `shareholderPatience`
+- ✓ `TRANSITION_CHAINS` for junta→democracy, abs_monarchy→democracy, autocracy→democracy
+- ✓ `beginTransition()`, `advanceTransition()`, `activatePolicySlot()`, `deactivatePolicySlot()`
+- ✓ `tickRegimeMechanics()` called monthly
+- ✓ 30 tests in `tests/phase9.test.ts`
 
 ### Phase 10 — Climate System Depth (GDD §8.2) — *Sonnet scope*
 
@@ -278,7 +292,14 @@ Climate ledger exists (`emissions` tracking) but lacks the visible long-lag impa
 - **Geoengineering** (2050+) — `launchGeoengineering()`: fast/cheap/side-effect-roulette; unilateral; triggers diplomatic crisis (`geoengineeringProtest[]` from affected rivals); roll random side effects (crop disruption, monsoon shift)
 - **Test targets** — CO₂ accumulation rate, warming lag math, sea-level event triggers, accord serialization
 
-### Phase 11 — Era 7–8 & Speculative Branch (GDD §10) — *Opus scope*
+### Phase 11 ✓ (PR #253 — Era 7–8 & Speculative Branch) — COMPLETED
+- ✓ 7 new tech/civic nodes: solar_wind_parity, battery_storage, ev_adoption, ai_automation, carbon_tax, cap_and_trade, green_industrial_policy
+- ✓ 4 new laws: carbon_pricing, cap_trade_law, green_industry_act, universal_basic_support
+- ✓ `automationUnemployment` drift; `strandedAssetLoss` write-downs; `enactUniversalBasicSupport()`
+- ✓ `determineSpeculativeBranch()` at 2040: solarpunk/corporatocracy/drowned based on CO₂, regime, Gini
+- ✓ 38 tests in `tests/phase11.test.ts`
+
+### Phase 11 spec (for reference) — Era 7–8 & Speculative Branch (GDD §10) — *Opus scope*
 
 The game currently runs to 2100 but eras 7–8 (2010–2100) lack the full content, tech depth, and branching art the GDD specifies.
 
@@ -295,7 +316,15 @@ The game currently runs to 2100 but eras 7–8 (2010–2100) lack the full conte
 - **2040+ art/audio** — backdrop kits and era palette for each branch (see GDD §3.2); procedural soundtrack shifts to branch-appropriate idiom (organic acoustic for solarpunk, industrial dark synth for dystopia)
 - **Test targets** — branch selection logic, speculative tech unlock gates, all three epilogue narrative paths
 
-### Phase 12 — Media & Misinformation System (GDD §8.3) — *Sonnet scope*
+### Phase 12 ✓ (PR #252 — Media & Misinformation System) — COMPLETED
+- ✓ 6-tier media reach: word_of_mouth → press → radio → television → internet → algorithmic
+- ✓ `pressFreedom` (0–100), `propagandaNarrative`, `credibilityGap` accumulator
+- ✓ Credibility gap ≥80 + spark → legitimacy cliff drop −30
+- ✓ Misinformation era (2015+): polarization growth, algorithmic reach
+- ✓ Player actions: grantPressLicense, censorMedia, enactPlatformRegulation, fundPublicMedia, investMediaLiteracy
+- ✓ 5 new tech nodes; UI section in Politics tab; 49 tests in `tests/phase12.test.ts`
+
+### Phase 12 spec — Media & Misinformation System (GDD §8.3) — *Sonnet scope*
 
 The sim has no media system yet. This is the late-game political complexity layer.
 
@@ -307,7 +336,16 @@ The sim has no media system yet. This is the late-game political complexity laye
 - **Counters** (each with tradeoffs): `platformRegulation` (reduces polarization, angers tech factions), `publicMediaFunding` (buffers against credibility gap, costs treasury), `mediaLiteracyEducation` (15-year lag education investment, reduces long-run polarization)
 - **Test targets** — credibility gap accumulation/collapse, misinformation era trigger, press freedom effect on scandal event rate
 
-### Phase 13 — Population & Society Depth (GDD §5.5) — *Sonnet scope*
+### Phase 13 ✓ (PR #251 — Population & Society Depth) — COMPLETED
+- ✓ Demographic transition: `globalBirthRate()`/`globalDeathRate()`, baby boom (×1.2 1945–1975), aging crisis (pension burden 2050+)
+- ✓ `appealScore()` for migration (wages, housing, services, safety, liberty); `tickAppealMigration()`
+- ✓ Education pipeline lag: 25-slot `educationLag[]` ring buffer; `projectedSkilledWorkforce(n)`
+- ✓ `giniIndex()` from 3-class wage approximation; grievance feedback per 0.1 above 0.4
+- ✓ 6-rung unrest ladder with time-based escalation; `crackdownProtests()`, `concedeToProtesters()`
+- ✓ Opinion dynamics: material experience drift, generational drift, 1968/2030s youthquakes
+- ✓ 27 tests in `tests/phase13.test.ts`
+
+### Phase 13 spec — Population & Society Depth (GDD §5.5) — *Sonnet scope*
 
 The cohort matrix exists but several of the GDD's dynamic mechanisms are stub-level or absent.
 
@@ -358,7 +396,15 @@ Provincial army movement exists (Phase 7). This phase replaces the simple power 
 - **Full peace terms** — peace priced in `warScore` (front positions, occupied territory, blockade effects): annex province (15–25 each), reparations (10/tranche), DMZ (15), puppet (45), status quo (0). Overreach creates Grudge-9 revanchist rival
 - **Test targets** — mobilization cost formulas, front resolution ratio math, occupation resistance growth, war support decay curves
 
-### Phase 17 — Historical Scenarios & Alternate Starts (GDD §8.8, §6.1) — *Sonnet scope*
+### Phase 17 ✓ (PR #256 — Historical Scenarios & Alternate Starts) — COMPLETED
+- ✓ `RegionSim.fromEraStart('1950'|'2000')` with pre-built starting state
+- ✓ 4 authored scenarios: The Long Peace, Iron Curtain, Digital Crossroads, Climate Emergency
+- ✓ `SCENARIOS` constant with `Scenario`/`ScenarioGoal` interfaces; `checkScenarioGoals()` monthly
+- ✓ `beginRegimeLocked()` / `isGovLocked()` for regime-lock challenge starts
+- ✓ Difficulty knobs: crisisFrequency, aiAggression, historicalAnchors wired into sim ticks
+- ✓ Scenario selection UI in title screen; 47 tests in `tests/phase17.test.ts`
+
+### Phase 17 spec — Historical Scenarios & Alternate Starts (GDD §8.8, §6.1) — *Sonnet scope*
 
 - **Era starts** — begin in 1950 with a pre-built state (skip colony/state phases, start with an existing nation), or in 2000 as an information-age economy. `RegionSim.fromEraStart(era, opts)` constructor with authored starting conditions per era
 - **Historical scenario layer** — authored starting conditions with named nations, historical parallels, and scripted opening events. Scenarios reference real geographical/political templates without replicating copyrighted works. Each scenario has 1–3 authored "scenario goals" on top of the standard win conditions
@@ -366,7 +412,7 @@ Provincial army movement exists (Phase 7). This phase replaces the simple power 
 - **Difficulty knobs in sandbox** — expose all tuning parameters: crisis frequency/severity, AI aggression, economic volatility, starting region harshness, historical-anchor toggles (fire on schedule vs emergent only)
 - **Test targets** — era start serializes cleanly, scenario goals wire to existing win-condition infrastructure
 
-### Phase 18 — Advisor System Depth (GDD §8.7) — *Sonnet scope*
+### Phase 18 — Advisor System Depth (GDD §8.7) — *Sonnet scope* — IN PROGRESS (PR pending)
 
 Cabinet portfolios exist (Phase 2 via PR #239). This phase gives advisors the forecast quality and personality depth the GDD describes.
 
