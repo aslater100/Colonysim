@@ -628,7 +628,11 @@ export const GOV_LEANS: Record<GovLean, { name: string; desc: string }> = {
 
 // ---- Nation-tier: government types & ministers (GDD §9) ----
 
-export type GovType = 'democracy' | 'republic' | 'junta' | 'monarchy';
+export type GovType =
+  | 'democracy' | 'republic' | 'junta' | 'monarchy'
+  | 'const_monarchy' | 'abs_monarchy' | 'oligarchy' | 'theocracy'
+  | 'direct_democracy' | 'corporatocracy' | 'fascist'
+  | 'social_democracy' | 'autocracy' | 'one_party' | 'technocracy';
 
 /** The four domains of national policy — each gov type gets a different mix. */
 export type PolicyDomain = 'economic' | 'social' | 'security' | 'diplomatic';
@@ -643,7 +647,56 @@ export interface GovTypeDef {
   startingLegitimacy: number;
   /** Ordered list of policy slot domains granted by this government type. */
   policySlots: PolicyDomain[];
+  /** Compatible govLean values (empty = any). */
+  allowedLeanings: string[];
+  /** Earliest year this regime can emerge. */
+  minYear?: number;
+  /** After this year cannot be newly adopted. */
+  maxYear?: number;
+  /** Multiplier on monthly legitimacy decay. */
+  legitimacyDecayModifier: number;
+  /** Max policy slots. */
+  maxSlots: number;
 }
+
+export interface TransitionStep {
+  id: string;
+  description: string;
+  factionResistance: { factionId: string; resistance: number }[];
+  capitalCost: number;
+  violenceRisk: number;   // 0–1 probability of unrest spike
+  internationalReaction: number;  // −30 to +15 relations change
+}
+
+export interface TransitionChain {
+  fromGov: string;
+  toGov: string;
+  steps: TransitionStep[];
+  currentStep: number;
+}
+
+export const TRANSITION_CHAINS: Record<string, TransitionStep[]> = {
+  'junta:democracy': [
+    { id: 'announce_elections', description: 'Announce election timeline', factionResistance: [{ factionId: 'militarists', resistance: 15 }], capitalCost: 20, violenceRisk: 0.05, internationalReaction: 8 },
+    { id: 'constitutional_assembly', description: 'Hold constitutional assembly', factionResistance: [{ factionId: 'militarists', resistance: 10 }, { factionId: 'nationalists', resistance: 8 }], capitalCost: 40, violenceRisk: 0.2, internationalReaction: 15 },
+    { id: 'first_elections', description: 'Hold first free elections', factionResistance: [{ factionId: 'militarists', resistance: 25 }], capitalCost: 30, violenceRisk: 0.1, internationalReaction: 12 },
+  ],
+  'abs_monarchy:democracy': [
+    { id: 'royal_concession', description: 'Crown issues constitutional concession', factionResistance: [{ factionId: 'monarchists', resistance: 20 }, { factionId: 'conservatives', resistance: 10 }], capitalCost: 30, violenceRisk: 0.1, internationalReaction: 5 },
+    { id: 'parliament_formed', description: 'Parliament convened with limited franchise', factionResistance: [{ factionId: 'monarchists', resistance: 15 }], capitalCost: 25, violenceRisk: 0.15, internationalReaction: 10 },
+    { id: 'universal_suffrage_granted', description: 'Universal suffrage proclaimed', factionResistance: [{ factionId: 'monarchists', resistance: 30 }, { factionId: 'oligarchs', resistance: 20 }], capitalCost: 50, violenceRisk: 0.25, internationalReaction: 15 },
+  ],
+  'monarchy:democracy': [
+    { id: 'royal_concession', description: 'Crown issues constitutional concession', factionResistance: [{ factionId: 'monarchists', resistance: 20 }], capitalCost: 30, violenceRisk: 0.1, internationalReaction: 5 },
+    { id: 'parliament_formed', description: 'Parliament convened with limited franchise', factionResistance: [{ factionId: 'monarchists', resistance: 15 }], capitalCost: 25, violenceRisk: 0.15, internationalReaction: 10 },
+    { id: 'universal_suffrage_granted', description: 'Universal suffrage proclaimed', factionResistance: [{ factionId: 'monarchists', resistance: 30 }], capitalCost: 50, violenceRisk: 0.25, internationalReaction: 15 },
+  ],
+  'autocracy:democracy': [
+    { id: 'liberalization', description: 'Announce liberalization program', factionResistance: [{ factionId: 'militarists', resistance: 10 }], capitalCost: 25, violenceRisk: 0.1, internationalReaction: 10 },
+    { id: 'opposition_legalized', description: 'Legalize opposition parties', factionResistance: [{ factionId: 'militarists', resistance: 15 }, { factionId: 'nationalists', resistance: 10 }], capitalCost: 35, violenceRisk: 0.2, internationalReaction: 12 },
+    { id: 'free_vote', description: 'Hold multiparty elections', factionResistance: [{ factionId: 'militarists', resistance: 20 }], capitalCost: 40, violenceRisk: 0.15, internationalReaction: 15 },
+  ],
+};
 
 export const GOV_TYPES: GovTypeDef[] = [
   {
@@ -655,6 +708,9 @@ export const GOV_TYPES: GovTypeDef[] = [
     militiaBonus: 0,
     startingLegitimacy: 80,
     policySlots: ['economic', 'social', 'security', 'diplomatic'],
+    allowedLeanings: ['liberal', 'social'],
+    legitimacyDecayModifier: 0.8,
+    maxSlots: 4,
   },
   {
     id: 'republic',
@@ -665,6 +721,9 @@ export const GOV_TYPES: GovTypeDef[] = [
     militiaBonus: 0,
     startingLegitimacy: 78,
     policySlots: ['economic', 'economic', 'security', 'diplomatic'],
+    allowedLeanings: [],
+    legitimacyDecayModifier: 0.9,
+    maxSlots: 4,
   },
   {
     id: 'junta',
@@ -675,6 +734,9 @@ export const GOV_TYPES: GovTypeDef[] = [
     militiaBonus: 2,
     startingLegitimacy: 70,
     policySlots: ['security', 'security', 'economic'],
+    allowedLeanings: ['nationalist', 'conservative'],
+    legitimacyDecayModifier: 1.2,
+    maxSlots: 3,
   },
   {
     id: 'monarchy',
@@ -685,6 +747,155 @@ export const GOV_TYPES: GovTypeDef[] = [
     militiaBonus: 1,
     startingLegitimacy: 75,
     policySlots: ['economic', 'security', 'social'],
+    allowedLeanings: ['conservative', 'reactionary'],
+    legitimacyDecayModifier: 1.1,
+    maxSlots: 3,
+  },
+  {
+    id: 'const_monarchy',
+    name: 'Constitutional Monarchy',
+    legitimacySource: 'Royal tradition and parliamentary consent',
+    electionsRequired: true,
+    taxCap: 26,
+    militiaBonus: 1,
+    startingLegitimacy: 77,
+    policySlots: ['economic', 'social', 'security', 'diplomatic'],
+    allowedLeanings: ['conservative', 'liberal'],
+    legitimacyDecayModifier: 0.85,
+    maxSlots: 4,
+  },
+  {
+    id: 'abs_monarchy',
+    name: 'Absolute Monarchy',
+    legitimacySource: 'Divine right and dynastic tradition',
+    electionsRequired: false,
+    taxCap: 22,
+    militiaBonus: 1,
+    startingLegitimacy: 75,
+    policySlots: ['economic', 'security', 'social'],
+    allowedLeanings: ['conservative', 'reactionary'],
+    legitimacyDecayModifier: 1.1,
+    maxSlots: 3,
+  },
+  {
+    id: 'oligarchy',
+    name: 'Oligarchy',
+    legitimacySource: 'Wealth and merchant class dominance',
+    electionsRequired: false,
+    taxCap: 20,
+    militiaBonus: 0,
+    startingLegitimacy: 65,
+    policySlots: ['economic', 'economic', 'diplomatic'],
+    allowedLeanings: ['liberal', 'conservative'],
+    legitimacyDecayModifier: 1.0,
+    maxSlots: 3,
+  },
+  {
+    id: 'theocracy',
+    name: 'Theocracy',
+    legitimacySource: 'Religious authority and divine mandate',
+    electionsRequired: false,
+    taxCap: 24,
+    militiaBonus: 1,
+    startingLegitimacy: 78,
+    policySlots: ['social', 'security', 'economic'],
+    allowedLeanings: ['reactionary', 'conservative'],
+    legitimacyDecayModifier: 0.9,
+    maxSlots: 3,
+  },
+  {
+    id: 'direct_democracy',
+    name: 'Direct Democracy',
+    legitimacySource: 'Popular assemblies and referenda',
+    electionsRequired: true,
+    taxCap: 28,
+    militiaBonus: 0,
+    startingLegitimacy: 82,
+    policySlots: ['economic', 'social', 'security', 'diplomatic'],
+    allowedLeanings: ['liberal', 'socialist'],
+    legitimacyDecayModifier: 0.7,
+    maxSlots: 4,
+  },
+  {
+    id: 'corporatocracy',
+    name: 'Corporatocracy',
+    legitimacySource: 'Corporate shareholder approval',
+    electionsRequired: false,
+    taxCap: 22,
+    militiaBonus: 0,
+    startingLegitimacy: 68,
+    policySlots: ['economic', 'economic', 'diplomatic', 'security'],
+    allowedLeanings: ['liberal', 'conservative'],
+    legitimacyDecayModifier: 1.1,
+    maxSlots: 4,
+  },
+  {
+    id: 'fascist',
+    name: 'Fascist State',
+    legitimacySource: 'Ultranationalist mass movement and military glory',
+    electionsRequired: false,
+    taxCap: 35,
+    militiaBonus: 3,
+    startingLegitimacy: 70,
+    policySlots: ['security', 'security', 'economic'],
+    allowedLeanings: ['nationalist', 'reactionary'],
+    minYear: 1925,
+    maxYear: 1955,
+    legitimacyDecayModifier: 1.5,
+    maxSlots: 3,
+  },
+  {
+    id: 'social_democracy',
+    name: 'Social Democracy',
+    legitimacySource: 'Democratic mandate and welfare provision',
+    electionsRequired: true,
+    taxCap: 30,
+    militiaBonus: 0,
+    startingLegitimacy: 80,
+    policySlots: ['economic', 'social', 'social', 'diplomatic'],
+    allowedLeanings: ['liberal', 'socialist'],
+    legitimacyDecayModifier: 0.8,
+    maxSlots: 4,
+  },
+  {
+    id: 'autocracy',
+    name: 'Autocracy',
+    legitimacySource: 'Strongman authority and loyal apparatus',
+    electionsRequired: false,
+    taxCap: 32,
+    militiaBonus: 2,
+    startingLegitimacy: 65,
+    policySlots: ['security', 'economic', 'social'],
+    allowedLeanings: ['nationalist', 'conservative', 'reactionary'],
+    legitimacyDecayModifier: 1.3,
+    maxSlots: 3,
+  },
+  {
+    id: 'one_party',
+    name: 'One-Party State',
+    legitimacySource: 'Party ideology and planned achievement',
+    electionsRequired: false,
+    taxCap: 35,
+    militiaBonus: 2,
+    startingLegitimacy: 72,
+    policySlots: ['economic', 'security', 'social'],
+    allowedLeanings: ['nationalist', 'socialist', 'reactionary'],
+    legitimacyDecayModifier: 1.2,
+    maxSlots: 3,
+  },
+  {
+    id: 'technocracy',
+    name: 'Technocracy',
+    legitimacySource: 'Expert consensus and measurable outcomes',
+    electionsRequired: false,
+    taxCap: 28,
+    militiaBonus: 1,
+    startingLegitimacy: 74,
+    policySlots: ['economic', 'economic', 'security', 'social'],
+    allowedLeanings: ['liberal', 'technocratic'],
+    minYear: 1950,
+    legitimacyDecayModifier: 0.95,
+    maxSlots: 4,
   },
 ];
 
@@ -1392,6 +1603,9 @@ export interface PlayerWar {
  *  15 below it, the home front breaks and the war ends on dictated terms. */
 export const WAR_SUPPORT_FLOOR: Record<GovType, number> = {
   democracy: 45, republic: 45, monarchy: 35, junta: 25,
+  const_monarchy: 40, abs_monarchy: 35, oligarchy: 30, theocracy: 40,
+  direct_democracy: 50, corporatocracy: 30, fascist: 20,
+  social_democracy: 48, autocracy: 20, one_party: 20, technocracy: 35,
 };
 
 const RIVAL_NAMES = [
@@ -2438,6 +2652,21 @@ export class RegionSim {
   private nextRivalBlocId = 1;
   /** Active economic sanctions (player ↔ rivals). */
   sanctions: Sanction[] = [];
+  // ---- Phase 9: Government Type System ----
+  /** One-Party / Command Economy: planning optimism (0–1). Grows 0.01/month. */
+  planningOptimism = 0;
+  /** Reported GDP for one-party states: actual × (1 + planningOptimism × 0.3). */
+  reportedGDP = 0;
+  /** Credibility gap: grows under authoritarian press control (0–100). */
+  credibilityGap = 0;
+  /** Theocracy: schism risk (0–100). Grows with secular tech research. */
+  schismRisk = 0;
+  /** Corporatocracy: shareholder patience (0–100). */
+  shareholderPatience = 80;
+  /** Active government transition chain (null if no transition in progress). */
+  transitionChain: TransitionChain | null = null;
+  /** Policy slots: category-tagged slots with active card. */
+  policySlots: { category: string; slotId: string; cardId: string | null }[] = [];
   // ---- Phase 7: Inter-provincial army movement ----
   /** Armies stationed at or marching between provinces. */
   provincialArmies: ProvincialArmy[] = [];
@@ -5341,6 +5570,7 @@ export class RegionSim {
     }
     this.maintainRoutes();
     this.tickLegitimacy();
+    this.tickRegimeMechanics();
     // Strikes: pressure vents when grievance boils over
     for (const t of this.settlements) {
       if (t.grievance > 60 && this.day >= t.strikeUntil && this.rng.chance(0.5)) {
@@ -8247,6 +8477,35 @@ export class RegionSim {
     return true;
   }
 
+  /** Socket a researched civic/law into a named policy slot.
+   *  Validates category match and that the gov type has this slot.
+   *  Returns false on invalid input. */
+  activatePolicySlot(category: string, cardId: string): boolean {
+    if (!this.nationProclaimed || !this.govType) return false;
+    const govDef = GOV_TYPES.find((g) => g.id === this.govType)!;
+    const card = POLICY_CARDS.find((c) => c.id === cardId);
+    if (!card) return false;
+    if (card.domain !== category) return false;  // category must match
+    if (!card.prereqs.every((p) => this.has(p))) return false;
+
+    // Find a matching empty slot, or count available slots
+    const slotsForCategory = govDef.policySlots.filter((d) => d === category).length;
+    const occupied = this.policySlots.filter((s) => s.category === category).length;
+    if (occupied >= slotsForCategory) return false;  // no room
+
+    const slotId = `${category}_${this.policySlots.filter((s) => s.category === category).length}`;
+    this.policySlots.push({ category, slotId, cardId });
+    return true;
+  }
+
+  /** Remove a policy from a slot by slotId. */
+  deactivatePolicySlot(slotId: string): boolean {
+    const idx = this.policySlots.findIndex((s) => s.slotId === slotId);
+    if (idx < 0) return false;
+    this.policySlots.splice(idx, 1);
+    return true;
+  }
+
   private rebuildPolicySet(): void {
     this.activePolicySet = new Set(this.activePolicies.filter((x): x is string => x !== null));
   }
@@ -8477,6 +8736,10 @@ export class RegionSim {
     gov: GovType,
     assignments: Partial<Record<MinisterRoleId, number | null>>,
   ): void {
+    if (gov === 'fascist' && this.year > 1955) {
+      // Cannot establish a new fascist government after 1955
+      return;
+    }
     const def = GOV_TYPES.find((g) => g.id === gov)!;
     this.nationName = name;
     this.govType = gov;
@@ -8484,6 +8747,12 @@ export class RegionSim {
     this.nationProclaimed = true;
     this.activePolicies = new Array(def.policySlots.length).fill(null);
     this.rebuildPolicySet();
+    // Reset per-regime fields on proclamation
+    this.planningOptimism = 0;
+    this.schismRisk = 0;
+    this.shareholderPatience = 80;
+    this.policySlots = [];
+    this.transitionChain = null;
     this.militiaLevel = Math.min(4, this.militiaLevel + def.militiaBonus);
     for (const m of this.ministers) {
       m.notableId = assignments[m.role] ?? null;
@@ -8759,10 +9028,12 @@ export class RegionSim {
   /** Monthly legitimacy tick (GDD §5.3). */
   private tickLegitimacy(): void {
     if (!this.nationProclaimed) return;
+    const govDef = this.govType ? GOV_TYPES.find((g) => g.id === this.govType) : null;
+    const regimeModifier = govDef?.legitimacyDecayModifier ?? 1.0;
     // Press Freedom Act law slows decay by 30%; Information minister adds a further 25%
     const pressBonus = this.passedLaws.has('press_freedom_act') ? 0.7 : 1.0;
     const infoBonus = this.ministerFor('press') ? 0.75 : 1.0;
-    const decayRate = 0.5 * pressBonus * infoBonus;
+    const decayRate = 0.5 * regimeModifier * pressBonus * infoBonus;
     this.legitimacy = Math.max(0, this.legitimacy - decayRate);
     if (this.govType === 'junta') {
       const ws = this.factions.find((f) => f.id === 'workers')?.support ?? 50;
@@ -8781,6 +9052,192 @@ export class RegionSim {
         'bad',
       );
     }
+  }
+
+  /** Monthly per-regime mechanics (GDD §9). Called from monthlyUpdate(). */
+  private tickRegimeMechanics(): void {
+    if (!this.nationProclaimed || !this.govType) return;
+
+    // ---- One-Party State: planning optimism and reported GDP ----
+    if (this.govType === 'one_party') {
+      this.planningOptimism = Math.min(1, this.planningOptimism + 0.01);
+      this.reportedGDP = this.gdpLastMonth * (1 + this.planningOptimism * 0.3);
+    } else {
+      this.reportedGDP = this.gdpLastMonth;
+      // planningOptimism resets on regime change (handled in proclaimNation)
+    }
+
+    // ---- Credibility Gap: authoritarian press + controlled narrative ----
+    const isAuthoritarian = ['junta', 'autocracy', 'one_party', 'fascist', 'abs_monarchy', 'monarchy'].includes(this.govType);
+    const hasControlledPress = !this.passedLaws.has('press_freedom_act');
+    if (isAuthoritarian && hasControlledPress) {
+      this.credibilityGap = Math.min(100, this.credibilityGap + 0.5);
+      // Cliff event: gap > 80 + spark
+      if (this.credibilityGap > 80) {
+        const spark = this.treasury < 0 ||
+          (this.playerWar && this.playerWar.score < -20) ||
+          this.settlements.some((t) => t.grievance > 75);
+        if (spark && this.rng.chance(0.15)) {
+          this.legitimacy = Math.max(0, this.legitimacy - 30);
+          this.addLog(
+            'CREDIBILITY COLLAPSE: The gap between the official narrative and lived reality has become impossible to ignore. Legitimacy shattered.',
+            'bad',
+          );
+        }
+      }
+    } else {
+      this.credibilityGap = Math.max(0, this.credibilityGap - 0.3);
+    }
+
+    // ---- Fascist regime: legitimacy requires conflict ----
+    if (this.govType === 'fascist') {
+      const atPeace = !this.playerWar;
+      if (atPeace) {
+        this.legitimacy = Math.max(0, this.legitimacy - 1);
+        if (this.rng.chance(0.3)) {
+          this.addLog(
+            'PRESSURE TO EXPAND: The regime feeds on conflict — without a war to sustain the movement, the streets grow restless.',
+            'bad',
+          );
+        }
+      }
+    }
+
+    // ---- Theocracy: schism risk grows with secular techs ----
+    if (this.govType === 'theocracy') {
+      const secularTechs = ['computing', 'civil_rights', 'antibiotics', 'public_education', 'social_insurance'];
+      const researched = secularTechs.filter((t) => this.has(t)).length;
+      if (researched > 0) {
+        this.schismRisk = Math.min(100, this.schismRisk + researched);
+      }
+      // Schism event at risk > 70
+      if (this.schismRisk > 70 && this.rng.chance(0.03)) {
+        // Schism fires
+        for (const t of this.settlements) {
+          t.grievance = Math.min(100, t.grievance + 20);
+        }
+        this.legitimacy = Math.max(0, this.legitimacy - 10);
+        this.schismRisk = 30; // reset after schism
+        this.addLog(
+          `DOCTRINAL SCHISM: The tension between religious orthodoxy and modernizing society erupts. ` +
+          `Faction split — a reformist movement challenges the clerical establishment. Grievance surges across all towns.`,
+          'bad',
+        );
+      }
+    }
+
+    // ---- Corporatocracy: shareholder patience decays during long wars ----
+    if (this.govType === 'corporatocracy') {
+      if (this.playerWar) {
+        const warMonths = (this.day - (this.playerWar as any).startDay) / 30;
+        if (warMonths > 12) {
+          this.shareholderPatience = Math.max(0, this.shareholderPatience - 3);
+        }
+      } else {
+        // Peacetime: patience recovers slowly
+        this.shareholderPatience = Math.min(100, this.shareholderPatience + 0.5);
+      }
+      // Hostile board takeover at patience < 20
+      if (this.shareholderPatience < 20 && this.rng.chance(0.1)) {
+        this.legitimacy = Math.max(0, this.legitimacy - 15);
+        const merchantFaction = this.factions.find((f) => f.id === 'merchants');
+        if (merchantFaction) {
+          merchantFaction.support = Math.min(100, merchantFaction.support + 20);
+        }
+        this.addLog(
+          'HOSTILE BOARD TAKEOVER: The corporate council convenes an emergency session. ' +
+          'Shareholder patience exhausted — a new policy is enacted by the merchant faction without consultation.',
+          'bad',
+        );
+        this.shareholderPatience = 35; // shock resets patience
+      }
+    }
+  }
+
+  /** Start a government transition chain from the current gov to a target gov type.
+   *  Returns false if no chain exists or prerequisites aren't met. */
+  beginTransition(toGovType: string): boolean {
+    if (!this.nationProclaimed || !this.govType) return false;
+    const key = `${this.govType}:${toGovType}`;
+    const steps = TRANSITION_CHAINS[key];
+    if (!steps || steps.length === 0) return false;
+    if (this.transitionChain) return false; // already in progress
+    this.transitionChain = {
+      fromGov: this.govType,
+      toGov: toGovType,
+      steps,
+      currentStep: 0,
+    };
+    this.addLog(
+      `TRANSITION BEGINS: The path from ${this.govType} to ${toGovType} starts now. ` +
+      `Step 1: ${steps[0].description}.`,
+      'info',
+    );
+    return true;
+  }
+
+  /** Confirm the current transition step. Returns false if cost can't be met.
+   *  On the final step, changes govType. */
+  advanceTransition(): boolean {
+    if (!this.transitionChain) return false;
+    const chain = this.transitionChain;
+    const step = chain.steps[chain.currentStep];
+    if (!step) return false;
+
+    // Capital cost
+    if (this.politicalCapital < step.capitalCost) return false;
+    this.politicalCapital -= step.capitalCost;
+
+    // Faction resistance effects
+    for (const fr of step.factionResistance) {
+      const faction = this.factions.find((f) => f.id === fr.factionId);
+      if (faction) {
+        faction.support = Math.max(0, (faction.support ?? 50) - fr.resistance);
+      }
+    }
+
+    // Violence risk
+    if (this.rng.chance(step.violenceRisk)) {
+      for (const t of this.settlements) {
+        t.grievance = Math.min(100, t.grievance + 15);
+      }
+      this.addLog(
+        `UNREST: The transition triggers violence — troops clash with protesters in the streets.`,
+        'bad',
+      );
+    }
+
+    // International reaction
+    if (step.internationalReaction !== 0) {
+      for (const rv of this.rivals) {
+        rv.relations = this.clampRel(rv.relations + step.internationalReaction);
+      }
+    }
+
+    chain.currentStep++;
+
+    // Final step: complete the transition
+    if (chain.currentStep >= chain.steps.length) {
+      const toGov = chain.toGov as GovType;
+      const def = GOV_TYPES.find((g) => g.id === toGov);
+      if (def) {
+        this.govType = toGov;
+        this.legitimacy = Math.min(100, this.legitimacy + 20);
+        this.activePolicies = new Array(def.policySlots.length).fill(null);
+        this.rebuildPolicySet();
+      }
+      this.addLog(
+        `TRANSITION COMPLETE: The ${toGov.replace(/_/g, ' ')} is established. A new chapter begins.`,
+        'good',
+      );
+      this.transitionChain = null;
+    } else {
+      this.addLog(
+        `TRANSITION STEP ${chain.currentStep}: ${chain.steps[chain.currentStep].description}.`,
+        'info',
+      );
+    }
+    return true;
   }
 
   // ---- Rival nations & diplomacy (GDD §5.4, §6.2–6.4) ----
@@ -11145,6 +11602,13 @@ export class RegionSim {
       currencyRegime: this.currencyRegime,
       currencyUnionPartnerId: this.currencyUnionPartnerId,
       fxBoost: this.fxBoost,
+      // Phase 9: Government Type System
+      planningOptimism: this.planningOptimism,
+      reportedGDP: this.reportedGDP,
+      schismRisk: this.schismRisk,
+      shareholderPatience: this.shareholderPatience,
+      transitionChain: this.transitionChain,
+      policySlots9: this.policySlots,
     });
   }
 
@@ -11409,6 +11873,13 @@ export class RegionSim {
     r.currencyRegime = d.currencyRegime ?? 'fiat';
     r.currencyUnionPartnerId = d.currencyUnionPartnerId ?? undefined;
     r.fxBoost = d.fxBoost ?? 1.0;
+    // Phase 9 backfill
+    r.planningOptimism = d.planningOptimism ?? 0;
+    r.reportedGDP = d.reportedGDP ?? 0;
+    r.schismRisk = d.schismRisk ?? 0;
+    r.shareholderPatience = d.shareholderPatience ?? 80;
+    r.transitionChain = d.transitionChain ?? null;
+    r.policySlots = d.policySlots9 ?? [];
     // Recompute cached perf fields after full restore.
     r.activeRailRoutes = r.routes.filter((rt) => rt.kind === 'rail' && rt.condition > 50).length;
     let tf = 0, tw = 0, mg = 0;
