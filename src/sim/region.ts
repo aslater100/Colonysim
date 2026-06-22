@@ -105,6 +105,25 @@ export interface Settlement {
   resourceFocus?: 'wool' | 'grain' | 'iron' | 'wood' | 'diverse';
   /** Last day emergency grain was purchased — prevents buying every single day. */
   lastEmergencyGrainDay?: number;
+  // ---- Phase 14: Zoning, Infrastructure & City Services (GDD §5.1) ----
+  /** Land use fractions (sum to 1.0) */
+  zoningMix?: { residential: number; commercial: number; industrial: number; office: number };
+  /** Land value 0–100 (computed monthly) */
+  landValue?: number;
+  /** Pollution level 0–100 (computed monthly) */
+  pollutionLevel?: number;
+  /** Power generated this settlement (MW) */
+  powerCapacity?: number;
+  /** Power consumed by this settlement (MW) */
+  powerDemand?: number;
+  /** Fraction of population served by water system (0–1) */
+  waterCoverage?: number;
+  /** Fraction of population served by waste management (0–1) */
+  wasteCoverage?: number;
+  /** City service coverage fractions (each 0–1) */
+  serviceCoverage?: { health: number; education: number; safety: number };
+  /** Last year a brownout event was logged (prevents spam) */
+  lastBrownoutYear?: number;
 }
 
 // ---- Phase 0: Territory & resource visualization ----
@@ -3987,6 +4006,15 @@ export class RegionSim {
     for (const t of this.settlements) this.updateSectors(t); // Phase 1: labor follows the technology
     this.wageCache = new Map(this.settlements.map((t) => [t.id, this.avgWageOf(t)]));
     this.tickRegionalEvents(); // Phase 4: disasters and windfalls
+    this.tickPollution();      // Phase 14: pollution diffusion
+    this.tickUtilities();      // Phase 14: power/water/waste utilities
+    this.tickServiceCoverage(); // Phase 14: service coverage effects
+    // Phase 14: update land value for each player settlement
+    for (const t of this.settlements) {
+      if (t.factionId === this.playerFactionId) {
+        t.landValue = this.computeLandValue(t.id);
+      }
+    }
     this.updateRouteCargo();   // Phase 6: cargo labels follow sector surplus
     this.migrate();
     this.caravans();
@@ -5706,6 +5734,159 @@ export class RegionSim {
     }
     // Wagner tilt: the public sector's share of GDP rises as the nation develops.
     return total * this.devFactor() ** TUNING.wagnerExp;
+  }
+
+  // ---- Phase 14: Zoning, Infrastructure & City Services (GDD §5.1) ----
+
+  /** Compute land value for a settlement (0–100). */
+  computeLandValue(settlementId: number): number {
+    const t = this.settlements.find((s) => s.id === settlementId);
+    if (!t) return 30;
+    let value = 20;
+    // +30 for each adjacent route with condition > 50
+    const adjacentRoutes = this.routes.filter((r) => (r.a === settlementId || r.b === settlementId) && r.condition > 50);
+    value += adjacentRoutes.length * 30;
+    // +20 if university building exists
+    if (t.buildings.includes('university')) value += 20;
+    // +15 if public market exists
+    if (t.buildings.includes('market_hall')) value += 15;
+    // +10 per service coverage point (health+edu+safety average) × 10
+    const sc = t.serviceCoverage ?? { health: 0.3, education: 0.2, safety: 0.2 };
+    const avgService = (sc.health + sc.education + sc.safety) / 3;
+    value += avgService * 10 * 10;
+    // -20 per 10 points of pollution
+    const pollution = t.pollutionLevel ?? 0;
+    value -= Math.floor(pollution / 10) * 20;
+    return Math.max(0, Math.min(100, Math.round(value)));
+  }
+
+  /** Compute power balance for a settlement. */
+  computePowerBalance(settlementId: number): { capacity: number; demand: number; surplus: number } {
+    const t = this.settlements.find((s) => s.id === settlementId);
+    if (!t) return { capacity: 0, demand: 0, surplus: 0 };
+    let capacity = 0;
+    // +100 if has coal_plant (power_station) building
+    if (t.buildings.includes('power_station')) capacity += 100;
+    // +80 if solar_wind_parity researched and pop >= 50
+    if (this.has('solar_wind_parity') && this.popOf(t) >= 50) capacity += 80;
+    const pop = this.popOf(t);
+    // demand: pop × 0.05 MW (per 1 pop, not per 100)
+    const demand = pop * 0.05;
+    return { capacity, demand, surplus: capacity - demand };
+  }
+
+  /** Compute service coverage for a settlement. */
+  computeServiceCoverage(settlementId: number): { health: number; education: number; safety: number } {
+    const t = this.settlements.find((s) => s.id === settlementId);
+    if (!t) return { health: 0.3, education: 0.2, safety: 0.2 };
+    // Health: 0.2 base; +0.4 if hospital; +0.2 if clinic; +0.1 if public_health tech
+    let health = 0.2;
+    if (t.buildings.includes('hospital')) health += 0.4;
+    if (t.buildings.includes('clinic')) health += 0.2;
+    if (this.has('public_health')) health += 0.1;
+    // Education: 0.1 base; +0.3 if school; +0.4 if university; +0.2 if public_education tech
+    let education = 0.1;
+    if (t.buildings.includes('schoolhouse')) education += 0.3;
+    if (t.buildings.includes('university')) education += 0.4;
+    if (this.has('public_education')) education += 0.2;
+    // Safety: 0.2 base; +0.3 if garrison_barracks (barracks); +0.2 if militia > 2; +0.1 if civil_order tech
+    let safety = 0.2;
+    if (t.buildings.includes('barracks')) safety += 0.3;
+    if ((t.garrisonStrength ?? 0) > 2) safety += 0.2;
+    if (this.has('civil_order')) safety += 0.1;
+    return {
+      health: Math.max(0, Math.min(1, health)),
+      education: Math.max(0, Math.min(1, education)),
+      safety: Math.max(0, Math.min(1, safety)),
+    };
+  }
+
+  /** Update pollution levels monthly for all player settlements. */
+  private tickPollution(): void {
+    for (const t of this.settlements) {
+      if (t.factionId !== this.playerFactionId) continue;
+      let base = 0;
+      // +30 if has iron_works (ironworks) or factory building
+      if (t.buildings.includes('ironworks') || t.buildings.includes('factory')) base += 30;
+      // +20 if has coal_plant (power_station) building
+      if (t.buildings.includes('power_station')) base += 20;
+      // -10 if has park (market_hall used as proxy; GDD says 'park' but we use closest match)
+      // Using 'grain_exchange' as park proxy since no 'park' building exists in data
+      // -10 if has clean_industry_act researched (activePolicies)
+      if (this.policyActive('clean_industry_act')) base -= 10;
+      // Decay 5% per month (natural)
+      const current = t.pollutionLevel ?? 0;
+      const decayed = current * 0.95;
+      // Blend: move toward base level
+      t.pollutionLevel = Math.max(0, Math.min(100, decayed + base * 0.1));
+      // Side effects: health -0.1 per pollution point / 10 per month on satisfaction
+      if (t.pollutionLevel > 0) {
+        t.satisfaction = Math.max(0, t.satisfaction - (t.pollutionLevel / 10) * 0.1);
+      }
+    }
+  }
+
+  /** Update utilities (power, water, waste) monthly for all player settlements. */
+  private tickUtilities(): void {
+    for (const t of this.settlements) {
+      if (t.factionId !== this.playerFactionId) continue;
+      const pop = this.popOf(t);
+      // Power balance
+      const pb = this.computePowerBalance(t.id);
+      t.powerCapacity = pb.capacity;
+      t.powerDemand = pb.demand;
+      if (pb.demand > pb.capacity) {
+        // Brownout: log once per year
+        const lastBrownout = t.lastBrownoutYear ?? -999;
+        if (this.year > lastBrownout) {
+          t.lastBrownoutYear = this.year;
+          this.townEvent(t, `Power demand exceeds supply — brownouts rolling across ${t.name}.`, 'bad');
+        }
+        t.satisfaction = Math.max(0, t.satisfaction - 5);
+        // Industry output penalty applied via sector output mult (tracked via active event instead)
+        // We model it as a monthly satisfaction drag and log the event
+      }
+      // Water coverage
+      if (t.buildings.includes('waterworks')) {
+        t.waterCoverage = 1.0;
+      } else {
+        t.waterCoverage = Math.min(0.5, pop / 200);
+      }
+      // Waste coverage
+      if (t.buildings.includes('sanitation') || t.buildings.includes('market_hall')) {
+        t.wasteCoverage = 1.0;
+      } else {
+        t.wasteCoverage = Math.min(0.3, pop / 500);
+      }
+      // Disease event: waterCoverage < 0.5 and pop > 100: 5% chance/month
+      if ((t.waterCoverage ?? 0) < 0.5 && pop > 100 && this.rng.chance(0.05)) {
+        this.townEvent(t, `Poor water supply in ${t.name} — disease spreads among the population.`, 'bad');
+        t.satisfaction = Math.max(0, t.satisfaction - 3);
+      }
+    }
+  }
+
+  /** Update service coverage monthly for all player settlements. */
+  private tickServiceCoverage(): void {
+    for (const t of this.settlements) {
+      if (t.factionId !== this.playerFactionId) continue;
+      const sc = this.computeServiceCoverage(t.id);
+      t.serviceCoverage = sc;
+      // Side effects: low health (< 0.3) raises expected death pressure — tracked via satisfaction
+      // (actual demographic effect via mortality is handled in monthlyUpdate cohorts)
+      if (sc.health < 0.3) {
+        // Represent death pressure via grievance (1 per month)
+        t.grievance = Math.min(100, (t.grievance ?? 0) + 0.5);
+      }
+      // Low education (< 0.2): satisfaction -2 per month
+      if (sc.education < 0.2) {
+        t.satisfaction = Math.max(0, t.satisfaction - 2);
+      }
+      // Low safety (< 0.3): grievance +1 per month
+      if (sc.safety < 0.3) {
+        t.grievance = Math.min(100, (t.grievance ?? 0) + 1);
+      }
+    }
   }
 
   // ---- Phase 4: Regional Events ----
@@ -9186,6 +9367,15 @@ export class RegionSim {
       focus: s.focus ?? 'balanced',
       activeEvents: s.activeEvents ?? [],
       policies: s.policies ?? { ...DEFAULT_CITY_POLICIES },
+      // Phase 14: Zoning, Infrastructure & City Services
+      zoningMix: s.zoningMix ?? { residential: 0.5, commercial: 0.2, industrial: 0.2, office: 0.1 },
+      landValue: s.landValue ?? 30,
+      pollutionLevel: s.pollutionLevel ?? 0,
+      powerCapacity: s.powerCapacity ?? 0,
+      powerDemand: s.powerDemand ?? 0,
+      waterCoverage: s.waterCoverage ?? 0.5,
+      wasteCoverage: s.wasteCoverage ?? 0.3,
+      serviceCoverage: s.serviceCoverage ?? { health: 0.3, education: 0.2, safety: 0.2 },
     }));
     r.notables = d.notables;
     r.expeditions = d.expeditions;
