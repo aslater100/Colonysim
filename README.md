@@ -10,7 +10,7 @@ True to its roots in games like Victoria, all in hi-def pixel art over lush era-
 - **Design:** [GDD.md](GDD.md) — the full game design document.
 - **Development guide:** [HANDOFF.md](HANDOFF.md) — architecture, completed phases, and roadmap.
 - **Early specs:** [docs/specs/](docs/specs/) — per-milestone implementation specs (historical reference).
-- **Design docs:** [transportation](docs/design/transportation.md)
+- **Design docs:** [transportation](docs/design/transportation.md) · [HF MCP + sprite generation](docs/design/hf-mcp-sprites.md)
 
 ## Download
 

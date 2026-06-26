@@ -1,20 +1,38 @@
 /**
- * HF sprite generator — calls the Hugging Face Inference API to produce
- * pixel-art sprites and drops them into public/sprites/, updating index.json.
+ * HF sprite generator — calls the Hugging Face Inference Providers API to
+ * produce pixel-art sprites and drops them into public/sprites/, updating
+ * index.json.
  *
  * The game's applyOverrides() loader scales any PNG to the slot's canvas size,
  * so the generated image does not need to exactly match slot dimensions.
  *
+ * Endpoint: this uses the Inference Providers *router*
+ * (https://router.huggingface.co/<provider>/models/<model>), which replaced the
+ * old, now-removed api-inference.huggingface.co serverless endpoint. Your token
+ * needs the "Inference Providers" permission:
+ *   https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained
+ *
+ * Discovering models: use the Hugging Face MCP server (declared in this repo's
+ * .mcp.json) from a Claude Code session to find/verify text-to-image models and
+ * which providers serve them before wiring a new --model/--provider here. See
+ * docs/design/hf-mcp-sprites.md for the workflow.
+ *
  * Usage:
  *   HF_TOKEN=hf_xxx npx tsx scripts/hf-sprites.ts
  *   HF_TOKEN=hf_xxx npx tsx scripts/hf-sprites.ts --slots=tree,grass-0,rock
+ *   HF_TOKEN=hf_xxx npx tsx scripts/hf-sprites.ts --model=nerijs/pixel-art-xl --provider=fal-ai
  *   npx tsx scripts/hf-sprites.ts --dry-run
  *   npx tsx scripts/hf-sprites.ts --dry-run --slots=settler-0-0
  *
  * Options:
  *   --dry-run          Print what would be requested without calling the API.
  *   --slots=a,b,c      Comma-separated subset of slot names to generate.
- *   --model=<id>       Override the HF model (default: FLUX.1-schnell).
+ *   --model=<id>       Override the HF model (default: black-forest-labs/FLUX.1-schnell).
+ *   --provider=<id>    Inference provider to route through (default: hf-inference).
+ *                      e.g. hf-inference, fal-ai, replicate, together, nscale.
+ *   --steps=N          Denoising steps (default: 4, tuned for the schnell model).
+ *   --guidance=N       Send guidance_scale + negative_prompt (skip for schnell/turbo
+ *                      models, which ignore guidance). Default: omitted.
  *   --retries=N        Max retries per slot on model-loading 503 (default: 4).
  */
 
@@ -360,53 +378,111 @@ const CATALOG: SlotDef[] = [
 // HF Inference API
 // ---------------------------------------------------------------------------
 
-// nerijs/pixel-art-xl: SDXL LoRA trained on pixel art — much better output for
-// game sprites than a generic model; use the HF Serverless Inference endpoint.
-const DEFAULT_MODEL = 'nerijs/pixel-art-xl';
-const HF_API_BASE = 'https://api-inference.huggingface.co/models';
+// black-forest-labs/FLUX.1-schnell: a fast distilled model served by six
+// providers (hf-inference, fal-ai, replicate, together, nscale, wavespeed), so
+// it's far more reliably reachable than a single-provider SDXL LoRA. It honours
+// the "pixel art" trigger baked into every prompt's SUFFIX. To use an SDXL pixel
+// LoRA instead, pass --model=nerijs/pixel-art-xl --provider=fal-ai --guidance=7.
+const DEFAULT_MODEL = 'black-forest-labs/FLUX.1-schnell';
+const DEFAULT_PROVIDER = 'hf-inference';
+const DEFAULT_STEPS = 4;
+// Inference Providers router (replaces the removed api-inference.huggingface.co).
+const HF_ROUTER_BASE = 'https://router.huggingface.co';
+
+interface GenOpts {
+  token: string;
+  model: string;
+  provider: string;
+  steps: number;
+  /** When set, send guidance_scale + negative_prompt (skip for schnell/turbo). */
+  guidance: number | null;
+  maxRetries: number;
+}
 
 function isPNG(buf: Buffer): boolean {
   return buf.length > 4 &&
     buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
 }
 
-async function generateSprite(
-  slot: SlotDef,
-  token: string,
-  model: string,
-  maxRetries: number,
-): Promise<Buffer> {
-  const url = `${HF_API_BASE}/${model}`;
-  // SDXL minimum is 512; scale up to nearest 64 multiple, at least 512
+/**
+ * Pull image bytes out of a router response. The hf-inference provider returns
+ * raw image bytes; some providers wrap the result in JSON as a base64 blob or a
+ * URL we then have to fetch. Handle all three so --provider can vary freely.
+ */
+async function extractImage(res: Response): Promise<Buffer> {
+  const ct = res.headers.get('content-type') ?? '';
+  if (!ct.includes('application/json')) {
+    return Buffer.from(await res.arrayBuffer());
+  }
+  const json: unknown = await res.json();
+  // Common shapes: { images: [{ url }] } | { data: [{ b64_json }] } | "<b64>"
+  const pick = (o: unknown): string | undefined => {
+    if (typeof o === 'string') return o;
+    if (!o || typeof o !== 'object') return undefined;
+    const r = o as Record<string, unknown>;
+    const arr = (r.images ?? r.data ?? r.output) as unknown;
+    const first = Array.isArray(arr) ? arr[0] : undefined;
+    if (typeof first === 'string') return first;
+    if (first && typeof first === 'object') {
+      const f = first as Record<string, unknown>;
+      return (f.url ?? f.b64_json ?? f.image) as string | undefined;
+    }
+    return (r.url ?? r.b64_json ?? r.image) as string | undefined;
+  };
+  const val = pick(json);
+  if (!val) throw new Error(`unrecognised JSON response: ${JSON.stringify(json).slice(0, 200)}`);
+  if (val.startsWith('http')) {
+    const img = await fetch(val);
+    if (!img.ok) throw new Error(`image URL fetch failed: HTTP ${img.status}`);
+    return Buffer.from(await img.arrayBuffer());
+  }
+  // base64 (optionally a data: URI)
+  return Buffer.from(val.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+}
+
+async function generateSprite(slot: SlotDef, opts: GenOpts): Promise<Buffer> {
+  const url = `${HF_ROUTER_BASE}/${opts.provider}/models/${opts.model}`;
+  // Diffusion models prefer ≥512; scale up to nearest 64 multiple, at least 512.
   const genW = Math.max(Math.ceil((slot.w * 8) / 64) * 64, 512);
   const genH = Math.max(Math.ceil((slot.h * 8) / 64) * 64, 512);
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  const parameters: Record<string, unknown> = {
+    width: genW,
+    height: genH,
+    num_inference_steps: opts.steps,
+  };
+  // schnell/turbo models ignore guidance; only send it when asked (--guidance).
+  if (opts.guidance != null) {
+    parameters.guidance_scale = opts.guidance;
+    parameters.negative_prompt = NEGATIVE;
+  }
+
+  for (let attempt = 0; attempt <= opts.maxRetries; attempt++) {
     const res = await fetch(url, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${opts.token}`,
         'Content-Type': 'application/json',
         Accept: 'image/png,image/*',
       },
-      body: JSON.stringify({
-        inputs: slot.prompt,
-        parameters: {
-          width: genW,
-          height: genH,
-          num_inference_steps: 25,
-          guidance_scale: 7,
-          negative_prompt: NEGATIVE,
-        },
-      }),
+      body: JSON.stringify({ inputs: slot.prompt, parameters }),
     });
 
-    if (res.status === 503) {
-      // Model loading — wait and retry
+    // Model cold-start (503) or rate limit (429): wait and retry with backoff.
+    if (res.status === 503 || res.status === 429) {
       const waitMs = (attempt + 1) * 8_000;
-      process.stdout.write(`loading (${Math.round(waitMs / 1000)}s wait)... `);
+      const why = res.status === 429 ? 'rate-limited' : 'loading';
+      process.stdout.write(`${why} (${Math.round(waitMs / 1000)}s wait)... `);
       await new Promise((r) => setTimeout(r, waitMs));
       continue;
+    }
+
+    if (res.status === 401 || res.status === 403) {
+      const body = await res.text().catch(() => '');
+      throw new Error(
+        `HTTP ${res.status} (auth): token rejected — ensure it has the ` +
+        `"Inference Providers" permission. ${body.slice(0, 200)}`,
+      );
     }
 
     if (!res.ok) {
@@ -414,15 +490,15 @@ async function generateSprite(
       throw new Error(`HTTP ${res.status}: ${body.slice(0, 300)}`);
     }
 
-    const buf = Buffer.from(await res.arrayBuffer());
+    const buf = await extractImage(res);
     if (!isPNG(buf)) {
-      // HF may return JPEG or other format — still usable, but flag it
+      // Provider may return JPEG/WebP — still usable by the loader, but flag it.
       const head = buf.slice(0, 4).toString('hex');
       process.stdout.write(`[non-PNG bytes:${head}] `);
     }
     return buf;
   }
-  throw new Error(`Exceeded ${maxRetries} retries (model still loading)`);
+  throw new Error(`Exceeded ${opts.maxRetries} retries (model still loading / rate-limited)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -438,8 +514,11 @@ function parseArgs(argv: string[]) {
     dryRun: flags.has('--dry-run'),
     slotFilter: kv.slots ? new Set(kv.slots.split(',')) : null,
     model: kv.model ?? DEFAULT_MODEL,
+    provider: kv.provider ?? DEFAULT_PROVIDER,
+    steps: kv.steps != null ? parseInt(kv.steps, 10) : DEFAULT_STEPS,
+    guidance: kv.guidance != null ? parseFloat(kv.guidance) : null,
     maxRetries: kv.retries != null ? parseInt(kv.retries, 10) : 4,
-    token: process.env.HF_TOKEN ?? '',
+    token: process.env.HF_TOKEN ?? process.env.HUGGINGFACE_TOKEN ?? '',
   };
 }
 
@@ -448,8 +527,9 @@ async function main() {
 
   if (!opts.dryRun && !opts.token) {
     console.error('Error: set HF_TOKEN env var or pass --dry-run');
-    console.error('  export HF_TOKEN=hf_...');
+    console.error('  export HF_TOKEN=hf_...   # needs the "Inference Providers" permission');
     console.error('  npx tsx scripts/hf-sprites.ts');
+    console.error('  Create a token: https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained');
     process.exit(1);
   }
 
@@ -464,9 +544,11 @@ async function main() {
   }
 
   console.log(`Centuria HF Sprite Generator`);
-  console.log(`  model  : ${opts.model}`);
-  console.log(`  slots  : ${slots.length}`);
-  console.log(`  mode   : ${opts.dryRun ? 'dry-run (no API calls)' : 'live'}`);
+  console.log(`  model    : ${opts.model}`);
+  console.log(`  provider : ${opts.provider}`);
+  console.log(`  steps    : ${opts.steps}${opts.guidance != null ? `  guidance: ${opts.guidance}` : ''}`);
+  console.log(`  slots    : ${slots.length}`);
+  console.log(`  mode     : ${opts.dryRun ? 'dry-run (no API calls)' : 'live'}`);
   console.log('');
 
   if (opts.dryRun) {
@@ -493,7 +575,14 @@ async function main() {
   for (const s of slots) {
     process.stdout.write(`  ${s.name.padEnd(18)} ... `);
     try {
-      const buf = await generateSprite(s, opts.token, opts.model, opts.maxRetries);
+      const buf = await generateSprite(s, {
+        token: opts.token,
+        model: opts.model,
+        provider: opts.provider,
+        steps: opts.steps,
+        guidance: opts.guidance,
+        maxRetries: opts.maxRetries,
+      });
       const outPath = join(SPRITES_DIR, `${s.name}.png`);
       writeFileSync(outPath, buf);
       if (!index.includes(s.name)) index.push(s.name);
