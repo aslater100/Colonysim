@@ -17,6 +17,7 @@ import { hexNeighbors } from './hex';
 import { Weather } from './weather';
 import type { Lender, Loan } from './economy';
 import { createInitialLenders } from './lenders';
+import { resolveSupplyChain } from './supply';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -5835,8 +5836,11 @@ export class RegionSim {
   // ---- Phase 15: Intermediate Goods, Supply Chains, Arbitrage & FX (GDD §5.2) ----
 
   /** Process all intermediate goods that are unlocked in the current year.
-   *  Goods with all inputs stocked produce their baseOutput; others produce 0.
-   *  Updates supplyChainHealth and fires secondary effects (disease risk, research penalty). */
+   *  A good produces its baseOutput only when its whole upstream chain is intact:
+   *  a raw-material outage cascades downstream (lose coal → lose chemicals → lose
+   *  pharmaceuticals/components → lose electronics/vehicles), per GDD §5.2. The
+   *  cascade itself is the pure `resolveSupplyChain` solver; this method owns the
+   *  stock ledger and the random secondary effects (disease risk, research penalty). */
   tickIntermediateGoods(): void {
     const currentYear = this.year;
     const availableGoods = INTERMEDIATE_GOODS.filter(g => currentYear >= g.eraUnlock);
@@ -5846,52 +5850,40 @@ export class RegionSim {
       return;
     }
 
-    // Available coal/iron/copper proxied by industry sector output being > 0
-    // Use stocks first, then proxy from industry if stock is zero
-    const getStockOrProxy = (inputId: string): number => {
+    // Raw materials (coal/iron/copper) are available if held in stock, else
+    // proxied by any industry output existing. The solver only ever queries
+    // this for raws — intermediate inputs resolve through the graph (cascade).
+    const rawAvailable = (inputId: string): boolean => {
       if (this.intermediateGoodStocks[inputId] !== undefined) {
-        return this.intermediateGoodStocks[inputId];
+        return this.intermediateGoodStocks[inputId] > 0;
       }
-      // Proxy: industry-based raw materials assumed if industry output exists
       if (inputId === 'coal' || inputId === 'iron' || inputId === 'copper') {
         const industryOutput = this.settlements.reduce((s, t) => s + t.sectors.industry.output, 0);
-        return industryOutput > 0 ? 1 : 0; // 1 = available, 0 = not
+        return industryOutput > 0;
       }
-      return 0;
+      return false;
     };
 
-    let fullySupplied = 0;
-    let totalActive = 0;
-    let pharmaceuticalsDisrupted = false;
-    this._electronicsDisrupted = false;
+    const result = resolveSupplyChain(INTERMEDIATE_GOODS, currentYear, rawAvailable);
 
+    // Stock ledger: supplied goods produce baseOutput and draw down one unit of
+    // each held input; disrupted goods produce nothing (key seeded to 0).
     for (const good of availableGoods) {
-      totalActive++;
-      // Check all inputs
-      const allInputsAvailable = good.inputs.every(inputId => getStockOrProxy(inputId) > 0);
-
-      if (allInputsAvailable) {
-        // Produce output
+      if (result.supplied.has(good.id)) {
         this.intermediateGoodStocks[good.id] = (this.intermediateGoodStocks[good.id] ?? 0) + good.baseOutput;
-        // Consume 1 unit of each input
         for (const inputId of good.inputs) {
           if (this.intermediateGoodStocks[inputId] !== undefined) {
             this.intermediateGoodStocks[inputId] = Math.max(0, this.intermediateGoodStocks[inputId] - 1);
           }
         }
-        fullySupplied++;
-      } else {
-        // Supply chain disruption
-        if (good.id === 'pharmaceuticals') pharmaceuticalsDisrupted = true;
-        if (good.id === 'electronics') this._electronicsDisrupted = true;
-        // Ensure the stock doesn't go negative
-        if (this.intermediateGoodStocks[good.id] === undefined) {
-          this.intermediateGoodStocks[good.id] = 0;
-        }
+      } else if (this.intermediateGoodStocks[good.id] === undefined) {
+        this.intermediateGoodStocks[good.id] = 0;
       }
     }
 
-    this.supplyChainHealth = totalActive > 0 ? fullySupplied / totalActive : 1.0;
+    const pharmaceuticalsDisrupted = result.disrupted.has('pharmaceuticals');
+    this._electronicsDisrupted = result.disrupted.has('electronics');
+    this.supplyChainHealth = result.health;
 
     // Secondary effects
     if (pharmaceuticalsDisrupted && this.settlements.length > 0) {
