@@ -1,6 +1,49 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-26 · **Tests:** 846 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway (PRs #264, #265, #269, #272, #270, #274 merged; save-size guard + live-slot asset generator + audio stems/ambience + wall-clock sim catch-up landed — asset *generation* blocked only by network egress)
+**Last updated:** 2026-06-26 · **Tests:** 864 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway (PRs #264, #265, #269, #272, #270, #274 merged; **PR #276 open — supply-chain cascade**; save-size guard + live-slot asset generator + audio stems/ambience + wall-clock sim catch-up landed — asset *generation* blocked only by network egress)
+
+## Recent session (2026-06-26) — supply-shock cascade for intermediate goods (D1-econ) · PR #276 (draft)
+
+Closed a real correctness gap in the Phase-15 intermediate-goods economy: shocks
+did **not** propagate. The graph (`coal/iron/copper → chemicals → components/
+pharmaceuticals → electronics/vehicles`) buffered each good's stock without bound
+(output ≫ the 1-unit/tick consumption), so once a good primed, its buffer fed
+downstream forever — a raw-material outage never reached dependents and the GDD
+§5.2 cascade ("no chemicals → no pharmaceuticals → health crisis") was dead.
+`supplyChainHealth` + the electronics/pharma disruption flags only ever reacted to
+a good's *own direct* inputs.
+
+- **`src/sim/supply.ts`** (new, pure, no-RNG/no-IO, unit-tested in Node):
+  `resolveSupplyChain(goods, year, rawAvailable)` → `{active, disrupted, supplied,
+  health}` — a deterministic topological pass where a good is supplied iff its
+  whole upstream chain is intact. Cycle-safe (transitive self-dependency → unmet,
+  no infinite loop); queries the raw-availability predicate **only** for raw
+  materials (intermediates resolve recursively). Plus `rawMaterialsOf()`.
+- **`region.ts` `tickIntermediateGoods()`** delegates the health + disruption-flag
+  derivation to the solver. The **stock ledger** (produce `baseOutput`, draw down
+  inputs) and the **random secondary effects** (plague roll, research-slow log)
+  are unchanged, in the **same RNG order** — determinism preserved by construction.
+  Net −8 lines.
+- **Behaviour:** healthy play is byte-identical (industry keeps raws flowing → no
+  disruptions either way → identical RNG stream; all long-run/balance/anchor/
+  climate integration suites pass untouched). The cascade only bites in a genuine
+  raw collapse (deep depression / wartime industry shutdown) — then a coal outage
+  correctly slows research (−10%) and raises disease risk across the *whole*
+  downstream chain.
+- **`tests/supply.test.ts`** — 18 tests: era gating, per-raw outage isolation
+  (coal→all 5; iron→iron branch; copper→electronics only), deep-chain + cycle
+  robustness, predicate-only-for-raws, and an integration test proving a
+  downstream good no longer free-rides on buffered upstream stock once its input
+  is cut. Verified: tsc clean, **864 tests** (18 new), `bench-region` PASS (60fps),
+  vite build green.
+
+**Next on the economy (D1-econ):** `supplyChainHealth` is computed + serialized
+but still **not consumed by output** — wiring it into industrial output is the
+obvious follow-up, but note health dips below 1.0 even in healthy play at each
+good's unlock (e.g. vehicles 1925 needs components 1930 → health 0.5 in 1925–30),
+so a naive `mult = f(health)` would perturb the early-game balance; baseline or
+gate it. Then the GDD's 18→44 goods expansion (chemicals/components/electronics/
+pharma/vehicles is only the intermediate tier) and physical goods on routes.
 
 ## Recent session (2026-06-26) — manifest-driven generator for the LIVE 4X slots (A1)
 
