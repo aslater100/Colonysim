@@ -15,6 +15,7 @@ import { DesignScreen } from './designscreen';
 import { Minimap } from './minimap';
 import { sparklineGrid } from './sparklines';
 import { AssetRegistry, townSpriteTier, TOWN_TIER_PX } from './assets/registry';
+import { Backdrop, buildBackdropPalette, type Sky, type Branch } from './backdrop';
 
 /** Fill a hex polygon from precomputed corners (no stroke). */
 function fillHexPath(g: CanvasRenderingContext2D, corners: { x: number; y: number }[]): void {
@@ -203,6 +204,9 @@ export class RegionView {
 
   /** Manifest-driven art overrides for the 4X map; procedural fallback when absent. */
   private readonly assets = new AssetRegistry();
+
+  /** Parallax atmosphere behind the map; era/season/weather/tension-tinted. */
+  private readonly backdrop = new Backdrop();
 
   constructor(private canvas: HTMLCanvasElement, private region: RegionSim, root: HTMLElement) {
     this.g = canvas.getContext('2d')!;
@@ -629,6 +633,10 @@ export class RegionView {
     g.imageSmoothingEnabled = false;
     g.fillStyle = '#10141c';
     g.fillRect(0, 0, W, H);
+    // Parallax atmosphere fills the void the terrain cache leaves behind (map
+    // margins + the whole frame when zoomed out). Screen-space, behind the map,
+    // tinted by era/season/branch/weather/tension — a pure read of sim state.
+    this.drawBackdrop(W, H);
     // Everything from the terrain to the expedition wagons is map-space: apply
     // the camera (zoom + pan) once here so individual draws stay in base coords.
     g.save();
@@ -1136,6 +1144,21 @@ export class RegionView {
     mg.clearRect(0, 0, W, H);
     this.drawMemoryFog(mg, W, H);
     this.memFogSig = sig;
+  }
+
+  /** Composite + blit the parallax atmosphere behind the map. Palette is rebuilt
+   *  each frame (cheap, pure) but the gradient canvas only re-paints when the
+   *  era/season/branch/weather/tension key changes. */
+  private drawBackdrop(W: number, H: number): void {
+    const r = this.region;
+    const pal = buildBackdropPalette({
+      year: r.year,
+      seasonIndex: r.seasonIndex,
+      branch: r.eraBranch as Branch,
+      sky: r.weather.forDay(r.day).sky as Sky,
+      tension: r.tensionScalar(),
+    });
+    this.backdrop.draw(this.g, W, H, pal, this.camX, this.camY, this.assets);
   }
 
   /** Lighting state for atmospheric rendering. Day/night cycle disabled — always daytime. */

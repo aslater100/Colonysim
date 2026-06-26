@@ -1,8 +1,43 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-26 · **Tests:** 805 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; performance-gated deep-expansion track underway (PRs #264, #265 merged — see next section)
+**Last updated:** 2026-06-26 · **Tests:** 815 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; performance-gated deep-expansion track underway (PRs #264, #265 merged; parallax backdrop next — see below)
 
-## Recent session (2026-06-26) — deep-expansion foundation (PRs #264, #265 merged)
+## Recent session (2026-06-26) — parallax atmosphere backdrop (`drawBackdrop`)
+
+Landed the first **Track-B atmosphere layer**: `src/ui/backdrop.ts` — the 5-band
+parallax sky that fills the void the terrain cache leaves at the map margins (and
+the whole frame when zoomed out), replacing the flat `#10141c` fill. Verified:
+tsc clean, **815 tests** (10 new), `bench-region` PASS (60fps held), vite build
+green, and a real-Chromium smoke render (clean multi-band gradient, gap-free).
+
+- **Pure core (unit-tested in Node, like `registry.ts`):** `eraIdForYear` (sky
+  era windows mirroring the music engine), `statBand` (tension → calm/tense/
+  crisis), and `buildBackdropPalette({year, seasonIndex, branch, sky, tension})`
+  → 5 depth-ordered bands (rising `parallax`) + a cache `key` + an override
+  `slot` (`backdrop-<era>`). Every output is a pure read — no RNG, no save state.
+  Era × season × era-branch × weather × tension each shift the colours (branch
+  *repaints* the future sky: solarpunk cyan-green, dystopia smog-amber, drowned
+  grey-blue; crisis reddens the horizon; storm darkens; winter desaturates).
+- **DOM `Backdrop` class:** offscreen gradient re-painted only when the palette
+  `key` changes (oversized by a 96px `MARGIN` so the parallax offset never
+  exposes an edge); `draw()` blits it in **screen space before the camera
+  transform** with a gentle pan-fraction parallax. If `AssetRegistry` holds the
+  `backdrop-<era>` slot, a painted sky composites on top — the same procedural-
+  fallback discipline as town sprites.
+- **Wired in `regionview.ts`:** new `drawBackdrop(W,H)` called right after the
+  base fill in `draw()` (screen space, behind the terrain blit). Note: the
+  HANDOFF plan said "inside the camera transform / world-space"; screen-space is
+  correct here — the terrain cache covers world-space opaquely, so the backdrop
+  must sit in front of the void fill but behind the (camera-transformed) map, and
+  parallax is a fraction of `camX/camY` applied at blit.
+
+**Next on the backdrop:** per-band blits (true independent parallax per layer,
+the data model already carries `band.parallax`); a stat-driven horizon glow /
+"skyline" cue; then real painted `backdrop-<era>` art once the asset pipeline has
+`HF_TOKEN` + an encoder. Sample-stem music / ambience beds (`audioRegistry.ts`)
+remain the other half of the atmosphere layer.
+
+## Earlier session (2026-06-26) — deep-expansion foundation (PRs #264, #265 merged)
 
 Kickoff of the **"1GB" deep-expansion roadmap**: a performance-gated two-track effort —
 simulation depth + an AI-generated asset pipeline toward a ~1GB production build. The full
@@ -16,9 +51,10 @@ vite build green):
     `music.update` + `soundscape.update` in `main.ts`. **The `tension` input was previously
     hardcoded to `0`**, so the audio engine's dynamic mixing was dead. Pure read (no RNG) —
     save/load determinism preserved.
-  - **`scripts/bench-region.ts`** — the perf guard the shipping 4X game lacked. The existing
-    `bench-scale.ts`/`bench-agents.ts` measure the **dropped town engine** (`Simulation`/
-    `AgentStore`/`FlowField`), NOT `RegionSim`. This benches `RegionSim.tick()` at
+  - **`scripts/bench-region.ts`** — the perf guard the shipping 4X game lacked. (The old
+    `bench-scale.ts`/`bench-agents.ts` benched the **dropped town engine** — `Simulation`/
+    `AgentStore`/`FlowField` — not `RegionSim`; both were removed in the backdrop PR since the
+    modules they imported no longer exist.) This benches `RegionSim.tick()` at
     early-colony / mid-nation / late-nation against the 16.7ms / 64-tick frame budget, reporting
     mean **and worst-case** ms/tick. Baseline: mean ~0.003–0.007ms (64-tick frame ~0.2–0.4ms),
     worst single tick ~10–12ms (the monthly/yearly spike — the stutter to watch). **This is the
@@ -124,8 +160,8 @@ saves break.
   the 64-iteration count** (`main.ts:274`) so a heavy late tick can't stutter — let the calendar lag
   at 8× instead. Era/asset transitions ≤1 dropped frame (async + prefetched).
 - **The guard:** `scripts/bench-region.ts` (shipped) — boots `RegionSim` at early/mid/late, reports
-  mean + worst-case ms/tick vs the 16.7 ms / 64-tick budget. **The old `bench-scale`/`bench-agents`
-  measure the dropped town engine — `bench-region` is the 4X guard.** Every perf-sensitive PR must
+  mean + worst-case ms/tick vs the 16.7 ms / 64-tick budget. **`bench-region` is the 4X guard**
+  (the old town-engine `bench-scale`/`bench-agents` were removed). Every perf-sensitive PR must
   show no "DROPS".
 - **Render:** keep the static `mapCache`; composite backdrop bands once per era/stat-band change to
   an offscreen canvas (blit + parallax-offset per frame); pre-render Phase-14 heatmaps offscreen.
@@ -268,13 +304,13 @@ npm install
 npm run dev        # http://localhost:5173/  (index.html → src/main.ts) ← the 4X game
 npm run build      # tsc + vite build (must pass)
 npx tsc --noEmit
-npx vitest run --exclude '**/.claude/**'   # 805 tests
+npx vitest run --exclude '**/.claude/**'   # 815 tests
 npx tsx scripts/bench-region.ts            # 60fps perf gate (early/mid/late) — must show no "DROPS"
 npm run sim                                # headless long-run balance harness (restored)
 ```
 
-> Note: `scripts/bench-scale.ts` / `bench-agents.ts` bench the **dropped town engine**, not the
-> shipping 4X campaign — use `scripts/bench-region.ts` for the `RegionSim` perf gate.
+> Note: `scripts/bench-region.ts` is the only perf bench — it gates the `RegionSim` 4X campaign.
+> The old town-engine benches (`bench-scale.ts` / `bench-agents.ts`) were removed.
 
 ## Recent completions (PRs #218–#256)
 

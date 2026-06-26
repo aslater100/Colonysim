@@ -1,10 +1,10 @@
 /**
  * Region (4X) scale benchmark — the perf guard the shipping game lacked.
  *
- * `bench-scale.ts` / `bench-agents.ts` measure the DROPPED town engine
- * (`Simulation` / `AgentStore`), NOT the campaign. This measures the real
- * `RegionSim.tick()` across game stages so we can defend 60fps from a 1919
- * colony to a 2000 nation — the "smooth at every stage" guarantee.
+ * Measures the real `RegionSim.tick()` across game stages so we can defend
+ * 60fps from a 1919 colony to a 2000 nation — the "smooth at every stage"
+ * guarantee. (Supersedes the removed `bench-scale`/`bench-agents`, which benched
+ * the dropped town engine — `Simulation`/`AgentStore` — not the 4X campaign.)
  *
  *   npx tsx scripts/bench-region.ts            # default fixed tick budget
  *   npx tsx scripts/bench-region.ts 6000       # custom ticks per stage
