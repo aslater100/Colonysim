@@ -1,6 +1,39 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-26 · **Tests:** 833 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; performance-gated deep-expansion track underway (PRs #264, #265, #269, #272 merged; save-size guard + wall-clock sim catch-up landed — see below)
+**Last updated:** 2026-06-26 · **Tests:** 846 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway (PRs #264, #265, #269, #272, #270, #274 merged; save-size guard + live-slot asset generator + audio stems/ambience + wall-clock sim catch-up landed — asset *generation* blocked only by network egress)
+
+## Recent session (2026-06-26) — manifest-driven generator for the LIVE 4X slots (A1)
+
+Closed the gap where the asset pipeline couldn't target the slots the shipping
+game actually overrides. `scripts/hf-sprites.ts`'s catalog is for the **dropped**
+town engine (`public/sprites/`); the live `AssetRegistry` slots (`town-<tier>`,
+`backdrop-<era>`) and the audio manifest had **no generator**. Added:
+
+- **`src/data/assetCatalog.ts`** (type-checked, unit-tested, no network/fs):
+  `LIVE_ASSET_CATALOG` — the 6 town tiers (mirroring `townSpriteTier`) + 5
+  backdrop eras (mirroring `eraIdForYear`), each with a tuned prompt (backdrop
+  palettes echo `ERA_SKY` so generated art and the procedural fallback read as
+  the same era). Plus the pure `mergeManifestItems(existing, incoming)` (replace
+  by slot, preserve others, sort — diff-friendly manifest).
+- **`scripts/hf-assets.ts`** — thin CLI + HF I/O over the catalog: writes PNG
+  bytes straight to `public/assets/` (HF returns PNG the registry loads directly,
+  **so sprites/backdrops need no encoder**), sha256s them, and `mergeManifestItems`
+  into `asset_manifest.json`. `--dry-run` / `--slots` / `--category` / `--era`
+  filters; `npm run hf-assets`. Generated PNGs are **gitignored** (hybrid
+  distribution = Release packs, not git blobs); committed manifest stays empty →
+  procedural fallback. Verified: tsc clean, **829 tests** (8 new), dry-run +
+  all filters exercised offline, build green.
+
+**⛔ Generation is blocked by network egress, not the token.** The user supplied a
+valid `HF_TOKEN`, but this web env's egress policy **403s `huggingface.co`** (agent
+proxy `CONNECT tunnel failed, response 403`), and the HF MCP `dynamic_space`
+**invoke** path is disabled (`gradio=none`) — only discover/inspect work. So no
+assets can be generated *from here*. To actually generate: run
+`HF_TOKEN=… npm run hf-assets` **locally**, or re-provision the web env with a
+network policy that allowlists `huggingface.co`. The catalog/generator/manifest
+plumbing is all ready and dry-run-verified; only the egress step remains.
+*(Audio stem generation additionally needs an OGG encoder — `sharp`/`ffmpeg`
+absent here too.)*
 
 ## Recent session (2026-06-26) — save-size regression guard (Risk #5)
 
@@ -40,7 +73,50 @@ up, which is invisible next to a dropped frame.
   `ceremonyOpen` tick-skip. Verified: tsc clean, **829 tests** (8 new,
   fake-clock), `bench-region` PASS (60fps), vite build green.
 
-## Recent session (2026-06-26) — per-band parallax + horizon glow
+## Recent session (2026-06-26) — audio stem override seam (`AudioRegistry`)
+
+Built the **audio half of the asset pipeline** — the sibling of `AssetRegistry`
+(#265, art) and the `backdrop-<era>` slot. `src/ui/audio/audioRegistry.ts`
+`AudioRegistry` loads recorded stems listed in `public/audio/audio_manifest.json`,
+decodes them on a live `AudioContext`, and serves them by slot with **procedural
+fallback** — so the whole WebAudio soundtrack keeps playing with real stems
+layered on, or (the shipped default, empty `items`) entirely without them.
+Verified: tsc clean, **826 tests** (5 new), `bench-region` PASS (60fps), vite
+build green (manifest ships in `dist/audio/`), and a **real-Chromium probe**
+confirming the shipped manifest resolves all 6 era slots with **`anyLoaded:false`**
+→ byte-identical procedural playback.
+
+- **Pure helpers (unit-tested in Node):** `musicStemSlot(year)` / `ambienceStemSlot(year)`
+  → `music-<era>` / `ambience-<era>`, in lockstep with the music engine's
+  `eraForYear` so the recorded bed and the synth turn over on the same windows.
+  Era ids: ragtime · chipjazz · midcentury · analog · electronica · future.
+- **`AudioRegistry`** mirrors `AssetRegistry` exactly: `load(ctx, dir='audio')`
+  fetches the manifest, fires an independent fetch→`decodeAudioData` per stem
+  (one bad stem never blocks the rest), `get`/`has` by slot. **Buffers are bound
+  to the context they decode on**, so music and soundscape each own an instance.
+- **Wired into `Music` (`music.ts`):** `setStems(reg)` attaches it; `updateStem()`
+  (called from `update()`) crossfades the `music-<era>` bed in on the **same
+  master gain**, swapping beds at era turnover (0.3s fade, no click) and **ducking
+  by intensity** — the recording owns the calm mix, the procedural kit rises with
+  tension so they never pile up. `main.ts` constructs the registry and calls
+  `music.setStems(...)`. No stems loaded → `updateStem` is a no-op → unchanged.
+
+**Ambience beds — done (this branch).** `Soundscape` now owns its **own**
+`AudioRegistry` instance (a second one — buffers can't cross contexts): `setAmbience(reg)`
+attaches it, and `updateBed()` (called from `update()` after the master ease,
+before the pause return) loops the `ambience-<era>` bed under the diegetic events
+on the **same `masterGain`** (so pause/disable already silence it), swapping beds
+at era turnover with a 0.4s fade. `main.ts` calls `soundscape.setAmbience(...)`.
+No beds → no-op → unchanged. Verified: tsc clean, 826 tests, bench PASS, build
+green, Chromium probe — all **12** era slots (music + ambience) resolve from the
+shipped manifest with `anyLoaded:false`.
+
+**Next on audio:** **bulk generation** of the actual stems — still blocked on
+`HF_TOKEN` (unset in web env) **+ an encoder** (`sharp`/`ffmpeg` not installed);
+provision those before generating. Every audio change stays gated by
+`scripts/bench-region.ts`.
+
+## Earlier session (2026-06-26) — per-band parallax + horizon glow
 
 Extended `src/ui/backdrop.ts` to the **two follow-ups the prior session flagged**
 as next: true independent per-layer parallax, and a stat-driven horizon glow.

@@ -14,6 +14,7 @@
     "sim": "tsx src/sim/headless.ts",
     "sim:town": "tsx src/sim/town-headless.ts",
     "hf-sprites": "tsx scripts/hf-sprites.ts",
+    "hf-assets": "tsx scripts/hf-assets.ts",
     "app": "npm run build && electron .",
     "app:dist": "npm run build && npx electron-builder"
   },

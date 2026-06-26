@@ -15,6 +15,8 @@
  * (it is the franchise voice) but the era around it modernizes.
  */
 
+import type { AudioRegistry } from './audio/audioRegistry';
+
 /** Equal-tempered frequency for `semitones` above a reference pitch. */
 function freqAt(baseHz: number, semitones: number): number {
   return baseHz * Math.pow(2, semitones / 12);
@@ -270,6 +272,14 @@ export class Music {
   private static readonly NOISE_DUR = 0.04;
   private static readonly NOISE_POOL_SIZE = 8;
 
+  // Optional recorded stems (AudioRegistry). When a `music-<era>` stem is loaded
+  // it crossfades in on the master bus and the procedural synth ducks beneath it;
+  // with no stems (the shipped default) the synth plays alone, unchanged.
+  private stems: AudioRegistry | null = null;
+  private stemSlot = ''; // the stem currently sounding ('' = none)
+  private stemSource: AudioBufferSourceNode | null = null;
+  private stemGain: GainNode | null = null;
+
   constructor() {
     let on = true;
     try {
@@ -288,6 +298,14 @@ export class Music {
       // preference just won't persist
     }
     if (!this.enabled && this.master) this.master.gain.value = 0;
+  }
+
+  /** Attach a manifest-driven stem registry. The registry decodes its stems on
+   *  this engine's AudioContext (once it exists); when it holds a `music-<era>`
+   *  bed, that recording crossfades in and the synth ducks. No stems → no change. */
+  setStems(reg: AudioRegistry): void {
+    this.stems = reg;
+    if (this.ctx) void reg.load(this.ctx);
   }
 
   /** Call from a user gesture so the browser lets the context start. */
@@ -316,10 +334,71 @@ export class Music {
         this.noisePool.push(buf);
       }
       this.noisePoolIdx = 0;
+      if (this.stems) void this.stems.load(this.ctx);
     } catch {
       this.ctx = null;
     }
     return this.ctx;
+  }
+
+  /**
+   * Manage the recorded era stem on the master bus. Swaps the bed when the era's
+   * stem changes (or one first becomes available), stops it when none applies,
+   * and crossfades by intensity: the recording owns the calm mix, and as tension
+   * rises the procedural kit comes up while the stem ducks so they never pile up.
+   * A no-op while no stems are loaded — the shipped, procedural-only path.
+   */
+  private updateStem(ctx: AudioContext, era: EraVoicing, intensity: number): void {
+    const reg = this.stems;
+    const slot = `music-${era.id}`;
+    const have = !!reg && reg.has(slot);
+    if (have && slot !== this.stemSlot) {
+      const buf = reg!.get(slot);
+      if (buf) this.startStem(ctx, buf, slot);
+    } else if (!have && this.stemSlot) {
+      this.stopStem(ctx);
+    }
+    if (this.stemGain && this.stemSlot) {
+      const i = Math.min(1, Math.max(0, intensity));
+      const target = 0.9 * (1 - 0.6 * i);
+      this.stemGain.gain.value += (target - this.stemGain.gain.value) * 0.05;
+    }
+  }
+
+  private startStem(ctx: AudioContext, buf: AudioBuffer, slot: string): void {
+    this.stopStem(ctx); // fade out and release the outgoing bed first
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    const gain = ctx.createGain();
+    gain.gain.value = 0; // eased up by updateStem so the entry isn't a click
+    src.connect(gain).connect(this.master!);
+    try {
+      src.start(ctx.currentTime + 0.02);
+    } catch {
+      /* a source can only start once; ignore */
+    }
+    this.stemSource = src;
+    this.stemGain = gain;
+    this.stemSlot = slot;
+  }
+
+  private stopStem(ctx: AudioContext): void {
+    const src = this.stemSource;
+    const gain = this.stemGain;
+    if (src && gain) {
+      const t = ctx.currentTime;
+      gain.gain.setValueAtTime(gain.gain.value, t);
+      gain.gain.linearRampToValueAtTime(0, t + 0.3); // brief fade, no click
+      try {
+        src.stop(t + 0.32);
+      } catch {
+        /* never started */
+      }
+    }
+    this.stemSource = null;
+    this.stemGain = null;
+    this.stemSlot = '';
   }
 
   /** A fast deterministic-ish pick in [0,1); keeps the melody from looping flat. */
@@ -528,6 +607,9 @@ export class Music {
     this.master.gain.value += (targetMaster - this.master.gain.value) * 0.02;
     const targetIntensity = c.paused ? 0 : 0.45 + 0.55 * Math.min(1, Math.max(0, c.tension));
     this.intensity += (targetIntensity - this.intensity) * 0.03;
+
+    // Crossfade any recorded era stem on the same bus (procedural-only by default).
+    this.updateStem(ctx, era, this.intensity);
 
     const stepDur = 60 / era.bpm / 4; // a 16th note
     const horizon = ctx.currentTime + 0.2;
