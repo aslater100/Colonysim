@@ -4,7 +4,7 @@
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
 import type { Settlement, Scout, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, DepressionMeasure, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType, TechNode, Province, DynastyNode } from '../sim/region';
-import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES, ESPIONAGE_OPS, BLOC_RELATIONS_FLOOR, DEPRESSION_MEASURES } from '../sim/region';
+import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, INTERMEDIATE_GOODS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES, ESPIONAGE_OPS, BLOC_RELATIONS_FLOOR, DEPRESSION_MEASURES } from '../sim/region';
 import type { EspionageOp } from '../sim/region';
 import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS } from '../sim/defs';
 import type { CurrencySymbol } from '../sim/defs';
@@ -106,7 +106,7 @@ export class RegionView {
   private centralBankPanel: HTMLElement;
   centralBankOpen = false;
   private lastCentralBankBuildFrame = -999;
-  private economyTab: 'overview' | 'settlements' = 'overview';
+  private economyTab: 'overview' | 'settlements' | 'supply' = 'overview';
   private ceremony: HTMLElement;
   private convention: HTMLElement;
   private policyModal: HTMLElement;
@@ -4604,7 +4604,7 @@ export class RegionView {
     this.lastEconomyBuildFrame = this.frame;
     this.setInnerHtml(this.economyPanel, this.economyPanelHtml());
     const refresh = () => { this.lastEconomyBuildFrame = -999; };
-    this.wireTabs(this.economyPanel, (t) => { this.economyTab = t as 'overview' | 'settlements'; });
+    this.wireTabs(this.economyPanel, (t) => { this.economyTab = t as 'overview' | 'settlements' | 'supply'; });
     for (const b of this.economyPanel.querySelectorAll<HTMLButtonElement>('.ep-close')) {
       b.onclick = () => { this.economyOpen = false; };
     }
@@ -4770,11 +4770,109 @@ export class RegionView {
       `<div class="pal-tabs">` +
       `<button class="pal-tab${etab === 'overview' ? ' active' : ''}" data-ptab="overview">Overview</button>` +
       `<button class="pal-tab${etab === 'settlements' ? ' active' : ''}" data-ptab="settlements">Settlements</button>` +
+      `<button class="pal-tab${etab === 'supply' ? ' active' : ''}" data-ptab="supply">Supply</button>` +
       `</div>` +
       `<div class="pal-section${etab === 'overview' ? '' : ' hidden'}" data-psection="overview">${overviewBody}</div>` +
       `<div class="pal-section${etab === 'settlements' ? '' : ' hidden'}" data-psection="settlements">` +
-        `<div class="thoughts">${settRows || '<p class="insp-skills">no towns yet</p>'}</div></div>`
+        `<div class="thoughts">${settRows || '<p class="insp-skills">no towns yet</p>'}</div></div>` +
+      `<div class="pal-section${etab === 'supply' ? '' : ' hidden'}" data-psection="supply">${this.supplyPanelHtml()}</div>`
     );
+  }
+
+  /** Critical goods the trade screen tracks dependency on (GDD §5.4). */
+  private static readonly CRITICAL_GOODS = ['food', 'fuel', 'steel', 'components'];
+
+  /** Transitive primary-raw footprint of a good — the raws that, if cut, take it
+   *  down. The "dependency" the GDD §5.4 trade screen surfaces, read off the DAG. */
+  private goodRawFootprint(goodId: string): string[] {
+    const byId = new Map(INTERMEDIATE_GOODS.map((g) => [g.id, g]));
+    const raws = new Set<string>();
+    const seen = new Set<string>();
+    const visit = (id: string): void => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      const g = byId.get(id);
+      if (!g) { raws.add(id); return; } // ground: a primary raw
+      for (const inp of g.inputs) visit(inp);
+    };
+    visit(goodId);
+    return [...raws].sort();
+  }
+
+  /** The Supply tab: supply-chain health, the live industrial drag, any standing
+   *  embargo, the GDD §5.4 critical-goods dependency board, and a per-good status
+   *  grid. Pure read off `supplyChainSnapshot()` — no mutation. */
+  private supplyPanelHtml(): string {
+    const r = this.region;
+    const snap = r.supplyChainSnapshot();
+    const nameOf = (id: string): string =>
+      INTERMEDIATE_GOODS.find((g) => g.id === id)?.name ?? id;
+
+    if (snap.active.length === 0) {
+      const firstUnlock = Math.min(...INTERMEDIATE_GOODS.map((g) => g.eraUnlock));
+      return `<p class="insp-skills">No supply chain yet — manufacturing begins ${firstUnlock}.</p>`;
+    }
+
+    const healthPct = Math.round(snap.health * 100);
+    const dragPct = (1 - snap.outputMult) * 100;
+    const disruptedCount = snap.disrupted.size;
+    const healthy = snap.severity === 0;
+    const barCol = healthy ? '#4e9' : snap.severity < 0.3 ? '#ca4' : '#e55';
+
+    // Headline: health bar + the actual industrial drag it's costing.
+    let html =
+      `<div class="bar-row" title="Active goods fully supplied this month">` +
+      `<span style="width:54px;display:inline-block">health</span>` +
+      `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${healthPct}%;background:${barCol}"></div></div>` +
+      `<span class="insp-skills" style="min-width:34px;text-align:right">${healthPct}%</span>` +
+      `</div>` +
+      `<p class="insp-skills">${snap.supplied.size}/${snap.active.length} goods flowing` +
+      (dragPct > 0.05 ? ` · industry −${dragPct.toFixed(1)}%` : ' · no shock') +
+      `</p>`;
+
+    // Standing embargoes — the "this is why" banner (oil shock, future blockades).
+    for (const e of snap.embargoes) {
+      const months = Math.max(1, Math.round(e.daysLeft / 30));
+      html +=
+        `<p class="insp-cond" style="margin:4px 0">⚠ ${e.raw.toUpperCase()} EMBARGO` +
+        ` — ${e.raw} cut off, cascading downstream · ~${months} mo left</p>`;
+    }
+
+    // Critical-goods dependency board (GDD §5.4: food, fuel, steel, components).
+    html += `<p class="insp-skills" style="margin-top:6px">CRITICAL GOODS</p>`;
+    for (const id of RegionView.CRITICAL_GOODS) {
+      if (!snap.active.includes(id)) continue; // not yet unlocked this era
+      const ok = snap.supplied.has(id);
+      const deps = this.goodRawFootprint(id).join(', ');
+      html +=
+        `<div style="display:flex;align-items:center;gap:6px;margin:2px 0" title="${nameOf(id)} depends on: ${deps}">` +
+        `<span style="color:${ok ? '#4e9' : '#e55'}">${ok ? '●' : '○'}</span>` +
+        `<span style="width:82px">${nameOf(id)}</span>` +
+        `<span class="insp-skills">← ${deps}</span>` +
+        (ok ? '' : `<span class="insp-cond">· cut</span>`) +
+        `</div>`;
+    }
+
+    // Full per-good status grid, disrupted first so a shock reads at a glance.
+    const order = [...snap.active].sort((a, b) => {
+      const da = snap.disrupted.has(a) ? 0 : 1;
+      const db = snap.disrupted.has(b) ? 0 : 1;
+      return da - db;
+    });
+    html += `<p class="insp-skills" style="margin-top:6px">ALL GOODS (${snap.active.length})</p>`;
+    html += `<div style="display:flex;flex-wrap:wrap;gap:2px 8px">`;
+    for (const id of order) {
+      const ok = snap.supplied.has(id);
+      const col = ok ? '#4e9' : '#e55';
+      html +=
+        `<span class="insp-skills" style="color:${col};min-width:84px" title="${ok ? 'supplied' : 'disrupted'}">` +
+        `${ok ? '●' : '○'} ${nameOf(id)}</span>`;
+    }
+    html += `</div>`;
+    if (disruptedCount > 0 && snap.embargoes.length === 0) {
+      html += `<p class="insp-skills" style="margin-top:4px">Open goods are disrupted — an upstream raw or input is short.</p>`;
+    }
+    return html;
   }
 
   /** Why a node can't be researched right now — shown on hover for locked nodes. */

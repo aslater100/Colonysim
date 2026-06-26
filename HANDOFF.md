@@ -1,6 +1,37 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-26 · **Tests:** 878 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway (PRs #264, #265, #269, #272, #270, #274, **#276 + #277 merged — supply-chain cascade + GDP drag**; save-size guard + live-slot asset generator + audio stems/ambience + wall-clock sim catch-up landed — asset *generation* blocked only by network egress). **This session: expanded the supply-chain DAG to the GDD §5.2 MVP-18 goods set (D1-econ, open PR).**
+**Last updated:** 2026-06-26 · **Tests:** 890 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway (PRs #264, #265, #269, #272, #270, #274, **#276 + #277 + #278 merged — supply-chain cascade + GDP drag + MVP-18 DAG**; save-size guard + live-slot asset generator + audio stems/ambience + wall-clock sim catch-up landed — asset *generation* blocked only by network egress). **This session: routed the oil-shock anchor through the supply chain (oil → fuel → trucking/plastics) and surfaced the whole chain in a new Economy → Supply tab (D1-econ, open PR).**
+
+## Recent session (2026-06-26) — the oil shock animates the chain + a Supply UI (D1-econ)
+
+The DAG (#278) deepened the graph but the cascade still only fired on a *total
+sector shutdown*, and the supply chain had **zero UI**. This session makes the
+chain matter in ordinary play via the GDD §5.4 anchor and makes it legible.
+
+- **Oil shock → supply cascade.** A new transient embargo ledger
+  (`rawEmbargoes: Record<raw, untilDay>`) cuts a raw at the root for a window. The
+  1970s oil-shock anchor now stamps `oil` for `OIL_EMBARGO_DAYS` (180d ≈ the 1973
+  embargo). `fuel` (← oil) and the fuel-burning finals — **vehicles, machinery,
+  consumer_goods** (GDD §5.4 "trucking, plastics") — now take `fuel` as an input,
+  so the cut cascades oil → fuel → those three (4/16 goods → health 0.75 →
+  ~3.75% industry drag for the window). "The oil shock isn't a popup."
+- **Byte-identical in healthy play.** `fuel` always flows when oil does, so the
+  three finals stay supplied and the era baseline is unchanged — the drag is still
+  exactly 1.0 with no embargo. Only a real oil cut bites. The embargo ledger
+  serializes (backfills `{}` on old saves) and prunes expired entries each tick.
+- **Economy → Supply tab.** `supplyChainSnapshot()` (pure read; reuses the
+  extracted `rawSupplyAvailable` predicate) drives a new tab: health bar + live
+  industrial drag, an **OIL EMBARGO** banner with countdown, the GDD §5.4
+  critical-goods dependency board (food/fuel/steel/components → their raws), and a
+  disrupted-first per-good status grid. Screenshot-verified in a 2018 dev save.
+- **Tests:** `tests/oil-shock-chain.test.ts` (12 — cascade, bounded drag, expiry,
+  anchor wiring, persistence, snapshot purity). tsc clean, **890 tests**, build green.
+
+**Next on the economy (D1-econ):** the raw proxy is still **binary** for the
+*untouched* raws (a raw flows iff its sector's output > 0). The complementary move
+is **(a) graded raw availability** — a per-raw ratio (extraction/imports vs. demand)
+so ordinary shortages drag output, not just embargoes/total collapse. And the goods
+are still an **abstract layer**: nothing reads stocks into GDP/prices/trade yet.
 
 ## Recent session (2026-06-26) — supply-chain DAG → GDD §5.2 MVP-18 goods set (D1-econ)
 

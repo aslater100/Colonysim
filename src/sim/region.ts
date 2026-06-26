@@ -221,9 +221,14 @@ export const INTERMEDIATE_GOODS: IntermediateGood[] = [
   { id: 'food',            name: 'Food',            eraUnlock: 1920, inputs: ['grain', 'livestock'],        baseOutput: 14 },
   { id: 'clothing',        name: 'Clothing',        eraUnlock: 1920, inputs: ['textiles'],                 baseOutput: 9  },
   { id: 'tools',           name: 'Tools',           eraUnlock: 1920, inputs: ['steel'],                    baseOutput: 8  },
-  { id: 'vehicles',        name: 'Vehicles',        eraUnlock: 1925, inputs: ['iron', 'components'],        baseOutput: 4  },
-  { id: 'machinery',       name: 'Machinery',       eraUnlock: 1930, inputs: ['steel', 'components'],       baseOutput: 6  },
-  { id: 'consumer_goods',  name: 'Consumer Goods',  eraUnlock: 1935, inputs: ['textiles', 'components'],    baseOutput: 7  },
+  // The fuel-burning finals (GDD §5.4 "the oil shock … is a fuel price your
+  // trucking, plastics, and heating all pay"). Taking `fuel` as an input is what
+  // lets an oil embargo cascade oil → fuel → here. In healthy play fuel always
+  // flows (oil is available whenever industry produces), so these stay supplied
+  // and the economy is unchanged; only a real oil cut bites.
+  { id: 'vehicles',        name: 'Vehicles',        eraUnlock: 1925, inputs: ['iron', 'components', 'fuel'],     baseOutput: 4  },
+  { id: 'machinery',       name: 'Machinery',       eraUnlock: 1930, inputs: ['steel', 'components', 'fuel'],    baseOutput: 6  },
+  { id: 'consumer_goods',  name: 'Consumer Goods',  eraUnlock: 1935, inputs: ['textiles', 'components', 'fuel'], baseOutput: 7  },
   { id: 'pharmaceuticals', name: 'Pharmaceuticals', eraUnlock: 1940, inputs: ['chemicals'],                baseOutput: 6  },
   { id: 'electronics',     name: 'Electronics',     eraUnlock: 1950, inputs: ['components', 'copper'],      baseOutput: 5  },
   { id: 'luxury_goods',    name: 'Luxury Goods',    eraUnlock: 1955, inputs: ['textiles', 'electronics'],   baseOutput: 3  },
@@ -237,6 +242,12 @@ export const INTERMEDIATE_GOODS: IntermediateGood[] = [
  *  (a good idling on a not-yet-unlocked input is the era boundary, not a shock),
  *  so healthy play is byte-identical and only a genuine raw collapse bites. */
 export const SUPPLY_SHOCK_MAX_DRAG = 0.15;
+
+/** How long (sim days) the 1970s oil-shock anchor embargoes the `oil` raw,
+ *  cutting `fuel` and the fuel-burning finals downstream. ~6 months — the real
+ *  1973 embargo's span — long enough to register across several monthly supply
+ *  ticks so the cascade and the industry drag are felt, not a one-frame blip. */
+export const OIL_EMBARGO_DAYS = 180;
 
 // ---- Phase 1: Sectoral economy (GDD §5.2: the century's structural transformation) ----
 
@@ -2780,6 +2791,12 @@ export class RegionSim {
   // ---- Phase 15: Extended Economy & FX (GDD §5.2) ----
   /** Current stock of each intermediate good (units). */
   intermediateGoodStocks: Record<string, number> = {};
+  /** Transient raw-material embargoes: raw id → the sim day the embargo lifts.
+   *  While `day < until` the raw reads unavailable in the supply solver, so the
+   *  shortage cascades downstream (the GDD §5.4 promise that a supply shock "isn't
+   *  a popup"). The oil-shock anchor writes `oil` here; a war or canal-closure
+   *  event could reuse it. Expired entries are pruned in tickIntermediateGoods. */
+  rawEmbargoes: Record<string, number> = {};
   /** 0–1 weighted average input availability across all active intermediate goods. */
   supplyChainHealth = 1.0;
   /** Active inter-settlement goods flows for price arbitrage. */
@@ -5888,6 +5905,12 @@ export class RegionSim {
    *  stock ledger and the random secondary effects (disease risk, research penalty). */
   tickIntermediateGoods(): void {
     const currentYear = this.year;
+    // Drop embargoes whose window has elapsed, so the chain heals on its own and
+    // the save ledger stays tidy (a stale entry would still read available, but
+    // pruning keeps `rawEmbargoes` to what's actually live).
+    for (const raw of Object.keys(this.rawEmbargoes)) {
+      if (this.day >= this.rawEmbargoes[raw]) delete this.rawEmbargoes[raw];
+    }
     const availableGoods = INTERMEDIATE_GOODS.filter(g => currentYear >= g.eraUnlock);
     if (availableGoods.length === 0) {
       this.supplyChainHealth = 1.0;
@@ -5896,26 +5919,7 @@ export class RegionSim {
       return;
     }
 
-    // Raw materials are available if held in stock, else proxied from the sector
-    // that extracts them: extractive raws (coal/iron/wood/oil/…) from industry,
-    // agricultural raws (grain/livestock) from agriculture. So only a *sector*
-    // collapse cuts the chain at its root — in healthy play every raw flows. The
-    // solver only ever queries this for raws; intermediate inputs resolve through
-    // the graph (the cascade).
-    const rawAvailable = (inputId: string): boolean => {
-      if (this.intermediateGoodStocks[inputId] !== undefined) {
-        return this.intermediateGoodStocks[inputId] > 0;
-      }
-      if (EXTRACTIVE_RAWS.has(inputId)) {
-        return this.settlements.reduce((s, t) => s + t.sectors.industry.output, 0) > 0;
-      }
-      if (AGRICULTURAL_RAWS.has(inputId)) {
-        return this.settlements.reduce((s, t) => s + t.sectors.agriculture.output, 0) > 0;
-      }
-      return false;
-    };
-
-    const result = resolveSupplyChain(INTERMEDIATE_GOODS, currentYear, rawAvailable);
+    const result = resolveSupplyChain(INTERMEDIATE_GOODS, currentYear, (id) => this.rawSupplyAvailable(id));
 
     // Stock ledger: supplied goods produce baseOutput and draw down one unit of
     // each held input; disrupted goods produce nothing (key seeded to 0).
@@ -5959,9 +5963,64 @@ export class RegionSim {
     }
   }
 
+  /** Whether a raw material is flowing this period. An active embargo cuts it
+   *  outright (the oil-shock anchor, a future blockade); otherwise it's available
+   *  if held in stock, else proxied from the sector that extracts it — extractive
+   *  raws (coal/iron/wood/oil/…) from industry, agricultural raws (grain/livestock)
+   *  from agriculture. So in healthy play every raw flows, and only a *sector*
+   *  collapse or an explicit embargo cuts the chain at its root. The supply solver
+   *  only ever queries this for raws; intermediate inputs resolve through the graph
+   *  (the cascade). Pure read — the same predicate the live UI snapshot uses. */
+  private rawSupplyAvailable(inputId: string): boolean {
+    const embargoUntil = this.rawEmbargoes[inputId];
+    if (embargoUntil !== undefined && this.day < embargoUntil) return false;
+    if (this.intermediateGoodStocks[inputId] !== undefined) {
+      return this.intermediateGoodStocks[inputId] > 0;
+    }
+    if (EXTRACTIVE_RAWS.has(inputId)) {
+      return this.settlements.reduce((s, t) => s + t.sectors.industry.output, 0) > 0;
+    }
+    if (AGRICULTURAL_RAWS.has(inputId)) {
+      return this.settlements.reduce((s, t) => s + t.sectors.agriculture.output, 0) > 0;
+    }
+    return false;
+  }
+
   /** Returns the current supply chain health (0–1). */
   getSupplyChainHealth(): number {
     return this.supplyChainHealth;
+  }
+
+  /** Read-only supply-chain snapshot for the UI (GDD §5.4 legibility). Re-resolves
+   *  the cascade live from current raw availability — supplied/disrupted per good,
+   *  the active drag, and any standing embargoes with months remaining. Pure read:
+   *  no RNG, no mutation, no stock-ledger side effects, so the panel can call it
+   *  every frame. `disrupted`/`supplied` are id sets in catalog order. */
+  supplyChainSnapshot(): {
+    health: number;
+    severity: number;
+    outputMult: number;
+    active: string[];
+    disrupted: Set<string>;
+    supplied: Set<string>;
+    embargoes: Array<{ raw: string; daysLeft: number }>;
+  } {
+    const res = resolveSupplyChain(INTERMEDIATE_GOODS, this.year, (id) => this.rawSupplyAvailable(id));
+    const embargoes: Array<{ raw: string; daysLeft: number }> = [];
+    for (const raw of Object.keys(this.rawEmbargoes)) {
+      const daysLeft = this.rawEmbargoes[raw] - this.day;
+      if (daysLeft > 0) embargoes.push({ raw, daysLeft });
+    }
+    embargoes.sort((a, b) => a.raw.localeCompare(b.raw));
+    return {
+      health: res.health,
+      severity: this.supplyShockSeverity(),
+      outputMult: this.supplyShockOutputMult(),
+      active: res.active,
+      disrupted: res.disrupted,
+      supplied: res.supplied,
+      embargoes,
+    };
   }
 
   /** Era-structural supply-chain health: what `supplyChainHealth` *would* be with
@@ -6285,6 +6344,11 @@ export class RegionSim {
       const hasCleanEnergy = this.has('renewables') || this.has('fusion_power');
       if (hasFossil && !hasCleanEnergy && this.rng.chance(0.06)) {
         this.oilShockFired = true;
+        // Route the shock through the supply chain: embargo the `oil` raw so the
+        // cut cascades oil → fuel → trucking/plastics and the supply-chain drag
+        // bites for the window — the shock is a fuel price the economy keeps
+        // paying, not just a one-off popup (GDD §5.4).
+        this.rawEmbargoes['oil'] = this.day + OIL_EMBARGO_DAYS;
         // Economic hit: treasury drain + inflation spike + currency devaluation
         const gdp = this.settlements.reduce(
           (s, t) => s + SECTOR_IDS.reduce((ss, id) => ss + t.sectors[id].output, 0), 0,
@@ -12195,6 +12259,7 @@ export class RegionSim {
       difficultySettings: this.difficultySettings ?? { ...DEFAULT_DIFFICULTY_SETTINGS },
       // Phase 15: Extended Economy & FX
       intermediateGoodStocks: this.intermediateGoodStocks,
+      rawEmbargoes: this.rawEmbargoes,
       supplyChainHealth: this.supplyChainHealth,
       tradeFlows: this.tradeFlows,
       currencyRegime: this.currencyRegime,
@@ -12495,6 +12560,7 @@ export class RegionSim {
     };
     // Phase 15: Extended Economy & FX (pre-Phase15 saves default to safe values)
     r.intermediateGoodStocks = d.intermediateGoodStocks ?? {};
+    r.rawEmbargoes = d.rawEmbargoes ?? {};
     r.supplyChainHealth = d.supplyChainHealth ?? 1.0;
     r.tradeFlows = d.tradeFlows ?? [];
     r.currencyRegime = d.currencyRegime ?? 'fiat';
