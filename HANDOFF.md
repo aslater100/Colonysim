@@ -1,6 +1,6 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-26 · **Tests:** 825 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; performance-gated deep-expansion track underway (PRs #264, #265, #269 merged; save-size regression guard added — see below)
+**Last updated:** 2026-06-26 · **Tests:** 833 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; performance-gated deep-expansion track underway (PRs #264, #265, #269, #272 merged; save-size guard + wall-clock sim catch-up landed — see below)
 
 ## Recent session (2026-06-26) — save-size regression guard (Risk #5)
 
@@ -17,6 +17,28 @@ upcoming Phase-14 per-settlement grid maps are the obvious bloat risk this
 catches before it reaches a user's save. Verified: tsc clean, **825 tests** (4
 new). *Finding:* a reload re-serializes ~0.9% **smaller** — benign, the
 `?? default` backfill omits stored defaults on the re-dump (not a bug).
+## Recent session (2026-06-26) — wall-clock-budgeted sim catch-up (Track D)
+
+Closed the **`main.ts:274` frame-budget gap** the roadmap's Track D called out:
+the loop drained up to a *fixed 64 ticks* per frame, but ticks aren't uniformly
+cheap — the monthly/yearly economy spike is a ~10–14 ms single tick (per
+`bench-region`). A cluster inside one frame blew the 16.7 ms budget and stuttered
+regardless of the count. Now the drain is **budgeted by wall-clock**: tick until
+~8 ms is spent (or the backlog clears, or a hard 240-tick ceiling), then yield —
+a heavy tick can't blow the frame; the calendar simply lags a frame and catches
+up, which is invisible next to a dropped frame.
+
+- **`src/ui/simLoop.ts` `runCatchUp(acc, tick, now, opts)`** — pure and
+  side-effect-free except through the injected `tick`/`now` callbacks, so it
+  unit-tests with a **fake clock** (no AudioContext/canvas/RAF). Returns
+  `{acc, ticks, budgetBound}`; the time check is *after* each tick so one
+  over-budget tick completes but no further tick starts (overrun bounded to one
+  tick). Carried backlog is clamped to `maxBacklog` so a sustained budget-bound
+  stretch can't spiral into ever-growing catch-up debt.
+- **`main.ts` loop** swaps the `guard++ < 64` while-loop for `runCatchUp(...,
+  { budgetMs: 8, maxTicks: 240, maxBacklog: 240 })`, preserving the
+  `ceremonyOpen` tick-skip. Verified: tsc clean, **829 tests** (8 new,
+  fake-clock), `bench-region` PASS (60fps), vite build green.
 
 ## Recent session (2026-06-26) — per-band parallax + horizon glow
 
