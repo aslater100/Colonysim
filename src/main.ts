@@ -58,8 +58,11 @@ window.addEventListener('resize', resize);
 const sfx = new Sfx();
 const music = new Music();
 const soundscape = new Soundscape();
-// Manifest-driven recorded stems (procedural fallback when none are present).
+// Manifest-driven recorded stems / ambience beds (procedural fallback when none
+// are present). Music and soundscape each own a registry bound to their own
+// AudioContext — decoded AudioBuffers cannot cross contexts.
 music.setStems(new AudioRegistry());
+soundscape.setAmbience(new AudioRegistry());
 window.addEventListener('mousedown', () => { sfx.unlock(); music.unlock(); soundscape.unlock(); }, { once: true });
 window.addEventListener('keydown', () => { sfx.unlock(); music.unlock(); soundscape.unlock(); }, { once: true });
 

@@ -8,7 +8,15 @@
  * No audio assets — every sound is a WebAudio oscillator, the same philosophy
  * as Sfx and Music. The class fires periodic ambient events based on live game
  * signals fed each frame via update().
+ *
+ * Atmosphere seam: when an {@link AudioRegistry} holds an `ambience-<era>` bed,
+ * that recorded loop plays *under* the diegetic events on the same master bus —
+ * the audio sibling of the music stems (music.ts) and the painted backdrop. No
+ * bed loaded (the shipped default) → the procedural soundscape plays alone.
  */
+
+import { ambienceStemSlot } from './audio/audioRegistry';
+import type { AudioRegistry } from './audio/audioRegistry';
 
 export interface SoundscapeContext {
   mode: 'town' | 'region';
@@ -34,6 +42,13 @@ export class Soundscape {
   private nextChantTime = 0;
   private nextNatureTime = 0;
 
+  // Optional recorded ambience bed (AudioRegistry, context-bound). Loops the
+  // `ambience-<era>` stem under the diegetic events; no bed → no change.
+  private ambience: AudioRegistry | null = null;
+  private bedSlot = ''; // the bed currently looping ('' = none)
+  private bedSource: AudioBufferSourceNode | null = null;
+  private bedGain: GainNode | null = null;
+
   constructor() {
     let on = true;
     try {
@@ -52,6 +67,14 @@ export class Soundscape {
       // preference won't persist
     }
     if (!this.enabled && this.masterGain) this.masterGain.gain.value = 0;
+  }
+
+  /** Attach a manifest-driven ambience registry. It decodes its beds on this
+   *  engine's AudioContext; when it holds an `ambience-<era>` loop, that bed
+   *  plays under the diegetic events. No beds → no change. */
+  setAmbience(reg: AudioRegistry): void {
+    this.ambience = reg;
+    if (this.ctx) void reg.load(this.ctx);
   }
 
   unlock(): void {
@@ -73,10 +96,69 @@ export class Soundscape {
       this.nextTrainTime  = now + 5.0 + Math.random() * 6;
       this.nextChantTime  = now + 2.0 + Math.random() * 2;
       this.nextNatureTime = now + 3.0 + Math.random() * 4;
+      if (this.ambience) void this.ambience.load(this.ctx);
     } catch {
       this.ctx = null;
     }
     return this.ctx;
+  }
+
+  /**
+   * Manage the recorded ambience bed on the master bus: swap it at era turnover
+   * (or when one first becomes available), stop it when none applies, and ease
+   * its level. Routed through `masterGain`, so pause/disable already silence it.
+   * A no-op while no beds are loaded — the shipped, procedural-only path.
+   */
+  private updateBed(ctx: AudioContext, year: number): void {
+    const reg = this.ambience;
+    const slot = ambienceStemSlot(year);
+    const have = !!reg && reg.has(slot);
+    if (have && slot !== this.bedSlot) {
+      const buf = reg!.get(slot);
+      if (buf) this.startBed(ctx, buf, slot);
+    } else if (!have && this.bedSlot) {
+      this.stopBed(ctx);
+    }
+    if (this.bedGain && this.bedSlot) {
+      const target = 0.7; // a soft, steady floor under the diegetic events
+      this.bedGain.gain.value += (target - this.bedGain.gain.value) * 0.04;
+    }
+  }
+
+  private startBed(ctx: AudioContext, buf: AudioBuffer, slot: string): void {
+    this.stopBed(ctx); // fade out and release the outgoing bed first
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    const gain = ctx.createGain();
+    gain.gain.value = 0; // eased up by updateBed so the entry isn't a click
+    src.connect(gain).connect(this.masterGain!);
+    try {
+      src.start(ctx.currentTime + 0.02);
+    } catch {
+      /* a source can only start once; ignore */
+    }
+    this.bedSource = src;
+    this.bedGain = gain;
+    this.bedSlot = slot;
+  }
+
+  private stopBed(ctx: AudioContext): void {
+    const src = this.bedSource;
+    const gain = this.bedGain;
+    if (src && gain) {
+      const t = ctx.currentTime;
+      gain.gain.setValueAtTime(gain.gain.value, t);
+      gain.gain.linearRampToValueAtTime(0, t + 0.4); // brief fade, no click
+      try {
+        src.stop(t + 0.42);
+      } catch {
+        /* never started */
+      }
+    }
+    this.bedSource = null;
+    this.bedGain = null;
+    this.bedSlot = '';
   }
 
   private tone(
@@ -148,6 +230,10 @@ export class Soundscape {
     // Ease master volume: silent when paused, gently present when playing.
     const targetVol = c.paused ? 0 : 0.38;
     this.masterGain.gain.value += (targetVol - this.masterGain.gain.value) * 0.04;
+
+    // Recorded ambience bed (procedural-only by default). Managed every frame so
+    // era swaps stay current; routed through masterGain, so pause silences it.
+    this.updateBed(ctx, c.year);
 
     if (c.paused) return;
 

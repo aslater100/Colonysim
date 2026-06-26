@@ -30,13 +30,20 @@ confirming the shipped manifest resolves all 6 era slots with **`anyLoaded:false
   tension so they never pile up. `main.ts` constructs the registry and calls
   `music.setStems(...)`. No stems loaded → `updateStem` is a no-op → unchanged.
 
-**Next on audio:** **ambience beds** — a second `AudioRegistry` instance bound to
-`Soundscape`'s own `AudioContext`, attached in `Soundscape.update()` after
-`ensure()`, looping the `ambience-<era>` bed under the diegetic events (the slot
-helpers and manifest slots already exist). Then **bulk generation** of the actual
-stems — still blocked on `HF_TOKEN` (unset in web env) **+ an encoder**
-(`sharp`/`ffmpeg` not installed); provision those before generating. Every audio
-change stays gated by `scripts/bench-region.ts`.
+**Ambience beds — done (this branch).** `Soundscape` now owns its **own**
+`AudioRegistry` instance (a second one — buffers can't cross contexts): `setAmbience(reg)`
+attaches it, and `updateBed()` (called from `update()` after the master ease,
+before the pause return) loops the `ambience-<era>` bed under the diegetic events
+on the **same `masterGain`** (so pause/disable already silence it), swapping beds
+at era turnover with a 0.4s fade. `main.ts` calls `soundscape.setAmbience(...)`.
+No beds → no-op → unchanged. Verified: tsc clean, 826 tests, bench PASS, build
+green, Chromium probe — all **12** era slots (music + ambience) resolve from the
+shipped manifest with `anyLoaded:false`.
+
+**Next on audio:** **bulk generation** of the actual stems — still blocked on
+`HF_TOKEN` (unset in web env) **+ an encoder** (`sharp`/`ffmpeg` not installed);
+provision those before generating. Every audio change stays gated by
+`scripts/bench-region.ts`.
 
 ## Earlier session (2026-06-26) — per-band parallax + horizon glow
 
