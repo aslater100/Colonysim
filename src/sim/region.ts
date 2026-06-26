@@ -199,6 +199,15 @@ export const INTERMEDIATE_GOODS: IntermediateGood[] = [
   { id: 'vehicles',        name: 'Vehicles',        eraUnlock: 1925, inputs: ['iron', 'components'],      baseOutput: 4  },
 ];
 
+/** Maximum industrial-output drag from a *total* supply-chain collapse — every
+ *  unlocked good's upstream chain cut. Small and bounded: a full cascade trims
+ *  the industry sector by 15%, never zeroes it (so a drag can't itself starve
+ *  the raw proxy and spiral — a positive output stays positive). The drag scales
+ *  with how far actual supply health falls *below the era's structural baseline*
+ *  (a good idling on a not-yet-unlocked input is the era boundary, not a shock),
+ *  so healthy play is byte-identical and only a genuine raw collapse bites. */
+export const SUPPLY_SHOCK_MAX_DRAG = 0.15;
+
 // ---- Phase 1: Sectoral economy (GDD §5.2: the century's structural transformation) ----
 
 /** The four sectors every settlement's labor splits across. In 1900 the
@@ -2508,6 +2517,12 @@ export class RegionSim {
   private activePolicySet: Set<string> = new Set();
   private sectorProdCache: Record<SectorId, number> | null = null;
   private wageCache: Map<number, number> | null = null;
+  /** Industry-output multiplier from supply-chain shocks (1.0 = healthy). Set by
+   *  `tickIntermediateGoods` each month (health and `year` consistent there) and
+   *  read by `updateSectors` the following month — a realistic one-month lag.
+   *  Transient (derived from serialized `supplyChainHealth`); after load it
+   *  defaults to 1.0 until the next monthly tick re-derives it. */
+  private supplyShockMult = 1;
   // ---- Phase 18: Advisor System Depth (GDD §8.7) ----
   /** Queue of advisor briefs from ministers (max 5, newest-first). */
   advisorBriefs: { portfolio: string; message: string; day: number }[] = [];
@@ -5847,6 +5862,7 @@ export class RegionSim {
     if (availableGoods.length === 0) {
       this.supplyChainHealth = 1.0;
       this._electronicsDisrupted = false;
+      this.supplyShockMult = 1; // no goods, no shock (defensive — already 1.0 here)
       return;
     }
 
@@ -5884,6 +5900,12 @@ export class RegionSim {
     const pharmaceuticalsDisrupted = result.disrupted.has('pharmaceuticals');
     this._electronicsDisrupted = result.disrupted.has('electronics');
     this.supplyChainHealth = result.health;
+    // Cache the industry-output drag now, while health and `year` are the same
+    // month (updateSectors reads it next month). Computing it later — at the next
+    // updateSectors, after a possible Jan year-roll — would compare this health
+    // against next year's structural baseline and fabricate a shock at era
+    // boundaries. Pure read; the order vs. the RNG effects below is irrelevant.
+    this.supplyShockMult = this.supplyShockOutputMult();
 
     // Secondary effects
     if (pharmaceuticalsDisrupted && this.settlements.length > 0) {
@@ -5905,6 +5927,35 @@ export class RegionSim {
   /** Returns the current supply chain health (0–1). */
   getSupplyChainHealth(): number {
     return this.supplyChainHealth;
+  }
+
+  /** Era-structural supply-chain health: what `supplyChainHealth` *would* be with
+   *  every raw material flowing. A good unlocked before its intermediate inputs
+   *  (vehicles 1925 needs components 1930) is structurally unsupplied through that
+   *  window — that dip is the era boundary, not a shortage. Baselining the drag
+   *  against it keeps healthy play unperturbed. Pure read; no RNG/state mutation. */
+  private supplyChainBaselineHealth(): number {
+    return resolveSupplyChain(INTERMEDIATE_GOODS, this.year, () => true).health;
+  }
+
+  /** How far actual supply health has fallen *below* the era-structural baseline,
+   *  0..1. Zero whenever raws are flowing (actual == baseline) — i.e. in all
+   *  healthy play; positive only when a real upstream shortage cascades downstream
+   *  (deep depression / wartime industry shutdown, where total industry output
+   *  hits zero and the raw proxy fails). This is the "the shock is genuine" signal. */
+  supplyShockSeverity(): number {
+    const baseline = this.supplyChainBaselineHealth();
+    if (baseline <= 0) return 0;
+    const shortfall = (baseline - this.supplyChainHealth) / baseline;
+    return shortfall <= 0 ? 0 : Math.min(1, shortfall);
+  }
+
+  /** Industry-output multiplier from supply-chain shocks, in
+   *  [1 − SUPPLY_SHOCK_MAX_DRAG, 1]. Exactly 1.0 in healthy play (so industry
+   *  output, GDP and the RNG stream stay byte-identical); below 1.0 only while a
+   *  real shortage cascades. Bounded so it can never zero industry. */
+  supplyShockOutputMult(): number {
+    return 1 - this.supplyShockSeverity() * SUPPLY_SHOCK_MAX_DRAG;
   }
 
   /** Compute a congestion tariff for a goods route between two settlements.
@@ -6420,7 +6471,10 @@ export class RegionSim {
       // Currency transition dents output until markets stabilize; the economic
       // system (design choice at nation flip) sets the steady-state multiplier.
       const fxMult = this.currencyEfficiency() * this.economyOutputMult();
-      s.output = workers * s.share * perWorker * strike * loyalty * eventMult * svcMult * taxMult * fxMult;
+      // A genuine supply-chain shock (raws collapse → cascade) drags manufacturing.
+      // 1.0 in healthy play (era-baselined), so output stays byte-identical there.
+      const supplyMult = id === 'industry' ? this.supplyShockMult : 1;
+      s.output = workers * s.share * perWorker * strike * loyalty * eventMult * svcMult * taxMult * fxMult * supplyMult;
       // Phase 5: wage policy adjusts the migration signal without affecting output
       const wagePolicyMult = t.policies.wagePolicy === 'low' ? 0.85 : t.policies.wagePolicy === 'high' ? 1.20 : 1.0;
       s.wage = perWorker * strike * loyalty * eventMult * svcMult * wagePolicyMult * fxMult;

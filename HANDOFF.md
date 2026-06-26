@@ -1,8 +1,50 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-26 · **Tests:** 864 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway (PRs #264, #265, #269, #272, #270, #274 merged; **PR #276 open — supply-chain cascade**; save-size guard + live-slot asset generator + audio stems/ambience + wall-clock sim catch-up landed — asset *generation* blocked only by network egress)
+**Last updated:** 2026-06-26 · **Tests:** 875 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway (PRs #264, #265, #269, #272, #270, #274, **#276 merged — supply-chain cascade**; save-size guard + live-slot asset generator + audio stems/ambience + wall-clock sim catch-up landed — asset *generation* blocked only by network egress). **This session: the supply cascade now drags GDP — era-baselined supply-shock output drag (D1-econ follow-up, open PR).**
 
-## Recent session (2026-06-26) — supply-shock cascade for intermediate goods (D1-econ) · PR #276 (draft)
+## Recent session (2026-06-26) — supply-shock output drag: the cascade now bites GDP (D1-econ)
+
+The PR #276 cascade was *correct* but *inert to the economy*: `supplyChainHealth`
+was computed + serialized yet never consumed, so a raw collapse slowed research /
+raised disease but left industrial output — and GDP — untouched. This session
+wires it in, the way the prior baton flagged: a **small, bounded, era-baselined**
+drag on the **industry sector** only.
+
+- **The era-baselining is the whole trick.** `supplyChainHealth` dips below 1.0
+  even in perfectly healthy play whenever a good unlocks before one of its
+  intermediate inputs (vehicles unlock 1925 but need components, which unlock
+  1930 → health 0.5 across 1925–1929). A naive `output *= health` would tax that
+  window and perturb the early game / balance suites. Instead the drag scales with
+  how far **actual** health falls *below the era-structural baseline*
+  (`resolveSupplyChain(GOODS, year, () => true).health` — what health *would* be
+  with every raw flowing). In healthy play actual == baseline → severity 0 → mult
+  **exactly 1.0** → byte-identical (verified: a 5-seed × 9-epoch golden snapshot of
+  GDP/treasury/pop/… is unchanged; `region-longrun` determinism + `save-size`
+  guards green).
+- **`region.ts`:** `SUPPLY_SHOCK_MAX_DRAG = 0.15` (a *total* collapse trims industry
+  15%, never zeroes it — so the drag can't starve the raw proxy and spiral);
+  `supplyShockSeverity()` (era-baselined shortfall, 0..1) + `supplyShockOutputMult()`
+  (in `[0.85, 1]`); `tickIntermediateGoods()` caches the mult the same month it
+  sets health (so actual + baseline share a `year` — computing it later, after a
+  Jan year-roll, fabricated a phantom shock at era boundaries; that was the one bug
+  the golden diff caught); `updateSectors()` multiplies **industry** output by it.
+  The mult is a transient cache (derived from the serialized `supplyChainHealth`),
+  read one month later by `updateSectors` — a realistic lag, no new save field.
+- **`tests/supply-shock.test.ts`** — 11 tests: no-drag across the 1925–29 boundary
+  despite health 0.5 (the baseline proof), total collapse → 0.85 floor, partial
+  copper-cut → 0.97, industry-only integration, old-save backfill shows no shock.
+  **864 → 875.** Verified: tsc clean, bench-region PASS (60fps), vite build green.
+
+**Next on the economy (D1-econ):** the drag only fires on a *total* industry
+shutdown (the raw proxy is binary: raws flow iff total industry output > 0), so
+it models catastrophe, not friction. A graded raw-availability proxy (per-raw,
+scaled by mining/imports) would let ordinary shortages bite too. Then the GDD's
+5→44 goods expansion (current set is only the intermediate tier; new recipes drop
+straight into `INTERMEDIATE_GOODS` and flow through the existing solver) and
+physical goods on routes (transit × congestion). Or pick up `C1` (region.ts leaf
+modularization) — `supply.ts` is the template.
+
+## Recent session (2026-06-26) — supply-shock cascade for intermediate goods (D1-econ) · PR #276 (merged)
 
 Closed a real correctness gap in the Phase-15 intermediate-goods economy: shocks
 did **not** propagate. The graph (`coal/iron/copper → chemicals → components/
