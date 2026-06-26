@@ -283,7 +283,10 @@ function loop(now: number): void {
   }
 
   const year = region?.year ?? 1900;
-  music.update({ year, paused, tension: 0 });
+  // Dynamic mixing: feed real war/unrest/crisis tension to music + soundscape
+  // (was hardcoded 0). null region (title screen) is calm.
+  const tension = region ? region.tensionScalar() : 0;
+  music.update({ year, paused, tension });
 
   soundscape.update({
     mode: 'region',
@@ -292,7 +295,7 @@ function loop(now: number): void {
     activeBuildWorkers: 0,
     activeRailRoutes: region ? region.activeRailRoutes : 0,
     maxGrievance: region ? region.maxGrievance : 0,
-    tension: 0,
+    tension,
   });
 
   const fps = Math.round(1000 / frameMsEma);

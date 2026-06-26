@@ -2857,6 +2857,22 @@ export class RegionSim {
     return `${this.monthName} ${this.monthDay}, ${this.year}`;
   }
 
+  /**
+   * A 0–1 "tension" scalar for dynamic audio/UI mixing (GDD §3.3): the louder of
+   * war, civil unrest, and economic crisis. Drives the music engine's intensity
+   * (calm pad → full kit) and the diegetic soundscape. Cheap — read every frame.
+   */
+  tensionScalar(): number {
+    let t = 0;
+    // War: any active war is tense; a collapsing home front is tenser still.
+    if (this.playerWar) t = Math.max(t, 0.6 + 0.4 * (1 - this.playerWar.support / 100));
+    // Civil unrest: the peak grievance anywhere in the nation.
+    t = Math.max(t, this.maxGrievance / 100);
+    // Economic crisis: a deep depression is dread even at peace.
+    t = Math.max(t, this.depressionDepth);
+    return Math.max(0, Math.min(1, t));
+  }
+
   totalPop(): number {
     return Math.round(
       this.settlements.reduce((s, t) => s + this.popOf(t), 0) +
