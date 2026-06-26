@@ -14,6 +14,7 @@ import { hexNeighbors, hexNeighborDir, hexCenter, hexCorners, hexLayoutParams, s
 import { DesignScreen } from './designscreen';
 import { Minimap } from './minimap';
 import { sparklineGrid } from './sparklines';
+import { AssetRegistry, townSpriteTier, TOWN_TIER_PX } from './assets/registry';
 
 /** Fill a hex polygon from precomputed corners (no stroke). */
 function fillHexPath(g: CanvasRenderingContext2D, corners: { x: number; y: number }[]): void {
@@ -200,8 +201,12 @@ export class RegionView {
   private tooltip: HTMLElement;
   private tooltipSettlementId: number | null = null;
 
+  /** Manifest-driven art overrides for the 4X map; procedural fallback when absent. */
+  private readonly assets = new AssetRegistry();
+
   constructor(private canvas: HTMLCanvasElement, private region: RegionSim, root: HTMLElement) {
     this.g = canvas.getContext('2d')!;
+    void this.assets.load();
     // If the era was already decided in a prior session (loaded save), treat the
     // reveal as already dismissed — only fire for a fork that happens live here.
     this.eraDismissed = region.eraBranch !== null;
@@ -1762,7 +1767,14 @@ export class RegionView {
     g.fillStyle = 'rgba(0,0,0,0.35)';
     g.fillRect(px - 16, py + 8, 32, 4);
 
-    if (pop < 30) {
+    const tier = townSpriteTier(pop);
+    const sprite = this.assets.get(`town-${tier}`);
+    if (sprite) {
+      // Real art override (AI-generated or hand-made), centred on the ground line.
+      const s = TOWN_TIER_PX[tier];
+      g.imageSmoothingEnabled = false;
+      g.drawImage(sprite, Math.round(px - s / 2), Math.round(py + 8 - s), s, s);
+    } else if (pop < 30) {
       // Shack: one tiny building, rough timber
       g.fillStyle = '#4a3822';
       g.fillRect(px - 6, py - 4, 12, 12);
