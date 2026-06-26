@@ -1,8 +1,42 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-26 · **Tests:** 875 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway (PRs #264, #265, #269, #272, #270, #274, **#276 merged — supply-chain cascade**; save-size guard + live-slot asset generator + audio stems/ambience + wall-clock sim catch-up landed — asset *generation* blocked only by network egress). **This session: the supply cascade now drags GDP — era-baselined supply-shock output drag (D1-econ follow-up, open PR).**
+**Last updated:** 2026-06-26 · **Tests:** 878 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway (PRs #264, #265, #269, #272, #270, #274, **#276 + #277 merged — supply-chain cascade + GDP drag**; save-size guard + live-slot asset generator + audio stems/ambience + wall-clock sim catch-up landed — asset *generation* blocked only by network egress). **This session: expanded the supply-chain DAG to the GDD §5.2 MVP-18 goods set (D1-econ, open PR).**
 
-## Recent session (2026-06-26) — supply-shock output drag: the cascade now bites GDP (D1-econ)
+## Recent session (2026-06-26) — supply-chain DAG → GDD §5.2 MVP-18 goods set (D1-econ)
+
+With the cascade (#276) and the GDP drag (#277) merged, the graph itself was the
+shallow part: only the 5-good intermediate tier, so a raw shock had little to
+cascade through. Laid the GDD §5.2 named set as a proper **primary → intermediate
+→ final DAG** (16 manufactured goods), byte-identical to the economy.
+
+- **`INTERMEDIATE_GOODS` 5 → 16:** adds `lumber, steel, textiles, fuel,
+  electricity` (intermediate) and `food, clothing, tools, machinery,
+  consumer_goods, luxury_goods` (final). The original five keep their **exact**
+  recipes/eras, so the cascade + the pharma→disease / electronics→research
+  effects are unchanged. Now a coal outage cascades through steel/chemicals/
+  electricity → components → vehicles/electronics/machinery/consumer_goods; an
+  iron outage takes the iron branch; copper still confines to electronics (+ its
+  lone dependent luxury_goods).
+- **Primary raws split by extracting sector:** `AGRICULTURAL_RAWS` (grain,
+  livestock) proxy off **agriculture** output; `EXTRACTIVE_RAWS` (wood/coal/iron/
+  copper/oil/stone) off **industry**. coal/iron/copper behaviour preserved
+  exactly. In healthy play both sectors produce → every raw flows → every good
+  supplied → health at its era baseline → drag stays exactly 1.0. The chain still
+  switches on in 1920, so the 1919 founding year keeps an empty graph.
+- **Determinism:** a 5-seed × 9-epoch golden of the macro economy (GDP, treasury,
+  pop, inflation, confidence, FX, leverage, debt) is **byte-identical** — the
+  richer graph moves only the supply-*health* metric at era boundaries, never the
+  economy in healthy play. tsc clean, **878 tests** (phase15/supply/supply-shock
+  updated for the new graph), bench-region PASS (60fps), build green.
+
+**Caveat for the next agent:** the goods are still an **abstract layer** — stocks
+feed *only* `supplyChainHealth` (→ the drag) + the two secondary effects; nothing
+reads them into GDP, prices, or trade. And the raw proxy is binary (a raw flows
+iff its sector's output > 0), so the drag still only bites on a *total sector
+shutdown*. The expansion is the DAG groundwork; making it *matter in ordinary
+play* is the next move (below).
+
+## Recent session (2026-06-26) — supply-shock output drag: the cascade now bites GDP (D1-econ) · PR #277 (merged)
 
 The PR #276 cascade was *correct* but *inert to the economy*: `supplyChainHealth`
 was computed + serialized yet never consumed, so a raw collapse slowed research /

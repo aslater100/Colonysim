@@ -29,9 +29,14 @@ function pinYear(r: RegionSim, year: number): void {
   Object.defineProperty(r, 'year', { get: () => year, configurable: true });
 }
 
-/** Flow / cut the raw-material proxy (industry output feeds coal/iron/copper). */
+/** Flow / cut the raw-material proxy. Extractive raws (coal/iron/wood/oil/…)
+ *  proxy off industry output, agricultural raws (grain/livestock) off
+ *  agriculture — so a full flow needs both sectors producing. */
 function setRawsFlowing(r: RegionSim, flowing: boolean): void {
-  for (const s of r.settlements) s.sectors.industry.output = flowing ? 100 : 0;
+  for (const s of r.settlements) {
+    s.sectors.industry.output = flowing ? 100 : 0;
+    s.sectors.agriculture.output = flowing ? 100 : 0;
+  }
 }
 
 const FLOOR = 1 - SUPPLY_SHOCK_MAX_DRAG;
@@ -50,16 +55,17 @@ describe('supply-shock drag — era-baselined (healthy play is a no-op)', () => 
     expect(r.supplyShockOutputMult()).toBe(1);
   });
 
-  it('no drag across the 1925–1929 vehicles/components boundary, despite health 0.5', () => {
-    // The crux: vehicles unlock 1925 but need components (1930), so the chain is
-    // *structurally* half-supplied here even with every raw flowing. Health 0.5,
-    // yet there is no shock to drag — the baseline is also 0.5.
+  it('no drag across the 1925–1929 vehicles/components boundary, despite sub-1.0 health', () => {
+    // The crux: vehicles unlock 1925 but need components (1930), so vehicles is
+    // *structurally* unsupplied here even with every raw flowing — a real but
+    // expected era-boundary dip below 1.0. Yet there is no shock to drag, because
+    // the baseline carries the exact same dip.
     const r = freshSim();
     pinYear(r, 1927);
     setRawsFlowing(r, true);
     r.tickIntermediateGoods();
-    expect(r.getSupplyChainHealth()).toBe(0.5);
-    expect(r.supplyShockSeverity()).toBe(0);
+    expect(r.getSupplyChainHealth()).toBeLessThan(1); // the structural dip is real …
+    expect(r.supplyShockSeverity()).toBe(0); // … but baselined away
     expect(r.supplyShockOutputMult()).toBe(1);
   });
 
@@ -90,11 +96,13 @@ describe('supply-shock drag — a real raw collapse bites', () => {
     const r = freshSim();
     pinYear(r, 2000);
     setRawsFlowing(r, true);
-    r.intermediateGoodStocks['copper'] = 0; // only electronics loses an input
+    r.intermediateGoodStocks['copper'] = 0; // electronics + its dependent luxury_goods fall
     r.tickIntermediateGoods();
-    expect(r.getSupplyChainHealth()).toBeCloseTo(0.8, 10); // 4 of 5 supplied
-    expect(r.supplyShockSeverity()).toBeCloseTo(0.2, 10);
-    expect(r.supplyShockOutputMult()).toBeCloseTo(1 - 0.2 * SUPPLY_SHOCK_MAX_DRAG, 10);
+    const n = INTERMEDIATE_GOODS.length; // 16
+    expect(r.getSupplyChainHealth()).toBeCloseTo((n - 2) / n, 10); // 2 of 16 disrupted
+    const severity = 2 / n;
+    expect(r.supplyShockSeverity()).toBeCloseTo(severity, 10);
+    expect(r.supplyShockOutputMult()).toBeCloseTo(1 - severity * SUPPLY_SHOCK_MAX_DRAG, 10);
   });
 
   it('is always bounded to [1 − MAX_DRAG, 1] and never zeroes industry (no spiral)', () => {

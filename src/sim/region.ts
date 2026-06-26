@@ -181,22 +181,52 @@ export function defaultPrices(): MarketPrices {
 
 // ---- Phase 15: Intermediate Goods & Supply Chains (GDD §5.2) ----
 
-/** An intermediate manufactured good that requires inputs from other goods/sectors
- *  to produce. Creates supply chain depth in the economy. */
+/** A manufactured good that requires inputs from other goods/raw materials to
+ *  produce. The set forms the GDD §5.2 supply-chain DAG: primary raw materials
+ *  feed intermediate goods, which feed final goods. A shortage propagates
+ *  downstream through `resolveSupplyChain` (see src/sim/supply.ts). */
 export interface IntermediateGood {
   id: string;
   name: string;
   eraUnlock: number;   // year this good becomes producible
-  inputs: string[];    // required input goods (by sector or good id)
+  inputs: string[];    // required input goods (a raw-material id or another good's id)
   baseOutput: number;  // monthly units produced with full inputs
 }
 
+/** Primary raw materials (GDD §5.2 "Primary" tier) — the leaves of the supply
+ *  graph. They aren't produced by any good; their availability is proxied from
+ *  the sector that extracts them, so a *sector* collapse (not a good outage) is
+ *  what cuts the chain at its root. Split by extracting sector. */
+export const AGRICULTURAL_RAWS = new Set(['grain', 'livestock']);
+export const EXTRACTIVE_RAWS = new Set(['wood', 'coal', 'iron', 'copper', 'oil', 'stone']);
+
+/** The supply-chain DAG (GDD §5.2, MVP-18 named set). Tiered for readability;
+ *  `resolveSupplyChain` is order-independent (it resolves dependencies
+ *  recursively). The original Phase-15 five (chemicals, components, electronics,
+ *  pharmaceuticals, vehicles) keep their exact recipes/eras — the cascade and the
+ *  pharma→disease / electronics→research effects are unchanged; the rest deepen
+ *  the graph a raw shock cascades through. */
 export const INTERMEDIATE_GOODS: IntermediateGood[] = [
-  { id: 'chemicals',       name: 'Chemicals',       eraUnlock: 1920, inputs: ['coal'],                    baseOutput: 10 },
-  { id: 'components',      name: 'Components',      eraUnlock: 1930, inputs: ['iron', 'chemicals'],        baseOutput: 8  },
-  { id: 'electronics',     name: 'Electronics',     eraUnlock: 1950, inputs: ['components', 'copper'],     baseOutput: 5  },
-  { id: 'pharmaceuticals', name: 'Pharmaceuticals', eraUnlock: 1940, inputs: ['chemicals'],               baseOutput: 6  },
-  { id: 'vehicles',        name: 'Vehicles',        eraUnlock: 1925, inputs: ['iron', 'components'],      baseOutput: 4  },
+  // Intermediate tier (primary raw → processed input). The chain switches on in
+  // 1920 (matching the original Phase-15 set), so the 1919 founding year keeps
+  // an empty, disruption-free supply graph.
+  { id: 'lumber',          name: 'Lumber',          eraUnlock: 1920, inputs: ['wood'],                     baseOutput: 12 },
+  { id: 'steel',           name: 'Steel',           eraUnlock: 1920, inputs: ['iron', 'coal'],             baseOutput: 10 },
+  { id: 'textiles',        name: 'Textiles',        eraUnlock: 1920, inputs: ['livestock'],                baseOutput: 10 },
+  { id: 'chemicals',       name: 'Chemicals',       eraUnlock: 1920, inputs: ['coal'],                     baseOutput: 10 },
+  { id: 'fuel',            name: 'Fuel',            eraUnlock: 1920, inputs: ['oil'],                       baseOutput: 9  },
+  { id: 'electricity',     name: 'Electricity',     eraUnlock: 1922, inputs: ['coal'],                     baseOutput: 11 },
+  { id: 'components',      name: 'Components',      eraUnlock: 1930, inputs: ['iron', 'chemicals'],         baseOutput: 8  },
+  // Final tier (intermediate → finished good).
+  { id: 'food',            name: 'Food',            eraUnlock: 1920, inputs: ['grain', 'livestock'],        baseOutput: 14 },
+  { id: 'clothing',        name: 'Clothing',        eraUnlock: 1920, inputs: ['textiles'],                 baseOutput: 9  },
+  { id: 'tools',           name: 'Tools',           eraUnlock: 1920, inputs: ['steel'],                    baseOutput: 8  },
+  { id: 'vehicles',        name: 'Vehicles',        eraUnlock: 1925, inputs: ['iron', 'components'],        baseOutput: 4  },
+  { id: 'machinery',       name: 'Machinery',       eraUnlock: 1930, inputs: ['steel', 'components'],       baseOutput: 6  },
+  { id: 'consumer_goods',  name: 'Consumer Goods',  eraUnlock: 1935, inputs: ['textiles', 'components'],    baseOutput: 7  },
+  { id: 'pharmaceuticals', name: 'Pharmaceuticals', eraUnlock: 1940, inputs: ['chemicals'],                baseOutput: 6  },
+  { id: 'electronics',     name: 'Electronics',     eraUnlock: 1950, inputs: ['components', 'copper'],      baseOutput: 5  },
+  { id: 'luxury_goods',    name: 'Luxury Goods',    eraUnlock: 1955, inputs: ['textiles', 'electronics'],   baseOutput: 3  },
 ];
 
 /** Maximum industrial-output drag from a *total* supply-chain collapse — every
@@ -5866,16 +5896,21 @@ export class RegionSim {
       return;
     }
 
-    // Raw materials (coal/iron/copper) are available if held in stock, else
-    // proxied by any industry output existing. The solver only ever queries
-    // this for raws — intermediate inputs resolve through the graph (cascade).
+    // Raw materials are available if held in stock, else proxied from the sector
+    // that extracts them: extractive raws (coal/iron/wood/oil/…) from industry,
+    // agricultural raws (grain/livestock) from agriculture. So only a *sector*
+    // collapse cuts the chain at its root — in healthy play every raw flows. The
+    // solver only ever queries this for raws; intermediate inputs resolve through
+    // the graph (the cascade).
     const rawAvailable = (inputId: string): boolean => {
       if (this.intermediateGoodStocks[inputId] !== undefined) {
         return this.intermediateGoodStocks[inputId] > 0;
       }
-      if (inputId === 'coal' || inputId === 'iron' || inputId === 'copper') {
-        const industryOutput = this.settlements.reduce((s, t) => s + t.sectors.industry.output, 0);
-        return industryOutput > 0;
+      if (EXTRACTIVE_RAWS.has(inputId)) {
+        return this.settlements.reduce((s, t) => s + t.sectors.industry.output, 0) > 0;
+      }
+      if (AGRICULTURAL_RAWS.has(inputId)) {
+        return this.settlements.reduce((s, t) => s + t.sectors.agriculture.output, 0) > 0;
       }
       return false;
     };

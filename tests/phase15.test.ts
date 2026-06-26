@@ -6,6 +6,8 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import {
   RegionSim,
   INTERMEDIATE_GOODS,
+  AGRICULTURAL_RAWS,
+  EXTRACTIVE_RAWS,
   REGION_MINUTES_PER_TICK,
 } from '../src/sim/region';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
@@ -31,17 +33,40 @@ function twoTownSim(seed = 42): RegionSim {
 // 1. INTERMEDIATE_GOODS constant — shape and content
 // ============================================================
 describe('INTERMEDIATE_GOODS constant', () => {
-  it('has exactly 5 entries', () => {
-    expect(INTERMEDIATE_GOODS).toHaveLength(5);
+  it('has the GDD §5.2 MVP-18 manufactured-goods set (16 entries)', () => {
+    expect(INTERMEDIATE_GOODS).toHaveLength(16);
   });
 
-  it('contains chemicals, components, electronics, pharmaceuticals, vehicles', () => {
+  it('still contains the original Phase-15 five with unchanged recipes', () => {
     const ids = INTERMEDIATE_GOODS.map(g => g.id);
     expect(ids).toContain('chemicals');
     expect(ids).toContain('components');
     expect(ids).toContain('electronics');
     expect(ids).toContain('pharmaceuticals');
     expect(ids).toContain('vehicles');
+  });
+
+  it('adds the GDD intermediate + final tiers (steel, food, machinery, …)', () => {
+    const ids = INTERMEDIATE_GOODS.map(g => g.id);
+    for (const id of ['lumber', 'steel', 'textiles', 'fuel', 'electricity', 'food', 'clothing', 'tools', 'machinery', 'consumer_goods', 'luxury_goods']) {
+      expect(ids).toContain(id);
+    }
+  });
+
+  it('every input resolves to a known good or a primary raw material', () => {
+    const goodIds = new Set(INTERMEDIATE_GOODS.map(g => g.id));
+    for (const g of INTERMEDIATE_GOODS) {
+      for (const input of g.inputs) {
+        const known = goodIds.has(input) || AGRICULTURAL_RAWS.has(input) || EXTRACTIVE_RAWS.has(input);
+        expect(known, `${g.id} input '${input}' must be a good or a primary raw`).toBe(true);
+      }
+    }
+  });
+
+  it('no good lists itself, directly, as an input', () => {
+    for (const g of INTERMEDIATE_GOODS) {
+      expect(g.inputs).not.toContain(g.id);
+    }
   });
 
   it('chemicals requires coal as its only input', () => {

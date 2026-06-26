@@ -15,13 +15,20 @@ import { RegionSim, INTERMEDIATE_GOODS } from '../src/sim/region';
 const rawsAvailable = (...available: string[]) => (id: string) => available.includes(id);
 /** Every raw material of the shipping catalog. */
 const ALL_RAWS = rawMaterialsOf(INTERMEDIATE_GOODS);
+/** Predicate with every catalog raw available *except* the named ones — an
+ *  outage of exactly those raws, robust to however large the raw set grows. */
+const allRawsExcept = (...cut: string[]) => (id: string) =>
+  ALL_RAWS.includes(id) && !cut.includes(id);
 
 // ============================================================
 // 1. rawMaterialsOf — graph shape
 // ============================================================
 describe('rawMaterialsOf()', () => {
-  it('identifies coal, iron and copper as the shipping catalog raws', () => {
-    expect(ALL_RAWS).toEqual(['coal', 'iron', 'copper']);
+  it('identifies the GDD §5.2 primary raws of the catalog', () => {
+    // First-appearance order across the catalog's input lists.
+    expect(new Set(ALL_RAWS)).toEqual(
+      new Set(['wood', 'iron', 'coal', 'livestock', 'oil', 'grain', 'copper']),
+    );
   });
 
   it('excludes every id that some good produces', () => {
@@ -51,18 +58,22 @@ describe('resolveSupplyChain() era gating', () => {
   });
 
   it('disrupts a good whose upstream good is not yet unlocked', () => {
-    // 1925: chemicals (1920) and vehicles (1925) are live; components (1930) is
-    // not — so vehicles, which needs components, cannot be made yet.
+    // 1925: the 1920-era goods and vehicles (1925) are live; components (1930) is
+    // not — so vehicles, which needs components, cannot be made yet, while every
+    // other unlocked good runs on raws/intermediates already available.
     const r = resolveSupplyChain(INTERMEDIATE_GOODS, 1925, () => true);
-    expect(r.active).toEqual(['chemicals', 'vehicles']);
-    expect(r.supplied.has('chemicals')).toBe(true);
+    expect(r.active).toContain('vehicles');
+    expect(r.active).not.toContain('components'); // unlocks 1930
     expect(r.disrupted.has('vehicles')).toBe(true);
-    expect(r.health).toBeCloseTo(0.5, 10);
+    expect(r.supplied.has('chemicals')).toBe(true);
+    expect([...r.disrupted]).toEqual(['vehicles']); // the *only* structural dip
+    expect(r.health).toBeCloseTo(9 / 10, 10);
   });
 
   it('supplies the whole pre-electronics chain by 1940 when raws flow', () => {
     const r = resolveSupplyChain(INTERMEDIATE_GOODS, 1940, () => true);
     expect(r.active).not.toContain('electronics'); // unlocks 1950
+    expect(r.active).not.toContain('luxury_goods'); // unlocks 1955
     expect(r.disrupted.size).toBe(0);
     expect(r.health).toBe(1);
   });
@@ -76,35 +87,43 @@ describe('resolveSupplyChain() cascade', () => {
     const r = resolveSupplyChain(INTERMEDIATE_GOODS, 2000, rawsAvailable(...ALL_RAWS));
     expect(r.health).toBe(1);
     expect(r.disrupted.size).toBe(0);
-    expect(r.supplied.size).toBe(5);
+    expect(r.supplied.size).toBe(INTERMEDIATE_GOODS.length);
   });
 
-  it('cascades a coal outage through the whole graph', () => {
-    // coal → chemicals → (components, pharmaceuticals) → (electronics, vehicles)
-    const r = resolveSupplyChain(INTERMEDIATE_GOODS, 2000, rawsAvailable('iron', 'copper'));
-    for (const id of ['chemicals', 'components', 'pharmaceuticals', 'electronics', 'vehicles']) {
-      expect(r.disrupted.has(id)).toBe(true);
+  it('cascades a coal outage through every coal-derived branch', () => {
+    // coal feeds steel, chemicals, electricity → and everything downstream of
+    // them (components → vehicles/electronics/machinery/consumer_goods, etc.).
+    const r = resolveSupplyChain(INTERMEDIATE_GOODS, 2000, allRawsExcept('coal'));
+    for (const id of ['steel', 'chemicals', 'electricity', 'components',
+      'pharmaceuticals', 'electronics', 'vehicles', 'machinery', 'tools']) {
+      expect(r.disrupted.has(id), `${id} should cascade from coal`).toBe(true);
     }
-    expect(r.health).toBe(0);
+    // The coal-independent branch survives.
+    for (const id of ['lumber', 'textiles', 'fuel', 'food', 'clothing']) {
+      expect(r.supplied.has(id), `${id} should survive a coal outage`).toBe(true);
+    }
+    expect(r.health).toBeCloseTo(5 / 16, 10);
   });
 
   it('isolates an iron outage to the iron-bearing branch', () => {
-    // iron feeds components (→ electronics) and vehicles; chemicals →
-    // pharmaceuticals run on coal alone and survive.
-    const r = resolveSupplyChain(INTERMEDIATE_GOODS, 2000, rawsAvailable('coal', 'copper'));
+    // iron feeds steel and components (→ vehicles/electronics/machinery); the
+    // coal-only chemicals→pharmaceuticals chain survives.
+    const r = resolveSupplyChain(INTERMEDIATE_GOODS, 2000, allRawsExcept('iron'));
     expect(r.supplied.has('chemicals')).toBe(true);
     expect(r.supplied.has('pharmaceuticals')).toBe(true);
-    expect(r.disrupted.has('components')).toBe(true);
-    expect(r.disrupted.has('electronics')).toBe(true); // needs components
-    expect(r.disrupted.has('vehicles')).toBe(true);
-    expect(r.health).toBeCloseTo(2 / 5, 10);
+    expect(r.supplied.has('electricity')).toBe(true);
+    for (const id of ['steel', 'components', 'electronics', 'vehicles', 'tools', 'machinery']) {
+      expect(r.disrupted.has(id), `${id} should fail without iron`).toBe(true);
+    }
+    expect(r.health).toBeCloseTo(8 / 16, 10);
   });
 
-  it('confines a copper outage to electronics alone', () => {
-    const r = resolveSupplyChain(INTERMEDIATE_GOODS, 2000, rawsAvailable('coal', 'iron'));
-    expect(r.disrupted.has('electronics')).toBe(true);
-    expect([...r.disrupted]).toEqual(['electronics']);
-    expect(r.health).toBeCloseTo(4 / 5, 10);
+  it('confines a copper outage to electronics and its sole dependent', () => {
+    // copper feeds only electronics; luxury_goods needs electronics, so it falls
+    // too — but nothing else does.
+    const r = resolveSupplyChain(INTERMEDIATE_GOODS, 2000, allRawsExcept('copper'));
+    expect(new Set(r.disrupted)).toEqual(new Set(['electronics', 'luxury_goods']));
+    expect(r.health).toBeCloseTo(14 / 16, 10);
   });
 
   it('propagates through a deep linear chain', () => {
@@ -162,27 +181,36 @@ function freshSim(seed = 7): RegionSim {
   return RegionSim.create(seed, { aiDifficulty: 'normal', currencySymbol: '$' });
 }
 
+/** Make every primary raw flow by giving both extracting sectors output. */
+function flowAllRaws(r: RegionSim): void {
+  for (const s of r.settlements) {
+    s.sectors.industry.output = 100; // extractive raws (coal/iron/wood/oil/…)
+    s.sectors.agriculture.output = 100; // agricultural raws (grain/livestock)
+  }
+}
+
 describe('tickIntermediateGoods() cascade integration', () => {
-  it('runs the full chain and reports perfect health when industry supplies raws', () => {
+  it('runs the full chain and reports perfect health when both sectors supply raws', () => {
     const r = freshSim();
     pinYear(r, 2000);
-    for (const s of r.settlements) s.sectors.industry.output = 100; // raws proxied available
+    flowAllRaws(r);
     r.tickIntermediateGoods();
     expect(r.getSupplyChainHealth()).toBe(1);
     expect(r.intermediateGoodStocks['electronics']).toBeGreaterThan(0);
+    expect(r.intermediateGoodStocks['food']).toBeGreaterThan(0);
   });
 
   it('does NOT let pharmaceuticals free-ride on buffered chemicals when coal is cut', () => {
     // The crux of the fix: pharmaceuticals holds no input of its own — it needs
-    // chemicals, which needs coal. With coal gone, the old buffer check would
-    // have produced pharmaceuticals off the 100-unit chemicals stock; the
-    // cascade solver correctly fails it.
+    // chemicals, which needs coal. With every raw gone, the old buffer check would
+    // have produced pharmaceuticals off the 100-unit chemicals stock; the cascade
+    // solver correctly fails it.
     const r = freshSim();
     pinYear(r, 2000);
-    for (const s of r.settlements) s.sectors.industry.output = 0; // no raw proxy
-    delete r.intermediateGoodStocks['coal'];
-    delete r.intermediateGoodStocks['iron'];
-    delete r.intermediateGoodStocks['copper'];
+    for (const s of r.settlements) {
+      s.sectors.industry.output = 0;
+      s.sectors.agriculture.output = 0;
+    }
     r.intermediateGoodStocks['chemicals'] = 100; // a fat upstream buffer …
     r.intermediateGoodStocks['pharmaceuticals'] = 0;
 
@@ -197,7 +225,10 @@ describe('tickIntermediateGoods() cascade integration', () => {
   it('slows research when an electronics outage cascades from a raw shortage', () => {
     const r = freshSim();
     pinYear(r, 2000);
-    for (const s of r.settlements) s.sectors.industry.output = 0; // cut every raw
+    for (const s of r.settlements) {
+      s.sectors.industry.output = 0; // cut every extractive raw
+      s.sectors.agriculture.output = 0;
+    }
     const before = r.researchRate();
     r.tickIntermediateGoods();
     // electronics disrupted (its components/copper chain is dead) → −10% research.
