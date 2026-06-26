@@ -1,6 +1,22 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-26 · **Tests:** 821 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; performance-gated deep-expansion track underway (PRs #264, #265 merged; backdrop now has true per-band parallax + horizon glow — see below)
+**Last updated:** 2026-06-26 · **Tests:** 825 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; performance-gated deep-expansion track underway (PRs #264, #265, #269 merged; save-size regression guard added — see below)
+
+## Recent session (2026-06-26) — save-size regression guard (Risk #5)
+
+Added the roadmap's **Risk #5** guard ("Phase-14 save bloat → a save-size
+regression test"), `tests/save-size.test.ts`. Measured today's `serialize()`
+footprint and locked it in: **~22 KiB at founding**, plateauing at **~82 KiB
+across a century and beyond** (2009 ≈ 2100 ≈ 2128 — the log-bearing fields are
+capped, so accumulation is bounded, not linear in elapsed time). The guard
+asserts an early ceiling (<64 KiB), a century ceiling (<192 KiB, generous
+headroom), non-ballooning past the century (+110 more years < 2× the +90 size),
+and **no round-trip expansion** (save→load→save doesn't grow — a field that
+duplicated each reload would balloon localStorage past its ~5 MB cap). The
+upcoming Phase-14 per-settlement grid maps are the obvious bloat risk this
+catches before it reaches a user's save. Verified: tsc clean, **825 tests** (4
+new). *Finding:* a reload re-serializes ~0.9% **smaller** — benign, the
+`?? default` backfill omits stored defaults on the re-dump (not a bug).
 
 ## Recent session (2026-06-26) — per-band parallax + horizon glow
 
