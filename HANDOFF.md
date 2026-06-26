@@ -1,6 +1,49 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-26 · **Tests:** 890 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway (PRs #264, #265, #269, #272, #270, #274, **#276 + #277 + #278 merged — supply-chain cascade + GDP drag + MVP-18 DAG**; save-size guard + live-slot asset generator + audio stems/ambience + wall-clock sim catch-up landed — asset *generation* blocked only by network egress). **This session: routed the oil-shock anchor through the supply chain (oil → fuel → trucking/plastics) and surfaced the whole chain in a new Economy → Supply tab (D1-econ, open PR).**
+**Last updated:** 2026-06-26 · **Tests:** 906 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway (PRs #264, #265, #269, #272, #270, #274, **#276 + #277 + #278 + #279 merged — supply-chain cascade + GDP drag + MVP-18 DAG + oil-shock-through-chain + Supply UI**; save-size guard + live-slot asset generator + audio stems/ambience + wall-clock sim catch-up landed — asset *generation* blocked only by network egress). **This session: made raw availability GRADED — a fractional supply solver + a partial oil shock, then an extraction proxy that grades off a trailing output norm so ordinary recessions bite the chain, not just embargoes/total collapse (D1-econ, open PR).**
+
+## Recent session (2026-06-26) — graded raw availability: ordinary shortages bite (D1-econ)
+
+The cascade + the GDP drag + the MVP-18 DAG + the oil shock all shipped, but the
+raw proxy was still **binary** — a raw flowed iff its extracting sector's output
+was >0, so the chain only moved on an *embargo* or a *total* sector shutdown.
+This session makes raw availability **fractional**, in two layers (the user
+explicitly chose "both, in that order"; each landed + verified before the next).
+
+- **Phase 1 — graded solver + partial oil shock (byte-identical in healthy play).**
+  New `resolveSupplyChainGraded` in `supply.ts`: each raw reports a *level* in
+  [0,1]; a good's level is the **min over its inputs** (Liebig's law of the
+  minimum), health is the **mean** level. It strictly generalises the boolean
+  solver — when every raw is 0 or 1 the mean equals supplied/active and the
+  sets are identical, so wiring it in is byte-identical in every all-or-nothing
+  scenario (all current play). `rawEmbargoes` gained a `cut` fraction
+  (`{ until, cut }`, old numeric saves migrate to `cut:1`), and the 1970s oil
+  anchor now cuts oil **partially** (`OIL_EMBARGO_CUT = 0.6`) — oil → fuel →
+  trucking/plastics run at 40% for the window, a more historical 1973 than a
+  total shutoff. Stock ledger produces `baseOutput × level`; secondary effects
+  (plague/research-slow) scale their RNG draw by the shortfall, so a full cut
+  keeps the exact pre-graded draw and healthy play draws nothing.
+- **Phase 2 — graded extraction proxy (intentional, bounded balance change).**
+  Each extracting sector keeps a trailing EWMA output norm (`sectorOutputNorm`,
+  serialized). `sectorRawLevel` grades off output/norm: ≥ norm (steady/growing)
+  → full 1.0, so healthy play stays byte-clean and the whole suite is unperturbed;
+  a contraction below the deadband (0.9) grades the raw toward MIN_LEVEL (0.35)
+  at the floor (0.5). The norm chases output, so the drag fires on the *transition*
+  into a downturn and heals — it bites the shock, not the steady state. Feedback
+  is damped on three axes (floor never 0, 1-month-lagged mult, 15% max drag), so
+  the loop is non-divergent (verified across 8 seeds × 181y in the headless sim).
+- **Tests:** graded-solver unit tests (boolean-equivalence, Liebig min, clamp,
+  cycles) + partial-embargo + graded-proxy + migration coverage. **890 → 906.**
+  tsc clean, full suite green (determinism/save-size/economy-balance still in
+  range), build green.
+
+**Next on the economy (D1-econ):** the goods are STILL an **abstract layer** —
+stocks feed only `supplyChainHealth` (→ the drag) + the two secondary effects;
+nothing reads them into GDP, prices, or trade. That's the remaining depth step
+(make goods *do more* economically). The graded plumbing (levels per good, a
+`cut` per embargo, per-sector norms) is now the substrate to build real
+consumption/prices on. Or pick up `C1` (region.ts modularization) — `supply.ts`
++ the `supply*` / `rawSupplyLevel` / `sectorRawLevel` methods are the template.
 
 ## Recent session (2026-06-26) — the oil shock animates the chain + a Supply UI (D1-econ)
 
