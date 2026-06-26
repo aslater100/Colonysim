@@ -4833,9 +4833,11 @@ export class RegionView {
     // Standing embargoes — the "this is why" banner (oil shock, future blockades).
     for (const e of snap.embargoes) {
       const months = Math.max(1, Math.round(e.daysLeft / 30));
+      const cutPct = Math.round(e.cut * 100);
+      const how = e.cut >= 1 ? 'cut off' : `${cutPct}% cut`;
       html +=
         `<p class="insp-cond" style="margin:4px 0">⚠ ${e.raw.toUpperCase()} EMBARGO` +
-        ` — ${e.raw} cut off, cascading downstream · ~${months} mo left</p>`;
+        ` — ${e.raw} ${how}, cascading downstream · ~${months} mo left</p>`;
     }
 
     // Critical-goods dependency board (GDD §5.4: food, fuel, steel, components).
@@ -4863,10 +4865,16 @@ export class RegionView {
     html += `<div style="display:flex;flex-wrap:wrap;gap:2px 8px">`;
     for (const id of order) {
       const ok = snap.supplied.has(id);
-      const col = ok ? '#4e9' : '#e55';
+      const level = snap.levels.get(id) ?? (ok ? 1 : 0);
+      // A partial cut (graded embargo / strained extraction) runs amber, not red,
+      // and shows the level it's holding — distinct from a total cut at a glance.
+      const partial = !ok && level > 0.001;
+      const col = ok ? '#4e9' : partial ? '#ca4' : '#e55';
+      const glyph = ok ? '●' : partial ? '◐' : '○';
+      const tip = ok ? 'supplied' : partial ? `running at ${Math.round(level * 100)}%` : 'disrupted';
       html +=
-        `<span class="insp-skills" style="color:${col};min-width:84px" title="${ok ? 'supplied' : 'disrupted'}">` +
-        `${ok ? '●' : '○'} ${nameOf(id)}</span>`;
+        `<span class="insp-skills" style="color:${col};min-width:84px" title="${tip}">` +
+        `${glyph} ${nameOf(id)}</span>`;
     }
     html += `</div>`;
     if (disruptedCount > 0 && snap.embargoes.length === 0) {

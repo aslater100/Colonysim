@@ -8,7 +8,12 @@
  * upstream.
  */
 import { describe, expect, it } from 'vitest';
-import { resolveSupplyChain, rawMaterialsOf, type SupplyGood } from '../src/sim/supply';
+import {
+  resolveSupplyChain,
+  resolveSupplyChainGraded,
+  rawMaterialsOf,
+  type SupplyGood,
+} from '../src/sim/supply';
 import { RegionSim, INTERMEDIATE_GOODS } from '../src/sim/region';
 
 /** A predicate that reports the given raw ids as available, all others not. */
@@ -166,6 +171,74 @@ describe('resolveSupplyChain() robustness', () => {
       return true;
     });
     expect(new Set(queried)).toEqual(new Set(ALL_RAWS)); // never chemicals/components/…
+  });
+});
+
+// ============================================================
+// 4b. resolveSupplyChainGraded — fractional availability
+// ============================================================
+describe('resolveSupplyChainGraded()', () => {
+  const linear: SupplyGood[] = [
+    { id: 'a', eraUnlock: 0, inputs: ['raw'], baseOutput: 1 },
+    { id: 'b', eraUnlock: 0, inputs: ['a'], baseOutput: 1 },
+    { id: 'c', eraUnlock: 0, inputs: ['b', 'raw2'], baseOutput: 1 },
+  ];
+
+  it('generalises the boolean solver exactly when every raw is 0 or 1', () => {
+    // For any all-or-nothing predicate, graded (mean level, level≥1 ⇒ supplied)
+    // must match resolveSupplyChain bit for bit — this is what guarantees healthy
+    // play stays byte-identical when the sim is wired to the graded solver.
+    for (const cut of [[], ['coal'], ['iron'], ['copper'], ['oil'], ['coal', 'oil']]) {
+      const pred = (id: string) => ALL_RAWS.includes(id) && !cut.includes(id);
+      const bool = resolveSupplyChain(INTERMEDIATE_GOODS, 2000, pred);
+      const graded = resolveSupplyChainGraded(INTERMEDIATE_GOODS, 2000, (id) => (pred(id) ? 1 : 0));
+      expect(graded.health).toBeCloseTo(bool.health, 12);
+      expect([...graded.supplied].sort()).toEqual([...bool.supplied].sort());
+      expect([...graded.disrupted].sort()).toEqual([...bool.disrupted].sort());
+    }
+  });
+
+  it('carries a fractional raw level downstream as the min over inputs (Liebig)', () => {
+    const res = resolveSupplyChainGraded(linear, 0, (id) => (id === 'raw' ? 0.4 : 1));
+    expect(res.levels.get('a')).toBeCloseTo(0.4, 10); // a ← raw(0.4)
+    expect(res.levels.get('b')).toBeCloseTo(0.4, 10); // b ← a(0.4)
+    expect(res.levels.get('c')).toBeCloseTo(0.4, 10); // c ← min(b 0.4, raw2 1)
+    // mean of (0.4, 0.4, 0.4)
+    expect(res.health).toBeCloseTo(0.4, 10);
+    // all three run below full → all disrupted, none "supplied"
+    expect(res.supplied.size).toBe(0);
+    expect(res.disrupted.size).toBe(3);
+  });
+
+  it('takes the scarcest input when two inputs differ', () => {
+    const res = resolveSupplyChainGraded(linear, 0, (id) => (id === 'raw' ? 0.9 : 0.3));
+    // c ← min(b, raw2) = min(0.9, 0.3)
+    expect(res.levels.get('c')).toBeCloseTo(0.3, 10);
+  });
+
+  it('clamps out-of-range and non-finite raw levels to [0,1]', () => {
+    const hi = resolveSupplyChainGraded(linear, 0, () => 5);
+    expect(hi.levels.get('a')).toBe(1);
+    const lo = resolveSupplyChainGraded(linear, 0, (id) => (id === 'raw' ? -2 : 1));
+    expect(lo.levels.get('a')).toBe(0);
+    const nan = resolveSupplyChainGraded(linear, 0, (id) => (id === 'raw' ? NaN : 1));
+    expect(nan.levels.get('a')).toBe(0);
+  });
+
+  it('treats a dependency cycle as level 0, like the boolean solver', () => {
+    const cyclic: SupplyGood[] = [
+      { id: 'a', eraUnlock: 0, inputs: ['b'], baseOutput: 1 },
+      { id: 'b', eraUnlock: 0, inputs: ['a'], baseOutput: 1 },
+    ];
+    const res = resolveSupplyChainGraded(cyclic, 0, () => 1);
+    expect(res.health).toBe(0);
+    expect(res.levels.get('a')).toBe(0);
+  });
+
+  it('reports perfect health and no active goods before any unlock', () => {
+    const res = resolveSupplyChainGraded(INTERMEDIATE_GOODS, 1900, () => 1);
+    expect(res.active).toEqual([]);
+    expect(res.health).toBe(1);
   });
 });
 

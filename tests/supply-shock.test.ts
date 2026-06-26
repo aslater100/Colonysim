@@ -3,6 +3,9 @@ import {
   RegionSim,
   INTERMEDIATE_GOODS,
   SUPPLY_SHOCK_MAX_DRAG,
+  RAW_SHORTAGE_DEADBAND,
+  RAW_SHORTAGE_FLOOR,
+  RAW_SHORTAGE_MIN_LEVEL,
   type Settlement,
 } from '../src/sim/region';
 
@@ -114,6 +117,93 @@ describe('supply-shock drag — a real raw collapse bites', () => {
     expect(mult).toBeGreaterThanOrEqual(FLOOR);
     expect(mult).toBeLessThanOrEqual(1);
     expect(mult).toBeGreaterThan(0); // a positive output stays positive — can't starve the raw proxy
+  });
+});
+
+// ============================================================
+// 2b. Graded extraction proxy — an ordinary contraction bites, not just collapse
+// ============================================================
+/** The level `sectorRawLevel` grades an extracting sector to at a given
+ *  output/norm ratio — mirrors the production formula under test. */
+function expectedLevel(ratio: number): number {
+  if (ratio >= RAW_SHORTAGE_DEADBAND) return 1;
+  if (ratio <= RAW_SHORTAGE_FLOOR) return RAW_SHORTAGE_MIN_LEVEL;
+  const t = (ratio - RAW_SHORTAGE_FLOOR) / (RAW_SHORTAGE_DEADBAND - RAW_SHORTAGE_FLOOR);
+  return RAW_SHORTAGE_MIN_LEVEL + t * (1 - RAW_SHORTAGE_MIN_LEVEL);
+}
+
+/** Set both extracting sectors to a flat output and pin their trailing norms, so
+ *  the output/norm ratio (hence the graded raw level) is exactly controllable. */
+function setOutputVsNorm(r: RegionSim, output: number, norm: number): void {
+  for (const s of r.settlements) {
+    s.sectors.industry.output = output;
+    s.sectors.agriculture.output = output;
+  }
+  r.sectorOutputNorm = { industry: norm, agriculture: norm };
+}
+
+describe('supply-shock drag — graded extraction proxy', () => {
+  it('reads full availability when output holds within the deadband of its norm', () => {
+    const r = freshSim();
+    pinYear(r, 2000);
+    setOutputVsNorm(r, 95, 100); // ratio 0.95 ≥ deadband → no shortage
+    const snap = r.supplyChainSnapshot(); // pure read: does not advance the norm
+    expect(snap.health).toBe(1);
+    expect(snap.levels.get('fuel')).toBe(1); // fuel ← oil (extractive) → full
+  });
+
+  it('grades an extractive good down in proportion to a contraction below norm', () => {
+    const r = freshSim();
+    pinYear(r, 2000);
+    setOutputVsNorm(r, 70, 100); // ratio 0.7, between floor and deadband
+    const snap = r.supplyChainSnapshot();
+    // fuel grounds out purely in oil (extractive) → exactly the industry level.
+    expect(snap.levels.get('fuel')).toBeCloseTo(expectedLevel(0.7), 10);
+    expect(snap.levels.get('fuel')!).toBeLessThan(1);
+    expect(snap.levels.get('fuel')!).toBeGreaterThan(RAW_SHORTAGE_MIN_LEVEL);
+  });
+
+  it('bottoms out at MIN_LEVEL on a deep contraction — a partial cut never fully starves a raw', () => {
+    const r = freshSim();
+    pinYear(r, 2000);
+    setOutputVsNorm(r, 30, 100); // ratio 0.3 ≤ floor
+    const snap = r.supplyChainSnapshot();
+    expect(snap.levels.get('fuel')).toBeCloseTo(RAW_SHORTAGE_MIN_LEVEL, 10);
+    expect(snap.levels.get('fuel')!).toBeGreaterThan(0); // not zero — only literal collapse is
+  });
+
+  it('an unwarmed norm (fresh/early game) fabricates no shock', () => {
+    const r = freshSim();
+    pinYear(r, 2000);
+    setOutputVsNorm(r, 50, 0); // norm 0 → not yet warmed
+    const snap = r.supplyChainSnapshot();
+    expect(snap.health).toBe(1);
+    expect(snap.severity).toBe(0);
+  });
+
+  it('drives a real industry drag once a contraction is ticked in', () => {
+    const r = freshSim();
+    pinYear(r, 2000);
+    setOutputVsNorm(r, 70, 100); // a ~30% dip below the trailing norm
+    r.tickIntermediateGoods(); // advances the norm, resolves the cascade, caches the drag
+    expect(r.supplyShockSeverity()).toBeGreaterThan(0);
+    expect(r.supplyShockOutputMult()).toBeLessThan(1);
+    expect(r.supplyShockOutputMult()).toBeGreaterThanOrEqual(FLOOR); // still bounded
+  });
+
+  it('round-trips the per-sector output norm through save/load', () => {
+    const r = freshSim();
+    r.sectorOutputNorm = { industry: 123.5, agriculture: 67.25 };
+    const r2 = RegionSim.deserialize(r.serialize());
+    expect(r2.sectorOutputNorm).toEqual({ industry: 123.5, agriculture: 67.25 });
+  });
+
+  it('backfills the norm to unwarmed (0) for a pre-graded save', () => {
+    const r = freshSim();
+    const data = JSON.parse(r.serialize());
+    delete data.sectorOutputNorm;
+    const r2 = RegionSim.deserialize(JSON.stringify(data));
+    expect(r2.sectorOutputNorm).toEqual({ industry: 0, agriculture: 0 });
   });
 });
 

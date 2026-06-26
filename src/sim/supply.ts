@@ -45,6 +45,17 @@ export interface SupplyResolution {
   health: number;
 }
 
+export interface SupplyResolutionGraded extends SupplyResolution {
+  /** good id → supply *level* in [0,1] this period: how fully it could run given
+   *  its scarcest input. The boolean `disrupted`/`supplied` sets above are derived
+   *  by thresholding this at 1 (a good at level < 1 is `disrupted`). */
+  levels: Map<string, number>;
+}
+
+/** Levels within this of 1.0 count as "fully supplied" — guards float drift so a
+ *  raw nominally at 1.0 doesn't read as a phantom shortage. */
+export const SUPPLY_FULL_EPS = 1e-9;
+
 /**
  * Identify the raw materials of a goods graph: every input id that is not
  * itself produced by some good in the catalog. (coal, iron, copper for the
@@ -132,5 +143,85 @@ export function resolveSupplyChain(
     disrupted,
     supplied,
     health: supplied.size / active.length,
+  };
+}
+
+/**
+ * Graded variant of {@link resolveSupplyChain}: instead of a binary
+ * available/cut predicate, each raw reports an availability *level* in [0,1]
+ * (1 = flowing freely, 0.4 = a 60%-cut embargo, 0 = total cut). A good's supply
+ * level is the **minimum** of its input levels — Liebig's law of the minimum:
+ * a fixed-recipe line runs only as fast as its scarcest input, so a half-cut on
+ * any one input halves the good (and that scarcity cascades to its consumers).
+ *
+ * Health is the **mean** supply level over active goods. This is a strict
+ * generalisation of the boolean solver: when every raw level is exactly 0 or 1,
+ * each good's level is 0 or 1, the mean equals `supplied/active`, and the
+ * `supplied`/`disrupted` sets are identical — so wiring this in is byte-identical
+ * in any all-or-nothing scenario (i.e. all current play, where raws either flow
+ * or don't). Only a genuinely *partial* raw level (graded embargo, strained
+ * extraction) produces a fractional level the old solver couldn't express.
+ *
+ * Determinism, cycle-safety and iteration order match `resolveSupplyChain`.
+ */
+export function resolveSupplyChainGraded(
+  goods: SupplyGood[],
+  year: number,
+  rawLevel: (id: string) => number,
+): SupplyResolutionGraded {
+  const active = goods.filter((g) => year >= g.eraUnlock);
+  if (active.length === 0) {
+    return { active: [], disrupted: new Set(), supplied: new Set(), levels: new Map(), health: 1 };
+  }
+
+  const activeById = new Map<string, SupplyGood>();
+  for (const g of active) activeById.set(g.id, g);
+  const known = new Set(goods.map((g) => g.id));
+
+  const levels = new Map<string, number>(); // good id → supply level this period
+  const visiting = new Set<string>();
+  const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
+
+  const inputLevel = (inputId: string): number => {
+    const producer = activeById.get(inputId);
+    if (producer) return goodLevel(producer);
+    // A known-but-locked good can't supply this era; a true raw falls back to the
+    // (clamped) availability level. NaN guards to 0 so a bad predicate can't poison.
+    if (known.has(inputId)) return 0;
+    const lvl = rawLevel(inputId);
+    return Number.isFinite(lvl) ? clamp01(lvl) : 0;
+  };
+
+  function goodLevel(g: SupplyGood): number {
+    const cached = levels.get(g.id);
+    if (cached !== undefined) return cached;
+    if (visiting.has(g.id)) return 0; // cycle → cannot bootstrap → unmet
+    visiting.add(g.id);
+    let lvl = 1;
+    for (const input of g.inputs) {
+      lvl = Math.min(lvl, inputLevel(input));
+      if (lvl <= 0) break; // a fully-cut input zeroes the good; nothing recovers it
+    }
+    visiting.delete(g.id);
+    levels.set(g.id, lvl);
+    return lvl;
+  }
+
+  const disrupted = new Set<string>();
+  const supplied = new Set<string>();
+  let sum = 0;
+  for (const g of active) {
+    const lvl = goodLevel(g);
+    sum += lvl;
+    if (lvl >= 1 - SUPPLY_FULL_EPS) supplied.add(g.id);
+    else disrupted.add(g.id);
+  }
+
+  return {
+    active: active.map((g) => g.id),
+    disrupted,
+    supplied,
+    levels,
+    health: sum / active.length,
   };
 }
