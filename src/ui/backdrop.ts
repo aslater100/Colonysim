@@ -56,8 +56,21 @@ export interface BackdropBand {
   parallax: number;
 }
 
+/** A single additive bloom of light at the horizon line — the sky's mood made
+ *  bright. Calm dusk warmth, a crisis ember, or a branch's signature future
+ *  glow. Drawn per-frame (not baked into the gradient cache) so it can pulse. */
+export interface BackdropGlow {
+  /** Horizon centre as a fraction of viewport height. */
+  y: number;
+  color: RGB;
+  /** 0 = invisible … 1 = full ember. */
+  intensity: number;
+}
+
 export interface BackdropPalette {
   bands: BackdropBand[];
+  /** Stat-driven horizon glow composited over the bands (additive). */
+  glow: BackdropGlow;
   /** Cache signature — identical inputs → identical key → no recompose. */
   key: string;
   /** Asset slot to look for an override image (e.g. `backdrop-future`). */
@@ -133,6 +146,45 @@ function tensionAdjust(c: RGB, band: StatBand, lower: boolean): RGB {
   return c;
 }
 
+/** Tension band → base horizon bloom: a faint dusk warmth at calm, an amber
+ *  unease when tense, a red ember at crisis. */
+const GLOW_BY_BAND: Record<StatBand, { color: RGB; intensity: number }> = {
+  calm:   { color: [255, 206, 150], intensity: 0.05 },
+  tense:  { color: [242, 150, 72],  intensity: 0.30 },
+  crisis: { color: [255, 92, 50],   intensity: 0.66 },
+};
+
+/** Each future branch repaints its own horizon light (matches BRANCH_SKY). */
+const BRANCH_GLOW: Record<NonNullable<Branch>, RGB> = {
+  solarpunk: [130, 235, 185], // clean cyan-green dawn
+  dystopia:  [250, 150, 60],  // sodium smog
+  drowned:   [120, 165, 205], // cold drowned light
+};
+
+/**
+ * The horizon glow for the current state. Pure read of the same inputs as the
+ * palette, so it carries no extra cache keys. Crisis always wins as a red ember
+ * (it overrides any branch tint); otherwise a future sky keeps its branch's
+ * signature light, and heavy weather smothers the bloom.
+ */
+export function buildHorizonGlow(inp: BackdropInputs): BackdropGlow {
+  const band = statBand(inp.tension);
+  const base = GLOW_BY_BAND[band];
+  let color = base.color;
+  let intensity = base.intensity;
+
+  if (eraIdForYear(inp.year) === 'future' && inp.branch && band !== 'crisis') {
+    color = BRANCH_GLOW[inp.branch];
+    intensity = Math.max(intensity, band === 'calm' ? 0.14 : 0.32);
+  }
+
+  if (inp.sky === 'storm') intensity *= 0.35;
+  else if (inp.sky === 'rain' || inp.sky === 'overcast') intensity *= 0.6;
+  else if (inp.sky === 'snow') intensity *= 0.5;
+
+  return { y: 0.74, color: color.map(clamp8) as RGB, intensity };
+}
+
 /**
  * Build the full 5-band palette for the current sim state. Pure: same inputs →
  * same bands and the same cache key.
@@ -174,7 +226,7 @@ export function buildBackdropPalette(inp: BackdropInputs): BackdropPalette {
   }));
 
   const key = [era, inp.branch ?? '-', seasonIdx, inp.sky, band].join('|');
-  return { bands, key, slot: `backdrop-${era}` };
+  return { bands, glow: buildHorizonGlow(inp), key, slot: `backdrop-${era}` };
 }
 
 // ---- DOM compositor --------------------------------------------------------
@@ -183,45 +235,58 @@ export function buildBackdropPalette(inp: BackdropInputs): BackdropPalette {
  *  offset never exposes a gap at the viewport edge. */
 const MARGIN = 96;
 
+/** Representative parallax for the horizon glow / override image — the lower
+ *  sky drifts roughly with the near bands. */
+const GLOW_PARALLAX = 0.4;
+
+/** One painted strip per band. The strip canvas is the band's pixel height plus
+ *  a MARGIN bleed on every side; the gradient's end colours extend into the
+ *  bleed so a parallax offset never exposes a gap. */
+interface BandStrip {
+  canvas: HTMLCanvasElement;
+  /** Top of the band in viewport pixels (before parallax), i.e. `y0 * H`. */
+  top: number;
+  parallax: number;
+}
+
 export class Backdrop {
-  private canvas: HTMLCanvasElement | null = null;
-  private ctx: CanvasRenderingContext2D | null = null;
+  private strips: BandStrip[] = [];
   private sig = '';
 
-  /** Re-paint the offscreen gradient only when the palette key or size changes. */
+  /** Re-paint the per-band strips only when the palette key or size changes. */
   private ensure(W: number, H: number, pal: BackdropPalette): void {
+    const sig = `${W}x${H}|${pal.key}`;
+    if (this.sig === sig && this.strips.length === pal.bands.length) return;
     const cw = W + MARGIN * 2;
-    const ch = H + MARGIN * 2;
-    const sig = `${cw}x${ch}|${pal.key}`;
-    if (this.canvas && this.sig === sig) return;
-    if (!this.canvas) this.canvas = document.createElement('canvas');
-    if (this.canvas.width !== cw || this.canvas.height !== ch) {
-      this.canvas.width = cw;
-      this.canvas.height = ch;
-      this.ctx = this.canvas.getContext('2d');
-    }
-    const c = this.ctx;
-    if (!c) return;
-    c.clearRect(0, 0, cw, ch);
-    for (const b of pal.bands) {
-      const y0 = MARGIN + b.y0 * H;
-      const y1 = MARGIN + b.y1 * H;
-      const grad = c.createLinearGradient(0, y0, 0, y1);
-      grad.addColorStop(0, rgbCss(b.top));
-      grad.addColorStop(1, rgbCss(b.bottom));
-      c.fillStyle = grad;
-      // Bands overlap; later (lower) bands paint over earlier ones, blending the
-      // seam. Each spans the full oversized width.
-      c.fillRect(0, y0, cw, y1 - y0);
-    }
+    this.strips = pal.bands.map((b) => {
+      const top = b.y0 * H;
+      const span = (b.y1 - b.y0) * H;
+      const canvas = document.createElement('canvas');
+      canvas.width = cw;
+      canvas.height = Math.max(1, Math.ceil(span + MARGIN * 2));
+      const c = canvas.getContext('2d');
+      if (c) {
+        // Gradient runs across the band proper (MARGIN .. MARGIN+span); filling
+        // the whole strip lets the clamped end colours flood the top/bottom
+        // bleed, so vertical parallax slides into matching colour, not a void.
+        const grad = c.createLinearGradient(0, MARGIN, 0, MARGIN + span);
+        grad.addColorStop(0, rgbCss(b.top));
+        grad.addColorStop(1, rgbCss(b.bottom));
+        c.fillStyle = grad;
+        c.fillRect(0, 0, cw, canvas.height);
+      }
+      return { canvas, top, parallax: b.parallax };
+    });
     this.sig = sig;
   }
 
   /**
    * Draw the backdrop in screen space behind the map. `camX/camY` are the live
    * camera pan (RegionView.camX/Y); each band is offset by the fraction of that
-   * pan it does *not* follow, so distant bands lag the terrain. The override
-   * image (if any) is stretched over the whole viewport on top of the gradient.
+   * pan it does *not* follow — so distant bands lag the terrain and near bands
+   * track it, true per-layer parallax rather than one shared drift. Back-to-
+   * front: distant bands first, nearer bands paint over their seams. The horizon
+   * glow blooms additively on top, then an override image (if any).
    *
    * Must be called before the camera transform is applied (i.e. before the
    * terrain blit), in raw screen coordinates.
@@ -236,21 +301,48 @@ export class Backdrop {
     registry?: AssetRegistry,
   ): void {
     this.ensure(W, H, pal);
-    if (!this.canvas) return;
-    // One representative parallax for the single-blit gradient: the mid band.
-    // (Per-band offsets would need per-band blits; the stacked gradient already
-    // carries the depth, so one slow drift reads correctly and stays cheap.)
-    const pf = pal.bands[2]?.parallax ?? 0.15;
-    const ox = clampMargin(-camX * (1 - pf));
-    const oy = clampMargin(-camY * (1 - pf));
-    g.drawImage(this.canvas, -MARGIN + ox, -MARGIN + oy);
+    for (const s of this.strips) {
+      const ox = clampMargin(-camX * (1 - s.parallax));
+      const oy = clampMargin(-camY * (1 - s.parallax));
+      g.drawImage(s.canvas, -MARGIN + ox, s.top - MARGIN + oy);
+    }
+
+    this.drawGlow(g, W, H, pal.glow, camX, camY);
 
     const img = registry?.get(pal.slot);
     if (img && img.width > 0) {
       // A painted sky overrides the procedural one; same gentle parallax.
+      const ox = clampMargin(-camX * (1 - GLOW_PARALLAX));
+      const oy = clampMargin(-camY * (1 - GLOW_PARALLAX));
       g.globalAlpha = 1;
       g.drawImage(img, ox * 0.6, oy * 0.6, W, H);
     }
+  }
+
+  /** Additive ember bloom centred on the horizon — the stat band made bright. */
+  private drawGlow(
+    g: CanvasRenderingContext2D,
+    W: number,
+    H: number,
+    glow: BackdropGlow,
+    camX: number,
+    camY: number,
+  ): void {
+    if (glow.intensity <= 0.002) return;
+    const ox = clampMargin(-camX * (1 - GLOW_PARALLAX));
+    const oy = clampMargin(-camY * (1 - GLOW_PARALLAX));
+    const cx = W / 2 + ox * 0.5;
+    const cy = glow.y * H + oy;
+    const radius = Math.max(W, H) * 0.72;
+    const [r, gg, bb] = glow.color;
+    const grad = g.createRadialGradient(cx, cy, 0, cx, cy, radius);
+    grad.addColorStop(0, `rgba(${clamp8(r)},${clamp8(gg)},${clamp8(bb)},${glow.intensity})`);
+    grad.addColorStop(1, `rgba(${clamp8(r)},${clamp8(gg)},${clamp8(bb)},0)`);
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    g.fillStyle = grad;
+    g.fillRect(0, 0, W, H);
+    g.restore();
   }
 }
 

@@ -1,8 +1,39 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-26 · **Tests:** 815 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; performance-gated deep-expansion track underway (PRs #264, #265 merged; parallax backdrop next — see below)
+**Last updated:** 2026-06-26 · **Tests:** 821 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; performance-gated deep-expansion track underway (PRs #264, #265 merged; backdrop now has true per-band parallax + horizon glow — see below)
 
-## Recent session (2026-06-26) — parallax atmosphere backdrop (`drawBackdrop`)
+## Recent session (2026-06-26) — per-band parallax + horizon glow
+
+Extended `src/ui/backdrop.ts` to the **two follow-ups the prior session flagged**
+as next: true independent per-layer parallax, and a stat-driven horizon glow.
+Verified: tsc clean, **821 tests** (6 new), `bench-region` PASS (60fps held, all
+stages), vite build green, and a real-Chromium smoke render across 5 states
+(dawn/crisis/solarpunk/storm, including a ±9999px extreme pan) reporting
+**0.000% void gap** everywhere and a correctly-tinted horizon (crisis → red 255
+ember, solarpunk → green-forward, storm → dim/desaturated).
+
+- **Per-band blits (replaces the single composite gradient):** `Backdrop` now
+  paints **one strip canvas per band** (`BandStrip`), each oversized by the 96px
+  `MARGIN` bleed so the gradient's clamped end-colours flood the top/bottom and a
+  parallax offset slides into matching colour — never a void. `draw()` blits them
+  **back-to-front** (distant first), each offset by its **own** `band.parallax`
+  fraction of `camX/camY`, so distant bands genuinely lag and near bands track —
+  real per-layer depth, not one shared drift. Nearer bands paint over the seams.
+- **Stat-driven horizon glow:** new pure `buildHorizonGlow(inputs)` → a
+  `BackdropGlow {y, color, intensity}` carried on the palette (no new cache keys —
+  it reads era/branch/sky/tension, all already keyed). Calm = faint dusk warmth,
+  tense = amber unease, crisis = a **red ember** (overrides any branch tint). A
+  calm *future* sky keeps its branch's signature light (solarpunk cyan-green,
+  dystopia sodium-amber, drowned cold). Heavy weather smothers the bloom. Drawn
+  per-frame as an **additive** (`globalCompositeOperation:'lighter'`) radial
+  centred on the horizon, drifting with the near-sky parallax (`GLOW_PARALLAX`).
+
+**Next on the backdrop:** real painted `backdrop-<era>` art once the asset
+pipeline has `HF_TOKEN` + an encoder (the override seam already composites it on
+top with the same parallax). Sample-stem music / ambience beds
+(`audioRegistry.ts`) remain the other half of the atmosphere layer.
+
+## Earlier session (2026-06-26) — parallax atmosphere backdrop (`drawBackdrop`)
 
 Landed the first **Track-B atmosphere layer**: `src/ui/backdrop.ts` — the 5-band
 parallax sky that fills the void the terrain cache leaves at the map margins (and

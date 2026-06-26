@@ -3,6 +3,7 @@ import {
   eraIdForYear,
   statBand,
   buildBackdropPalette,
+  buildHorizonGlow,
   rgbCss,
   type BackdropInputs,
 } from '../src/ui/backdrop';
@@ -96,6 +97,55 @@ describe('buildBackdropPalette', () => {
     const crisis = buildBackdropPalette({ ...base, tension: 0.95 });
     const ground = (p: ReturnType<typeof buildBackdropPalette>) => p.bands[4].bottom;
     expect(ground(crisis)[0]).toBeGreaterThan(ground(calm)[0]); // more red
+  });
+
+  it('attaches a horizon glow to the palette', () => {
+    const pal = buildBackdropPalette(base);
+    expect(pal.glow.y).toBeGreaterThan(0);
+    expect(pal.glow.y).toBeLessThan(1);
+    expect(pal.glow.intensity).toBeGreaterThanOrEqual(0);
+    for (const ch of pal.glow.color) {
+      expect(ch).toBeGreaterThanOrEqual(0);
+      expect(ch).toBeLessThanOrEqual(255);
+    }
+  });
+});
+
+describe('buildHorizonGlow', () => {
+  it('brightens the bloom as tension rises through the bands', () => {
+    const calm = buildHorizonGlow({ ...base, tension: 0 });
+    const tense = buildHorizonGlow({ ...base, tension: 0.5 });
+    const crisis = buildHorizonGlow({ ...base, tension: 0.9 });
+    expect(tense.intensity).toBeGreaterThan(calm.intensity);
+    expect(crisis.intensity).toBeGreaterThan(tense.intensity);
+  });
+
+  it('burns a red ember at crisis (more red than blue)', () => {
+    const crisis = buildHorizonGlow({ ...base, tension: 0.95 });
+    expect(crisis.color[0]).toBeGreaterThan(crisis.color[2]);
+  });
+
+  it('a calm future sky keeps its branch signature light', () => {
+    const future = { ...base, year: 2080, tension: 0 };
+    const sun = buildHorizonGlow({ ...future, branch: 'solarpunk' });
+    const smog = buildHorizonGlow({ ...future, branch: 'dystopia' });
+    expect(sun.color).not.toEqual(smog.color);
+    // solarpunk reads green-forward, dystopia red/amber-forward.
+    expect(sun.color[1]).toBeGreaterThan(sun.color[0]);
+    expect(smog.color[0]).toBeGreaterThan(smog.color[2]);
+  });
+
+  it('a crisis ember overrides the branch tint', () => {
+    const future = { ...base, year: 2080, tension: 0.95 };
+    const sun = buildHorizonGlow({ ...future, branch: 'solarpunk' });
+    const none = buildHorizonGlow({ ...future, branch: null });
+    expect(sun.color).toEqual(none.color); // both the red ember
+  });
+
+  it('heavy weather smothers the bloom', () => {
+    const clear = buildHorizonGlow({ ...base, tension: 0.5, sky: 'clear' });
+    const storm = buildHorizonGlow({ ...base, tension: 0.5, sky: 'storm' });
+    expect(storm.intensity).toBeLessThan(clear.intensity);
   });
 });
 
