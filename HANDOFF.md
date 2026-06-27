@@ -1,6 +1,6 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-27 (latest) · **Tests:** 975 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway. **Latest session: #294 merged — the per-settlement-stocks STORAGE SWAP (PR-2)** (the goods ledger now lives on **`Settlement.goodStocks`** per town instead of one nation-wide `intermediateGoodStocks` pool; the #292 accessor seam made it mechanical — `produceGood` splits the tick's output across towns by producing-sector output, `drawGood` drains greedily in-order, both preserving the nation-wide aggregate exactly → **byte-identical gameplay**; per-town serialize via the settlement spread; old saves migrate the legacy pool into the capital). **Prior session: #292 — the per-settlement-stocks FOUNDATION** (the byte-identical *ledger seam* PR-2 was built on). **Earlier: 8 PRs (#283–#286, #288)** — cost-push inflation; non-asset depth pass (export-drag trade leg + serialize-determinism harness & 3 bug fixes + first C1 extraction + perf-guard re-baseline); C1 services extraction + situation-aware deals; AI difficulty belligerence + intel-gated agenda; **#288 = Tier-2 climate farm drag (A) + Tier-3 goods-on-routes first slice (B).**
+**Last updated:** 2026-06-27 (latest) · **Tests:** 980 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway. **Latest session: PR-3 slice 1 — "goods ride the rails"** (trade-route shipments now carry **real physical `cargo`**: units of the shipped good are debited from the source town's `goodStocks` on dispatch and credited to the destination's on arrival — a severed route now strands the **real units**, where before only abstract arbitrage profit moved and the flow's goodId/volume were decorative. The dispatch logic / `pendingIncome` are untouched and nothing reads intermediate-stock *magnitudes* into the economy, so it's **macro-neutral — proven by a byte-for-byte-identical 8-seed × 181y headless diff**. It's the substrate the *per-town supply solve* — PR-3 slice 2, the actual balance change — will consume). **Prior session: #294 merged — the per-settlement-stocks STORAGE SWAP (PR-2)** (the goods ledger moved onto **`Settlement.goodStocks`** per town; `produceGood` splits the tick's output by producing-sector, `drawGood` drains greedily in-order, both preserving the nation-wide aggregate exactly → **byte-identical gameplay**; built on **#292 — the per-settlement-stocks FOUNDATION** ledger seam). **Earlier: 8 PRs (#283–#286, #288)** — cost-push inflation; non-asset depth pass (export-drag trade leg + serialize-determinism harness & 3 bug fixes + first C1 extraction + perf-guard re-baseline); C1 services extraction + situation-aware deals; AI difficulty belligerence + intel-gated agenda; **#288 = Tier-2 climate farm drag (A) + Tier-3 goods-on-routes first slice (B).**
 
 > **PARALLEL TRACK — SPATIAL 4X redesign** (`docs/design/spatial-4x-redesign.md`): a second session is turning Centuria into a Civ/Age-of-Wonders spatial city game (found towns by clicking, place buildings on hexes) **while keeping the 4X clear**. **Phase A (click-to-found) MERGED #289**; **Phase B (place buildings on hexes) MERGED #291.** Next: Phase C (tile yields feed economy — intentional re-baseline), Phase D (districts/wonders). See `.handoff.md` §0. Lesson learned: AI text-to-image is the wrong tool for crisp foreground sprites — procedural rendering + the spatial layer is the win.
 
@@ -64,6 +64,53 @@
 > (parallax backdrops + era UI skins) and `B2-audio` (music stems + ambience + voice)
 > are the bold roadmap items and remain **un-started in earnest** — they need an env
 > with network egress + image/audio tooling to actually generate.
+
+## Recent session (2026-06-27 latest) — PR-3 slice 1: "goods ride the rails" (physical cargo on trade routes)
+
+User said "continue" → picked up the explicitly-sequenced next step (PR-3) and shipped its
+**first, macro-neutral slice** — the #288 follow-on the prior baton named as PR-3's entry
+point ("extend the `pendingIncome` delivery to move physical units into the destination
+town's `goodStocks`").
+
+The gap it closes: a `tradeFlows` entry carried a `goodId` + `volume` that were
+**decorative** — only the arbitrage *profit* (`pendingIncome`) ever moved; the cargo itself
+never left a warehouse, so the GDD §5.2 promise of "physical goods on routes" was half-true.
+
+- **The mechanic.** Each flow now carries **`cargo`** (new serialized field) — the real
+  units of `goodId` **debited from the source town's `goodStocks` on dispatch**
+  (`shipGoodFrom(t, id, max)` ships `min(volume, what the town actually holds)`, never
+  negative) and **credited to the destination town's `goodStocks` on arrival** (after
+  `transitDays`, via the existing `addGoodStock`). **A severed route now strands the REAL
+  cargo** — debited on dispatch, never credited → destroyed (the #288 narrative, literally,
+  not just "abstract profit lost"). A town holding none of the good ships zero cargo but
+  the profit flow still dispatches (dispatch is independent of physical stock).
+- **Macro-neutral — PROVEN by direct diff.** The dispatch decision, transit time and
+  `pendingIncome` are **untouched**; cargo is purely additive per-town bookkeeping. Nothing
+  reads intermediate-good *stock magnitudes* into the macro economy — the solver's
+  `rawSupplyLevel` proxies **true raws** (coal/iron/…, never in the ledger) off sector
+  output and resolves intermediates through the **graph**, never their stock size (the same
+  "ledger is gameplay-inert in healthy play" insight that de-risked #292/#294). Verified
+  empirically: stashed the change and re-ran the **8-seed × 181y headless sweep** — the
+  output (GDP/treasury/inflation/pop/sat/outcome, all 8 seeds) is **byte-for-byte
+  identical**. So the per-town stocks now *move* but observe no behaviour yet — that's slice 2.
+- **Serialization.** `cargo` rides the existing `tradeFlows` serialize; deserialize
+  backfills `cargo: f.cargo ?? 0` (pre-cargo flows start at 0), mirroring `pendingIncome`.
+- **Why ship this slice first (not the whole of PR-3).** It's the substrate the *real*
+  balance change — per-town supply solving — consumes, but it's independently coherent,
+  fully verifiable without a human, and macro-neutral, so it lands de-risked: the same
+  decompose-and-verify discipline as #292 seam → #294 storage swap.
+- **Verified.** tsc clean, vite build green; determinism harness ✅; save-size guard ✅
+  (cargo is one number per flow, flows capped to one per lane); bench-region PASS; headless
+  byte-identical to base. Tests 975 → **980** (+5: dispatch-debits-source, none-held-ships-
+  zero-but-dispatches-profit, arrival-credits-destination, severed-route-destroys-cargo,
+  pre-cargo-save-backfills-to-0; the tradeFlows round-trip now also asserts cargo).
+
+**Next (PR-3 slice 2, INTENTIONAL DIVERGENCE — the actual balance change):** consume a
+good's inputs from the *producing town's* stock and run a **local supply level per town**,
+so the imported stock now *matters* (a town builds vehicles only if components arrive). This
+is the first deliberate balance change → downturn playtest + re-baseline the headless sweep;
+watch bench-region (per-town solving is hot-path work) and the RNG order of the secondary
+disease/research draws. Then per-good local prices → the 44-good catalog.
 
 ## Recent session (2026-06-27 latest) — per-settlement-stocks STORAGE SWAP: goods stocks move per-town (PR #294)
 
@@ -210,10 +257,15 @@ of making the goods ledger economically real, sequenced: ✅ **PR-1 ledger seam 
 distributed per-town by producing sector, draws greedy in-order, solver reads the nation-wide
 *sum* → byte-identical; per-town serialize via the settlement spread + legacy-pool→capital
 migration; save-size guard re-checked, +<2 KiB) → **PR-3 goods consumed/shipped between
-towns** (INTENTIONAL DIVERGENCE — consume from the producing town, local supply level, ship
-surplus on routes) → per-good local prices (drop the wage-gap proxy) → 44-good catalog; E2
-R/C/I/O demand + land-value grid maps (trips the save-size guard by design); `drawBackdrop`
-parallax compositing.
+towns** (INTENTIONAL DIVERGENCE), itself sequenced: ✅ **slice 1 — "goods ride the rails"**
+(trade flows carry real `cargo`: debit source town on dispatch, credit destination on
+arrival, severed route strands the real units; dispatch/profit untouched → **macro-neutral**,
+headless byte-identical) → **slice 2 — per-town consume + LOCAL supply level** (the actual
+balance change: consume a good's inputs from the producing town, resolve supply per-town so
+imported stock matters; downturn playtest + re-baseline) → per-good local prices (drop the
+wage-gap proxy; the flow already carries a real good) → 44-good catalog; E2 R/C/I/O demand +
+land-value grid maps (trips the save-size guard by design); `drawBackdrop` parallax
+compositing.
 
 **Dependency rules:** the determinism harness (✅) precedes every "byteIdenticalSafe"
 claim; `bench-region` (✅) precedes large `region.ts` cost; **continue C1 leaf
