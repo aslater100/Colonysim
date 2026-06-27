@@ -83,6 +83,10 @@ export class RegionView {
    *  the per-frame highlight doesn't re-validate 16k hexes. */
   private foundingFromId: number | null = null;
   private foundingValidCells: Set<number> | null = null;
+  /** "Place building" mode (spatial-4X Phase B): the town + building def awaiting a
+   *  hex, plus the precomputed legal cells for the highlight overlay. */
+  private buildingPlacement: { townId: number; defId: string } | null = null;
+  private buildingValidCells: Set<number> | null = null;
   /** Province overlay toggle (P key or State panel button). Shows province labels + stats on map. */
   provinceViewActive = false;
   /** Currently selected province id (= settlement id), null if none. */
@@ -479,6 +483,20 @@ export class RegionView {
         return;
       }
     }
+    // Place building: in placement mode, a map click breaks ground on the chosen
+    // worked-ring hex (validated by buildCity).
+    if (this.buildingPlacement !== null) {
+      const W = this.canvas.width;
+      const H = this.canvas.height;
+      const { size, ox, oy } = hexLayoutParams(W, H, REGION_N, 60);
+      const { col, row } = screenToHex(mx, my, size, ox, oy);
+      if (col >= 0 && col < REGION_N && row >= 0 && row < REGION_N) {
+        this.region.buildCity(this.buildingPlacement.townId, this.buildingPlacement.defId, col * REGION_N + row);
+      }
+      this.cancelBuildingPlacement();
+      this.refreshPanel();
+      return;
+    }
     // Click-to-found: in placement mode, a map click sites the new town's
     // expedition at the chosen hex (validated by foundTownAt).
     if (this.foundingFromId !== null) {
@@ -687,8 +705,10 @@ export class RegionView {
     this.ensureMemFogCache(W, H);
     if (this.memFogCanvas) g.drawImage(this.memFogCanvas, 0, 0);
 
-    // Click-to-found placement highlights (only while in founding mode).
+    // Placed buildings dot the worked ring; placement highlights when arming a build.
+    this.drawPlacedBuildings(W, H);
     this.drawFoundingOverlay(W, H);
+    this.drawBuildingPlacementOverlay(W, H);
 
     // Routes along their actual corridors (M6b/6c): dotted trails, solid
     // roads, cross-tied rail; line brightness is the route's condition.
@@ -1409,6 +1429,71 @@ export class RegionView {
       fillHexPath(g, corners);
       g.strokeStyle = 'rgba(150,230,140,0.7)';
       strokeHexPath(g, corners);
+    }
+  }
+
+  /** Arm (or cancel) building-placement mode for a town + building def. Precomputes
+   *  the legal worked-ring cells so the per-frame highlight is a set lookup. */
+  private toggleBuildingPlacement(townId: number, defId: string): void {
+    if (this.buildingPlacement && this.buildingPlacement.townId === townId && this.buildingPlacement.defId === defId) {
+      this.cancelBuildingPlacement(); return;
+    }
+    this.foundingFromId = null; this.foundingValidCells = null; // mutually exclusive
+    this.buildingPlacement = { townId, defId };
+    this.buildingValidCells = new Set(this.region.buildablePlacementCells(townId));
+  }
+
+  private cancelBuildingPlacement(): void {
+    this.buildingPlacement = null;
+    this.buildingValidCells = null;
+  }
+
+  /** Per-frame highlight of legal building sites (amber, to read distinct from the
+   *  green founding highlight). */
+  private drawBuildingPlacementOverlay(W: number, H: number): void {
+    const cells = this.buildingValidCells;
+    if (!this.buildingPlacement || !cells || cells.size === 0) return;
+    const g = this.g;
+    const N = REGION_N;
+    const { size, ox, oy } = hexLayoutParams(W, H, N, 60);
+    const pulse = 0.16 + 0.12 * Math.abs(Math.sin(this.frame / 18));
+    g.lineWidth = 1.5;
+    for (const key of cells) {
+      const col = Math.floor(key / N), row = key % N;
+      const { x: cx, y: cy } = hexCenter(col, row, size, ox, oy);
+      if (cx < this.vb.l - size || cx > this.vb.r + size || cy < this.vb.t - size || cy > this.vb.b + size) continue;
+      const corners = hexCorners(cx, cy, size);
+      g.fillStyle = `rgba(228,178,90,${pulse.toFixed(3)})`;
+      fillHexPath(g, corners);
+      g.strokeStyle = 'rgba(240,200,120,0.75)';
+      strokeHexPath(g, corners);
+    }
+  }
+
+  /** Render each town's placed buildings as small shaded icons on their hexes,
+   *  tinted by the building's economic sector (spatial-4X Phase B — render-only). */
+  private drawPlacedBuildings(W: number, H: number): void {
+    const g = this.g;
+    const N = REGION_N;
+    const { size, ox, oy } = hexLayoutParams(W, H, N, 60);
+    const sectorColor: Record<string, string> = {
+      agriculture: '#8a9a4a', industry: '#9a6a3a', services: '#4a7fa4', information: '#7a5a9a', all: '#9a8a5a',
+    };
+    for (const t of this.region.settlements) {
+      if (!t.placedBuildings || t.placedBuildings.length === 0) continue;
+      for (const p of t.placedBuildings) {
+        const col = Math.floor(p.cell / N), row = p.cell % N;
+        const { x: cx, y: cy } = hexCenter(col, row, size, ox, oy);
+        if (cx < this.vb.l - size || cx > this.vb.r + size || cy < this.vb.t - size || cy > this.vb.b + size) continue;
+        const def = REGION_BUILDINGS.find((b) => b.id === p.id);
+        const base = sectorColor[def?.sector ?? 'all'] ?? '#9a8a5a';
+        const s = Math.max(6, size * 0.5);
+        // little shaded building: body + lit roof + drop shadow
+        g.fillStyle = 'rgba(0,0,0,0.25)';
+        g.beginPath(); g.ellipse(cx, cy + s * 0.5, s * 0.55, s * 0.2, 0, 0, Math.PI * 2); g.fill();
+        this.box(Math.round(cx - s / 2), Math.round(cy - s * 0.35), Math.round(s), Math.round(s * 0.8), base);
+        this.roof(Math.round(cx - s / 2 - 1), Math.round(cy - s * 0.7), Math.round(s + 2), Math.round(s * 0.4), this.shade(base, -0.28));
+      }
     }
   }
 
@@ -4170,7 +4255,9 @@ export class RegionView {
     const mil = this.panel.querySelector<HTMLButtonElement>('#militia-btn');
     if (mil) mil.onclick = () => { this.region.recruitMilitia(t.id); this.refreshPanel(); };
     for (const cb of this.panel.querySelectorAll<HTMLButtonElement>('.city-build-btn')) {
-      cb.onclick = () => { this.region.buildCity(t.id, cb.dataset.b!); this.refreshPanel(); };
+      // Spatial-4X: arm placement mode (pick a hex in the worked ring) instead of
+      // building abstractly. Re-clicking the same building cancels.
+      cb.onclick = () => { this.toggleBuildingPlacement(t.id, cb.dataset.b!); };
     }
     for (const fb of this.panel.querySelectorAll<HTMLButtonElement>('.focus-btn')) {
       fb.onclick = () => { this.region.setTownFocus(t.id, fb.dataset.f as TownFocus); this.refreshPanel(); };

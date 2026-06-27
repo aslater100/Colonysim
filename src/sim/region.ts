@@ -13,7 +13,7 @@ import { computePenalty, transitionEfficiency, ANNOUNCE_LEAD_DAYS } from './curr
 import type { CurrencyChangeCause, CurrencyAnnouncement, CurrencyTransition } from './currency';
 import { RegionMap, REGION_N, CELL_SCALE } from './worldgen';
 import type { TownSite } from './worldgen';
-import { hexNeighbors } from './hex';
+import { hexNeighbors, hexDistance } from './hex';
 import { Weather } from './weather';
 import type { Lender, Loan } from './economy';
 import { createInitialLenders } from './lenders';
@@ -93,6 +93,11 @@ export interface Settlement {
   sectors: Sectors;
   /** Phase 2: civic works raised in a managed city (building def ids). */
   buildings: string[];
+  /** Spatial-4X Phase B: where each raised building sits, as a cell index
+   *  (col*REGION_N + row). Render-only — the economy still reads `buildings`, so
+   *  this is purely additive. Stays in sync with `buildings` via completion +
+   *  migration (`ensurePlacements`). */
+  placedBuildings: PlacedBuilding[];
   /** Construction underway, if any — one project at a time per town. */
   construction: CityConstruction | null;
   /** Development focus: biases where this town's labor drifts. */
@@ -352,7 +357,18 @@ export const REGION_BUILDINGS: RegionalBuildingDef[] = regionBuildingsJson.build
 export interface CityConstruction {
   id: string;      // building def id
   doneDay: number; // absolute day it completes
+  cell?: number;   // chosen placement cell (col*REGION_N+row); auto-sited if absent
 }
+
+/** A raised building and the hex it occupies (spatial-4X Phase B). */
+export interface PlacedBuilding {
+  id: string;
+  cell: number; // col * REGION_N + row
+}
+
+/** Worked-ring radius (in hexes) a city can place buildings within. District-scale
+ *  per the spatial-4X north star — kept small so placement stays strategic. */
+export const CITY_WORK_RADIUS = 2;
 
 /** Population at which a town (beyond the capital) opens to direct management. */
 export const CITY_MANAGEMENT_POP = 100;
@@ -4477,6 +4493,7 @@ export class RegionSim {
       factionStrengths: new Map(activeFactions(START_YEAR).map(f => [f.id, 50] as [NewFactionId, number])),
       sectors: defaultSectors(),
       buildings: [],
+      placedBuildings: [],
       construction: null,
       focus: 'balanced',
       activeEvents: [],
@@ -4651,6 +4668,7 @@ export class RegionSim {
         factionStrengths: new Map(activeFactions(targetYear).map((f) => [f.id, 50] as [NewFactionId, number])),
         sectors: defaultSectors(),
         buildings: [],
+        placedBuildings: [],
         construction: null,
         focus: townFocus,
         activeEvents: [],
@@ -7239,15 +7257,86 @@ export class RegionSim {
 
   /** Break ground on a civic work. The treasury pays now; the bonus arrives
    *  when the scaffolding comes down. */
-  buildCity(townId: number, defId: string): boolean {
+  buildCity(townId: number, defId: string, cell?: number): boolean {
     const t = this.settlement(townId);
     const def = REGION_BUILDINGS_MAP.get(defId);
     if (!t || !def || !this.cityBuildCheck(t, def).ok) return false;
+    // Spatial-4X: a chosen cell must be a legal placement for this town; an
+    // unspecified cell is auto-sited at completion (AI / legacy callers).
+    if (cell !== undefined && !this.canPlaceBuildingAt(townId, cell)) return false;
     const cost = this.cityBuildCost(def);
     this.treasury -= cost;
-    t.construction = { id: def.id, doneDay: this.day + def.days };
+    t.construction = { id: def.id, doneDay: this.day + def.days, cell };
     this.addLog(`Ground is broken for the ${def.name} at ${t.name} — ` + formatCurrency(cost) + `, ${def.days} days.`, 'info');
     return true;
+  }
+
+  /** Cell index for (col,row) and back — the key used by `placedBuildings`. */
+  private cellIndex(col: number, row: number): number { return col * REGION_N + row; }
+
+  /** Is `cell` a legal building site for this town? Within `CITY_WORK_RADIUS` hexes
+   *  of the centre (but not the centre itself), on land, and not already occupied
+   *  by another of the town's buildings or its pending construction. Render/economy-
+   *  neutral — pure validation. */
+  canPlaceBuildingAt(townId: number, cell: number): boolean {
+    const t = this.settlement(townId);
+    if (!t) return false;
+    const col = Math.floor(cell / REGION_N), row = cell % REGION_N;
+    if (col < 0 || col >= REGION_N || row < 0 || row >= REGION_N) return false;
+    const c = this.map.coordToCell(t.x, t.y);
+    const d = hexDistance(c.x, c.y, col, row);
+    if (d < 1 || d > CITY_WORK_RADIUS) return false; // not the centre, within the ring
+    if (this.map.isWater(col, row)) return false;
+    if (t.placedBuildings.some((p) => p.cell === cell)) return false;
+    if (t.construction?.cell === cell) return false;
+    return true;
+  }
+
+  /** All legal placement cells in this town's worked ring (for the placement UI). */
+  buildablePlacementCells(townId: number): number[] {
+    const t = this.settlement(townId);
+    if (!t) return [];
+    const c = this.map.coordToCell(t.x, t.y);
+    const out: number[] = [];
+    for (let col = Math.max(0, c.x - CITY_WORK_RADIUS); col <= Math.min(REGION_N - 1, c.x + CITY_WORK_RADIUS); col++) {
+      for (let row = Math.max(0, c.y - CITY_WORK_RADIUS); row <= Math.min(REGION_N - 1, c.y + CITY_WORK_RADIUS); row++) {
+        const cell = this.cellIndex(col, row);
+        if (this.canPlaceBuildingAt(townId, cell)) out.push(cell);
+      }
+    }
+    return out;
+  }
+
+  /** Deterministically pick a worked-ring cell for an auto-sited building (AI /
+   *  legacy / migration). Returns the nearest free legal cell, or -1 if the ring
+   *  is full. No RNG — keeps the sim byte-deterministic. */
+  private autoPlaceCell(t: Settlement): number {
+    const cells = this.buildablePlacementCells(t.id);
+    if (cells.length === 0) return -1;
+    const c = this.map.coordToCell(t.x, t.y);
+    let best = cells[0], bestD = Infinity;
+    for (const cell of cells) {
+      const col = Math.floor(cell / REGION_N), row = cell % REGION_N;
+      const d = hexDistance(c.x, c.y, col, row) * 1000 + col * REGION_N + row; // tie-break by index
+      if (d < bestD) { bestD = d; best = cell; }
+    }
+    return best;
+  }
+
+  /** Reconcile `placedBuildings` with `buildings`: auto-site any building that has
+   *  no placement yet (old saves, AI direct grants). Deterministic; render-only. */
+  ensurePlacements(t: Settlement): void {
+    if (!t.placedBuildings) t.placedBuildings = [];
+    if (t.placedBuildings.length >= t.buildings.length) return;
+    const placedCount = new Map<string, number>();
+    for (const p of t.placedBuildings) placedCount.set(p.id, (placedCount.get(p.id) ?? 0) + 1);
+    const seen = new Map<string, number>();
+    for (const id of t.buildings) {
+      const n = (seen.get(id) ?? 0) + 1; seen.set(id, n);
+      if (n <= (placedCount.get(id) ?? 0)) continue; // already placed
+      const cell = this.autoPlaceCell(t);
+      if (cell >= 0) t.placedBuildings.push({ id, cell });
+    }
   }
 
   static readonly SCOUT_BASE_COST = 10;
@@ -7963,6 +8052,11 @@ export class RegionSim {
       if (t.construction && this.day >= t.construction.doneDay) {
         const def = REGION_BUILDINGS_MAP.get(t.construction!.id);
         t.buildings.push(t.construction.id);
+        // Record where it sits (chosen cell, or auto-sited in the worked ring).
+        const cell = t.construction.cell !== undefined && this.canPlaceBuildingAt(t.id, t.construction.cell)
+          ? t.construction.cell
+          : this.autoPlaceCell(t);
+        if (cell >= 0) t.placedBuildings.push({ id: t.construction.id, cell });
         t.construction = null;
         if (def) {
           this.addLog(`The ${def.name} opens at ${t.name}.`, 'good');
@@ -8447,6 +8541,7 @@ export class RegionSim {
           factionStrengths: new Map(activeFactions(this.year).map(f => [f.id, 50] as [NewFactionId, number])),
           sectors: defaultSectors(),
           buildings: [],
+          placedBuildings: [],
           construction: null,
           focus: 'balanced',
           activeEvents: [],
@@ -12443,6 +12538,7 @@ export class RegionSim {
       factionStrengths: new Map(Object.entries(s.factionStrengths ?? {}) as [NewFactionId, number][]),
       sectors: s.sectors ?? defaultSectors(),
       buildings: s.buildings ?? [],
+      placedBuildings: s.placedBuildings ?? [],
       construction: s.construction ?? null,
       focus: s.focus ?? 'balanced',
       activeEvents: s.activeEvents ?? [],
@@ -12457,6 +12553,9 @@ export class RegionSim {
       wasteCoverage: s.wasteCoverage ?? 0.3,
       serviceCoverage: s.serviceCoverage ?? { health: 0.3, education: 0.2, safety: 0.2 },
     }));
+    // Spatial-4X migration: site any building that has no placement yet (pre-Phase-B
+    // saves, or AI grants) into the worked ring — deterministic, render-only.
+    for (const t of r.settlements) r.ensurePlacements(t);
     r.notables = (d.notables ?? []).map((n: any) => ({
       skill: 50,
       health: 80,
@@ -13956,6 +14055,7 @@ export class RegionSim {
       factionStrengths: new Map(activeFactions(this.year).map(f => [f.id, 50] as [NewFactionId, number])),
       sectors: defaultSectors(),
       buildings: [],
+      placedBuildings: [],
       construction: null,
       focus: 'balanced' as TownFocus,
       activeEvents: [],
