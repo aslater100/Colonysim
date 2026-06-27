@@ -1,8 +1,8 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-27 · **Tests:** 964 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway. **This session: 8 PRs merged (#283–#286, #288)** — cost-push inflation; non-asset depth pass (export-drag trade leg + serialize-determinism harness & 3 bug fixes + first C1 extraction + perf-guard re-baseline); C1 services extraction + situation-aware deals; AI difficulty belligerence + intel-gated agenda; **#288 = Tier-2 climate farm drag (A) + Tier-3 goods-on-routes first slice (B), both merged.**
+**Last updated:** 2026-06-27 (late) · **Tests:** 971 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway. **Latest session: #292 merged — the per-settlement-stocks FOUNDATION** (a byte-identical *ledger seam*: every read/write of the nation-wide `intermediateGoodStocks` pool now flows through `goodStock`/`hasGoodStock`/`produceGood`/`drawGood`/`seedGoodStock`/`goodStocksSnapshot`/`restoreGoodStocks` on `RegionSim`, so the per-settlement storage swap (PR-2) becomes surgical). **Prior session: 8 PRs (#283–#286, #288)** — cost-push inflation; non-asset depth pass (export-drag trade leg + serialize-determinism harness & 3 bug fixes + first C1 extraction + perf-guard re-baseline); C1 services extraction + situation-aware deals; AI difficulty belligerence + intel-gated agenda; **#288 = Tier-2 climate farm drag (A) + Tier-3 goods-on-routes first slice (B).**
 
-> **PARALLEL TRACK — SPATIAL 4X redesign** (`docs/design/spatial-4x-redesign.md`): a second session is turning Centuria into a Civ/Age-of-Wonders spatial city game (found towns by clicking, place buildings on hexes) **while keeping the 4X clear**. **Phase A (click-to-found) MERGED #289**; **Phase B (place buildings on hexes) PR #291 open.** Next: Phase C (tile yields feed economy — intentional re-baseline), Phase D (districts/wonders). See `.handoff.md` §0. Lesson learned: AI text-to-image is the wrong tool for crisp foreground sprites — procedural rendering + the spatial layer is the win.
+> **PARALLEL TRACK — SPATIAL 4X redesign** (`docs/design/spatial-4x-redesign.md`): a second session is turning Centuria into a Civ/Age-of-Wonders spatial city game (found towns by clicking, place buildings on hexes) **while keeping the 4X clear**. **Phase A (click-to-found) MERGED #289**; **Phase B (place buildings on hexes) MERGED #291.** Next: Phase C (tile yields feed economy — intentional re-baseline), Phase D (districts/wonders). See `.handoff.md` §0. Lesson learned: AI text-to-image is the wrong tool for crisp foreground sprites — procedural rendering + the spatial layer is the win.
 
 > 🌾⚠️ **#288 — two intentional BALANCE changes (user picked A+B), UNVERIFIED-BY-HUMAN (unit + headless only):**
 > **A — agriculture climate drag:** warming past +1.5°C trims the agriculture *sector's*
@@ -13,9 +13,10 @@
 > profit (`pendingIncome`, serialized) pays out on ARRIVAL after `transitDays` of travel,
 > a severed route strands the cargo, and a long-standing inverted buy/sell direction bug
 > is fixed. Macro-neutral (arbitrage is minor; headless unchanged). **Follow-on:** per-good
-> prices (still a wage-gap proxy) and per-settlement goods stocks (the big rock — currently
-> `intermediateGoodStocks` is one nation-wide pool, so goods can't truly move *between*
-> settlements yet).
+> prices (still a wage-gap proxy) and per-settlement goods stocks — the big rock. **#292
+> laid its foundation:** `intermediateGoodStocks` is still one nation-wide pool, but it's
+> now behind a ledger seam (`goodStock`/`produceGood`/`drawGood`/…), so PR-2 can repoint the
+> backing store to `Settlement.goodStocks` without touching production/consumption logic.
 
 > 🟢 **PR #284 (open, this session) — non-asset depth pass, 4 commits:**
 > 1. **D1-econ trade leg** — a supply shock now chokes *exports*
@@ -62,6 +63,40 @@
 > (parallax backdrops + era UI skins) and `B2-audio` (music stems + ambience + voice)
 > are the bold roadmap items and remain **un-started in earnest** — they need an env
 > with network egress + image/audio tooling to actually generate.
+
+## Recent session (2026-06-27 late) — per-settlement-stocks FOUNDATION: the goods-stock ledger seam (PR #292)
+
+User asked "what's next (per-settlement-stocks foundation)?" The blocker for goods moving
+*between* towns is that `intermediateGoodStocks` is a single nation-wide pool. Rather than
+swap the backing store in one large risky change, this session shipped the **seam** so the
+later swap is surgical, not a scatter-edit.
+
+- **The mechanic.** Every read/write of the ledger now flows through accessors on
+  `RegionSim`: `goodStock(id)` (0-default read), `hasGoodStock(id)` ("is this good
+  tracked?"), `produceGood(id,qty)` (deposit), `drawGood(id,qty)` (consume, floors at 0,
+  **no-op for an untracked raw** — that's how raws stay proxied by `sectorRawLevel`),
+  `seedGoodStock(id)` (seed-to-0, **never overwrites**), and `goodStocksSnapshot()` /
+  `restoreGoodStocks(d)` (the serialize/deserialize legs). Five touch points routed: the
+  `tickIntermediateGoods` production loop, `rawSupplyLevel`, serialize, deserialize.
+- **Byte-identical, verified 3 ways.** The accessors wrap the same single record, so
+  behaviour AND the save format are unchanged: the full-`serialize()` determinism harness
+  passes, the save-size guard passes, and a direct same-seed `serialize()` snapshot is
+  **hash-for-hash identical to base `main`** across 3 seeds × 5 era checkpoints (1950–2070)
+  with the ledger populated (15–16 goods).
+- **Tests.** +7 unit tests pin the accessor contract, incl. the two subtle invariants the
+  PR-2 swap must preserve (`drawGood` no-ops on an untracked raw; `seedGoodStock` never
+  overwrites). 964 → **971** (incl. #291), tsc clean, vite build green, headless 8-seed ×
+  181y all finite.
+- **Gotcha.** `stockOf` was already the per-town food/wood trade-market reader — the
+  intermediate-goods ledger read is **`goodStock(id)`**.
+
+**Next (PR-2):** per-settlement storage — add `Settlement.goodStocks`, attribute production
+per-town (distribute the same totals by sector output), have the supply solver read the
+nation-wide *sum* so it stays aggregate-equivalent / byte-identical, serialize per-town +
+backfill legacy saves into the capital, and re-check the save-size guard (44 goods × N towns
+is exactly what it watches — sparse-serialize non-zero entries). Only after that does
+spatial behaviour intentionally diverge (consume-where-produced → ship surplus on routes →
+local prices → 44-good catalog).
 
 ## Recent session (2026-06-27 pm) — non-asset depth pass (PR #284): trade leg + the two guards + first extraction
 
@@ -126,10 +161,13 @@ live-stats skyline + Century Graph (new serialized field); **consolidate the two
 writers** (do after more of C1 lands so `region.ts` is calmer).
 
 **Tier-3 (large rewrites, last):** spatial military Front (full resolution rewrite,
-new RNG order — needs the Front stub first); physical-goods-on-routes → per-good
-prices → 44-good catalog (sequence in that order; the heart of making
-`intermediateGoodStocks` economically real); E2 R/C/I/O demand + land-value grid
-maps (trips the save-size guard by design); `drawBackdrop` parallax compositing.
+new RNG order — needs the Front stub first); **per-settlement goods stocks** — the heart
+of making `intermediateGoodStocks` economically real, sequenced: ✅ **PR-1 ledger seam
+(#292)** → **PR-2 per-settlement storage** (`Settlement.goodStocks`, production attributed
+per-town, solver reads the nation-wide *sum* → still byte-identical; per-town serialize +
+old-save backfill; **re-check save-size guard**) → goods consumed/shipped between towns →
+per-good local prices (drop the wage-gap proxy) → 44-good catalog; E2 R/C/I/O demand +
+land-value grid maps (trips the save-size guard by design); `drawBackdrop` parallax compositing.
 
 **Dependency rules:** the determinism harness (✅) precedes every "byteIdenticalSafe"
 claim; `bench-region` (✅) precedes large `region.ts` cost; **continue C1 leaf
