@@ -4980,25 +4980,84 @@ export class RegionSim {
       .concat(this.expeditions.map((e) => this.map.coordToCell(e.targetX, e.targetY)));
     const site = this.map.bestSiteNear(fromCell.x, fromCell.y, claimed);
     if (!site) return false;
+    return this.launchExpeditionTo(from, site, pop, food, wood);
+  }
+
+  /** Launch an expedition toward an explicit, already-chosen site (the
+   *  click-to-found path) — identical bookkeeping to the auto-sited variant, so
+   *  both share the same RNG-consuming name draw and expedition record. */
+  private launchExpeditionTo(from: Settlement, site: TownSite, pop: number, food: number, wood: number): boolean {
+    const fromCell = this.map.coordToCell(from.x, from.y);
     const target = this.map.cellToCoord(site.cellX, site.cellY);
     const travel = this.map.travelDays(fromCell.x, fromCell.y, site.cellX, site.cellY);
     const name = this.townNamePool.length > 0
       ? this.townNamePool.splice(this.rng.int(this.townNamePool.length), 1)[0]
       : `New Town ${this.settlements.length + 1}`;
     this.expeditions.push({
-      fromId: from.id,
-      x: from.x,
-      y: from.y,
-      targetX: target.rx,
-      targetY: target.ry,
-      pop,
-      food,
-      wood,
-      departDay: this.day,
-      arrivesDay: this.day + travel,
-      name,
-      site,
+      fromId: from.id, x: from.x, y: from.y,
+      targetX: target.rx, targetY: target.ry,
+      pop, food, wood,
+      departDay: this.day, arrivesDay: this.day + travel,
+      name, site,
     });
+    return true;
+  }
+
+  /** Whether the player may found a new town AT a chosen map location
+   *  (click-to-found). Same resource/treasury/cap gates as `canFoundTown`, but it
+   *  validates the *chosen* site: settleable land, ≥ `MIN_SETTLEMENT_SPACING` from
+   *  any town or pending expedition, and within an expedition's reach of the
+   *  source town. */
+  canFoundAt(fromId: number, rx: number, ry: number): { ok: boolean; reason: string } {
+    const t = this.settlement(fromId);
+    if (!t) return { ok: false, reason: 'no settlement' };
+    if (this.settlements.length + this.expeditions.length >= MAX_SETTLEMENTS) {
+      return { ok: false, reason: 'region fully settled' };
+    }
+    const m = this.expansionCostMult();
+    const needPop = Math.round(24 * m), needFood = Math.round(80 * m), needWood = Math.round(80 * m);
+    const foundCost = this.foundingCost();
+    if (this.treasury < foundCost) return { ok: false, reason: `founding costs ${formatCurrency(foundCost)}` };
+    if (this.popOf(t) < needPop) return { ok: false, reason: `needs ${needPop} pop` };
+    if (t.food < needFood) return { ok: false, reason: `needs ${needFood} food` };
+    if (t.wood < needWood) return { ok: false, reason: `needs ${needWood} wood` };
+    if (rx < 0 || rx > 100 || ry < 0 || ry > 100) return { ok: false, reason: 'off the map' };
+    const cell = this.map.coordToCell(rx, ry);
+    if (this.map.siteScore(cell.x, cell.y) < 0) return { ok: false, reason: 'cannot settle water or mountains' };
+    const tooClose = this.settlements.some((s) => Math.hypot(s.x - rx, s.y - ry) < MIN_SETTLEMENT_SPACING)
+      || this.expeditions.some((e) => Math.hypot(e.targetX - rx, e.targetY - ry) < MIN_SETTLEMENT_SPACING);
+    if (tooClose) return { ok: false, reason: 'too close to an existing town' };
+    const fromCell = this.map.coordToCell(t.x, t.y);
+    const range = Math.round(REGION_N * 0.28);
+    if (Math.hypot(cell.x - fromCell.x, cell.y - fromCell.y) > range) {
+      return { ok: false, reason: 'too far from your towns to reach' };
+    }
+    return { ok: true, reason: '' };
+  }
+
+  /** Found a new town at a player-chosen location: launches an expedition toward
+   *  the chosen site and pays the founding cost (pop/food/wood/treasury). */
+  foundTownAt(fromId: number, rx: number, ry: number): boolean {
+    const check = this.canFoundAt(fromId, rx, ry);
+    const t = this.settlement(fromId);
+    if (!check.ok || !t) return false;
+    const m = this.expansionCostMult();
+    const food = Math.round(80 * m), wood = Math.round(80 * m);
+    const cell = this.map.coordToCell(rx, ry);
+    if (!this.launchExpeditionTo(t, this.map.siteAt(cell.x, cell.y), 8, food, wood)) return false;
+    this.removePop(t, 8);
+    t.food -= food;
+    t.wood -= wood;
+    const foundCost = this.foundingCost();
+    this.treasury -= foundCost;
+    const e = this.expeditions[this.expeditions.length - 1];
+    const days = e.arrivesDay - this.day;
+    this.addLog(
+      `An expedition of 8 sets out from ${t.name} for ${e.name} — ${days} days, bound for the ` +
+      `site you chose${e.site.river ? ' by the river' : ''}${e.site.coastal ? ' on the coast' : ''} ` +
+      `(charter fee: ${formatCurrency(foundCost)}).`,
+      'info',
+    );
     return true;
   }
 
