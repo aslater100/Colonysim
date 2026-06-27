@@ -18,6 +18,7 @@ import { Weather } from './weather';
 import type { Lender, Loan } from './economy';
 import { createInitialLenders } from './lenders';
 import { resolveSupplyChainGraded, SUPPLY_FULL_EPS } from './supply';
+import { tickPollution } from './systems/pollution';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -5233,7 +5234,7 @@ export class RegionSim {
     for (const t of this.settlements) this.updateSectors(t); // Phase 1: labor follows the technology
     this.wageCache = new Map(this.settlements.map((t) => [t.id, this.avgWageOf(t)]));
     this.tickRegionalEvents(); // Phase 4: disasters and windfalls
-    this.tickPollution();      // Phase 14: pollution diffusion
+    tickPollution(this);       // Phase 14: pollution diffusion (systems/pollution.ts)
     this.tickUtilities();      // Phase 14: power/water/waste utilities
     this.tickServiceCoverage(); // Phase 14: service coverage effects
     // Phase 14: update land value for each player settlement
@@ -7538,30 +7539,6 @@ export class RegionSim {
   }
 
   /** Update pollution levels monthly for all player settlements. */
-  private tickPollution(): void {
-    for (const t of this.settlements) {
-      if (t.factionId !== this.playerFactionId) continue;
-      let base = 0;
-      // +30 if has iron_works (ironworks) or factory building
-      if (t.buildings.includes('ironworks') || t.buildings.includes('factory')) base += 30;
-      // +20 if has coal_plant (power_station) building
-      if (t.buildings.includes('power_station')) base += 20;
-      // -10 if has park (market_hall used as proxy; GDD says 'park' but we use closest match)
-      // Using 'grain_exchange' as park proxy since no 'park' building exists in data
-      // -10 if has clean_industry_act researched (activePolicies)
-      if (this.policyActive('clean_industry_act')) base -= 10;
-      // Decay 5% per month (natural)
-      const current = t.pollutionLevel ?? 0;
-      const decayed = current * 0.95;
-      // Blend: move toward base level
-      t.pollutionLevel = Math.max(0, Math.min(100, decayed + base * 0.1));
-      // Side effects: health -0.1 per pollution point / 10 per month on satisfaction
-      if (t.pollutionLevel > 0) {
-        t.satisfaction = Math.max(0, t.satisfaction - (t.pollutionLevel / 10) * 0.1);
-      }
-    }
-  }
-
   /** Update utilities (power, water, waste) monthly for all player settlements. */
   private tickUtilities(): void {
     for (const t of this.settlements) {

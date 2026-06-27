@@ -4,6 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { RegionSim } from '../src/sim/region';
+import { tickPollution } from '../src/sim/systems/pollution';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
 import { REGION_MINUTES_PER_TICK } from '../src/sim/region';
 
@@ -161,8 +162,7 @@ describe('Phase 14: Pollution', () => {
     const t = playerTown(r);
     t.pollutionLevel = 0;
     t.buildings = ['ironworks'];
-    const priv = r as unknown as { tickPollution(): void };
-    priv.tickPollution();
+    tickPollution(r);
     expect(t.pollutionLevel).toBeGreaterThan(0);
   });
 
@@ -171,8 +171,7 @@ describe('Phase 14: Pollution', () => {
     const t = playerTown(r);
     t.pollutionLevel = 0;
     t.buildings = ['factory'];
-    const priv = r as unknown as { tickPollution(): void };
-    priv.tickPollution();
+    tickPollution(r);
     expect(t.pollutionLevel).toBeGreaterThan(0);
   });
 
@@ -181,8 +180,7 @@ describe('Phase 14: Pollution', () => {
     const t = playerTown(r);
     t.pollutionLevel = 0;
     t.buildings = ['power_station'];
-    const priv = r as unknown as { tickPollution(): void };
-    priv.tickPollution();
+    tickPollution(r);
     expect(t.pollutionLevel).toBeGreaterThan(0);
   });
 
@@ -191,8 +189,7 @@ describe('Phase 14: Pollution', () => {
     const t = playerTown(r);
     t.pollutionLevel = 50;
     t.buildings = [];
-    const priv = r as unknown as { tickPollution(): void };
-    priv.tickPollution();
+    tickPollution(r);
     // Should have decayed (5% decay means < 50)
     expect(t.pollutionLevel).toBeLessThan(50);
   });
@@ -202,8 +199,7 @@ describe('Phase 14: Pollution', () => {
     const t = playerTown(r);
     t.pollutionLevel = 99;
     t.buildings = ['ironworks', 'factory', 'power_station'];
-    const priv = r as unknown as { tickPollution(): void };
-    for (let i = 0; i < 50; i++) priv.tickPollution();
+    for (let i = 0; i < 50; i++) tickPollution(r);
     expect(t.pollutionLevel).toBeLessThanOrEqual(100);
     expect(t.pollutionLevel).toBeGreaterThanOrEqual(0);
   });
@@ -214,8 +210,7 @@ describe('Phase 14: Pollution', () => {
     t.pollutionLevel = 100;
     t.buildings = ['ironworks'];
     t.satisfaction = 70;
-    const priv = r as unknown as { tickPollution(): void };
-    priv.tickPollution();
+    tickPollution(r);
     expect(t.satisfaction).toBeLessThan(70);
   });
 });
