@@ -521,7 +521,7 @@ body {
   min-width: 48px;
   padding: 3px 6px !important;
   background: #1e1c18 !important;
-  color: #998c6e !important;
+  color: #7a6b56 !important;
   border: 1px solid #4d3320 !important;
   font-size: 10px !important;
   cursor: pointer;
@@ -557,9 +557,9 @@ body {
   outline: none;
 }
 
-.insp-state  { color: #9ab0c4; }
-.insp-skills { color: #998c6e; font-size: 11px; }
-.insp-cond   { color: #e07a5a; font-weight: bold; }
+.insp-state  { color: #4a6a8a; line-height: 1.4; }
+.insp-skills { color: #7a6b56; font-size: 11px; line-height: 1.4; }
+.insp-cond   { color: #d65a38; font-weight: bold; }
 
 .inspector button {
   margin: 3px 3px 3px 0;
@@ -614,7 +614,7 @@ body {
 }
 
 .insp-workers {
-  color: #9ab0c4;
+  color: #4a6a8a;
   font-size: 11px;
   margin: 3px 0;
 }
@@ -629,7 +629,7 @@ body {
 
 .bar-row span:first-child {
   width: 50px;
-  color: #998c6e;
+  color: #7a6b56;
 }
 
 .bar-row span:last-child {
@@ -642,7 +642,7 @@ body {
   width: 58px;
   min-width: 58px;
   flex-shrink: 0;
-  color: #998c6e;
+  color: #7a6b56;
 }
 
 .sp-val {
@@ -668,7 +668,7 @@ body {
 .thoughts {
   list-style: none;
   margin-top: 4px;
-  color: #9ab0c4;
+  color: #4a6a8a;
   font-size: 11px;
 }
 
@@ -695,10 +695,10 @@ body {
 
 .prio { cursor: pointer; text-align: center; border: 1px solid #2a2620; }
 .prio-0 { color: #555; }
-.prio-1 { color: #998c6e; }
+.prio-1 { color: #7a6b56; }
 .prio-2 { color: #c2a14d; }
 .prio-3 { color: #8fc26a; font-weight: bold; }
-.prio-name { color: #9ab0c4; }
+.prio-name { color: #4a6a8a; }
 
 /* ---- Minimap ---- */
 #minimap {

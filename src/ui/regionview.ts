@@ -15,6 +15,7 @@ import { DesignScreen } from './designscreen';
 import { Minimap } from './minimap';
 import { sparklineGrid } from './sparklines';
 import { AssetRegistry, townSpriteTier, TOWN_TIER_PX } from './assets/registry';
+import { buildPawnSprites } from './sprites';
 import { Backdrop, buildBackdropPalette, type Sky, type Branch } from './backdrop';
 
 /** Fill a hex polygon from precomputed corners (no stroke). */
@@ -142,6 +143,9 @@ export class RegionView {
   /** Unit recruitment modal (GDD §7.1: military depth). */
   private recruitmentModal: HTMLElement;
   private frame = 0;
+  /** Pawn sprites (settler/armed/raider) for rendering armies on the map; built
+   *  lazily on first army draw so a session with no armies pays nothing. */
+  private pawns?: ReturnType<typeof buildPawnSprites>;
   private techLayoutCache = new Map<string, { pos: Map<string, { x: number; y: number }>; width: number; height: number }>();
   // ---- Static-map cache. Terrain + territory fills are O(N²) and barely change,
   //      so render them once into an offscreen canvas (base coords) and blit it
@@ -1275,30 +1279,54 @@ export class RegionView {
       else slot.rival += count;
       armyGroups.set(key, slot);
     }
+    const pawns = (this.pawns ??= buildPawnSprites());
     for (const [provId, counts] of armyGroups) {
       const s = region.settlement(provId);
       if (!s) continue;
       const { px, py } = this.toPx(s.x, s.y);
-      if (!this.inView(px, py, 40)) continue;
-      // Player armies: blue shield to the left
+      if (!this.inView(px, py, 48)) continue;
+      // Player armies: a squad of soldiers to the left; rival raiders to the right.
       if (counts.player > 0) {
-        g.font = 'bold 11px monospace';
-        g.textAlign = 'center';
-        g.fillStyle = 'rgba(0,0,0,0.7)';
-        g.fillText(`⚔${counts.player}`, px - 22 + 1, py - 24 + 1);
-        g.fillStyle = '#5599ff';
-        g.fillText(`⚔${counts.player}`, px - 22, py - 24);
+        const frames = pawns.settlerArmed[provId % pawns.settlerArmed.length];
+        this.drawSquad(px - 24, py - 12, counts.player, frames, '#7fb2ff');
       }
-      // Rival armies: red sword to the right
       if (counts.rival > 0) {
-        g.font = 'bold 11px monospace';
-        g.textAlign = 'center';
-        g.fillStyle = 'rgba(0,0,0,0.7)';
-        g.fillText(`⚔${counts.rival}`, px + 22 + 1, py - 24 + 1);
-        g.fillStyle = '#e05050';
-        g.fillText(`⚔${counts.rival}`, px + 22, py - 24);
+        this.drawSquad(px + 24, py - 12, counts.rival, pawns.raider, '#ff8a7a');
       }
     }
+    g.textAlign = 'left';
+  }
+
+  /** Draw an army as a little animated formation of pawn sprites plus a strength
+   *  chip, instead of a bare `⚔N` glyph. 1–3 figures scale with the count; the
+   *  2-frame walk cycle ties to the global frame counter (so they shuffle in
+   *  place). `frames` is a unit's [stand, step] sprite pair. */
+  private drawSquad(cx: number, cy: number, count: number, frames: HTMLCanvasElement[], color: string): void {
+    if (frames.length === 0) return;
+    const g = this.g;
+    const n = count >= 6 ? 3 : count >= 3 ? 2 : 1;
+    const fi = Math.floor(this.frame / 12) % frames.length;
+    const sprite = frames[fi];
+    const SP = 24; // on-map size of each 32×32 figure
+    const prevSmoothing = g.imageSmoothingEnabled;
+    g.imageSmoothingEnabled = false;
+    // Back-to-front so nearer figures overlap the farther ones.
+    for (let i = n - 1; i >= 0; i--) {
+      const dx = (i - (n - 1) / 2) * 8;
+      const dy = -(i % 2) * 3; // alternate depth row
+      g.drawImage(sprite, Math.round(cx + dx - SP / 2), Math.round(cy + dy - SP), SP, SP);
+    }
+    g.imageSmoothingEnabled = prevSmoothing;
+    // Strength chip below the squad.
+    const label = String(count);
+    g.font = 'bold 10px ui-monospace, monospace';
+    g.textAlign = 'center';
+    const w = Math.ceil(g.measureText(label).width) + 8;
+    g.fillStyle = 'rgba(18,16,14,0.82)';
+    g.fillRect(cx - w / 2, cy + 1, w, 12);
+    g.fillStyle = color;
+    g.fillRect(cx - w / 2, cy + 1, w, 1); // top accent line
+    g.fillText(label, cx, cy + 10);
     g.textAlign = 'left';
   }
 
@@ -1784,123 +1812,138 @@ export class RegionView {
 
   /** Pixel-art town sprite scaled by population tier:
    *  <30 shack, 30-80 cottage, 80-200 house, 200-500 town, 500-1k manor, 1k+ castle */
+  /** Lighten (f>0) / darken (f<0) a #rrggbb colour for cheap edge-lighting. */
+  private shade(hex: string, f: number): string {
+    const n = parseInt(hex.slice(1), 16);
+    const a = (c: number) => Math.max(0, Math.min(255, Math.round(c + 255 * f)));
+    return `rgb(${a((n >> 16) & 255)},${a((n >> 8) & 255)},${a(n & 255)})`;
+  }
+
+  /** A wall/mass block with top-left highlight + bottom-right shadow — gives the
+   *  flat tiers a sense of light and depth without per-pixel art. */
+  private box(x: number, y: number, w: number, h: number, base: string): void {
+    const g = this.g;
+    g.fillStyle = base; g.fillRect(x, y, w, h);
+    g.fillStyle = this.shade(base, 0.10); g.fillRect(x, y, w, 1); g.fillRect(x, y, 1, h);
+    g.fillStyle = this.shade(base, -0.16); g.fillRect(x, y + h - 1, w, 1); g.fillRect(x + w - 1, y, 1, h);
+  }
+
+  /** A roof block — brighter ridge along the top, darker eave at the bottom. */
+  private roof(x: number, y: number, w: number, h: number, base: string): void {
+    const g = this.g;
+    g.fillStyle = base; g.fillRect(x, y, w, h);
+    g.fillStyle = this.shade(base, 0.16); g.fillRect(x, y, w, 1);
+    g.fillStyle = this.shade(base, -0.22); g.fillRect(x, y + h - 1, w, 1);
+  }
+
+  /** A warm lit window: soft amber glow, bright pane, top glint. */
+  private litWindow(x: number, y: number, w: number, h: number): void {
+    const g = this.g;
+    g.fillStyle = 'rgba(240,214,120,0.22)'; g.fillRect(x - 1, y - 1, w + 2, h + 2);
+    g.fillStyle = '#e8d27a'; g.fillRect(x, y, w, h);
+    g.fillStyle = '#fff3c4'; g.fillRect(x, y, Math.max(1, w - 1), 1);
+  }
+
+  private door(x: number, y: number, w: number, h: number, color = '#8a6a3a'): void {
+    const g = this.g;
+    g.fillStyle = color; g.fillRect(x, y, w, h);
+    g.fillStyle = this.shade(color, -0.22); g.fillRect(x, y, w, 1);
+  }
+
+  /** Animated chimney smoke — a couple of puffs rising and fading. */
+  private smoke(cx: number, top: number): void {
+    const g = this.g;
+    for (let k = 0; k < 3; k++) {
+      const rise = ((this.frame >> 2) + k * 4) % 12; // 0..11
+      const a = 0.4 * (1 - rise / 12);
+      if (a <= 0.03) continue;
+      const sz = 1 + (rise > 6 ? 1 : 0);
+      g.fillStyle = `rgba(208,210,214,${a.toFixed(3)})`;
+      g.fillRect(Math.round(cx) - sz, top - rise, sz + 1, sz + 1);
+    }
+  }
+
   private drawTownTier(px: number, py: number, pop: number, selected: boolean): void {
     const g = this.g;
-    // shadow / ground plate
-    g.fillStyle = 'rgba(0,0,0,0.35)';
-    g.fillRect(px - 16, py + 8, 32, 4);
-
     const tier = townSpriteTier(pop);
     const sprite = this.assets.get(`town-${tier}`);
+
+    // Soft elliptical ground shadow (replaces the flat plate).
+    const sw = tier === 'castle' ? 19 : tier === 'manor' ? 17 : tier === 'town' ? 16 : 14;
+    g.fillStyle = 'rgba(0,0,0,0.26)';
+    g.beginPath();
+    g.ellipse(px, py + 9, sw, 4.5, 0, 0, Math.PI * 2);
+    g.fill();
+
     if (sprite) {
-      // Real art override (AI-generated or hand-made), centred on the ground line.
+      // Real art override (curated PNG), centred on the ground line.
       const s = TOWN_TIER_PX[tier];
       g.imageSmoothingEnabled = false;
       g.drawImage(sprite, Math.round(px - s / 2), Math.round(py + 8 - s), s, s);
     } else if (pop < 30) {
-      // Shack: one tiny building, rough timber
-      g.fillStyle = '#4a3822';
-      g.fillRect(px - 6, py - 4, 12, 12);
-      g.fillStyle = '#2e2018';
-      g.fillRect(px - 7, py - 8, 14, 5); // lean-to roof
-      g.fillStyle = '#c2a14d';
-      g.fillRect(px - 1, py - 2, 2, 4); // door
+      // Shack: one tiny rough-timber building
+      this.box(px - 6, py - 4, 12, 12, '#5a4329');
+      this.roof(px - 7, py - 8, 14, 5, '#33261a');
+      this.door(px - 1, py - 2, 2, 4);
     } else if (pop < 80) {
-      // Cottage: tidy house with chimney
-      g.fillStyle = '#6e4a2f';
-      g.fillRect(px - 8, py - 4, 16, 12);
-      g.fillStyle = '#3a2e26';
-      g.fillRect(px - 9, py - 10, 18, 7); // gable roof
-      g.fillStyle = '#554030';
-      g.fillRect(px + 3, py - 15, 4, 6); // chimney
-      g.fillStyle = '#e8d27a';
-      g.fillRect(px - 4, py - 1, 3, 3); // window
-      g.fillRect(px + 2, py - 1, 3, 3);
+      // Cottage: tidy house with a smoking chimney
+      this.box(px - 8, py - 4, 16, 12, '#7a5436');
+      this.roof(px - 9, py - 10, 18, 7, '#43342a');
+      this.box(px + 3, py - 15, 4, 6, '#5a4030'); // chimney
+      this.smoke(px + 5, py - 16);
+      this.litWindow(px - 4, py - 1, 3, 3);
+      this.litWindow(px + 2, py - 1, 3, 3);
     } else if (pop < 200) {
       // House: proper two-story with detail
-      g.fillStyle = '#7a5840';
-      g.fillRect(px - 10, py - 8, 20, 16);
-      g.fillStyle = '#3a2e26';
-      g.fillRect(px - 11, py - 14, 22, 7);
-      g.fillStyle = '#554030';
-      g.fillRect(px + 5, py - 19, 4, 6);
-      g.fillStyle = '#1a1410';
-      g.fillRect(px - 3, py - 3, 6, 8); // door arch
-      g.fillStyle = '#e8d27a';
-      g.fillRect(px - 8, py - 5, 3, 3);
-      g.fillRect(px + 5, py - 5, 3, 3);
-      g.fillRect(px - 8, py + 2, 3, 3);
-      g.fillRect(px + 5, py + 2, 3, 3);
+      this.box(px - 10, py - 8, 20, 16, '#86603f');
+      this.roof(px - 11, py - 14, 22, 7, '#43342a');
+      this.box(px + 5, py - 19, 4, 6, '#5a4030'); // chimney
+      this.smoke(px + 7, py - 20);
+      this.door(px - 3, py - 3, 6, 8, '#241a12'); // arch
+      this.litWindow(px - 8, py - 5, 3, 3);
+      this.litWindow(px + 5, py - 5, 3, 3);
+      this.litWindow(px - 8, py + 2, 3, 3);
+      this.litWindow(px + 5, py + 2, 3, 3);
     } else if (pop < 500) {
-      // Town: cluster of buildings with a central hall
-      g.fillStyle = '#8c6848';
-      g.fillRect(px - 14, py - 6, 28, 14); // base block
-      g.fillStyle = '#6e4a2f';
-      g.fillRect(px - 7, py - 12, 14, 18); // central hall taller
-      g.fillStyle = '#2e2018';
-      g.fillRect(px - 15, py - 10, 30, 5); // wide roof
-      g.fillStyle = '#3a2e26';
-      g.fillRect(px - 8, py - 16, 16, 5); // peaked center
-      g.fillStyle = '#e8d27a';
-      g.fillRect(px - 5, py - 9, 3, 4);
-      g.fillRect(px + 2, py - 9, 3, 4);
-      g.fillStyle = '#c2a14d';
-      g.fillRect(px - 1, py - 1, 2, 6); // central door
-      // flanking cottages
-      g.fillStyle = '#6e4a2f';
-      g.fillRect(px - 14, py - 4, 6, 10);
-      g.fillRect(px + 8, py - 4, 6, 10);
-      g.fillStyle = '#3a2e26';
-      g.fillRect(px - 15, py - 8, 8, 5);
-      g.fillRect(px + 7, py - 8, 8, 5);
+      // Town: cluster of buildings around a central hall
+      this.box(px - 14, py - 6, 28, 14, '#9a7450'); // base block
+      this.box(px - 14, py - 4, 6, 10, '#7a5436'); // flanking cottages
+      this.box(px + 8, py - 4, 6, 10, '#7a5436');
+      this.roof(px - 15, py - 8, 8, 5, '#43342a');
+      this.roof(px + 7, py - 8, 8, 5, '#43342a');
+      this.box(px - 7, py - 12, 14, 18, '#86603f'); // central hall
+      this.roof(px - 15, py - 10, 30, 5, '#33261a'); // wide roof
+      this.roof(px - 8, py - 16, 16, 5, '#43342a'); // peak
+      this.litWindow(px - 5, py - 9, 3, 4);
+      this.litWindow(px + 2, py - 9, 3, 4);
+      this.door(px - 1, py - 1, 2, 6, '#c2a14d');
     } else if (pop < 1000) {
-      // Manor: grand estate with towers
-      g.fillStyle = '#9a7858';
-      g.fillRect(px - 16, py - 8, 32, 16);
-      g.fillStyle = '#7a5840';
-      g.fillRect(px - 10, py - 14, 20, 22);
-      g.fillStyle = '#2e2018';
-      g.fillRect(px - 17, py - 12, 34, 5);
-      g.fillStyle = '#3a2e26';
-      g.fillRect(px - 11, py - 18, 22, 5);
-      // corner towers
-      g.fillStyle = '#5a4030';
-      g.fillRect(px - 18, py - 14, 6, 18);
-      g.fillRect(px + 12, py - 14, 6, 18);
-      g.fillStyle = '#2e2018';
-      g.fillRect(px - 19, py - 18, 8, 5);
-      g.fillRect(px + 11, py - 18, 8, 5);
-      g.fillStyle = '#e8d27a';
-      g.fillRect(px - 7, py - 10, 3, 4);
-      g.fillRect(px + 4, py - 10, 3, 4);
-      g.fillRect(px - 7, py - 2, 3, 4);
-      g.fillRect(px + 4, py - 2, 3, 4);
-      g.fillStyle = '#c2a14d';
-      g.fillRect(px - 2, py - 4, 4, 8);
+      // Manor: grand estate with corner towers
+      this.box(px - 16, py - 8, 32, 16, '#a9855f');
+      this.box(px - 18, py - 14, 6, 18, '#6a4c38'); // towers
+      this.box(px + 12, py - 14, 6, 18, '#6a4c38');
+      this.roof(px - 19, py - 18, 8, 5, '#33261a');
+      this.roof(px + 11, py - 18, 8, 5, '#33261a');
+      this.box(px - 10, py - 14, 20, 22, '#86603f'); // central block
+      this.roof(px - 17, py - 12, 34, 5, '#33261a');
+      this.roof(px - 11, py - 18, 22, 5, '#43342a');
+      this.litWindow(px - 7, py - 10, 3, 4);
+      this.litWindow(px + 4, py - 10, 3, 4);
+      this.litWindow(px - 7, py - 2, 3, 4);
+      this.litWindow(px + 4, py - 2, 3, 4);
+      this.door(px - 2, py - 4, 4, 8, '#c2a14d');
     } else {
       // Castle: fortified keep with battlements
-      g.fillStyle = '#6a6358';
-      g.fillRect(px - 18, py - 10, 36, 18); // curtain wall
-      g.fillStyle = '#7a7060';
-      g.fillRect(px - 12, py - 18, 24, 26); // keep
-      // battlements
-      g.fillStyle = '#5a5448';
-      for (let bx = -16; bx <= 12; bx += 4) {
-        g.fillRect(px + bx, py - 13, 3, 4);
-      }
-      for (let bx = -10; bx <= 8; bx += 4) {
-        g.fillRect(px + bx, py - 21, 3, 4);
-      }
-      // windows
-      g.fillStyle = '#e8d27a';
-      g.fillRect(px - 8, py - 14, 3, 4);
-      g.fillRect(px + 5, py - 14, 3, 4);
-      g.fillRect(px - 8, py - 5, 3, 4);
-      g.fillRect(px + 5, py - 5, 3, 4);
-      g.fillStyle = '#c2a14d';
-      g.fillRect(px - 2, py - 4, 4, 12); // gate
-      g.fillStyle = '#3a2e26';
-      g.fillRect(px - 1, py - 6, 2, 3); // portcullis
+      this.box(px - 18, py - 10, 36, 18, '#787064'); // curtain wall
+      this.box(px - 12, py - 18, 24, 26, '#88806f'); // keep
+      for (let bx = -16; bx <= 12; bx += 4) this.box(px + bx, py - 13, 3, 4, '#5f594c');
+      for (let bx = -10; bx <= 8; bx += 4) this.box(px + bx, py - 21, 3, 4, '#5f594c');
+      this.litWindow(px - 8, py - 14, 3, 4);
+      this.litWindow(px + 5, py - 14, 3, 4);
+      this.litWindow(px - 8, py - 5, 3, 4);
+      this.litWindow(px + 5, py - 5, 3, 4);
+      this.door(px - 2, py - 4, 4, 12, '#c2a14d'); // gate
+      g.fillStyle = '#241a12'; g.fillRect(px - 1, py - 6, 2, 3); // portcullis
     }
     // selection glow
     if (selected) {

@@ -3149,6 +3149,52 @@ function stationSprite(id: string, w: number, h: number): HTMLCanvasElement {
   return c;
 }
 
+// Six distinct settler looks for population variety, plus the raider look. Lifted
+// to module scope so the live map renderer can build just the pawns (via
+// `buildPawnSprites`) without paying for the whole terrain/building set.
+const PAWN_LOOKS: PawnLook[] = [
+  { cloth: P.cloth1, clothDk: P.clothDark1, clothLt: P.clothLight1,
+    skin: P.skin,  skinShad: P.skinShad,  skinLight: P.skinLight,
+    hair: P.hairB, hairDk: P.hairA },
+  { cloth: P.cloth2, clothDk: P.clothDark2, clothLt: P.clothLight2,
+    skin: P.skinB, skinShad: P.skinBShad, skinLight: P.skinBLight,
+    hair: '#8a5e34', hairDk: '#5a3a1e' },
+  { cloth: P.cloth3, clothDk: P.clothDark3, clothLt: P.clothLight3,
+    skin: P.skin,  skinShad: P.skinShad,  skinLight: P.skinLight,
+    hair: P.hairC, hairDk: '#6e665a' },
+  { cloth: P.cloth4, clothDk: P.clothDark4, clothLt: P.clothLight4,
+    skin: P.skinB, skinShad: P.skinBShad, skinLight: P.skinBLight,
+    hair: '#1c1a18', hairDk: '#0e0c0a' },
+  // Russet-red tunic, silver-grey hair — elder look
+  { cloth: '#7a3c2c', clothDk: '#522818', clothLt: '#9a5040',
+    skin: P.skin,  skinShad: P.skinShad,  skinLight: P.skinLight,
+    hair: '#b0aca0', hairDk: P.hairC },
+  // Deep slate-blue tunic, warm sandy hair, dark skin
+  { cloth: '#405068', clothDk: '#2c3848', clothLt: '#5a6e88',
+    skin: P.skinB, skinShad: P.skinBShad, skinLight: P.skinBLight,
+    hair: '#c8a860', hairDk: '#9a7840' },
+];
+const RAIDER_LOOK: PawnLook = {
+  cloth: P.clothRaider, clothDk: P.clothRaiderDk, clothLt: P.clothRaiderLt,
+  skin: P.skinB, skinShad: P.skinBShad, skinLight: P.skinBLight,
+  hair: P.hairA, hairDk: '#241a12',
+};
+
+/** Build just the pawn sprites (settler / armed settler / raider), each a 2-frame
+ *  walk cycle, without the rest of the SpriteSet. Cheap enough to call once on the
+ *  region map so armies can render as actual figures instead of a `⚔N` glyph. */
+export function buildPawnSprites(): {
+  settler: HTMLCanvasElement[][];
+  settlerArmed: HTMLCanvasElement[][];
+  raider: HTMLCanvasElement[];
+} {
+  return {
+    settler: PAWN_LOOKS.map((lk) => [pawnSprite(lk, 0), pawnSprite(lk, 1)]),
+    settlerArmed: PAWN_LOOKS.map((lk) => [pawnSprite(lk, 0, true), pawnSprite(lk, 1, true)]),
+    raider: [pawnSprite(RAIDER_LOOK, 0, true), pawnSprite(RAIDER_LOOK, 1, true)],
+  };
+}
+
 export function buildSprites(buildingDefs: { id: string; w: number; h: number; upgrades?: unknown[] }[]): SpriteSet {
   const buildings: Record<string, HTMLCanvasElement> = {};
   const blueprints: Record<string, HTMLCanvasElement> = {};
@@ -3172,34 +3218,6 @@ export function buildSprites(buildingDefs: { id: string; w: number; h: number; u
     roads[k]     = roadTile(k, false);
     roadPlans[k] = roadTile(k, true);
   }
-  // Six distinct settler looks for population variety.
-  const pawnLooks: PawnLook[] = [
-    { cloth: P.cloth1, clothDk: P.clothDark1, clothLt: P.clothLight1,
-      skin: P.skin,  skinShad: P.skinShad,  skinLight: P.skinLight,
-      hair: P.hairB, hairDk: P.hairA },
-    { cloth: P.cloth2, clothDk: P.clothDark2, clothLt: P.clothLight2,
-      skin: P.skinB, skinShad: P.skinBShad, skinLight: P.skinBLight,
-      hair: '#8a5e34', hairDk: '#5a3a1e' },
-    { cloth: P.cloth3, clothDk: P.clothDark3, clothLt: P.clothLight3,
-      skin: P.skin,  skinShad: P.skinShad,  skinLight: P.skinLight,
-      hair: P.hairC, hairDk: '#6e665a' },
-    { cloth: P.cloth4, clothDk: P.clothDark4, clothLt: P.clothLight4,
-      skin: P.skinB, skinShad: P.skinBShad, skinLight: P.skinBLight,
-      hair: '#1c1a18', hairDk: '#0e0c0a' },
-    // Russet-red tunic, silver-grey hair — elder look
-    { cloth: '#7a3c2c', clothDk: '#522818', clothLt: '#9a5040',
-      skin: P.skin,  skinShad: P.skinShad,  skinLight: P.skinLight,
-      hair: '#b0aca0', hairDk: P.hairC },
-    // Deep slate-blue tunic, warm sandy hair, dark skin
-    { cloth: '#405068', clothDk: '#2c3848', clothLt: '#5a6e88',
-      skin: P.skinB, skinShad: P.skinBShad, skinLight: P.skinBLight,
-      hair: '#c8a860', hairDk: '#9a7840' },
-  ];
-  const raiderLook: PawnLook = {
-    cloth: P.clothRaider, clothDk: P.clothRaiderDk, clothLt: P.clothRaiderLt,
-    skin: P.skinB, skinShad: P.skinBShad, skinLight: P.skinBLight,
-    hair: P.hairA, hairDk: '#241a12',
-  };
   return {
     grass: [0, 1, 2, 3].map(grassTile),
     grassSpring: [0, 1, 2, 3].map(grassSpringTile),
@@ -3236,9 +3254,7 @@ export function buildSprites(buildingDefs: { id: string; w: number; h: number; u
     gatePlan: gatePlanTile(),
     sapling: saplingSprite(),
     forage: [saplingSprite() /* unused slot 0 */, berryBushSprite(), mushroomClusterSprite(), herbPatchSprite()],
-    settler: pawnLooks.map((lk) => [pawnSprite(lk, 0), pawnSprite(lk, 1)]),
-    settlerArmed: pawnLooks.map((lk) => [pawnSprite(lk, 0, true), pawnSprite(lk, 1, true)]),
-    raider: [pawnSprite(raiderLook, 0, true), pawnSprite(raiderLook, 1, true)],
+    ...buildPawnSprites(),
     deer: [deerSprite(0), deerSprite(1)],
     wolf: [wolfSprite(0), wolfSprite(1)],
     items: {
