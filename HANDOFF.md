@@ -1,6 +1,6 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-27 · **Tests:** 943 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway (#276–#280 + **#283 (cost-push) + #284 (non-asset depth pass: trade leg + determinism guard + first C1 extraction + perf guard) merged**; **PR #285 open — C1 services extraction + situation-aware deals**).
+**Last updated:** 2026-06-27 · **Tests:** 946 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway (#276–#280 + **#283 (cost-push) + #284 (non-asset depth pass) + #285 (C1 services extraction + situation-aware deals) merged**; **PR #286 open — AI difficulty belligerence + intel-gated agenda**).
 
 > 🟢 **PR #284 (open, this session) — non-asset depth pass, 4 commits:**
 > 1. **D1-econ trade leg** — a supply shock now chokes *exports*
@@ -86,16 +86,24 @@ Order: byte-identical + low-risk + high-value first; deps noted. ✅ = shipped t
    trade. Byte-identical (0 at peace; `evaluateDeal` is player-initiated only, not in
    the tick/AI path, so headless is untouched). Keyed off foreign-war state (NOT
    relations — that would have moved the existing diplomacy tests).
-5. **D3-ai: structured `AgendaKind`** (1:1 from archetype, serialized, intel-gated
-   reveal at `intel≥0.5`) — prereq for agenda-driven behaviour later.
-6. **D3-ai: tier-asymmetry guardrail** — route rival aggression `chance()` through a
-   new `AI_DIFFICULTY.rivalAggroMult` (normal=1.0 → byte-identical; easy/hard only).
+5. ◑ **D3-ai: agenda legibility** (PR #286) — intel-gated agenda *display* shipped
+   (panel shows a rival's agenda only at `intelOf ≥ 0.5`; display-only, byte-identical).
+   The structured `AgendaKind` *enum* (prereq for agenda-driven behaviour) is still
+   open — note the agenda is already archetype-derived + shown "stated" at spawn, so
+   the enum's value is future behaviour, not display.
+6. ✅ **D3-ai: tier-asymmetry guardrail** (PR #286) — rival belligerence (hostile
+   mischief + tribute ultimatum) now runs through `aggroChance(p) = clamp(p ×
+   aiAggression)`, reusing the EXISTING `aiAggression` knob (not a new one). Scales
+   the threshold not the draw → byte-identical at the 1.0 default (all tests +
+   headless); only easy/hard tiers shift nastiness.
 7. **D2-mil: regime-modulated war-support DECAY rate** (`WAR_SUPPORT_DECAY_MULT`, all
    1.0 → no-op now); **Front stub** (`front?:{position}` from `w.score`, write-only);
-   **post-war `warScars` record** (pure bookkeeping). All TRUE/low-risk.
-8. **E1-climate: continuous crop-yield drag, zero below 1.5 °C** (TRUE — warmingC
-   stays <1.5 in the scored window). **UIUX: era skin via `data-era`**, decompose
-   tooltips (render-only, TRUE).
+   **post-war `warScars` record** (pure bookkeeping). All TRUE/low-risk — but pure
+   scaffolding (no immediate gameplay change), so weigh value before shipping.
+8. **UIUX: era skin via `data-era`**, decompose tooltips (render-only, TRUE).
+   ⚠️ **NOT the climate crop-yield drag** — the inventory mis-tagged it byte-identical;
+   verified `warmingC` reaches **2.0–4.7 °C by 2100** (not <1.5), so a "zero below
+   1.5 °C" drag fires in every run → it's a Tier-2 **re-baseline** balance change.
 
 **Tier-2 (needs re-baseline — own PRs):** revanchism CB + AI war-frequency shift;
 sea-wall overtopping / climate-refugee migration; brownout −30 % industrial output;
