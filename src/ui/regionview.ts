@@ -27,6 +27,14 @@ function fillHexPath(g: CanvasRenderingContext2D, corners: { x: number; y: numbe
   g.fill();
 }
 
+function strokeHexPath(g: CanvasRenderingContext2D, corners: { x: number; y: number }[]): void {
+  g.beginPath();
+  g.moveTo(corners[0].x, corners[0].y);
+  for (let i = 1; i < 6; i++) g.lineTo(corners[i].x, corners[i].y);
+  g.closePath();
+  g.stroke();
+}
+
 /** Parse a #rrggbb (or #rgb) hex string to {r,g,b}; falls back to grey. */
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   let h = hex.replace('#', '');
@@ -70,6 +78,11 @@ export class RegionView {
   conventionOpen = false;
   /** True when player is in "claim land" mode — clicking map cells triggers claimCell(). */
   claimLandMode = false;
+  /** "Found town" placement mode: the source town whose expedition we're siting,
+   *  plus the precomputed set of valid target cells (key = col*REGION_N + row) so
+   *  the per-frame highlight doesn't re-validate 16k hexes. */
+  private foundingFromId: number | null = null;
+  private foundingValidCells: Set<number> | null = null;
   /** Province overlay toggle (P key or State panel button). Shows province labels + stats on map. */
   provinceViewActive = false;
   /** Currently selected province id (= settlement id), null if none. */
@@ -466,6 +479,20 @@ export class RegionView {
         return;
       }
     }
+    // Click-to-found: in placement mode, a map click sites the new town's
+    // expedition at the chosen hex (validated by foundTownAt).
+    if (this.foundingFromId !== null) {
+      const W = this.canvas.width;
+      const H = this.canvas.height;
+      const { size, ox, oy } = hexLayoutParams(W, H, REGION_N, 60);
+      const { col, row } = screenToHex(mx, my, size, ox, oy);
+      if (col >= 0 && col < REGION_N && row >= 0 && row < REGION_N) {
+        this.region.foundTownAt(this.foundingFromId, (col / REGION_N) * 100, (row / REGION_N) * 100);
+      }
+      this.cancelFoundingMode();
+      this.refreshPanel();
+      return;
+    }
     // If a scout is selected, clicking the map sends it to that hex.
     if (this.selectedScoutId !== null) {
       const W = this.canvas.width;
@@ -659,6 +686,9 @@ export class RegionView {
     // Memory fog (explored-but-not-visible) from its own cache — O(1) per frame.
     this.ensureMemFogCache(W, H);
     if (this.memFogCanvas) g.drawImage(this.memFogCanvas, 0, 0);
+
+    // Click-to-found placement highlights (only while in founding mode).
+    this.drawFoundingOverlay(W, H);
 
     // Routes along their actual corridors (M6b/6c): dotted trails, solid
     // roads, cross-tied rail; line brightness is the route's condition.
@@ -1328,6 +1358,58 @@ export class RegionView {
     g.fillRect(cx - w / 2, cy + 1, w, 1); // top accent line
     g.fillText(label, cx, cy + 10);
     g.textAlign = 'left';
+  }
+
+  /** Enter (or cancel) click-to-found placement mode for a source town. On enter,
+   *  precompute every valid target cell within reach so the highlight overlay is
+   *  a cheap set lookup, not 16k validations per frame. */
+  private toggleFoundingMode(fromId: number): void {
+    if (this.foundingFromId === fromId) { this.cancelFoundingMode(); return; }
+    this.foundingFromId = fromId;
+    this.claimLandMode = false; // mutually exclusive map modes
+    const r = this.region;
+    const t = r.settlement(fromId);
+    const valid = new Set<number>();
+    if (t) {
+      const N = REGION_N;
+      const fromCell = r.map.coordToCell(t.x, t.y);
+      const range = Math.round(N * 0.28);
+      const lo = (v: number) => Math.max(0, v - range), hi = (v: number) => Math.min(N - 1, v + range);
+      for (let col = lo(fromCell.x); col <= hi(fromCell.x); col++) {
+        for (let row = lo(fromCell.y); row <= hi(fromCell.y); row++) {
+          const rx = (col / N) * 100, ry = (row / N) * 100;
+          if (r.canFoundAt(fromId, rx, ry).ok) valid.add(col * N + row);
+        }
+      }
+    }
+    this.foundingValidCells = valid;
+  }
+
+  private cancelFoundingMode(): void {
+    this.foundingFromId = null;
+    this.foundingValidCells = null;
+  }
+
+  /** Per-frame highlight of valid founding sites (map-space, under the camera).
+   *  A soft pulsing green hex on each reachable, legal site. */
+  private drawFoundingOverlay(W: number, H: number): void {
+    const cells = this.foundingValidCells;
+    if (this.foundingFromId === null || !cells || cells.size === 0) return;
+    const g = this.g;
+    const N = REGION_N;
+    const { size, ox, oy } = hexLayoutParams(W, H, N, 60);
+    const pulse = 0.18 + 0.12 * Math.abs(Math.sin(this.frame / 18));
+    g.lineWidth = 1.5;
+    for (const key of cells) {
+      const col = Math.floor(key / N), row = key % N;
+      const { x: cx, y: cy } = hexCenter(col, row, size, ox, oy);
+      if (cx < this.vb.l - size || cx > this.vb.r + size || cy < this.vb.t - size || cy > this.vb.b + size) continue;
+      const corners = hexCorners(cx, cy, size);
+      g.fillStyle = `rgba(120,210,110,${pulse.toFixed(3)})`;
+      fillHexPath(g, corners);
+      g.strokeStyle = 'rgba(150,230,140,0.7)';
+      strokeHexPath(g, corners);
+    }
   }
 
   /** Province inspector panel: shows detailed stats for the selected province. */
@@ -4028,7 +4110,9 @@ export class RegionView {
     this.wireTabs(this.panel, (tab) => { this.panelTab = tab as 'overview' | 'economy' | 'people'; });
     const btn = this.panel.querySelector<HTMLButtonElement>('#found-btn');
     if (btn) {
-      btn.onclick = () => { this.region.foundTown(t.id); this.refreshPanel(); };
+      // Enter click-to-found placement mode (valid sites highlight; click one to
+      // send the expedition there). Re-clicking cancels.
+      btn.onclick = () => { this.toggleFoundingMode(t.id); };
     }
     // Inline rename: Electron has no window.prompt(), so swap the heading for an
     // editable field on click. Enter/blur commits, Escape cancels.
