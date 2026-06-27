@@ -1,6 +1,6 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-27 · **Tests:** 939 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway (#276–#280 + **#283 merged — cost-push inflation**; **PR #284 open — non-asset depth pass**). **Last session (#283, merged): the supply shock's COST-PUSH INFLATION (D1-econ prices leg).**
+**Last updated:** 2026-06-27 · **Tests:** 943 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway (#276–#280 + **#283 (cost-push) + #284 (non-asset depth pass: trade leg + determinism guard + first C1 extraction + perf guard) merged**; **PR #285 open — C1 services extraction + situation-aware deals**).
 
 > 🟢 **PR #284 (open, this session) — non-asset depth pass, 4 commits:**
 > 1. **D1-econ trade leg** — a supply shock now chokes *exports*
@@ -80,12 +80,12 @@ Order: byte-identical + low-risk + high-value first; deps noted. ✅ = shipped t
 **Safe wave (byte-identical TRUE, low-risk — ship next):**
 1. ✅ **D1-econ trade leg** (supply shock → exports).
 2. ✅ **C1: extract `tickPollution`** → `systems/pollution.ts` (first leaf).
-3. **C1: extract `tickServiceCoverage`** → `systems/services.ts` (sole dep
-   `computeServiceCoverage` public, zero RNG — same recipe as #2, now de-risked).
-4. **D3-ai: situation-aware `DealVerdict`** — pure `rivalSituation(rv)∈[0,1]` from
-   data on the object (foreign war / sanctions / neighbour relations); scale pact
-   appetite `×(1+0.5·sit)`, trade `×(1−0.3·sit)`, gated `sit>0` → 0 in all current
-   play → byte-identical. **High value, render-of-AI depth.**
+3. ✅ **C1: extract `tickServiceCoverage`** → `systems/services.ts` (PR #285).
+4. ✅ **D3-ai: situation-aware `DealVerdict`** (PR #285) — `rivalSituation(rv)∈[0,1]`
+   (1 while fighting a foreign war), additive `SITUATION_TREATY_BONUS` for protection/
+   trade. Byte-identical (0 at peace; `evaluateDeal` is player-initiated only, not in
+   the tick/AI path, so headless is untouched). Keyed off foreign-war state (NOT
+   relations — that would have moved the existing diplomacy tests).
 5. **D3-ai: structured `AgendaKind`** (1:1 from archetype, serialized, intel-gated
    reveal at `intel≥0.5`) — prereq for agenda-driven behaviour later.
 6. **D3-ai: tier-asymmetry guardrail** — route rival aggression `chance()` through a
