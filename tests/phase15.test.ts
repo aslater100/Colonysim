@@ -9,6 +9,7 @@ import {
   AGRICULTURAL_RAWS,
   EXTRACTIVE_RAWS,
   REGION_MINUTES_PER_TICK,
+  type Settlement,
 } from '../src/sim/region';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
 
@@ -409,7 +410,7 @@ describe('tickPriceArbitrage()', () => {
     routeBetween(r, from.id, to.id);
     r.tradeFlows.push({
       goodId: 'chemicals', fromSettlementId: from.id, toSettlementId: to.id,
-      volume: 8, transitDays: 5, congestionTariff: 0.1, pendingIncome: 25,
+      volume: 8, transitDays: 5, congestionTariff: 0.1, pendingIncome: 25, cargo: 0,
     });
     const before = r.treasury;
     r.tickPriceArbitrage(); // transitDays 5 − DAYS_PER_MONTH(5) ≤ 0 → arrives this tick
@@ -422,7 +423,7 @@ describe('tickPriceArbitrage()', () => {
     // Settlements with no route between them → the lane is cut.
     r.tradeFlows.push({
       goodId: 'chemicals', fromSettlementId: 999998, toSettlementId: 999999,
-      volume: 8, transitDays: 10, congestionTariff: 0.1, pendingIncome: 25,
+      volume: 8, transitDays: 10, congestionTariff: 0.1, pendingIncome: 25, cargo: 0,
     });
     const before = r.treasury;
     r.tickPriceArbitrage();
@@ -448,6 +449,87 @@ describe('tickPriceArbitrage()', () => {
 
     r.tickPriceArbitrage(); // next month it arrives
     expect(r.treasury).toBeGreaterThan(before);
+  });
+
+  // --- Physical cargo: trade flows now relocate real units between town ledgers ---
+  // (the source town is debited on dispatch, the destination credited on arrival,
+  // and a severed route destroys the cargo). The dispatch decision and pendingIncome
+  // are unchanged, so the macro economy stays neutral; only per-town stocks move.
+  const forceDispatchWages = (from: Settlement, to: Settlement) => {
+    for (const id of ['industry', 'agriculture', 'services', 'information'] as const) {
+      from.sectors[id].wage = 50;
+      to.sectors[id].wage = 5;
+    }
+  };
+  // Seed a town with plenty of every good that could be dispatched (goodIds[0], or
+  // the 'components' fallback when nothing is unlocked yet), so it can ship in full.
+  const seedAllGoods = (t: Settlement, qty: number) => {
+    t.goodStocks = {};
+    for (const g of INTERMEDIATE_GOODS) t.goodStocks[g.id] = qty;
+    t.goodStocks['components'] = qty;
+  };
+
+  it('dispatch debits the source town of the shipped good (cargo ≤ volume)', () => {
+    const r = twoTownSim(42);
+    const [from, to] = r.settlements;
+    routeBetween(r, from.id, to.id);
+    forceDispatchWages(from, to); // buySide (source) is the low-wage town: `to`
+    const seed = 1000;
+    seedAllGoods(to, seed);
+    r.tickPriceArbitrage();
+    const flow = r.tradeFlows.find(f => f.fromSettlementId === to.id && f.toSettlementId === from.id);
+    expect(flow).toBeDefined();
+    expect(flow!.cargo).toBeGreaterThan(0);
+    expect(flow!.cargo).toBeLessThanOrEqual(flow!.volume);
+    // The source ledger fell by exactly the cargo shipped.
+    expect(to.goodStocks![flow!.goodId]).toBeCloseTo(seed - flow!.cargo, 5);
+  });
+
+  it('a source town holding none of the good ships zero cargo (profit flow still dispatches)', () => {
+    const r = twoTownSim(42);
+    const [from, to] = r.settlements;
+    routeBetween(r, from.id, to.id);
+    forceDispatchWages(from, to);
+    to.goodStocks = {}; // source holds nothing
+    r.tickPriceArbitrage();
+    const flow = r.tradeFlows.find(f => f.fromSettlementId === to.id && f.toSettlementId === from.id);
+    expect(flow).toBeDefined();
+    expect(flow!.cargo).toBe(0);
+    expect(flow!.pendingIncome).toBeGreaterThan(0); // dispatch & profit are independent of physical stock
+  });
+
+  it('arrival credits the destination town with the shipment cargo', () => {
+    const r = twoTownSim(42);
+    const [from, to] = r.settlements;
+    routeBetween(r, from.id, to.id);
+    const destBefore = to.goodStocks?.['chemicals'] ?? 0;
+    r.tradeFlows.push({
+      goodId: 'chemicals', fromSettlementId: from.id, toSettlementId: to.id,
+      volume: 8, transitDays: 5, congestionTariff: 0.1, pendingIncome: 0, cargo: 4,
+    });
+    r.tickPriceArbitrage(); // arrives this tick
+    expect(to.goodStocks?.['chemicals'] ?? 0).toBeCloseTo(destBefore + 4, 5);
+  });
+
+  it('a severed route destroys cargo mid-transit — source stays debited, dest never credited', () => {
+    const r = twoTownSim(42);
+    const [from, to] = r.settlements;
+    routeBetween(r, from.id, to.id);
+    forceDispatchWages(from, to);
+    const seed = 1000;
+    seedAllGoods(to, seed);
+    r.tickPriceArbitrage(); // dispatch debits the source; the flow is now in transit
+    const flow = r.tradeFlows.find(f => f.fromSettlementId === to.id && f.toSettlementId === from.id);
+    expect(flow).toBeDefined();
+    const { goodId, cargo } = flow!;
+    expect(cargo).toBeGreaterThan(0);
+    expect(to.goodStocks![goodId]).toBeCloseTo(seed - cargo, 5); // debited on dispatch
+    const destBefore = from.goodStocks?.[goodId] ?? 0;
+    r.routes = []; // sever the lane before it arrives
+    r.tickPriceArbitrage();
+    expect(r.tradeFlows).toHaveLength(0); // stranded and dropped
+    expect(to.goodStocks![goodId]).toBeCloseTo(seed - cargo, 5); // source remains debited…
+    expect(from.goodStocks?.[goodId] ?? 0).toBe(destBefore); // …and the destination never received it
   });
 });
 
@@ -733,7 +815,7 @@ describe('serialization', () => {
     expect(r2.supplyChainHealth).toBeCloseTo(0.6, 5);
   });
 
-  it('round-trips tradeFlows', () => {
+  it('round-trips tradeFlows (incl. physical cargo)', () => {
     const r = twoTownSim(42);
     r.tradeFlows = [{
       goodId: 'chemicals',
@@ -742,12 +824,24 @@ describe('serialization', () => {
       volume: 7,
       transitDays: 5,
       congestionTariff: 0.12,
+      pendingIncome: 9,
+      cargo: 4,
     }];
     const json = r.serialize();
     const r2 = RegionSim.deserialize(json);
     expect(r2.tradeFlows).toHaveLength(1);
     expect(r2.tradeFlows[0].goodId).toBe('chemicals');
     expect(r2.tradeFlows[0].volume).toBeCloseTo(7, 5);
+    expect(r2.tradeFlows[0].cargo).toBeCloseTo(4, 5);
+  });
+
+  it('pre-cargo saves backfill a flow with cargo 0', () => {
+    const r = twoTownSim(42);
+    const data = JSON.parse(r.serialize());
+    // A legacy flow with no `cargo` key (its goodId/volume were decorative).
+    data.tradeFlows = [{ goodId: 'chemicals', fromSettlementId: 1, toSettlementId: 2, volume: 7, transitDays: 5, congestionTariff: 0.12, pendingIncome: 9 }];
+    const r2 = RegionSim.deserialize(JSON.stringify(data));
+    expect(r2.tradeFlows[0].cargo).toBe(0);
   });
 
   it('round-trips currencyRegime', () => {

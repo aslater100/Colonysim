@@ -2965,7 +2965,9 @@ export class RegionSim {
    *  physically in transit: it carries `pendingIncome` (the arbitrage profit) that
    *  is realized only on ARRIVAL, after `transitDays` of travel — so congestion
    *  (which sets the transit time) delays the payout, and a flow whose route is
-   *  severed mid-transit is lost. */
+   *  severed mid-transit is lost. It also carries `cargo` — the real units of
+   *  `goodId` debited from the source town's `goodStocks` on dispatch and credited
+   *  to the destination's on arrival (lost outright if the route is severed). */
   tradeFlows: Array<{
     goodId: string;
     fromSettlementId: number;
@@ -2975,6 +2977,10 @@ export class RegionSim {
     congestionTariff: number;
     /** Arbitrage profit (£) carried by this shipment, paid out on delivery. */
     pendingIncome: number;
+    /** Physical units of `goodId` in transit — what the source town actually had
+     *  to ship (≤ volume). Credited to the destination town's `goodStocks` on
+     *  arrival; destroyed if the route is severed mid-transit. */
+    cargo: number;
   }> = [];
   /** Currency regime for Phase 15 FX. Separate from monetary regime (peg/float/print). */
   currencyRegime: 'gold_standard' | 'fiat' | 'currency_union' = 'fiat';
@@ -6252,6 +6258,18 @@ export class RegionSim {
     (t.goodStocks ??= {})[goodId] = (t.goodStocks[goodId] ?? 0) + qty;
   }
 
+  /** Debit up to `max` units of a good from a town's ledger for shipment, returning
+   *  the amount actually moved (≤ the town's holding, never negative — a town with
+   *  none ships nothing). The dispatch complement of `addGoodStock` (the arrival
+   *  credit); used by the trade-flow pipeline to relocate real goods between towns. */
+  private shipGoodFrom(t: Settlement, goodId: string, max: number): number {
+    if (max <= 0) return 0;
+    const have = t.goodStocks?.[goodId] ?? 0;
+    const moved = Math.min(max, have);
+    if (moved > 0) t.goodStocks![goodId] = have - moved;
+    return moved;
+  }
+
   /** The settlement that banks unattributed deposits — a legacy-save migration, a
    *  zero-output early-game seed: the player's capital, else the first settlement. */
   private capitalSettlement(): Settlement | undefined {
@@ -6532,6 +6550,12 @@ export class RegionSim {
       flow.transitDays -= DAYS_PER_MONTH;
       if (flow.transitDays <= 0) {
         delivered += flow.pendingIncome;
+        // Land the physical cargo in the destination town's ledger (the source was
+        // debited on dispatch). A vanished destination simply drops the cargo.
+        if (flow.cargo > 0) {
+          const dest = this.settlement(flow.toSettlementId);
+          if (dest !== undefined) this.addGoodStock(dest, flow.goodId, flow.cargo);
+        }
       } else {
         stillMoving.push(flow);
       }
@@ -6580,8 +6604,17 @@ export class RegionSim {
         if (existing) continue;
 
         const volume = Math.min(10, priceDiff * 2);
+        const goodId = goodIds.length > 0 ? goodIds[0] : 'components';
+        // Move the real units the source town can spare (≤ volume) out of its ledger
+        // now; they ride with the shipment and land at the destination on arrival.
+        // The dispatch decision, transit time and pendingIncome are unchanged — the
+        // cargo is purely additive bookkeeping, so the macro economy stays neutral
+        // (nothing reads intermediate-stock magnitudes; the solver proxies raws off
+        // sector output) while goods physically relocate between town warehouses —
+        // the substrate the later per-town supply solve consumes.
+        const cargo = this.shipGoodFrom(buySide, goodId, volume);
         this.tradeFlows.push({
-          goodId: goodIds.length > 0 ? goodIds[0] : 'components',
+          goodId,
           fromSettlementId: buySide.id,
           toSettlementId: sellSide.id,
           volume,
@@ -6590,6 +6623,7 @@ export class RegionSim {
           transitDays: Math.max(1, Math.round(tariff * 100)),
           congestionTariff: tariff,
           pendingIncome: volume * tariff * 5,
+          cargo,
         });
       }
     }
@@ -13109,8 +13143,10 @@ export class RegionSim {
     r.supplyShockMult = d.supplyShockMult ?? 1;            // no-shock default
     r._electronicsDisrupted = d.electronicsDisrupted ?? false;
     // Pre-transit-pipeline flows carried no pendingIncome — backfill to 0 (they
-    // simply transit out without a payout); new flows round-trip unchanged.
-    r.tradeFlows = (d.tradeFlows ?? []).map((f: { pendingIncome?: number }) => ({ ...f, pendingIncome: f.pendingIncome ?? 0 }));
+    // simply transit out without a payout); pre-cargo flows carried no physical
+    // units — backfill cargo to 0 (their goodId/volume were decorative); new flows
+    // round-trip both unchanged.
+    r.tradeFlows = (d.tradeFlows ?? []).map((f: { pendingIncome?: number; cargo?: number }) => ({ ...f, pendingIncome: f.pendingIncome ?? 0, cargo: f.cargo ?? 0 }));
     r.currencyRegime = d.currencyRegime ?? 'fiat';
     r.currencyUnionPartnerId = d.currencyUnionPartnerId ?? undefined;
     r.fxBoost = d.fxBoost ?? 1.0;
