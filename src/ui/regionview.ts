@@ -4,7 +4,7 @@
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
 import type { Settlement, Scout, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, DepressionMeasure, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType, TechNode, Province, DynastyNode } from '../sim/region';
-import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, INTERMEDIATE_GOODS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES, ESPIONAGE_OPS, BLOC_RELATIONS_FLOOR, DEPRESSION_MEASURES, SUPPLY_SHOCK_INFLATION } from '../sim/region';
+import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, INTERMEDIATE_GOODS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES, ESPIONAGE_OPS, BLOC_RELATIONS_FLOOR, DEPRESSION_MEASURES, SUPPLY_SHOCK_INFLATION, SUPPLY_SHOCK_EXPORT_DRAG } from '../sim/region';
 import type { EspionageOp } from '../sim/region';
 import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS } from '../sim/defs';
 import type { CurrencySymbol } from '../sim/defs';
@@ -4818,23 +4818,27 @@ export class RegionView {
     const disruptedCount = snap.disrupted.size;
     const healthy = snap.severity === 0;
     const barCol = healthy ? '#4e9' : snap.severity < 0.3 ? '#ca4' : '#e55';
-    // The shock's other half: cost-push inflation (GDD §5.2). The target lift in
-    // percentage points the shortage adds to monetary inflation — only realized
-    // once a central bank runs the monetary system, so gate the readout on it.
+    // The shock's other halves (GDD §5.2): cost-push inflation and an export
+    // drag. Prices: the target lift in percentage points — only realized once a
+    // central bank runs the monetary system, so gate that readout on it. Exports:
+    // the trade leg, the % a shortage trims off foreign sales (no gate).
     const pricePushPp = snap.severity * SUPPLY_SHOCK_INFLATION * 100;
     const showPush = pricePushPp > 0.05 && r.hasCentralBank();
+    const exportDragPct = snap.severity * SUPPLY_SHOCK_EXPORT_DRAG * 100;
+    const showExportDrag = exportDragPct > 0.05;
 
-    // Headline: health bar + the actual industrial drag and price push it's costing.
+    // Headline: health bar + the output drag, price push, and export drag it costs.
     let html =
       `<div class="bar-row" title="Active goods fully supplied this month">` +
       `<span style="width:54px;display:inline-block">health</span>` +
       `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${healthPct}%;background:${barCol}"></div></div>` +
       `<span class="insp-skills" style="min-width:34px;text-align:right">${healthPct}%</span>` +
       `</div>` +
-      `<p class="insp-skills" title="A shortage both cuts output and raises prices (stagflation)">` +
+      `<p class="insp-skills" title="A shortage cuts output, raises prices (stagflation), and chokes exports">` +
       `${snap.supplied.size}/${snap.active.length} goods flowing` +
       (dragPct > 0.05 ? ` · industry −${dragPct.toFixed(1)}%` : ' · no shock') +
       (showPush ? ` · prices +${pricePushPp.toFixed(1)}pp` : '') +
+      (showExportDrag ? ` · exports −${exportDragPct.toFixed(1)}%` : '') +
       `</p>`;
 
     // Standing embargoes — the "this is why" banner (oil shock, future blockades).

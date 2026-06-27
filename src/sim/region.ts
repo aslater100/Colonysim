@@ -257,6 +257,20 @@ export const SUPPLY_SHOCK_MAX_DRAG = 0.15;
  *  so it can't reinforce the shortage that caused it. */
 export const SUPPLY_SHOCK_INFLATION = 0.30;
 
+/** Export drag from a supply-chain shock (GDD §5.2), the *trade* leg of the
+ *  goods→economy coupling — the output drag (`SUPPLY_SHOCK_MAX_DRAG`) and the
+ *  cost-push (`SUPPLY_SHOCK_INFLATION`) are the other two. A nation short on
+ *  fuel, components, or food has less surplus to sell abroad, so export earnings
+ *  fall by `supplyShockSeverity × SUPPLY_SHOCK_EXPORT_DRAG`: a partial oil
+ *  embargo (severity ≈ 0.15) trims exports ~7.5%, a total cut (≈ 0.25) ~12.5%,
+ *  a total cascade at most 50%. Foreign sales are the discretionary surplus, so
+ *  they're hit harder than essential domestic output (15% max) — yet still
+ *  bounded, never zeroed. Exactly 0 in healthy play (severity 0 whenever raws
+ *  flow) → ×1 → byte-identical there; only a real cascade below the era baseline
+ *  bites. A pure sink: exports feed the treasury, never sector output → the raw
+ *  proxy, so it can't deepen the shortage that caused it. */
+export const SUPPLY_SHOCK_EXPORT_DRAG = 0.5;
+
 /** How long (sim days) the 1970s oil-shock anchor embargoes the `oil` raw,
  *  cutting `fuel` and the fuel-burning finals downstream. ~6 months — the real
  *  1973 embargo's span — long enough to register across several monthly supply
@@ -5720,6 +5734,16 @@ export class RegionSim {
     // At depth=1.0 trade is at ~45% of normal; recovers as depth fades over ~30 months.
     if (this.depressionDepth > 0.01) {
       this.exportEarningsLastMonth *= Math.max(0.3, 1 - this.depressionDepth * 0.55);
+    }
+    // Supply-chain shock chokes exports (GDD §5.2, the trade leg): a nation short
+    // on fuel/components/food has less surplus to sell abroad. Reads the same
+    // below-the-era-baseline severity as the output drag and the cost-push (cached
+    // supplyChainHealth — monthlyEconomy runs before tickIntermediateGoods, a
+    // one-month lag), so it is exactly 0 in healthy play → ×1 → byte-identical;
+    // only a real cascade trims exports. Bounded by SUPPLY_SHOCK_EXPORT_DRAG.
+    const supplyExportSeverity = this.supplyShockSeverity();
+    if (supplyExportSeverity > 0) {
+      this.exportEarningsLastMonth *= 1 - supplyExportSeverity * SUPPLY_SHOCK_EXPORT_DRAG;
     }
     // Phase 15: Monetary regime effects on economy
     // Gold standard: slight deflation pressure
