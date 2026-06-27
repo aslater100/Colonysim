@@ -119,7 +119,12 @@ Era windows start at years 1900 / 1918 / 1945 / 1970 / 2000 / 2040.
 
 - `public/assets/asset_manifest.json` — image manifest (ships empty).
 - `public/audio/audio_manifest.json` — audio manifest (ships empty).
-- `src/data/assetCatalog.ts` — the 11 live slot defs + prompts + sizes.
+- `scripts/gen-local.ts` — **the preferred generator**: local SD (A1111 API) →
+  `public/assets/`, with built-in town background-removal + manifest update. Run
+  via `npm run gen:local`. Free, local, no token. (`scripts/png.ts` = its
+  dependency-free PNG decode/encode + flood-fill matting.)
+- `src/data/assetCatalog.ts` — the 11 live slot defs + prompts + sizes (shared by
+  `gen-local.ts` and `hf-assets.ts`).
 - `scripts/hf-assets.ts` — live-slot generator → `public/assets/`. **Targets the
   removed `api-inference.huggingface.co` endpoint** (see Channel detection — likely
   non-functional until ported to the router).
@@ -140,7 +145,22 @@ Era windows start at years 1900 / 1918 / 1945 / 1970 / 2000 / 2040.
 behaviour — do not assume a channel from a stale note. Pick exactly one live
 channel; if none is live, STOP and report what to provision.**
 
-1. **TRY MCP `dynamic_space` invoke** (cheapest, $0 — runs on HF infra, needs no
+0. **PREFERRED — local Stable Diffusion via `npm run gen:local`** (free, fully
+   local, no token, no cloud egress; the intended default). It drives an
+   AUTOMATIC1111-compatible SD server on `127.0.0.1` (not proxied/blocked),
+   writes `public/assets/<slot>.png`, cuts town backgrounds to transparency
+   (built-in flood-fill or `--bg-tool=rembg`), and updates the manifest.
+   - Probe: `npm run gen:local -- --dry-run` always works (no server). For a live
+     run the user must have a local SD server up (`./webui.sh --api`).
+   - Run: `npm run gen:local -- --slots=<slot>` (or `--category`, `--era`, or bare
+     for all 11). Flags: `--api-url`, `--steps`, `--cfg`, `--sampler`, `--seed`,
+     `--model`, `--no-bg`, `--bg-tool=rembg`, `--bg-tol`, `--retries`. The tool
+     does steps 2–5 + manifest for you; you still do QA (7–8) and the git reset (9).
+   - If `preflight` reports it can't reach the server → tell the user to start
+     their local SD server (or pass `--api-url`), then retry. This is the channel
+     to prefer whenever a local GPU + SD server exist.
+
+1. **ELSE TRY MCP `dynamic_space` invoke** ($0 — runs on HF infra, needs no
    local egress or token). Probe `evalstate/flux1_schnell` with a trivial prompt
    and **branch on the actual returned error**:
    - **Invoke succeeds** → **Channel = MCP. Use it.** Image-gen via
@@ -271,6 +291,9 @@ Use a chosen `<slot>` (e.g. `town-castle` or `backdrop-dawn`).
 
 1. **Confirm channel** (Channel detection). If none live, STOP and report.
 2. **Generate the PNG.**
+   - **Local SD channel (preferred):** `npm run gen:local -- --slots=<slot>` —
+     generates, cuts town backgrounds, writes the PNG, and merges the manifest item
+     for you (skip steps 3–5; go to QA at 6). Needs a local SD server running.
    - **MCP channel:** `dynamic_space` invoke `evalstate/flux1_schnell` with the
      era-anchored prompt (body + suffix), `num_inference_steps=4`, and the slot's
      gen size — town `width=256 height=256`, backdrop `width=1216 height=704` (both
