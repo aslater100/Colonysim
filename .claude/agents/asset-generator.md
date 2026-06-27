@@ -150,8 +150,11 @@ channel; if none is live, STOP and report what to provision.**
    AUTOMATIC1111-compatible SD server on `127.0.0.1` (not proxied/blocked),
    writes `public/assets/<slot>.png`, cuts town backgrounds to transparency
    (built-in flood-fill or `--bg-tool=rembg`), and updates the manifest.
-   - Probe: `npm run gen:local -- --dry-run` always works (no server). For a live
-     run the user must have a local SD server up (`./webui.sh --api`).
+   - Backends: `--backend=a1111` (default, AUTOMATIC1111 `./webui.sh --api`, port
+     7860) or `--backend=comfy` (ComfyUI, port 8188, needs `--model=<ckpt>`).
+   - Probe: `npm run gen:local -- --init` checks the server is reachable and lists
+     its checkpoints (then suggests the run command); `--dry-run` plans with no
+     server. For a live run the user must have their local SD server up.
    - Run: `npm run gen:local -- --slots=<slot>` (or `--category`, `--era`, or bare
      for all 11). Flags: `--api-url`, `--steps`, `--cfg`, `--sampler`, `--seed`,
      `--model`, `--no-bg`, `--bg-tool=rembg`, `--bg-tol`, `--retries`. The tool
