@@ -1,6 +1,6 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-27 (late) · **Tests:** 971 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway. **Latest session: #292 merged — the per-settlement-stocks FOUNDATION** (a byte-identical *ledger seam*: every read/write of the nation-wide `intermediateGoodStocks` pool now flows through `goodStock`/`hasGoodStock`/`produceGood`/`drawGood`/`seedGoodStock`/`goodStocksSnapshot`/`restoreGoodStocks` on `RegionSim`, so the per-settlement storage swap (PR-2) becomes surgical). **Prior session: 8 PRs (#283–#286, #288)** — cost-push inflation; non-asset depth pass (export-drag trade leg + serialize-determinism harness & 3 bug fixes + first C1 extraction + perf-guard re-baseline); C1 services extraction + situation-aware deals; AI difficulty belligerence + intel-gated agenda; **#288 = Tier-2 climate farm drag (A) + Tier-3 goods-on-routes first slice (B).**
+**Last updated:** 2026-06-27 (latest) · **Tests:** 975 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway. **Latest session: #294 merged — the per-settlement-stocks STORAGE SWAP (PR-2)** (the goods ledger now lives on **`Settlement.goodStocks`** per town instead of one nation-wide `intermediateGoodStocks` pool; the #292 accessor seam made it mechanical — `produceGood` splits the tick's output across towns by producing-sector output, `drawGood` drains greedily in-order, both preserving the nation-wide aggregate exactly → **byte-identical gameplay**; per-town serialize via the settlement spread; old saves migrate the legacy pool into the capital). **Prior session: #292 — the per-settlement-stocks FOUNDATION** (the byte-identical *ledger seam* PR-2 was built on). **Earlier: 8 PRs (#283–#286, #288)** — cost-push inflation; non-asset depth pass (export-drag trade leg + serialize-determinism harness & 3 bug fixes + first C1 extraction + perf-guard re-baseline); C1 services extraction + situation-aware deals; AI difficulty belligerence + intel-gated agenda; **#288 = Tier-2 climate farm drag (A) + Tier-3 goods-on-routes first slice (B).**
 
 > **PARALLEL TRACK — SPATIAL 4X redesign** (`docs/design/spatial-4x-redesign.md`): a second session is turning Centuria into a Civ/Age-of-Wonders spatial city game (found towns by clicking, place buildings on hexes) **while keeping the 4X clear**. **Phase A (click-to-found) MERGED #289**; **Phase B (place buildings on hexes) MERGED #291.** Next: Phase C (tile yields feed economy — intentional re-baseline), Phase D (districts/wonders). See `.handoff.md` §0. Lesson learned: AI text-to-image is the wrong tool for crisp foreground sprites — procedural rendering + the spatial layer is the win.
 
@@ -14,9 +14,10 @@
 > a severed route strands the cargo, and a long-standing inverted buy/sell direction bug
 > is fixed. Macro-neutral (arbitrage is minor; headless unchanged). **Follow-on:** per-good
 > prices (still a wage-gap proxy) and per-settlement goods stocks — the big rock. **#292
-> laid its foundation:** `intermediateGoodStocks` is still one nation-wide pool, but it's
-> now behind a ledger seam (`goodStock`/`produceGood`/`drawGood`/…), so PR-2 can repoint the
-> backing store to `Settlement.goodStocks` without touching production/consumption logic.
+> laid its foundation (the ledger seam) and #294 DID THE SWAP:** the ledger now lives on
+> `Settlement.goodStocks` per town; the nation-wide totals the chain reads are the sum across
+> towns, so gameplay is still byte-identical. **From here it intentionally diverges** — PR-3
+> is consume-where-produced + ship surplus on routes (the first deliberate balance change).
 
 > 🟢 **PR #284 (open, this session) — non-asset depth pass, 4 commits:**
 > 1. **D1-econ trade leg** — a supply shock now chokes *exports*
@@ -63,6 +64,48 @@
 > (parallax backdrops + era UI skins) and `B2-audio` (music stems + ambience + voice)
 > are the bold roadmap items and remain **un-started in earnest** — they need an env
 > with network egress + image/audio tooling to actually generate.
+
+## Recent session (2026-06-27 latest) — per-settlement-stocks STORAGE SWAP: goods stocks move per-town (PR #294)
+
+User said "continue" → picked up the explicitly-sequenced PR-2 the #292 seam was built for
+and shipped it. The goods ledger no longer lives in one nation-wide `intermediateGoodStocks`
+pool; it lives per town on **`Settlement.goodStocks?: Record<string,number>`** (optional,
+sparse). Because every read/write already flowed through the #292 accessors, this was a
+backing-store repoint — production/consumption logic untouched.
+
+- **Aggregate-equivalent / byte-identical gameplay.** The supply chain reads nation-wide
+  totals; those are now the **sum across towns**, but the values match the old single pool:
+  - `produceGood(id,qty)` **distributes** the tick's output across towns by the producing
+    sector's output (`goodProducingSector` → agriculture for food/textiles, industry for the
+    rest). Every contributing town but the last gets its proportional share; the **last gets
+    the exact remainder** so Σ == qty (no float drift). All sector outputs 0 → banks in the
+    capital.
+  - `drawGood(id,qty)` drains towns **greedily in array order** until qty is met or stock is
+    exhausted; the aggregate falls by exactly `min(qty,total)` (matches old `max(0,pool−qty)`),
+    using only subtraction so the floor is exact. Still a **no-op for an untracked raw**.
+  - `seedGoodStock` seeds a 0-entry into the **capital** if untracked; never overwrites.
+  - `goodStocksSnapshot()` is now a **derived aggregate** (UI/debug/test read), not the
+    serialize source. `restoreGoodStocks` is **legacy-migration only** (old top-level pool →
+    capital, guarded so a new save isn't clobbered).
+- **Serialization.** Per-town `goodStocks` rides each settlement's `...s` spread (sparse —
+  absent when empty); the top-level `intermediateGoodStocks` key is gone. `deserialize` keeps
+  `r.restoreGoodStocks(d.intermediateGoodStocks)` as the migration call (no-op for new saves).
+- **Why it was safe (the key insight that de-risked the whole swap).** The stock ledger is
+  **gameplay-inert in healthy play**: the cascade solver's `rawLevel` callback is only invoked
+  for **leaf raws** (coal/iron/…), which are never tracked in the ledger, so it reads the
+  **sector proxy**, never a tracked good's magnitude. The Supply UI panel reads the **live
+  solve** (`supplyChainSnapshot`), not stock magnitudes. So the per-town split changes no
+  observable behaviour today — it's pure storage groundwork for consume/ship-between-towns.
+- **Verified.** tsc clean, vite build green; determinism harness (3 seeds × 4 checkpoints +
+  fixed-point reload) ✅; save-size guard (all 4 ceilings, +<2 KiB for 16 goods × N towns) ✅;
+  headless 8-seed × 181y all finite at 2.0% inflation. Tests 971 → **975** (+4: snapshot
+  aggregation, legacy migration into capital, per-settlement round-trip, new-save format).
+
+**Next (PR-3, INTENTIONAL DIVERGENCE — no longer byte-identical):** consume a good's inputs
+from the producing town's stock, run a *local* supply level per town, and ship surplus over
+the existing route network (extend #288's `pendingIncome` arrival delivery to move physical
+units into the destination's `goodStocks`). First deliberate balance change → downturn
+playtest + re-baseline the headless sweep. Then per-good local prices → the 44-good catalog.
 
 ## Recent session (2026-06-27 late) — per-settlement-stocks FOUNDATION: the goods-stock ledger seam (PR #292)
 
@@ -162,12 +205,15 @@ writers** (do after more of C1 lands so `region.ts` is calmer).
 
 **Tier-3 (large rewrites, last):** spatial military Front (full resolution rewrite,
 new RNG order — needs the Front stub first); **per-settlement goods stocks** — the heart
-of making `intermediateGoodStocks` economically real, sequenced: ✅ **PR-1 ledger seam
-(#292)** → **PR-2 per-settlement storage** (`Settlement.goodStocks`, production attributed
-per-town, solver reads the nation-wide *sum* → still byte-identical; per-town serialize +
-old-save backfill; **re-check save-size guard**) → goods consumed/shipped between towns →
-per-good local prices (drop the wage-gap proxy) → 44-good catalog; E2 R/C/I/O demand +
-land-value grid maps (trips the save-size guard by design); `drawBackdrop` parallax compositing.
+of making the goods ledger economically real, sequenced: ✅ **PR-1 ledger seam (#292)** →
+✅ **PR-2 per-settlement storage (#294)** (ledger now on `Settlement.goodStocks`; production
+distributed per-town by producing sector, draws greedy in-order, solver reads the nation-wide
+*sum* → byte-identical; per-town serialize via the settlement spread + legacy-pool→capital
+migration; save-size guard re-checked, +<2 KiB) → **PR-3 goods consumed/shipped between
+towns** (INTENTIONAL DIVERGENCE — consume from the producing town, local supply level, ship
+surplus on routes) → per-good local prices (drop the wage-gap proxy) → 44-good catalog; E2
+R/C/I/O demand + land-value grid maps (trips the save-size guard by design); `drawBackdrop`
+parallax compositing.
 
 **Dependency rules:** the determinism harness (✅) precedes every "byteIdenticalSafe"
 claim; `bench-region` (✅) precedes large `region.ts` cost; **continue C1 leaf
