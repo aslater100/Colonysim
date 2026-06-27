@@ -120,10 +120,10 @@ describe('tickIntermediateGoods()', () => {
     // We can't directly set year, so we'll call the method directly
     // and seed the stocks manually after year is advanced via serialization hack
 
-    // Manually seed stocks to simulate available inputs
-    r.intermediateGoodStocks['coal'] = 5;
-    r.intermediateGoodStocks['iron'] = 5;
-    r.intermediateGoodStocks['chemicals'] = 0;
+    // Seed per-settlement stocks to simulate available inputs
+    (r.settlements[0].goodStocks ??= {})['coal'] = 5;
+    (r.settlements[0].goodStocks)['iron'] = 5;
+    (r.settlements[0].goodStocks)['chemicals'] = 0;
 
     // Give industry output so raw material proxy works
     for (const s of r.settlements) {
@@ -138,7 +138,7 @@ describe('tickIntermediateGoods()', () => {
     r.tickIntermediateGoods();
     // chemicals should have been produced (coal input available via proxy or stock)
     // After production, chemicals stock should increase
-    expect(r.intermediateGoodStocks['chemicals']).toBeGreaterThanOrEqual(0);
+    expect(r.goodStock('chemicals')).toBeGreaterThanOrEqual(0);
   });
 
   it('starts with supplyChainHealth at 1.0 before any goods unlock', () => {
@@ -149,42 +149,38 @@ describe('tickIntermediateGoods()', () => {
     expect(r.supplyChainHealth).toBe(1.0);
   });
 
-  it('intermediateGoodStocks starts as empty record', () => {
+  it('goodStocksSnapshot starts as empty record (no per-town stocks yet)', () => {
     const r = twoTownSim(42);
-    expect(r.intermediateGoodStocks).toEqual({});
+    expect(r.goodStocksSnapshot()).toEqual({});
   });
 
   it('produces output when stock inputs explicitly available', () => {
     const r = twoTownSim(42);
 
-    // Manually give it chemicals stock to produce pharmaceuticals (era 1940)
-    r.intermediateGoodStocks['chemicals'] = 10;
-
-    // Override year check by providing stocks and calling directly
-    const orig = Object.getOwnPropertyDescriptor(RegionSim.prototype, 'year') ??
-      { get: undefined, configurable: true };
+    // Seed chemicals stock to simulate available inputs (era 1940 pharma would consume it)
+    (r.settlements[0].goodStocks ??= {})['chemicals'] = 10;
 
     // Directly test the logic: inject stock, call, check pharma output
     // chemicals input is available (stock=10), so pharmaceuticals (1940) can produce if year >= 1940
     // We'll check the method doesn't crash and stock is handled properly
     r.tickIntermediateGoods(); // year ~1900, nothing unlocked
     // No goods unlocked yet at game start so stocks unchanged
-    expect(r.intermediateGoodStocks['chemicals']).toBe(10);
+    expect(r.goodStock('chemicals')).toBe(10);
   });
 
   it('does not produce goods whose era has not been reached', () => {
     const r = twoTownSim(42);
     // Year is ~1900; no goods should be produced
-    r.intermediateGoodStocks['coal'] = 100;
-    r.intermediateGoodStocks['iron'] = 100;
-    r.intermediateGoodStocks['chemicals'] = 100;
-    r.intermediateGoodStocks['components'] = 100;
-    r.intermediateGoodStocks['copper'] = 100;
+    (r.settlements[0].goodStocks ??= {})['coal'] = 100;
+    r.settlements[0].goodStocks['iron'] = 100;
+    r.settlements[0].goodStocks['chemicals'] = 100;
+    r.settlements[0].goodStocks['components'] = 100;
+    r.settlements[0].goodStocks['copper'] = 100;
 
-    const before = { ...r.intermediateGoodStocks };
+    const chemBefore = r.goodStock('chemicals');
     r.tickIntermediateGoods();
     // No production because no goods are unlocked at year ~1900
-    expect(r.intermediateGoodStocks['chemicals']).toBe(before['chemicals']);
+    expect(r.goodStock('chemicals')).toBe(chemBefore);
   });
 
   it('supplyChainHealth defaults to 1 when no goods are active', () => {
@@ -195,27 +191,26 @@ describe('tickIntermediateGoods()', () => {
 });
 
 // ============================================================
-// 2b. Goods stock ledger accessors (per-settlement-stocks seam)
+// 2b. Goods stock ledger accessors (per-settlement storage)
 // ============================================================
-// These wrap the nation-wide `intermediateGoodStocks` pool today; locking in
-// their contract here means the later per-settlement storage swap can be judged
-// against an explicit spec, not just the inline behaviour it replaced.
+// The backing store is per-settlement `goodStocks`; the nation-wide totals the
+// supply chain and these accessors expose are the sum across towns.
 describe('goods stock ledger accessors', () => {
-  it('goodStock reads 0 for an untracked good and the stored value otherwise', () => {
+  it('goodStock reads 0 for an untracked good and the summed per-town value otherwise', () => {
     const r = twoTownSim(42);
     expect(r.goodStock('chemicals')).toBe(0);
-    r.intermediateGoodStocks['chemicals'] = 7;
+    (r.settlements[0].goodStocks ??= {})['chemicals'] = 7;
     expect(r.goodStock('chemicals')).toBe(7);
   });
 
-  it('hasGoodStock distinguishes "untracked" from "tracked at 0"', () => {
+  it('hasGoodStock distinguishes "untracked anywhere" from "tracked at 0"', () => {
     const r = twoTownSim(42);
     expect(r.hasGoodStock('chemicals')).toBe(false);
-    r.intermediateGoodStocks['chemicals'] = 0;
+    (r.settlements[0].goodStocks ??= {})['chemicals'] = 0;
     expect(r.hasGoodStock('chemicals')).toBe(true); // tracked, even at zero
   });
 
-  it('produceGood creates the entry and accumulates units', () => {
+  it('produceGood creates entries and accumulates; aggregate matches qty', () => {
     const r = twoTownSim(42);
     r.produceGood('chemicals', 4);
     r.produceGood('chemicals', 1.5);
@@ -224,7 +219,7 @@ describe('goods stock ledger accessors', () => {
 
   it('drawGood floors a tracked stock at 0 and never goes negative', () => {
     const r = twoTownSim(42);
-    r.intermediateGoodStocks['chemicals'] = 3;
+    (r.settlements[0].goodStocks ??= {})['chemicals'] = 3;
     r.drawGood('chemicals', 2);
     expect(r.goodStock('chemicals')).toBe(1);
     r.drawGood('chemicals', 5);
@@ -238,29 +233,46 @@ describe('goods stock ledger accessors', () => {
     expect(r.goodStock('coal')).toBe(0);
   });
 
-  it('seedGoodStock creates a 0 entry but never overwrites an existing stock', () => {
+  it('seedGoodStock creates a 0 entry in the capital but never overwrites an existing stock', () => {
     const r = twoTownSim(42);
     r.seedGoodStock('chemicals');
     expect(r.hasGoodStock('chemicals')).toBe(true);
     expect(r.goodStock('chemicals')).toBe(0);
-    r.intermediateGoodStocks['chemicals'] = 9;
-    r.seedGoodStock('chemicals'); // no-op when present
+    // Directly write a value into whichever town holds the seeded entry
+    for (const t of r.settlements) {
+      if (t.goodStocks?.['chemicals'] !== undefined) { t.goodStocks['chemicals'] = 9; break; }
+    }
+    r.seedGoodStock('chemicals'); // no-op when already tracked
     expect(r.goodStock('chemicals')).toBe(9);
   });
 
-  it('snapshot/restore round-trip the ledger; restore backfills an absent save', () => {
+  it('goodStocksSnapshot aggregates per-town stocks into one record', () => {
     const r = twoTownSim(42);
-    r.produceGood('chemicals', 5);
-    r.produceGood('components', 3);
+    r.settlements[0].goodStocks = { chemicals: 5 };
+    r.settlements[1].goodStocks = { components: 3 };
     const snap = r.goodStocksSnapshot();
     expect(snap).toEqual({ chemicals: 5, components: 3 });
+  });
 
-    r.restoreGoodStocks({ steel: 2 });
+  it('restoreGoodStocks migrates a legacy pool into the capital when no per-town data exists', () => {
+    const r = twoTownSim(42);
+    r.restoreGoodStocks({ steel: 2, chemicals: 5 });
     expect(r.goodStock('steel')).toBe(2);
-    expect(r.goodStock('chemicals')).toBe(0);
+    expect(r.goodStock('chemicals')).toBe(5);
+  });
 
-    r.restoreGoodStocks(undefined); // an old save missing the field
-    expect(r.intermediateGoodStocks).toEqual({});
+  it('restoreGoodStocks is a no-op when per-town stocks are already present', () => {
+    const r = twoTownSim(42);
+    r.settlements[0].goodStocks = { chemicals: 9 };
+    r.restoreGoodStocks({ steel: 2 }); // should not migrate — per-town data exists
+    expect(r.goodStock('steel')).toBe(0);
+    expect(r.goodStock('chemicals')).toBe(9);
+  });
+
+  it('restoreGoodStocks(undefined) is a no-op (missing field in an old save)', () => {
+    const r = twoTownSim(42);
+    r.restoreGoodStocks(undefined);
+    expect(r.goodStocksSnapshot()).toEqual({});
   });
 });
 
@@ -702,13 +714,15 @@ describe('currency union export bonus', () => {
 // 11. Serialization round-trips
 // ============================================================
 describe('serialization', () => {
-  it('round-trips intermediateGoodStocks', () => {
+  it('round-trips per-settlement goodStocks through serialize/deserialize', () => {
     const r = twoTownSim(42);
-    r.intermediateGoodStocks = { chemicals: 5, components: 3 };
-    const json = r.serialize();
-    const r2 = RegionSim.deserialize(json);
-    expect(r2.intermediateGoodStocks['chemicals']).toBe(5);
-    expect(r2.intermediateGoodStocks['components']).toBe(3);
+    r.settlements[0].goodStocks = { chemicals: 5 };
+    r.settlements[1].goodStocks = { components: 3 };
+    const r2 = RegionSim.deserialize(r.serialize());
+    expect(r2.goodStock('chemicals')).toBe(5);
+    expect(r2.goodStock('components')).toBe(3);
+    expect(r2.settlements[0].goodStocks?.['chemicals']).toBe(5);
+    expect(r2.settlements[1].goodStocks?.['components']).toBe(3);
   });
 
   it('round-trips supplyChainHealth', () => {
@@ -761,12 +775,23 @@ describe('serialization', () => {
     expect(r2.currencyUnionPartnerId).toBe(3);
   });
 
-  it('old saves (missing fields) backfill intermediateGoodStocks with {}', () => {
+  it('old saves with top-level intermediateGoodStocks migrate the pool into the capital', () => {
     const r = twoTownSim(42);
     const data = JSON.parse(r.serialize());
-    delete data.intermediateGoodStocks;
+    // Simulate an old save: no per-town goodStocks, legacy top-level pool present
+    for (const s of data.settlements) delete s.goodStocks;
+    data.intermediateGoodStocks = { chemicals: 5, components: 3 };
     const r2 = RegionSim.deserialize(JSON.stringify(data));
-    expect(r2.intermediateGoodStocks).toEqual({});
+    expect(r2.goodStock('chemicals')).toBe(5);
+    expect(r2.goodStock('components')).toBe(3);
+  });
+
+  it('new saves without a top-level intermediateGoodStocks field are unaffected', () => {
+    const r = twoTownSim(42);
+    const data = JSON.parse(r.serialize());
+    expect(data.intermediateGoodStocks).toBeUndefined();
+    const r2 = RegionSim.deserialize(JSON.stringify(data));
+    expect(r2.goodStocksSnapshot()).toEqual({});
   });
 
   it('old saves backfill supplyChainHealth with 1.0', () => {

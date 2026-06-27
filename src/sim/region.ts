@@ -95,6 +95,13 @@ export interface Settlement {
   sectors: Sectors;
   /** Phase 2: civic works raised in a managed city (building def ids). */
   buildings: string[];
+  /** Per-settlement-stocks (Tier-3): this town's share of the intermediate-goods
+   *  ledger, good id → units. Optional + sparse — created lazily when a town first
+   *  banks a good, absent (and unserialized) otherwise, so old saves migrate for
+   *  free. The nation-wide totals the supply chain reads are the SUM across towns
+   *  (`goodStock`), so this split is economy-neutral today; it's the storage the
+   *  later "consume / ship goods where produced" work builds on. */
+  goodStocks?: Record<string, number>;
   /** Spatial-4X Phase B: where each raised building sits, as a cell index
    *  (col*REGION_N + row). Render-only — the economy still reads `buildings`, so
    *  this is purely additive. Stays in sync with `buildings` via completion +
@@ -240,6 +247,22 @@ export const INTERMEDIATE_GOODS: IntermediateGood[] = [
   { id: 'electronics',     name: 'Electronics',     eraUnlock: 1950, inputs: ['components', 'copper'],      baseOutput: 5  },
   { id: 'luxury_goods',    name: 'Luxury Goods',    eraUnlock: 1955, inputs: ['textiles', 'electronics'],   baseOutput: 3  },
 ];
+
+/** Goods whose direct recipe pulls an agricultural raw (grain/livestock) — the
+ *  food/textile line. Production of these is attributed to a town's AGRICULTURE
+ *  output; everything else (steel, chemicals, machinery, …) to its INDUSTRY
+ *  output, when splitting a tick's production across settlements (`produceGood`).
+ *  The split only decides which town's bucket holds the units — the supply chain
+ *  reads the nation-wide sum — so this mapping is economy-neutral, a future-economy
+ *  attribution choice, not a balance one. */
+const AGRI_ATTRIBUTED_GOODS = new Set(
+  INTERMEDIATE_GOODS.filter((g) => g.inputs.some((i) => AGRICULTURAL_RAWS.has(i))).map((g) => g.id),
+);
+
+/** The extracting/producing sector a good's output is attributed to per-settlement. */
+function goodProducingSector(goodId: string): 'industry' | 'agriculture' {
+  return AGRI_ATTRIBUTED_GOODS.has(goodId) ? 'agriculture' : 'industry';
+}
 
 /** Maximum industrial-output drag from a *total* supply-chain collapse — every
  *  unlocked good's upstream chain cut. Small and bounded: a full cascade trims
@@ -2919,8 +2942,9 @@ export class RegionSim {
   /** True once the polarization reduction from media literacy has been applied. */
   mediaLiteracyApplied = false;
   // ---- Phase 15: Extended Economy & FX (GDD §5.2) ----
-  /** Current stock of each intermediate good (units). */
-  intermediateGoodStocks: Record<string, number> = {};
+  // The intermediate-goods stock ledger now lives PER SETTLEMENT
+  // (`Settlement.goodStocks`); the nation-wide totals the supply chain reads are
+  // the sum across towns, exposed through the `goodStock`/`produceGood`/… accessors.
   /** Trailing EWMA of each extracting sector's total output, the "recent norm"
    *  the graded raw proxy measures contractions against (see `sectorRawLevel`).
    *  Seeded lazily from the first observed output; serialized so the norm — and
@@ -6132,55 +6156,136 @@ export class RegionSim {
 
   // ---- Phase 15: Intermediate Goods, Supply Chains, Arbitrage & FX (GDD §5.2) ----
 
-  // --- Intermediate-goods stock ledger (the per-settlement-stocks seam) ---
-  // Every read/write of the goods ledger flows through these accessors so the
-  // backing store can later move from one nation-wide pool to per-settlement
-  // stocks (the Tier-3 roadmap step) without disturbing the production /
-  // consumption / supply-chain logic. Today they wrap a single
-  // `intermediateGoodStocks` record, so behaviour AND the serialized form are
-  // byte-identical to the inline field access they replace.
+  // --- Intermediate-goods stock ledger (now PER SETTLEMENT) ---
+  // Every read/write of the goods ledger flows through these accessors. The
+  // backing store is `Settlement.goodStocks` (good id → units, per town); the
+  // nation-wide totals the production/consumption/supply-chain logic reads are the
+  // SUM across towns. Production is split across settlements by the output of the
+  // sector that makes the good, and a draw is taken greedily across towns — so the
+  // aggregate every reader sees moves exactly as the old single nation-wide pool
+  // did (the supply chain is economy-neutral), while the storage is now the
+  // per-town store the "consume / ship goods where produced" work builds on.
 
-  /** Current nation-wide stock of a good, in units (0 if the good is untracked). */
+  /** Current nation-wide stock of a good, in units (0 if untracked everywhere) —
+   *  the sum over every settlement's per-town ledger. */
   goodStock(goodId: string): number {
-    return this.intermediateGoodStocks[goodId] ?? 0;
+    let total = 0;
+    for (const t of this.settlements) total += t.goodStocks?.[goodId] ?? 0;
+    return total;
   }
 
-  /** Whether the ledger tracks this good at all (distinct from "tracked, at 0").
-   *  A raw material with no ledger entry resolves through its extracting sector
-   *  rather than from stock — see `rawSupplyLevel`. */
+  /** Whether ANY settlement tracks this good (distinct from "tracked, at 0"). A raw
+   *  with no ledger entry anywhere resolves through its extracting sector rather
+   *  than from stock — see `rawSupplyLevel`. */
   hasGoodStock(goodId: string): boolean {
-    return this.intermediateGoodStocks[goodId] !== undefined;
+    for (const t of this.settlements) {
+      if (t.goodStocks !== undefined && goodId in t.goodStocks) return true;
+    }
+    return false;
   }
 
-  /** Add produced units to a good's stock, creating the entry if needed. */
+  /** Add produced units to a good's stock, distributed across settlements by the
+   *  output of the sector that makes it (`goodProducingSector`). The aggregate is
+   *  unchanged (Σ over towns == qty: every contributing town but the last gets its
+   *  proportional share, the last gets the exact remainder so no float drift), so
+   *  `goodStock` — and therefore the economy — is byte-identical to the old
+   *  single-pool deposit. When no town reports output in the producing sector
+   *  (pre-industrial years, a bare test fixture), the units bank in the capital so
+   *  none are lost. */
   produceGood(goodId: string, qty: number): void {
-    this.intermediateGoodStocks[goodId] = this.goodStock(goodId) + qty;
+    if (qty <= 0) return;
+    const ts = this.settlements;
+    if (ts.length === 0) return;
+    const sector = goodProducingSector(goodId);
+    const weight = (t: Settlement): number => Math.max(0, t.sectors?.[sector]?.output ?? 0);
+    let totalW = 0;
+    let lastPos = -1;
+    for (let i = 0; i < ts.length; i++) {
+      const w = weight(ts[i]);
+      totalW += w;
+      if (w > 0) lastPos = i;
+    }
+    if (totalW <= 0) {
+      this.addGoodStock(this.capitalSettlement() ?? ts[0], goodId, qty);
+      return;
+    }
+    let assigned = 0;
+    for (let i = 0; i < ts.length; i++) {
+      const w = weight(ts[i]);
+      if (w <= 0) continue;
+      const share = i === lastPos ? qty - assigned : (qty * w) / totalW;
+      this.addGoodStock(ts[i], goodId, share);
+      assigned += share;
+    }
   }
 
-  /** Draw units from a TRACKED good's stock, floored at 0. A no-op when the good
-   *  isn't ledger-tracked (a raw input proxied by its extracting sector) — exactly
-   *  the old `if (stock[input] !== undefined)` guard, now owned by the ledger. */
+  /** Draw units from a TRACKED good's stock, floored at 0 in aggregate. Drained
+   *  greedily across settlements in order, so the nation-wide total falls by exactly
+   *  min(qty, total) — identical to the old single-pool `max(0, pool − qty)` — using
+   *  only subtraction (no division), so the floor lands on an exact value. A no-op
+   *  when the good isn't tracked anywhere (a raw input proxied by its extracting
+   *  sector) — exactly the old `if (stock[input] !== undefined)` guard. */
   drawGood(goodId: string, qty: number): void {
-    const cur = this.intermediateGoodStocks[goodId];
-    if (cur === undefined) return;
-    this.intermediateGoodStocks[goodId] = Math.max(0, cur - qty);
+    if (qty <= 0 || !this.hasGoodStock(goodId)) return;
+    let remaining = qty;
+    for (const t of this.settlements) {
+      if (remaining <= 0) break;
+      const have = t.goodStocks?.[goodId];
+      if (have === undefined || have <= 0) continue;
+      const take = Math.min(have, remaining);
+      t.goodStocks![goodId] = have - take;
+      remaining -= take;
+    }
   }
 
-  /** Ensure a good has a ledger entry, seeding it to 0 if absent, so a good that
-   *  produced nothing this month still shows up in the ledger. No-op if present. */
+  /** Ensure a good has a ledger entry, seeding it to 0 in the capital if no town
+   *  tracks it yet, so a good that produced nothing this month still appears in the
+   *  ledger. No-op if already tracked anywhere (never overwrites a stock). */
   seedGoodStock(goodId: string): void {
-    if (this.intermediateGoodStocks[goodId] === undefined) this.intermediateGoodStocks[goodId] = 0;
+    if (this.hasGoodStock(goodId)) return;
+    const cap = this.capitalSettlement() ?? this.settlements[0];
+    if (cap !== undefined) this.addGoodStock(cap, goodId, 0);
   }
 
-  /** The ledger snapshot written to a save. The storage swap (per-settlement
-   *  stocks) repoints this and `restoreGoodStocks`; identical to the raw field today. */
+  /** Lazily create a settlement's per-town ledger and add `qty` to a good. */
+  private addGoodStock(t: Settlement, goodId: string, qty: number): void {
+    (t.goodStocks ??= {})[goodId] = (t.goodStocks[goodId] ?? 0) + qty;
+  }
+
+  /** The settlement that banks unattributed deposits — a legacy-save migration, a
+   *  zero-output early-game seed: the player's capital, else the first settlement. */
+  private capitalSettlement(): Settlement | undefined {
+    const capId = this.faction(this.playerFactionId)?.capital;
+    return this.settlements.find((s) => s.id === capId) ?? this.settlements[0];
+  }
+
+  /** The derived nation-wide ledger (good id → summed units across all towns). No
+   *  longer the serialized form — each settlement serializes its own `goodStocks` —
+   *  but kept for the UI/debug aggregate view and as a stable read in tests. */
   goodStocksSnapshot(): Record<string, number> {
-    return this.intermediateGoodStocks;
+    const agg: Record<string, number> = {};
+    for (const t of this.settlements) {
+      if (t.goodStocks === undefined) continue;
+      for (const id of Object.keys(t.goodStocks)) agg[id] = (agg[id] ?? 0) + t.goodStocks[id];
+    }
+    return agg;
   }
 
-  /** Restore the ledger from a save, backfilling an absent field to an empty pool. */
+  /** Migrate a legacy nation-wide ledger (an old save's top-level
+   *  `intermediateGoodStocks`) into the per-settlement store by depositing the whole
+   *  pool into the capital — but ONLY when no settlement already carries per-town
+   *  stocks, so a new save (whose stocks ride the settlement spread) is never
+   *  clobbered. Absent/empty pool → no-op. */
   restoreGoodStocks(data: Record<string, number> | undefined): void {
-    this.intermediateGoodStocks = data ?? {};
+    if (data === undefined) return;
+    const ids = Object.keys(data);
+    if (ids.length === 0) return;
+    for (const t of this.settlements) {
+      if (t.goodStocks !== undefined && Object.keys(t.goodStocks).length > 0) return;
+    }
+    const cap = this.capitalSettlement() ?? this.settlements[0];
+    if (cap === undefined) return;
+    for (const id of ids) this.addGoodStock(cap, id, data[id]);
   }
 
   /** Process all intermediate goods that are unlocked in the current year.
@@ -12663,7 +12768,10 @@ export class RegionSim {
       govLockExpiry: this.govLockExpiry ?? null,
       difficultySettings: this.difficultySettings ?? { ...DEFAULT_DIFFICULTY_SETTINGS },
       // Phase 15: Extended Economy & FX
-      intermediateGoodStocks: this.goodStocksSnapshot(),
+      // Note: intermediate-goods stocks are now per-settlement and ride the
+      // `settlements` spread above — no top-level field. Old saves that carry a
+      // top-level `intermediateGoodStocks` are migrated to the capital in
+      // `restoreGoodStocks` during deserialize.
       sectorOutputNorm: this.sectorOutputNorm,
       rawEmbargoes: this.rawEmbargoes,
       supplyChainHealth: this.supplyChainHealth,

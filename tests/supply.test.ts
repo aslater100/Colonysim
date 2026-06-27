@@ -269,8 +269,8 @@ describe('tickIntermediateGoods() cascade integration', () => {
     flowAllRaws(r);
     r.tickIntermediateGoods();
     expect(r.getSupplyChainHealth()).toBe(1);
-    expect(r.intermediateGoodStocks['electronics']).toBeGreaterThan(0);
-    expect(r.intermediateGoodStocks['food']).toBeGreaterThan(0);
+    expect(r.goodStock('electronics')).toBeGreaterThan(0);
+    expect(r.goodStock('food')).toBeGreaterThan(0);
   });
 
   it('does NOT let pharmaceuticals free-ride on buffered chemicals when coal is cut', () => {
@@ -284,15 +284,15 @@ describe('tickIntermediateGoods() cascade integration', () => {
       s.sectors.industry.output = 0;
       s.sectors.agriculture.output = 0;
     }
-    r.intermediateGoodStocks['chemicals'] = 100; // a fat upstream buffer …
-    r.intermediateGoodStocks['pharmaceuticals'] = 0;
+    (r.settlements[0].goodStocks ??= {})['chemicals'] = 100; // a fat upstream buffer …
+    r.settlements[0].goodStocks['pharmaceuticals'] = 0;
 
     r.tickIntermediateGoods();
 
     // … that no longer rescues the downstream good.
-    expect(r.intermediateGoodStocks['pharmaceuticals']).toBe(0);
+    expect(r.goodStock('pharmaceuticals')).toBe(0);
     expect(r.getSupplyChainHealth()).toBe(0);
-    expect(r.intermediateGoodStocks['chemicals']).toBe(100); // unconsumed: nobody could run
+    expect(r.goodStock('chemicals')).toBe(100); // unconsumed: nobody could run
   });
 
   it('slows research when an electronics outage cascades from a raw shortage', () => {

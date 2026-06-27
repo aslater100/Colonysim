@@ -248,11 +248,11 @@ describe('supplyChainSnapshot()', () => {
     pinYear(r, 2000);
     flowAllRaws(r);
     r.tickIntermediateGoods();
-    const stocksBefore = JSON.stringify(r.intermediateGoodStocks);
+    const stocksBefore = JSON.stringify(r.goodStocksSnapshot());
     const healthBefore = r.getSupplyChainHealth();
     r.supplyChainSnapshot();
     r.supplyChainSnapshot();
-    expect(JSON.stringify(r.intermediateGoodStocks)).toBe(stocksBefore);
+    expect(JSON.stringify(r.goodStocksSnapshot())).toBe(stocksBefore);
     expect(r.getSupplyChainHealth()).toBe(healthBefore);
   });
 });
