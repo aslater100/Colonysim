@@ -6132,6 +6132,57 @@ export class RegionSim {
 
   // ---- Phase 15: Intermediate Goods, Supply Chains, Arbitrage & FX (GDD §5.2) ----
 
+  // --- Intermediate-goods stock ledger (the per-settlement-stocks seam) ---
+  // Every read/write of the goods ledger flows through these accessors so the
+  // backing store can later move from one nation-wide pool to per-settlement
+  // stocks (the Tier-3 roadmap step) without disturbing the production /
+  // consumption / supply-chain logic. Today they wrap a single
+  // `intermediateGoodStocks` record, so behaviour AND the serialized form are
+  // byte-identical to the inline field access they replace.
+
+  /** Current nation-wide stock of a good, in units (0 if the good is untracked). */
+  goodStock(goodId: string): number {
+    return this.intermediateGoodStocks[goodId] ?? 0;
+  }
+
+  /** Whether the ledger tracks this good at all (distinct from "tracked, at 0").
+   *  A raw material with no ledger entry resolves through its extracting sector
+   *  rather than from stock — see `rawSupplyLevel`. */
+  hasGoodStock(goodId: string): boolean {
+    return this.intermediateGoodStocks[goodId] !== undefined;
+  }
+
+  /** Add produced units to a good's stock, creating the entry if needed. */
+  produceGood(goodId: string, qty: number): void {
+    this.intermediateGoodStocks[goodId] = this.goodStock(goodId) + qty;
+  }
+
+  /** Draw units from a TRACKED good's stock, floored at 0. A no-op when the good
+   *  isn't ledger-tracked (a raw input proxied by its extracting sector) — exactly
+   *  the old `if (stock[input] !== undefined)` guard, now owned by the ledger. */
+  drawGood(goodId: string, qty: number): void {
+    const cur = this.intermediateGoodStocks[goodId];
+    if (cur === undefined) return;
+    this.intermediateGoodStocks[goodId] = Math.max(0, cur - qty);
+  }
+
+  /** Ensure a good has a ledger entry, seeding it to 0 if absent, so a good that
+   *  produced nothing this month still shows up in the ledger. No-op if present. */
+  seedGoodStock(goodId: string): void {
+    if (this.intermediateGoodStocks[goodId] === undefined) this.intermediateGoodStocks[goodId] = 0;
+  }
+
+  /** The ledger snapshot written to a save. The storage swap (per-settlement
+   *  stocks) repoints this and `restoreGoodStocks`; identical to the raw field today. */
+  goodStocksSnapshot(): Record<string, number> {
+    return this.intermediateGoodStocks;
+  }
+
+  /** Restore the ledger from a save, backfilling an absent field to an empty pool. */
+  restoreGoodStocks(data: Record<string, number> | undefined): void {
+    this.intermediateGoodStocks = data ?? {};
+  }
+
   /** Process all intermediate goods that are unlocked in the current year.
    *  A good produces its baseOutput only when its whole upstream chain is intact:
    *  a raw-material outage cascades downstream (lose coal → lose chemicals → lose
@@ -6168,14 +6219,12 @@ export class RegionSim {
     for (const good of availableGoods) {
       const level = result.levels.get(good.id) ?? 0;
       if (level >= SUPPLY_FULL_EPS) {
-        this.intermediateGoodStocks[good.id] = (this.intermediateGoodStocks[good.id] ?? 0) + good.baseOutput * level;
+        this.produceGood(good.id, good.baseOutput * level);
         for (const inputId of good.inputs) {
-          if (this.intermediateGoodStocks[inputId] !== undefined) {
-            this.intermediateGoodStocks[inputId] = Math.max(0, this.intermediateGoodStocks[inputId] - level);
-          }
+          this.drawGood(inputId, level);
         }
-      } else if (this.intermediateGoodStocks[good.id] === undefined) {
-        this.intermediateGoodStocks[good.id] = 0;
+      } else {
+        this.seedGoodStock(good.id);
       }
     }
 
@@ -6225,8 +6274,8 @@ export class RegionSim {
     if (embargo !== undefined && this.day < embargo.until) {
       return Math.max(0, 1 - embargo.cut);
     }
-    if (this.intermediateGoodStocks[inputId] !== undefined) {
-      return this.intermediateGoodStocks[inputId] > 0 ? 1 : 0;
+    if (this.hasGoodStock(inputId)) {
+      return this.goodStock(inputId) > 0 ? 1 : 0;
     }
     if (EXTRACTIVE_RAWS.has(inputId)) return this.sectorRawLevel('industry');
     if (AGRICULTURAL_RAWS.has(inputId)) return this.sectorRawLevel('agriculture');
@@ -12614,7 +12663,7 @@ export class RegionSim {
       govLockExpiry: this.govLockExpiry ?? null,
       difficultySettings: this.difficultySettings ?? { ...DEFAULT_DIFFICULTY_SETTINGS },
       // Phase 15: Extended Economy & FX
-      intermediateGoodStocks: this.intermediateGoodStocks,
+      intermediateGoodStocks: this.goodStocksSnapshot(),
       sectorOutputNorm: this.sectorOutputNorm,
       rawEmbargoes: this.rawEmbargoes,
       supplyChainHealth: this.supplyChainHealth,
@@ -12930,7 +12979,7 @@ export class RegionSim {
       ...(d.difficultySettings ?? {}),
     };
     // Phase 15: Extended Economy & FX (pre-Phase15 saves default to safe values)
-    r.intermediateGoodStocks = d.intermediateGoodStocks ?? {};
+    r.restoreGoodStocks(d.intermediateGoodStocks);
     // Trailing output norms for the graded raw proxy. Pre-graded saves lack them;
     // backfill to 0 (unwarmed) so the norm re-seeds from live output, parity-clean.
     r.sectorOutputNorm = {

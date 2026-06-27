@@ -195,6 +195,76 @@ describe('tickIntermediateGoods()', () => {
 });
 
 // ============================================================
+// 2b. Goods stock ledger accessors (per-settlement-stocks seam)
+// ============================================================
+// These wrap the nation-wide `intermediateGoodStocks` pool today; locking in
+// their contract here means the later per-settlement storage swap can be judged
+// against an explicit spec, not just the inline behaviour it replaced.
+describe('goods stock ledger accessors', () => {
+  it('goodStock reads 0 for an untracked good and the stored value otherwise', () => {
+    const r = twoTownSim(42);
+    expect(r.goodStock('chemicals')).toBe(0);
+    r.intermediateGoodStocks['chemicals'] = 7;
+    expect(r.goodStock('chemicals')).toBe(7);
+  });
+
+  it('hasGoodStock distinguishes "untracked" from "tracked at 0"', () => {
+    const r = twoTownSim(42);
+    expect(r.hasGoodStock('chemicals')).toBe(false);
+    r.intermediateGoodStocks['chemicals'] = 0;
+    expect(r.hasGoodStock('chemicals')).toBe(true); // tracked, even at zero
+  });
+
+  it('produceGood creates the entry and accumulates units', () => {
+    const r = twoTownSim(42);
+    r.produceGood('chemicals', 4);
+    r.produceGood('chemicals', 1.5);
+    expect(r.goodStock('chemicals')).toBe(5.5);
+  });
+
+  it('drawGood floors a tracked stock at 0 and never goes negative', () => {
+    const r = twoTownSim(42);
+    r.intermediateGoodStocks['chemicals'] = 3;
+    r.drawGood('chemicals', 2);
+    expect(r.goodStock('chemicals')).toBe(1);
+    r.drawGood('chemicals', 5);
+    expect(r.goodStock('chemicals')).toBe(0);
+  });
+
+  it('drawGood is a no-op for an untracked good (a raw proxied by its sector)', () => {
+    const r = twoTownSim(42);
+    r.drawGood('coal', 5); // coal has no ledger entry — must not create one
+    expect(r.hasGoodStock('coal')).toBe(false);
+    expect(r.goodStock('coal')).toBe(0);
+  });
+
+  it('seedGoodStock creates a 0 entry but never overwrites an existing stock', () => {
+    const r = twoTownSim(42);
+    r.seedGoodStock('chemicals');
+    expect(r.hasGoodStock('chemicals')).toBe(true);
+    expect(r.goodStock('chemicals')).toBe(0);
+    r.intermediateGoodStocks['chemicals'] = 9;
+    r.seedGoodStock('chemicals'); // no-op when present
+    expect(r.goodStock('chemicals')).toBe(9);
+  });
+
+  it('snapshot/restore round-trip the ledger; restore backfills an absent save', () => {
+    const r = twoTownSim(42);
+    r.produceGood('chemicals', 5);
+    r.produceGood('components', 3);
+    const snap = r.goodStocksSnapshot();
+    expect(snap).toEqual({ chemicals: 5, components: 3 });
+
+    r.restoreGoodStocks({ steel: 2 });
+    expect(r.goodStock('steel')).toBe(2);
+    expect(r.goodStock('chemicals')).toBe(0);
+
+    r.restoreGoodStocks(undefined); // an old save missing the field
+    expect(r.intermediateGoodStocks).toEqual({});
+  });
+});
+
+// ============================================================
 // 3. Supply chain disruption effects
 // ============================================================
 describe('supply chain disruption effects', () => {
