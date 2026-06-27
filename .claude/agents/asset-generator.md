@@ -157,7 +157,8 @@ channel; if none is live, STOP and report what to provision.**
      server. For a live run the user must have their local SD server up.
    - Run: `npm run gen:local -- --slots=<slot>` (or `--category`, `--era`, or bare
      for all 11). Flags: `--api-url`, `--steps`, `--cfg`, `--sampler`, `--seed`,
-     `--model`, `--no-bg`, `--bg-tool=rembg`, `--bg-tol`, `--retries`. The tool
+     `--model`, `--no-bg`, `--bg-tool=rembg`, `--bg-tol`, `--max-dim` (cap gen
+     size for low-VRAM GPUs, e.g. `--max-dim=768` on a 4 GB card), `--retries`. The tool
      does steps 2–5 + manifest for you; you still do QA (7–8) and the git reset (9).
    - If `preflight` reports it can't reach the server → tell the user to start
      their local SD server (or pass `--api-url`), then retry. This is the channel

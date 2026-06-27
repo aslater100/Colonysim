@@ -47,6 +47,30 @@ describe('gen-local sizing', () => {
     expect(genSize(town)).toEqual({ width: 512, height: 512 });
     expect(genSize(back)).toEqual({ width: 1216, height: 704 });
   });
+
+  it('--max-dim caps the larger side, preserves aspect, snaps to 64 (low-VRAM)', () => {
+    // backdrop 1216×704 capped to 768 → 768×448 (≈ same 1.72 aspect, 64-multiples)
+    const b = genSize(back, 768);
+    expect(b.width).toBe(768);
+    expect(b.height).toBe(448);
+    expect(Math.max(b.width, b.height)).toBeLessThanOrEqual(768);
+    // town 512² is already within 768 → unchanged
+    expect(genSize(town, 768)).toEqual({ width: 512, height: 512 });
+    // a tighter cap also shrinks the town
+    expect(genSize(town, 384)).toEqual({ width: 384, height: 384 });
+  });
+
+  it('parses --max-dim (default 0 = uncapped)', () => {
+    expect(parseArgs([]).maxDim).toBe(0);
+    expect(parseArgs(['--max-dim=768']).maxDim).toBe(768);
+  });
+
+  it('the a1111 body and comfy graph honour --max-dim', () => {
+    const o = parseArgs(['--max-dim=768']);
+    expect(a1111Body(back, o)).toMatchObject({ width: 768, height: 448 });
+    const g = comfyGraph(back, parseArgs(['--backend=comfy', '--max-dim=768']), 1) as Record<string, { inputs: Record<string, unknown> }>;
+    expect(g['5'].inputs).toMatchObject({ width: 768, height: 448 });
+  });
 });
 
 describe('a1111 request body', () => {

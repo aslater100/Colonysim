@@ -21,6 +21,7 @@
  *   npm run gen:local                                # all 11 slots
  *   npm run gen:local -- --backend=comfy --model=sd_xl_base_1.0.safetensors
  *   npm run gen:local -- --slots=town-castle --bg-tool=rembg
+ *   npm run gen:local -- --max-dim=768           # low-VRAM (e.g. 4 GB): cap gen size
  *
  * It writes public/assets/<slot>.png and updates public/assets/asset_manifest.json
  * (town sprites get a transparent background; backdrops stay opaque). The COMMITTED
@@ -71,6 +72,7 @@ export interface Opts {
   bg: boolean;
   bgTool: 'builtin' | 'rembg';
   bgTol: number;
+  maxDim: number; // cap the larger generated side (0 = uncapped); for low-VRAM GPUs
   retries: number;
 }
 
@@ -82,15 +84,27 @@ export function snap64(n: number, floor = 0): number {
   return Math.max(Math.ceil(n / 64) * 64, floor);
 }
 
-/** Generation dims for a slot: towns floored to 512, backdrops keep their aspect. */
-export function genSize(s: AssetSlotDef): { width: number; height: number } {
+/** Generation dims for a slot: towns floored to 512, backdrops keep their aspect.
+ *  `maxDim` (0 = uncapped) caps the larger side for low-VRAM GPUs — e.g. a 4 GB
+ *  card can't render a 1216×704 backdrop, but `--max-dim=768` scales it to
+ *  768×448 (aspect preserved, snapped to 64-multiples). Backdrops fill the canvas
+ *  on screen regardless of source size, so the detail cost is negligible. */
+export function genSize(s: AssetSlotDef, maxDim = 0): { width: number; height: number } {
   const floor = s.category === 'town' ? 512 : 0;
-  return { width: snap64(s.w, floor), height: snap64(s.h, floor) };
+  let width = snap64(s.w, floor);
+  let height = snap64(s.h, floor);
+  if (maxDim > 0 && Math.max(width, height) > maxDim) {
+    const k = maxDim / Math.max(width, height);
+    const snapNear = (n: number) => Math.max(64, Math.round((n * k) / 64) * 64);
+    width = snapNear(width);
+    height = snapNear(height);
+  }
+  return { width, height };
 }
 
 /** AUTOMATIC1111 /sdapi/v1/txt2img request body. */
 export function a1111Body(s: AssetSlotDef, opts: Opts): Record<string, unknown> {
-  const { width, height } = genSize(s);
+  const { width, height } = genSize(s, opts.maxDim);
   const body: Record<string, unknown> = {
     prompt: s.prompt,
     negative_prompt: NEGATIVE,
@@ -112,7 +126,7 @@ export function a1111Body(s: AssetSlotDef, opts: Opts): Record<string, unknown> 
 /** A minimal ComfyUI txt2img workflow graph (API prompt format). `seed` must be a
  *  concrete number for ComfyUI (callers resolve -1 to a random seed first). */
 export function comfyGraph(s: AssetSlotDef, opts: Opts, seed: number): Record<string, unknown> {
-  const { width, height } = genSize(s);
+  const { width, height } = genSize(s, opts.maxDim);
   const ckpt = opts.model ?? 'sd_xl_base_1.0.safetensors';
   const sampler = opts.sampler && /_/.test(opts.sampler) ? opts.sampler : 'dpmpp_2m';
   return {
@@ -241,6 +255,7 @@ export function parseArgs(argv: string[]): Opts {
     bg: !flags.has('--no-bg'),
     bgTool: kv['bg-tool'] === 'rembg' ? 'rembg' : 'builtin',
     bgTol: kv['bg-tol'] != null ? parseInt(kv['bg-tol'], 10) : 1600,
+    maxDim: kv['max-dim'] != null ? parseInt(kv['max-dim'], 10) : 0,
     retries: kv.retries != null ? parseInt(kv.retries, 10) : 2,
   };
 }
@@ -313,13 +328,13 @@ export async function main(): Promise<void> {
 
   console.log('Centuria local AI asset generator');
   console.log(`  backend : ${opts.backend} @ ${opts.apiUrl}${opts.model ? ` (checkpoint ${opts.model})` : ''}`);
-  console.log(`  sampler : ${opts.sampler}${opts.backend === 'comfy' ? `/${opts.scheduler}` : ''}  steps ${opts.steps}  cfg ${opts.cfg}  seed ${opts.seed}`);
+  console.log(`  sampler : ${opts.sampler}${opts.backend === 'comfy' ? `/${opts.scheduler}` : ''}  steps ${opts.steps}  cfg ${opts.cfg}  seed ${opts.seed}${opts.maxDim ? `  max-dim ${opts.maxDim}` : ''}`);
   console.log(`  slots   : ${slots.length}`);
   console.log(`  mode    : ${opts.dryRun ? 'dry-run (no server calls)' : 'live'}\n`);
 
   if (opts.dryRun) {
     for (const s of slots) {
-      const { width, height } = genSize(s);
+      const { width, height } = genSize(s, opts.maxDim);
       const bg = s.category === 'town' && opts.bg ? ` +bg-cut(${opts.bgTool})` : '';
       console.log(`  ${s.slot.padEnd(16)} [${s.category}] ${width}×${height}${bg}`);
     }
