@@ -12,6 +12,7 @@ import {
   type Settlement,
 } from '../src/sim/region';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
+import { computeCongestionTariff, tickPriceArbitrage } from '../src/sim/systems/arbitrage';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
 
@@ -329,7 +330,7 @@ describe('computeCongestionTariff()', () => {
     const r = twoTownSim(42);
     if (r.settlements.length < 2) return;
     // Use IDs that won't have a route (very unlikely unless we route them)
-    const tariff = r.computeCongestionTariff(9999, 8888);
+    const tariff = computeCongestionTariff(r, 9999, 8888);
     expect(tariff).toBe(0.3);
   });
 
@@ -355,11 +356,11 @@ describe('computeCongestionTariff()', () => {
 
     // Good condition
     route.condition = 100;
-    const goodTariff = r.computeCongestionTariff(from.id, to.id);
+    const goodTariff = computeCongestionTariff(r, from.id, to.id);
 
     // Poor condition
     route.condition = 0;
-    const poorTariff = r.computeCongestionTariff(from.id, to.id);
+    const poorTariff = computeCongestionTariff(r, from.id, to.id);
 
     expect(poorTariff).toBeGreaterThanOrEqual(goodTariff);
   });
@@ -376,7 +377,7 @@ describe('computeCongestionTariff()', () => {
       terrainCost: 2, freight: 0, cargoType: null,
     });
 
-    const tariff = r.computeCongestionTariff(from.id, to.id);
+    const tariff = computeCongestionTariff(r, from.id, to.id);
     expect(tariff).toBeGreaterThanOrEqual(0.05);
     expect(tariff).toBeLessThanOrEqual(0.3);
   });
@@ -413,7 +414,7 @@ describe('tickPriceArbitrage()', () => {
       volume: 8, transitDays: 5, congestionTariff: 0.1, pendingIncome: 25, cargo: 0,
     });
     const before = r.treasury;
-    r.tickPriceArbitrage(); // transitDays 5 − DAYS_PER_MONTH(5) ≤ 0 → arrives this tick
+    tickPriceArbitrage(r); // transitDays 5 − DAYS_PER_MONTH(5) ≤ 0 → arrives this tick
     expect(r.tradeFlows.some(f => f.goodId === 'chemicals')).toBe(false); // delivered, gone
     expect(r.treasury).toBeCloseTo(before + 25, 5); // its pending income paid out on arrival
   });
@@ -426,7 +427,7 @@ describe('tickPriceArbitrage()', () => {
       volume: 8, transitDays: 10, congestionTariff: 0.1, pendingIncome: 25, cargo: 0,
     });
     const before = r.treasury;
-    r.tickPriceArbitrage();
+    tickPriceArbitrage(r);
     expect(r.tradeFlows.some(f => f.goodId === 'chemicals')).toBe(false); // lost in transit
     expect(r.treasury).toBe(before); // no payout for cargo that never arrived
   });
@@ -440,14 +441,14 @@ describe('tickPriceArbitrage()', () => {
       to.sectors[id].wage = 5;
     }
     const before = r.treasury;
-    r.tickPriceArbitrage();
+    tickPriceArbitrage(r);
     // A shipment is dispatched from the low-wage town to the high-wage one…
     const flow = r.tradeFlows.find(f => f.fromSettlementId === to.id && f.toSettlementId === from.id);
     expect(flow).toBeDefined();
     expect(flow!.pendingIncome).toBeGreaterThan(0);
     expect(r.treasury).toBe(before); // …but dispatch pays nothing — the profit is in transit
 
-    r.tickPriceArbitrage(); // next month it arrives
+    tickPriceArbitrage(r); // next month it arrives
     expect(r.treasury).toBeGreaterThan(before);
   });
 
@@ -476,7 +477,7 @@ describe('tickPriceArbitrage()', () => {
     forceDispatchWages(from, to); // buySide (source) is the low-wage town: `to`
     const seed = 1000;
     seedAllGoods(to, seed);
-    r.tickPriceArbitrage();
+    tickPriceArbitrage(r);
     const flow = r.tradeFlows.find(f => f.fromSettlementId === to.id && f.toSettlementId === from.id);
     expect(flow).toBeDefined();
     expect(flow!.cargo).toBeGreaterThan(0);
@@ -491,7 +492,7 @@ describe('tickPriceArbitrage()', () => {
     routeBetween(r, from.id, to.id);
     forceDispatchWages(from, to);
     to.goodStocks = {}; // source holds nothing
-    r.tickPriceArbitrage();
+    tickPriceArbitrage(r);
     const flow = r.tradeFlows.find(f => f.fromSettlementId === to.id && f.toSettlementId === from.id);
     expect(flow).toBeDefined();
     expect(flow!.cargo).toBe(0);
@@ -507,7 +508,7 @@ describe('tickPriceArbitrage()', () => {
       goodId: 'chemicals', fromSettlementId: from.id, toSettlementId: to.id,
       volume: 8, transitDays: 5, congestionTariff: 0.1, pendingIncome: 0, cargo: 4,
     });
-    r.tickPriceArbitrage(); // arrives this tick
+    tickPriceArbitrage(r); // arrives this tick
     expect(to.goodStocks?.['chemicals'] ?? 0).toBeCloseTo(destBefore + 4, 5);
   });
 
@@ -518,7 +519,7 @@ describe('tickPriceArbitrage()', () => {
     forceDispatchWages(from, to);
     const seed = 1000;
     seedAllGoods(to, seed);
-    r.tickPriceArbitrage(); // dispatch debits the source; the flow is now in transit
+    tickPriceArbitrage(r); // dispatch debits the source; the flow is now in transit
     const flow = r.tradeFlows.find(f => f.fromSettlementId === to.id && f.toSettlementId === from.id);
     expect(flow).toBeDefined();
     const { goodId, cargo } = flow!;
@@ -526,7 +527,7 @@ describe('tickPriceArbitrage()', () => {
     expect(to.goodStocks![goodId]).toBeCloseTo(seed - cargo, 5); // debited on dispatch
     const destBefore = from.goodStocks?.[goodId] ?? 0;
     r.routes = []; // sever the lane before it arrives
-    r.tickPriceArbitrage();
+    tickPriceArbitrage(r);
     expect(r.tradeFlows).toHaveLength(0); // stranded and dropped
     expect(to.goodStocks![goodId]).toBeCloseTo(seed - cargo, 5); // source remains debited…
     expect(from.goodStocks?.[goodId] ?? 0).toBe(destBefore); // …and the destination never received it

@@ -20,6 +20,7 @@ import { createInitialLenders } from './lenders';
 import { resolveSupplyChainGraded, SUPPLY_FULL_EPS } from './supply';
 import { tickPollution } from './systems/pollution';
 import { tickServiceCoverage } from './systems/services';
+import { tickPriceArbitrage } from './systems/arbitrage';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -5478,7 +5479,7 @@ export class RegionSim {
 
     // Phase 15: Intermediate goods, arbitrage, and FX tick
     this.tickIntermediateGoods();
-    this.tickPriceArbitrage();
+    tickPriceArbitrage(this); // Phase 15: price arbitrage + cargo shipments (systems/arbitrage.ts)
     this.tickFX();
 
     // Record monthly history for sparklines (last 12 months)
@@ -6253,16 +6254,20 @@ export class RegionSim {
     if (cap !== undefined) this.addGoodStock(cap, goodId, 0);
   }
 
-  /** Lazily create a settlement's per-town ledger and add `qty` to a good. */
-  private addGoodStock(t: Settlement, goodId: string, qty: number): void {
+  /** Lazily create a settlement's per-town ledger and add `qty` to a good.
+   *  Public so the extracted arbitrage system (systems/arbitrage.ts) can credit a
+   *  shipment's cargo to the destination town on arrival. */
+  addGoodStock(t: Settlement, goodId: string, qty: number): void {
     (t.goodStocks ??= {})[goodId] = (t.goodStocks[goodId] ?? 0) + qty;
   }
 
   /** Debit up to `max` units of a good from a town's ledger for shipment, returning
    *  the amount actually moved (≤ the town's holding, never negative — a town with
    *  none ships nothing). The dispatch complement of `addGoodStock` (the arrival
-   *  credit); used by the trade-flow pipeline to relocate real goods between towns. */
-  private shipGoodFrom(t: Settlement, goodId: string, max: number): number {
+   *  credit); used by the trade-flow pipeline to relocate real goods between towns.
+   *  Public so the extracted arbitrage system (systems/arbitrage.ts) can debit the
+   *  source town on dispatch. */
+  shipGoodFrom(t: Settlement, goodId: string, max: number): number {
     if (max <= 0) return 0;
     const have = t.goodStocks?.[goodId] ?? 0;
     const moved = Math.min(max, have);
@@ -6506,127 +6511,6 @@ export class RegionSim {
    *  real shortage cascades. Bounded so it can never zero industry. */
   supplyShockOutputMult(): number {
     return 1 - this.supplyShockSeverity() * SUPPLY_SHOCK_MAX_DRAG;
-  }
-
-  /** Compute a congestion tariff for a goods route between two settlements.
-   *  tariff = routeDistance × (1 + (1 − routeCondition/100) × 0.5), clamped 0.05–0.3. */
-  computeCongestionTariff(fromId: number, toId: number): number {
-    const route = this.routes.find(
-      (rt) => (rt.a === fromId && rt.b === toId) || (rt.a === toId && rt.b === fromId)
-    );
-    if (!route) return 0.3; // no route = maximum friction
-
-    const routeDistance = route.path.length;
-    const routeCondition = route.condition;
-    const tariff = (routeDistance / 100) * (1 + (1 - routeCondition / 100) * 0.5);
-    return Math.max(0.05, Math.min(0.3, tariff));
-  }
-
-  /** Tick price arbitrage between player settlements (GDD §5.2: physical goods on
-   *  routes, transit × congestion). Goods physically travel: a flow's arbitrage
-   *  profit is paid out only when the shipment ARRIVES (after `transitDays` of
-   *  travel, which congestion lengthens), and a flow whose route is severed
-   *  mid-transit is lost. Where a price differential exceeds congestion costs and
-   *  no shipment is already en route, a new flow is dispatched. */
-  tickPriceArbitrage(): void {
-    // 1. Advance in-transit shipments. Deliver those that arrive (pay out their
-    //    pending income); strand those whose route has been severed.
-    const stillMoving: typeof this.tradeFlows = [];
-    let delivered = 0;
-    let stranded = 0;
-    for (const flow of this.tradeFlows) {
-      // A flow needs a live route the whole way; a SEVERED lane loses its cargo.
-      // (A merely-congested route still delivers — only a missing one strands, so
-      // test for the route's existence, not the clamped-max congestion tariff.)
-      const hasRoute = this.routes.some(
-        (rt) =>
-          (rt.a === flow.fromSettlementId && rt.b === flow.toSettlementId) ||
-          (rt.a === flow.toSettlementId && rt.b === flow.fromSettlementId),
-      );
-      if (!hasRoute) {
-        stranded++;
-        continue;
-      }
-      flow.transitDays -= DAYS_PER_MONTH;
-      if (flow.transitDays <= 0) {
-        delivered += flow.pendingIncome;
-        // Land the physical cargo in the destination town's ledger (the source was
-        // debited on dispatch). A vanished destination simply drops the cargo.
-        if (flow.cargo > 0) {
-          const dest = this.settlement(flow.toSettlementId);
-          if (dest !== undefined) this.addGoodStock(dest, flow.goodId, flow.cargo);
-        }
-      } else {
-        stillMoving.push(flow);
-      }
-    }
-    this.tradeFlows = stillMoving;
-    if (delivered > 0) {
-      this.treasury += delivered;
-      if (this.rng.chance(0.1)) {
-        this.addLog(`Goods arrive: shipments deliver ${formatCurrency(Math.round(delivered))} in arbitrage profit.`, 'good');
-      }
-    }
-    if (stranded > 0 && this.rng.chance(0.15)) {
-      this.addLog(`Goods stranded: a severed route loses ${stranded} shipment${stranded > 1 ? 's' : ''} in transit.`, 'bad');
-    }
-
-    // 2. Dispatch new shipments where a differential beats the congestion cost.
-    const playerSettlements = this.settlements.filter(s => s.factionId === this.playerFactionId);
-    if (playerSettlements.length < 2) return;
-
-    const goodIds = INTERMEDIATE_GOODS
-      .filter(g => this.year >= g.eraUnlock)
-      .map(g => g.id);
-
-    for (let i = 0; i < playerSettlements.length; i++) {
-      for (let j = i + 1; j < playerSettlements.length; j++) {
-        const from = playerSettlements[i];
-        const to = playerSettlements[j];
-        const tariff = this.computeCongestionTariff(from.id, to.id);
-        if (tariff >= 0.3) continue; // no route
-
-        // Proxy price differential from wage gap (per-good prices are a follow-on).
-        const fromWage = this.avgWageOf(from);
-        const toWage = this.avgWageOf(to);
-        const priceDiff = Math.abs(fromWage - toWage);
-        const threshold = tariff * 10;
-        if (priceDiff <= threshold) continue;
-
-        // Goods flow from the cheaper market to the dearer one (buy low, sell high).
-        const buySide = fromWage > toWage ? to : from;   // lower wage/price — source
-        const sellSide = fromWage > toWage ? from : to;  // higher wage/price — market
-
-        // Only one shipment per lane at a time — wait for it to arrive before the next.
-        const existing = this.tradeFlows.find(
-          f => f.fromSettlementId === buySide.id && f.toSettlementId === sellSide.id
-        );
-        if (existing) continue;
-
-        const volume = Math.min(10, priceDiff * 2);
-        const goodId = goodIds.length > 0 ? goodIds[0] : 'components';
-        // Move the real units the source town can spare (≤ volume) out of its ledger
-        // now; they ride with the shipment and land at the destination on arrival.
-        // The dispatch decision, transit time and pendingIncome are unchanged — the
-        // cargo is purely additive bookkeeping, so the macro economy stays neutral
-        // (nothing reads intermediate-stock magnitudes; the solver proxies raws off
-        // sector output) while goods physically relocate between town warehouses —
-        // the substrate the later per-town supply solve consumes.
-        const cargo = this.shipGoodFrom(buySide, goodId, volume);
-        this.tradeFlows.push({
-          goodId,
-          fromSettlementId: buySide.id,
-          toSettlementId: sellSide.id,
-          volume,
-          // Congestion sets the travel time (≥1 day so a shipment always spends a
-          // tick in transit); the profit lands when it arrives, not now.
-          transitDays: Math.max(1, Math.round(tariff * 100)),
-          congestionTariff: tariff,
-          pendingIncome: volume * tariff * 5,
-          cargo,
-        });
-      }
-    }
   }
 
   /** Compute the exchange rate from trade balance, interest rate, and confidence.
