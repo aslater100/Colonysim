@@ -3,6 +3,7 @@ dist/
 *.log
 .claude/*
 !.claude/settings.json
+!.claude/agents/
 
 # AI-generated binary assets (hybrid distribution: ship as Release packs, not git
 # blobs). The committed manifests stay empty → procedural fallback. See

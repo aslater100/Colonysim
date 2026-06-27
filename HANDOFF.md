@@ -1,6 +1,28 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-26 · **Tests:** 906 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway (PRs #264, #265, #269, #272, #270, #274, **#276 + #277 + #278 + #279 merged — supply-chain cascade + GDP drag + MVP-18 DAG + oil-shock-through-chain + Supply UI**; save-size guard + live-slot asset generator + audio stems/ambience + wall-clock sim catch-up landed — asset *generation* blocked only by network egress). **This session: made raw availability GRADED — a fractional supply solver + a partial oil shock, then an extraction proxy that grades off a trailing output norm so ordinary recessions bite the chain, not just embargoes/total collapse (D1-econ, open PR).**
+**Last updated:** 2026-06-26 · **Tests:** 906 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway (PRs #264, #265, #269, #272, #270, #274, **#276 + #277 + #278 + #279 + #280 merged — supply-chain cascade + GDP drag + MVP-18 DAG + oil-shock-through-chain + Supply UI + graded raw availability**; save-size guard + live-slot asset generator + audio stems/ambience + wall-clock sim catch-up landed — asset *generation* blocked only by network egress). **This session: made raw availability GRADED — a fractional supply solver + a partial oil shock, then an extraction proxy that grades off a trailing output norm so ordinary recessions bite the chain, not just embargoes/total collapse (D1-econ, PR #280 MERGED).**
+
+> ⚠️ **Untested-by-human balance change live on `main`:** PR #280's *Phase-2 graded
+> extraction proxy* (an ordinary contraction now drags industry via the chain) is
+> validated only by unit tests + an 8-seed×181y headless macro-stability sweep — it
+> has **not** been eyeballed in-game. Worth a playtest during a downturn (depression
+> ~1929, a war) before building more economy on top of it. Dials live in `region.ts`:
+> `RAW_SHORTAGE_DEADBAND` 0.9 / `RAW_SHORTAGE_FLOOR` 0.5 / `RAW_SHORTAGE_MIN_LEVEL`
+> 0.35 / `SECTOR_NORM_ALPHA` 0.02, all bounded by `SUPPLY_SHOCK_MAX_DRAG` 0.15.
+
+> 🎨 **Visual/audio assets — the "1 GB" that makes the game *much larger* — are NOT in.**
+> The repo still ships **zero binary assets**: all art is procedural Canvas 2D, all
+> audio procedural WebAudio (`find` for png/jpg/ogg/flac/… returns nothing). Manifests
+> exist (`public/assets/asset_manifest.json`, `public/audio/audio_manifest.json`) and
+> the `AssetRegistry` override seam + `hf-sprites.ts` dry-run are wired, but generation
+> has never run here — `HF_TOKEN` unset, no `sharp`/`ffmpeg`, `huggingface.co` 403s in
+> this web env. The generated `.png`/`.ogg` are `.gitignore`'d by design (hybrid
+> distribution = GitHub Release packs, not git). Pipeline files the roadmap still wants
+> — `scripts/hf-audio.ts`, `scripts/gen/post.ts`, `src/data/*_manifest.json`, the
+> audio/music registries — **don't exist yet**. The literal-gigabyte phases `B1-art`
+> (parallax backdrops + era UI skins) and `B2-audio` (music stems + ambience + voice)
+> are the bold roadmap items and remain **un-started in earnest** — they need an env
+> with network egress + image/audio tooling to actually generate.
 
 ## Recent session (2026-06-26) — graded raw availability: ordinary shortages bite (D1-econ)
 
