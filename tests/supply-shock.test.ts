@@ -99,7 +99,7 @@ describe('supply-shock drag — a real raw collapse bites', () => {
     const r = freshSim();
     pinYear(r, 2000);
     setRawsFlowing(r, true);
-    r.intermediateGoodStocks['copper'] = 0; // electronics + its dependent luxury_goods fall
+    (r.settlements[0].goodStocks ??= {})['copper'] = 0; // electronics + its dependent luxury_goods fall
     r.tickIntermediateGoods();
     const n = INTERMEDIATE_GOODS.length; // 16
     expect(r.getSupplyChainHealth()).toBeCloseTo((n - 2) / n, 10); // 2 of 16 disrupted
