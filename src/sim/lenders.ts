@@ -85,7 +85,9 @@ export function createLoan(
 ): Loan {
   const ticksPerMonth = 30 * 24 * 60 / 4; // assuming 4-minute ticks, 30-day months
   return {
-    id: Math.random(), // unique ID
+    // Deterministic unique id from (lender, tick) — never Math.random, so a
+    // serialized loan stays reproducible for a fixed seed.
+    id: lender.id * 1_000_000 + currentTick,
     lenderId: lender.id,
     principal,
     borrowed: principal,

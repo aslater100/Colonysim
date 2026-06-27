@@ -4,7 +4,7 @@
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
 import type { Settlement, Scout, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, DepressionMeasure, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType, TechNode, Province, DynastyNode } from '../sim/region';
-import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, INTERMEDIATE_GOODS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES, ESPIONAGE_OPS, BLOC_RELATIONS_FLOOR, DEPRESSION_MEASURES } from '../sim/region';
+import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, INTERMEDIATE_GOODS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES, ESPIONAGE_OPS, BLOC_RELATIONS_FLOOR, DEPRESSION_MEASURES, SUPPLY_SHOCK_INFLATION, SUPPLY_SHOCK_EXPORT_DRAG, AGRI_CLIMATE_THRESHOLD } from '../sim/region';
 import type { EspionageOp } from '../sim/region';
 import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS } from '../sim/defs';
 import type { CurrencySymbol } from '../sim/defs';
@@ -2802,6 +2802,9 @@ export class RegionView {
       `${r.eraBranch ? ` · <b>${r.eraBranch.toUpperCase()}</b>` : ` (→ +${r.projectedWarming().toFixed(1)}°C by 2100)`}` +
       (r.geoDeployed ? ` · <span style="color:#4cf" title="Stratospheric aerosols active — warming suppressed for two years">aerosols active</span>` : '') +
       `</p>` +
+      (r.agriClimateMult() < 1
+        ? `<p class="insp-skills" title="Heat stress, shifting seasons, and water stress on cash crops erode the farm economy past +${AGRI_CLIMATE_THRESHOLD}°C (GDD §8.2). Cut emissions to ease it.">🌾 farm output −${Math.round((1 - r.agriClimateMult()) * 100)}% to climate</p>`
+        : '') +
       (r.has('geoengineering') && !r.geoDeployed && r.nationProclaimed
         ? `<p><button class="mini" id="geo-deploy-btn" title="Deploy stratospheric aerosols: −${GEOENGINEER_COOLING}°C over 2 years, but all rivals lose 15 relations (one-time)">⚗ deploy geoengineering</button></p>`
         : '') +
@@ -3208,6 +3211,9 @@ export class RegionView {
       const emblemHtml = rv.flagData ? `${rv.flagData.emblem}&nbsp;` : '';
       const archetypeData = RIVAL_ARCHETYPES[rv.archetype];
       const archetypeTooltip = `${archetypeData.name}: ${archetypeData.desc}`;
+      // Their true agenda is only legible once you have penetrated them (intel ≥ 0.5);
+      // until then espionage is the way to read what they are really after (GDD §5.5).
+      const agendaShown = r.intelOf(rv.id) >= 0.5 ? rv.agenda : 'unknown — gather intelligence to read it';
       // War minister estimates rival military strength (Phase 8 advisor forecast)
       const trueRivalStrength = rv.pop;
       const estStrength = Math.round(r.advisorForecast('War', trueRivalStrength));
@@ -3217,7 +3223,7 @@ export class RegionView {
         ? `<p class="insp-skills" title="Your war minister's estimate of ${rv.name}'s military strength — accuracy depends on their skill.">` +
           `${defAdvisorName} estimates ${rv.name} strength: <b>${estStrength}</b></p>`
         : '';
-      return `<div class="bar-row" title="${archetypeTooltip}\n\nAgenda: ${rv.agenda}\n\n${personalityInfo}">` +
+      return `<div class="bar-row" title="${archetypeTooltip}\n\nAgenda: ${agendaShown}\n\n${personalityInfo}">` +
         `${flagHtml}<span style="width:70px;display:inline-block">${emblemHtml}<b>${rv.name}</b></span>` +
         `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${pct}%;background:${col}"></div></div>` +
         `<span>${rel}</span></div>` +
@@ -3779,9 +3785,11 @@ export class RegionView {
     if (!rv) return '';
     const v = r.evaluateDeal(rv, this.currentBasket());
     const ledger = `they value it ${v.get.toFixed(1)} pts against ${v.cost.toFixed(1)} asked`;
-    if (v.accept) return `✓ Their envoy nods — ${ledger}. They would sign.`;
-    if (v.counter) return `± Close: ${ledger}. They would counter, asking ` + formatCurrency(v.counter.goldToThem - this.dealGoldToThem) + ` more.`;
-    return `✗ ${ledger}. They would walk — "${v.reason}."`;
+    // §6.3: flag an embattled rival (fighting a foreign war) — keener on protection/trade.
+    const embattled = r.rivalSituation(rv) > 0 ? ' ⚔ At war abroad — keener to deal.' : '';
+    if (v.accept) return `✓ Their envoy nods — ${ledger}. They would sign.${embattled}`;
+    if (v.counter) return `± Close: ${ledger}. They would counter, asking ` + formatCurrency(v.counter.goldToThem - this.dealGoldToThem) + ` more.${embattled}`;
+    return `✗ ${ledger}. They would walk — "${v.reason}."${embattled}`;
   }
 
   /** Forecast relations impact after deal (GDD §6.3 advanced UI). */
@@ -5032,16 +5040,27 @@ export class RegionView {
     const disruptedCount = snap.disrupted.size;
     const healthy = snap.severity === 0;
     const barCol = healthy ? '#4e9' : snap.severity < 0.3 ? '#ca4' : '#e55';
+    // The shock's other halves (GDD §5.2): cost-push inflation and an export
+    // drag. Prices: the target lift in percentage points — only realized once a
+    // central bank runs the monetary system, so gate that readout on it. Exports:
+    // the trade leg, the % a shortage trims off foreign sales (no gate).
+    const pricePushPp = snap.severity * SUPPLY_SHOCK_INFLATION * 100;
+    const showPush = pricePushPp > 0.05 && r.hasCentralBank();
+    const exportDragPct = snap.severity * SUPPLY_SHOCK_EXPORT_DRAG * 100;
+    const showExportDrag = exportDragPct > 0.05;
 
-    // Headline: health bar + the actual industrial drag it's costing.
+    // Headline: health bar + the output drag, price push, and export drag it costs.
     let html =
       `<div class="bar-row" title="Active goods fully supplied this month">` +
       `<span style="width:54px;display:inline-block">health</span>` +
       `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${healthPct}%;background:${barCol}"></div></div>` +
       `<span class="insp-skills" style="min-width:34px;text-align:right">${healthPct}%</span>` +
       `</div>` +
-      `<p class="insp-skills">${snap.supplied.size}/${snap.active.length} goods flowing` +
+      `<p class="insp-skills" title="A shortage cuts output, raises prices (stagflation), and chokes exports">` +
+      `${snap.supplied.size}/${snap.active.length} goods flowing` +
       (dragPct > 0.05 ? ` · industry −${dragPct.toFixed(1)}%` : ' · no shock') +
+      (showPush ? ` · prices +${pricePushPp.toFixed(1)}pp` : '') +
+      (showExportDrag ? ` · exports −${exportDragPct.toFixed(1)}%` : '') +
       `</p>`;
 
     // Standing embargoes — the "this is why" banner (oil shock, future blockades).

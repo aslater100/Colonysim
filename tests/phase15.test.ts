@@ -308,67 +308,64 @@ describe('tickPriceArbitrage()', () => {
     expect(r.tradeFlows).toHaveLength(0);
   });
 
-  it('decays existing trade flows by half each tick', () => {
-    const r = twoTownSim(42);
-    r.tradeFlows.push({
-      goodId: 'chemicals',
-      fromSettlementId: 0,
-      toSettlementId: 1,
-      volume: 8,
-      transitDays: 10,
-      congestionTariff: 0.1,
-    });
-    r.tickPriceArbitrage();
-    // volume 8 * 0.5 = 4, which is >= 0.5 so stays
-    const flow = r.tradeFlows.find(f => f.goodId === 'chemicals');
-    if (flow) {
-      expect(flow.volume).toBeCloseTo(4, 5);
-    }
-  });
-
-  it('removes trade flows with volume below 0.5 after decay', () => {
-    const r = twoTownSim(42);
-    r.tradeFlows.push({
-      goodId: 'chemicals',
-      fromSettlementId: 0,
-      toSettlementId: 1,
-      volume: 0.8,
-      transitDays: 10,
-      congestionTariff: 0.1,
-    });
-    r.tickPriceArbitrage(); // 0.8 * 0.5 = 0.4 < 0.5, gets removed
-    expect(r.tradeFlows.filter(f => f.goodId === 'chemicals')).toHaveLength(0);
-  });
-
-  it('can generate trade flow income when price differential exists', () => {
-    const r = twoTownSim(42);
-    if (r.settlements.length < 2) return;
-
-    const from = r.settlements[0];
-    const to = r.settlements[1];
-    r.routes.push({
-      a: from.id, b: to.id, kind: 'trail', condition: 100,
+  // The flow lifecycle is now a transit pipeline (GDD §5.2): a shipment carries its
+  // arbitrage profit and pays out only on ARRIVAL, after `transitDays` of travel;
+  // a shipment whose route is severed mid-transit is lost.
+  // A single clean, short, well-maintained lane (tariff well under 0.3), replacing
+  // any pre-built routes so the congestion cost is deterministic for the test.
+  const routeBetween = (r: RegionSim, aId: number, bId: number) => {
+    r.routes = [{
+      a: aId, b: bId, kind: 'trail', condition: 100,
       path: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }],
       terrainCost: 3, freight: 0, cargoType: null,
+    }];
+  };
+
+  it('advances in-transit shipments and pays out arbitrage profit on arrival', () => {
+    const r = twoTownSim(42);
+    const [from, to] = r.settlements;
+    routeBetween(r, from.id, to.id);
+    r.tradeFlows.push({
+      goodId: 'chemicals', fromSettlementId: from.id, toSettlementId: to.id,
+      volume: 8, transitDays: 5, congestionTariff: 0.1, pendingIncome: 25,
     });
+    const before = r.treasury;
+    r.tickPriceArbitrage(); // transitDays 5 − DAYS_PER_MONTH(5) ≤ 0 → arrives this tick
+    expect(r.tradeFlows.some(f => f.goodId === 'chemicals')).toBe(false); // delivered, gone
+    expect(r.treasury).toBeCloseTo(before + 25, 5); // its pending income paid out on arrival
+  });
 
-    // Create a wage differential to trigger arbitrage
-    from.sectors.industry.wage = 50;
-    from.sectors.agriculture.wage = 50;
-    from.sectors.services.wage = 50;
-    from.sectors.information.wage = 50;
-
-    to.sectors.industry.wage = 5;
-    to.sectors.agriculture.wage = 5;
-    to.sectors.services.wage = 5;
-    to.sectors.information.wage = 5;
-
-    // Force year to enable some goods
-    // We can test the method runs without error even at game start
-    const treasuryBefore = r.treasury;
+  it('strands (loses the cargo of) a shipment whose route has been severed', () => {
+    const r = twoTownSim(42);
+    // Settlements with no route between them → the lane is cut.
+    r.tradeFlows.push({
+      goodId: 'chemicals', fromSettlementId: 999998, toSettlementId: 999999,
+      volume: 8, transitDays: 10, congestionTariff: 0.1, pendingIncome: 25,
+    });
+    const before = r.treasury;
     r.tickPriceArbitrage();
-    // Either treasury increased (arbitrage income) or stayed the same (differential too small)
-    expect(r.treasury).toBeGreaterThanOrEqual(treasuryBefore);
+    expect(r.tradeFlows.some(f => f.goodId === 'chemicals')).toBe(false); // lost in transit
+    expect(r.treasury).toBe(before); // no payout for cargo that never arrived
+  });
+
+  it('dispatches a shipment carrying pending income, paid on arrival not on dispatch', () => {
+    const r = twoTownSim(42);
+    const [from, to] = r.settlements;
+    routeBetween(r, from.id, to.id);
+    for (const id of ['industry', 'agriculture', 'services', 'information'] as const) {
+      from.sectors[id].wage = 50;
+      to.sectors[id].wage = 5;
+    }
+    const before = r.treasury;
+    r.tickPriceArbitrage();
+    // A shipment is dispatched from the low-wage town to the high-wage one…
+    const flow = r.tradeFlows.find(f => f.fromSettlementId === to.id && f.toSettlementId === from.id);
+    expect(flow).toBeDefined();
+    expect(flow!.pendingIncome).toBeGreaterThan(0);
+    expect(r.treasury).toBe(before); // …but dispatch pays nothing — the profit is in transit
+
+    r.tickPriceArbitrage(); // next month it arrives
+    expect(r.treasury).toBeGreaterThan(before);
   });
 });
 

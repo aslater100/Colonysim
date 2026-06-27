@@ -18,6 +18,8 @@ import { Weather } from './weather';
 import type { Lender, Loan } from './economy';
 import { createInitialLenders } from './lenders';
 import { resolveSupplyChainGraded, SUPPLY_FULL_EPS } from './supply';
+import { tickPollution } from './systems/pollution';
+import { tickServiceCoverage } from './systems/services';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -248,6 +250,34 @@ export const INTERMEDIATE_GOODS: IntermediateGood[] = [
  *  so healthy play is byte-identical and only a genuine raw collapse bites. */
 export const SUPPLY_SHOCK_MAX_DRAG = 0.15;
 
+/** Cost-push inflation gain from a supply-chain shock (GDD §5.2). A shortage is
+ *  not only fewer goods made (the `SUPPLY_SHOCK_MAX_DRAG` output bite) — it is
+ *  also dearer goods: the 1973 oil embargo quadrupled prices, and *that* half of
+ *  the shock was missing. The monthly inflation target gains
+ *  `supplyShockSeverity × SUPPLY_SHOCK_INFLATION`, so a partial oil embargo
+ *  (severity ≈ 0.15) lifts the target ~4.5pp — a few points of stagflation that
+ *  heal as the chain does, capped by the 0.50 inflation ceiling. Exactly 0 in
+ *  healthy play (severity is 0 whenever raws flow), so the inflation path — and
+ *  the whole monetary RNG stream — stays byte-identical there; only a genuine
+ *  cascade below the era-structural baseline pushes prices. Bounded and a pure
+ *  sink (inflation feeds confidence/GDP, never sector output → the raw proxy),
+ *  so it can't reinforce the shortage that caused it. */
+export const SUPPLY_SHOCK_INFLATION = 0.30;
+
+/** Export drag from a supply-chain shock (GDD §5.2), the *trade* leg of the
+ *  goods→economy coupling — the output drag (`SUPPLY_SHOCK_MAX_DRAG`) and the
+ *  cost-push (`SUPPLY_SHOCK_INFLATION`) are the other two. A nation short on
+ *  fuel, components, or food has less surplus to sell abroad, so export earnings
+ *  fall by `supplyShockSeverity × SUPPLY_SHOCK_EXPORT_DRAG`: a partial oil
+ *  embargo (severity ≈ 0.15) trims exports ~7.5%, a total cut (≈ 0.25) ~12.5%,
+ *  a total cascade at most 50%. Foreign sales are the discretionary surplus, so
+ *  they're hit harder than essential domestic output (15% max) — yet still
+ *  bounded, never zeroed. Exactly 0 in healthy play (severity 0 whenever raws
+ *  flow) → ×1 → byte-identical there; only a real cascade below the era baseline
+ *  bites. A pure sink: exports feed the treasury, never sector output → the raw
+ *  proxy, so it can't deepen the shortage that caused it. */
+export const SUPPLY_SHOCK_EXPORT_DRAG = 0.5;
+
 /** How long (sim days) the 1970s oil-shock anchor embargoes the `oil` raw,
  *  cutting `fuel` and the fuel-burning finals downstream. ~6 months — the real
  *  1973 embargo's span — long enough to register across several monthly supply
@@ -328,6 +358,26 @@ export function defaultSectors(): Sectors {
     s[id] = { share: SECTOR_BASE_SHARES[id], output: 0, wage: SECTOR_BASE_OUTPUT[id], growth: 0 };
   }
   return s;
+}
+
+/** Phase-14 city-service fields (GDD §11), defaulted. Applied SYMMETRICALLY in
+ *  serialize() and deserialize() so a save round-trips losslessly: the runtime
+ *  settlement-founding sites predate these fields and never set them, so without
+ *  a shared normalization serialize would omit (undefined → dropped by JSON)
+ *  exactly what deserialize fabricates, and a reloaded save would never byte-match
+ *  the in-memory one. Behaviourally inert — the readers already use these same
+ *  defaults via `?? `, so making the fields explicit changes no gameplay value. */
+export function cityServiceFields(s: Partial<Settlement>) {
+  return {
+    zoningMix: s.zoningMix ?? { residential: 0.5, commercial: 0.2, industrial: 0.2, office: 0.1 },
+    landValue: s.landValue ?? 30,
+    pollutionLevel: s.pollutionLevel ?? 0,
+    powerCapacity: s.powerCapacity ?? 0,
+    powerDemand: s.powerDemand ?? 0,
+    waterCoverage: s.waterCoverage ?? 0.5,
+    wasteCoverage: s.wasteCoverage ?? 0.3,
+    serviceCoverage: s.serviceCoverage ?? { health: 0.3, education: 0.2, safety: 0.2 },
+  };
 }
 
 // ---- Phase 2: civic works & development focus (deep management for managed cities) ----
@@ -1224,6 +1274,19 @@ export interface DealCounter {
 /** £ → diplomatic points: the chancery's exchange rate. */
 export const GOLD_PER_POINT = 8;
 export const DEAL_COUNTER_DAYS = 90;
+
+/** Appetite bonus (diplomatic points) an *embattled* rival — `rivalSituation > 0`,
+ *  i.e. fighting a foreign war — gains for treaties that shore it up: it fears a
+ *  second front and needs income and allies, so it signs protection and trade more
+ *  readily. ADDITIVE (not multiplicative), so the lift applies even to a treaty the
+ *  rival's temperament normally dislikes (a negative base appetite), and exactly 0
+ *  at peace (`rivalSituation` 0) → the deal verdict is byte-identical in all current
+ *  play and every existing diplomacy test (none of which sets a foreign war). */
+export const SITUATION_TREATY_BONUS: Partial<Record<TreatyKind, number>> = {
+  defensive_pact: 4,
+  non_aggression: 3,
+  trade_agreement: 2,
+};
 
 // ---- Monetary system constants (GDD §5.1) ----
 /** Credit-neutral policy rate; below this leverage builds, above it contracts. */
@@ -2336,6 +2399,20 @@ export const CENTURY_YEAR = 2100;
 export const GEOENGINEER_COOLING = 0.4;
 /** How long the aerosols stay effective: 2 years × 60 days/year. */
 export const GEOENGINEER_DURATION_DAYS = 120;
+
+/** Farm-economy climate drag (GDD §8.2). The agriculture SECTOR's £/month output
+ *  erodes once realized warming passes `AGRI_CLIMATE_THRESHOLD`°C — heat stress,
+ *  shifting growing seasons, water stress on cash crops drag the farm economy's
+ *  contribution to GDP. This is DISTINCT from the older subsistence-food drag in
+ *  `dailyUpdate` (which scales `t.food` production past +0.8°C) — different
+ *  variable, so no double-count: one is the cash-crop economy, the other the
+ *  granary. Linear above the threshold, capped at `AGRI_CLIMATE_MAX_DRAG` so a
+ *  warm late-century trims agricultural GDP without zeroing it; exactly 1.0 below
+ *  the threshold. A pure sink (warming is driven by emissions, never by farm
+ *  output), so the loop is non-divergent. */
+export const AGRI_CLIMATE_THRESHOLD = 1.5; // °C above 1900 before the farm economy bites
+export const AGRI_CLIMATE_SLOPE = 0.06;    // sector-output drag per °C above the threshold
+export const AGRI_CLIMATE_MAX_DRAG = 0.30; // cap: agricultural GDP down at most 30%
 /** Accord compliance: below this fraction the signatory is a free-rider. */
 export const ACCORD_DEFECT_THRESHOLD = 0.35;
 /** Maximum world-emissions cut from fully compliant accord coverage. */
@@ -2537,6 +2614,14 @@ export class RegionSim {
    *  from the main `rng` so AI choices never perturb the colony's own stochastic
    *  outcomes (events, washouts, raids) — preserving cross-feature determinism. */
   aiRng: Rng;
+  /** Third deterministic stream for incidental stochastic detail that must stay
+   *  apart from the colony and AI draws — notable health decay, loan ids.
+   *  Previously these used `Math.random()`, which made the serialized save
+   *  non-reproducible for a fixed seed (the determinism harness caught a notable's
+   *  health diverging between two same-seed runs); routing them through a
+   *  dedicated seeded stream restores byte-level determinism without shifting the
+   *  main or AI streams (so every existing seed-dependent outcome is unchanged). */
+  auxRng: Rng;
   minute: number;
   map: RegionMap;
   weather: Weather;
@@ -2852,7 +2937,11 @@ export class RegionSim {
   rawEmbargoes: Record<string, { until: number; cut: number }> = {};
   /** 0–1 weighted average input availability across all active intermediate goods. */
   supplyChainHealth = 1.0;
-  /** Active inter-settlement goods flows for price arbitrage. */
+  /** Active inter-settlement goods flows for price arbitrage. A flow is goods
+   *  physically in transit: it carries `pendingIncome` (the arbitrage profit) that
+   *  is realized only on ARRIVAL, after `transitDays` of travel — so congestion
+   *  (which sets the transit time) delays the payout, and a flow whose route is
+   *  severed mid-transit is lost. */
   tradeFlows: Array<{
     goodId: string;
     fromSettlementId: number;
@@ -2860,6 +2949,8 @@ export class RegionSim {
     volume: number;
     transitDays: number;
     congestionTariff: number;
+    /** Arbitrage profit (£) carried by this shipment, paid out on delivery. */
+    pendingIncome: number;
   }> = [];
   /** Currency regime for Phase 15 FX. Separate from monetary regime (peg/float/print). */
   currencyRegime: 'gold_standard' | 'fiat' | 'currency_union' = 'fiat';
@@ -2936,6 +3027,8 @@ export class RegionSim {
     // Derive the AI stream deterministically from the main seed so it stays
     // reproducible without sharing draws with the colony simulation.
     this.aiRng = new Rng((rng.getState() ^ 0x9e3779b9) >>> 0);
+    // A third stream (distinct mix constant) for incidental detail — see auxRng.
+    this.auxRng = new Rng((rng.getState() ^ 0x85ebca6b) >>> 0);
     this.minute = minute;
     this.map = map;
     this.weather = weather;
@@ -3103,6 +3196,16 @@ export class RegionSim {
   /** Difficulty knobs for the regional AI competitors (GDD §6.2). */
   aiKnobs(): typeof AI_DIFFICULTY[AiDifficulty] {
     return AI_DIFFICULTY[this.aiDifficulty] ?? AI_DIFFICULTY.normal;
+  }
+
+  /** Scale a rival-belligerence probability by the `aiAggression` difficulty knob
+   *  (GDD §6.4): 1.0 on normal so the chance is unchanged, >1 on harder tiers makes
+   *  rival mischief and ultimatums more frequent, <1 on easier ones gentler. It
+   *  scales the THRESHOLD, not the draw, so the RNG stream is byte-identical on
+   *  normal (and in the headless sim and every test, which all run at the 1.0
+   *  default). Clamped to [0,1] so a high multiplier can't overflow a probability. */
+  aggroChance(p: number): number {
+    return Math.max(0, Math.min(1, p * this.difficultySettings.aiAggression));
   }
 
   /** Get garrison strength of a settlement, including stationed units (GDD §7.1). */
@@ -5252,9 +5355,9 @@ export class RegionSim {
     for (const t of this.settlements) this.updateSectors(t); // Phase 1: labor follows the technology
     this.wageCache = new Map(this.settlements.map((t) => [t.id, this.avgWageOf(t)]));
     this.tickRegionalEvents(); // Phase 4: disasters and windfalls
-    this.tickPollution();      // Phase 14: pollution diffusion
+    tickPollution(this);       // Phase 14: pollution diffusion (systems/pollution.ts)
     this.tickUtilities();      // Phase 14: power/water/waste utilities
-    this.tickServiceCoverage(); // Phase 14: service coverage effects
+    tickServiceCoverage(this); // Phase 14: service coverage effects (systems/services.ts)
     // Phase 14: update land value for each player settlement
     for (const t of this.settlements) {
       if (t.factionId === this.playerFactionId) {
@@ -5784,6 +5887,16 @@ export class RegionSim {
     if (this.depressionDepth > 0.01) {
       this.exportEarningsLastMonth *= Math.max(0.3, 1 - this.depressionDepth * 0.55);
     }
+    // Supply-chain shock chokes exports (GDD §5.2, the trade leg): a nation short
+    // on fuel/components/food has less surplus to sell abroad. Reads the same
+    // below-the-era-baseline severity as the output drag and the cost-push (cached
+    // supplyChainHealth — monthlyEconomy runs before tickIntermediateGoods, a
+    // one-month lag), so it is exactly 0 in healthy play → ×1 → byte-identical;
+    // only a real cascade trims exports. Bounded by SUPPLY_SHOCK_EXPORT_DRAG.
+    const supplyExportSeverity = this.supplyShockSeverity();
+    if (supplyExportSeverity > 0) {
+      this.exportEarningsLastMonth *= 1 - supplyExportSeverity * SUPPLY_SHOCK_EXPORT_DRAG;
+    }
     // Phase 15: Monetary regime effects on economy
     // Gold standard: slight deflation pressure
     if (this.currencyRegime === 'gold_standard') {
@@ -5893,10 +6006,18 @@ export class RegionSim {
     const dLeverage = (NEUTRAL_RATE - this.policyRate) * 0.5 * (1 - this.privateLeverage / 5.0);
     this.privateLeverage = Math.max(0, this.privateLeverage + dLeverage);
 
-    // 2. Inflation: credit expansion + money printing
+    // 2. Inflation: credit expansion + money printing + supply-chain cost-push
     const leverageInflation = Math.max(0, dLeverage) * 0.08;
     const printInflation = this.monetaryRegime === 'print' ? 0.010 : 0;
-    const inflTarget = 0.02 + leverageInflation + printInflation;
+    // Cost-push (GDD §5.2): a real supply-chain shock makes goods dearer, not just
+    // scarcer — the stagflation half of the 1973 oil embargo (output already drags
+    // via supplyShockMult). `supplyShockSeverity()` reads last month's cached
+    // supplyChainHealth (tickIntermediateGoods runs later in the tick), a natural
+    // one-month price lag, and is a pure no-RNG read. It is exactly 0 whenever raws
+    // flow, so in all healthy play this term is +0 and the monetary stream is
+    // byte-identical; only a genuine cascade below the era baseline lifts the target.
+    const supplyPush = this.supplyShockSeverity() * SUPPLY_SHOCK_INFLATION;
+    const inflTarget = 0.02 + leverageInflation + printInflation + supplyPush;
     this.inflationRate += (inflTarget - this.inflationRate) * 0.15;
     this.inflationRate = Math.max(0, Math.min(0.50, this.inflationRate));
 
@@ -6229,19 +6350,53 @@ export class RegionSim {
     return Math.max(0.05, Math.min(0.3, tariff));
   }
 
-  /** Tick price arbitrage between player settlements.
-   *  Where price differentials exceed congestion costs, spawn trade flows and collect tariff income. */
+  /** Tick price arbitrage between player settlements (GDD §5.2: physical goods on
+   *  routes, transit × congestion). Goods physically travel: a flow's arbitrage
+   *  profit is paid out only when the shipment ARRIVES (after `transitDays` of
+   *  travel, which congestion lengthens), and a flow whose route is severed
+   *  mid-transit is lost. Where a price differential exceeds congestion costs and
+   *  no shipment is already en route, a new flow is dispatched. */
   tickPriceArbitrage(): void {
-    // Decay old flows by half each month
+    // 1. Advance in-transit shipments. Deliver those that arrive (pay out their
+    //    pending income); strand those whose route has been severed.
+    const stillMoving: typeof this.tradeFlows = [];
+    let delivered = 0;
+    let stranded = 0;
     for (const flow of this.tradeFlows) {
-      flow.volume *= 0.5;
+      // A flow needs a live route the whole way; a SEVERED lane loses its cargo.
+      // (A merely-congested route still delivers — only a missing one strands, so
+      // test for the route's existence, not the clamped-max congestion tariff.)
+      const hasRoute = this.routes.some(
+        (rt) =>
+          (rt.a === flow.fromSettlementId && rt.b === flow.toSettlementId) ||
+          (rt.a === flow.toSettlementId && rt.b === flow.fromSettlementId),
+      );
+      if (!hasRoute) {
+        stranded++;
+        continue;
+      }
+      flow.transitDays -= DAYS_PER_MONTH;
+      if (flow.transitDays <= 0) {
+        delivered += flow.pendingIncome;
+      } else {
+        stillMoving.push(flow);
+      }
     }
-    this.tradeFlows = this.tradeFlows.filter(f => f.volume >= 0.5);
+    this.tradeFlows = stillMoving;
+    if (delivered > 0) {
+      this.treasury += delivered;
+      if (this.rng.chance(0.1)) {
+        this.addLog(`Goods arrive: shipments deliver ${formatCurrency(Math.round(delivered))} in arbitrage profit.`, 'good');
+      }
+    }
+    if (stranded > 0 && this.rng.chance(0.15)) {
+      this.addLog(`Goods stranded: a severed route loses ${stranded} shipment${stranded > 1 ? 's' : ''} in transit.`, 'bad');
+    }
 
+    // 2. Dispatch new shipments where a differential beats the congestion cost.
     const playerSettlements = this.settlements.filter(s => s.factionId === this.playerFactionId);
     if (playerSettlements.length < 2) return;
 
-    let arbitrageIncome = 0;
     const goodIds = INTERMEDIATE_GOODS
       .filter(g => this.year >= g.eraUnlock)
       .map(g => g.id);
@@ -6253,51 +6408,36 @@ export class RegionSim {
         const tariff = this.computeCongestionTariff(from.id, to.id);
         if (tariff >= 0.3) continue; // no route
 
-        // Proxy price differential from wage gap
+        // Proxy price differential from wage gap (per-good prices are a follow-on).
         const fromWage = this.avgWageOf(from);
         const toWage = this.avgWageOf(to);
         const priceDiff = Math.abs(fromWage - toWage);
         const threshold = tariff * 10;
+        if (priceDiff <= threshold) continue;
 
-        if (priceDiff > threshold) {
-          // Spawn trade flow
-          const volume = Math.min(10, priceDiff * 2);
-          const highWageSide = fromWage > toWage ? to : from;
-          const lowWageSide = fromWage > toWage ? from : to;
+        // Goods flow from the cheaper market to the dearer one (buy low, sell high).
+        const buySide = fromWage > toWage ? to : from;   // lower wage/price — source
+        const sellSide = fromWage > toWage ? from : to;  // higher wage/price — market
 
-          // Check if this flow already exists
-          const existing = this.tradeFlows.find(
-            f => f.fromSettlementId === lowWageSide.id && f.toSettlementId === highWageSide.id && goodIds.includes(f.goodId)
-          );
+        // Only one shipment per lane at a time — wait for it to arrive before the next.
+        const existing = this.tradeFlows.find(
+          f => f.fromSettlementId === buySide.id && f.toSettlementId === sellSide.id
+        );
+        if (existing) continue;
 
-          const goodId = goodIds.length > 0 ? goodIds[0] : 'components';
-          if (!existing) {
-            this.tradeFlows.push({
-              goodId,
-              fromSettlementId: lowWageSide.id,
-              toSettlementId: highWageSide.id,
-              volume,
-              transitDays: Math.round(tariff * 100),
-              congestionTariff: tariff,
-            });
-          }
-
-          // Income from tariff on flow volume
-          const income = volume * tariff * 5;
-          arbitrageIncome += income;
-
-          if (income >= 1 && this.rng.chance(0.1)) {
-            this.addLog(
-              `Arbitrage: goods flowing ${lowWageSide.name}→${highWageSide.name} (differential ${priceDiff.toFixed(1)}). Tariff income: ${formatCurrency(Math.round(income))}.`,
-              'good'
-            );
-          }
-        }
+        const volume = Math.min(10, priceDiff * 2);
+        this.tradeFlows.push({
+          goodId: goodIds.length > 0 ? goodIds[0] : 'components',
+          fromSettlementId: buySide.id,
+          toSettlementId: sellSide.id,
+          volume,
+          // Congestion sets the travel time (≥1 day so a shipment always spends a
+          // tick in transit); the profit lands when it arrives, not now.
+          transitDays: Math.max(1, Math.round(tariff * 100)),
+          congestionTariff: tariff,
+          pendingIncome: volume * tariff * 5,
+        });
       }
-    }
-
-    if (arbitrageIncome > 0) {
-      this.treasury += arbitrageIncome;
     }
   }
 
@@ -6736,7 +6876,9 @@ export class RegionSim {
       // A genuine supply-chain shock (raws collapse → cascade) drags manufacturing.
       // 1.0 in healthy play (era-baselined), so output stays byte-identical there.
       const supplyMult = id === 'industry' ? this.supplyShockMult : 1;
-      s.output = workers * s.share * perWorker * strike * loyalty * eventMult * svcMult * taxMult * fxMult * supplyMult;
+      // A hotter century erodes the farm economy past +1.5°C (GDD §8.2); 1.0 below.
+      const climateMult = id === 'agriculture' ? this.agriClimateMult() : 1;
+      s.output = workers * s.share * perWorker * strike * loyalty * eventMult * svcMult * taxMult * fxMult * supplyMult * climateMult;
       // Phase 5: wage policy adjusts the migration signal without affecting output
       const wagePolicyMult = t.policies.wagePolicy === 'low' ? 0.85 : t.policies.wagePolicy === 'high' ? 1.20 : 1.0;
       s.wage = perWorker * strike * loyalty * eventMult * svcMult * wagePolicyMult * fxMult;
@@ -7610,30 +7752,6 @@ export class RegionSim {
   }
 
   /** Update pollution levels monthly for all player settlements. */
-  private tickPollution(): void {
-    for (const t of this.settlements) {
-      if (t.factionId !== this.playerFactionId) continue;
-      let base = 0;
-      // +30 if has iron_works (ironworks) or factory building
-      if (t.buildings.includes('ironworks') || t.buildings.includes('factory')) base += 30;
-      // +20 if has coal_plant (power_station) building
-      if (t.buildings.includes('power_station')) base += 20;
-      // -10 if has park (market_hall used as proxy; GDD says 'park' but we use closest match)
-      // Using 'grain_exchange' as park proxy since no 'park' building exists in data
-      // -10 if has clean_industry_act researched (activePolicies)
-      if (this.policyActive('clean_industry_act')) base -= 10;
-      // Decay 5% per month (natural)
-      const current = t.pollutionLevel ?? 0;
-      const decayed = current * 0.95;
-      // Blend: move toward base level
-      t.pollutionLevel = Math.max(0, Math.min(100, decayed + base * 0.1));
-      // Side effects: health -0.1 per pollution point / 10 per month on satisfaction
-      if (t.pollutionLevel > 0) {
-        t.satisfaction = Math.max(0, t.satisfaction - (t.pollutionLevel / 10) * 0.1);
-      }
-    }
-  }
-
   /** Update utilities (power, water, waste) monthly for all player settlements. */
   private tickUtilities(): void {
     for (const t of this.settlements) {
@@ -7675,28 +7793,6 @@ export class RegionSim {
   }
 
   /** Update service coverage monthly for all player settlements. */
-  private tickServiceCoverage(): void {
-    for (const t of this.settlements) {
-      if (t.factionId !== this.playerFactionId) continue;
-      const sc = this.computeServiceCoverage(t.id);
-      t.serviceCoverage = sc;
-      // Side effects: low health (< 0.3) raises expected death pressure — tracked via satisfaction
-      // (actual demographic effect via mortality is handled in monthlyUpdate cohorts)
-      if (sc.health < 0.3) {
-        // Represent death pressure via grievance (1 per month)
-        t.grievance = Math.min(100, (t.grievance ?? 0) + 0.5);
-      }
-      // Low education (< 0.2): satisfaction -2 per month
-      if (sc.education < 0.2) {
-        t.satisfaction = Math.max(0, t.satisfaction - 2);
-      }
-      // Low safety (< 0.3): grievance +1 per month
-      if (sc.safety < 0.3) {
-        t.grievance = Math.min(100, (t.grievance ?? 0) + 1);
-      }
-    }
-  }
-
   // ---- Phase 4: Regional Events ----
 
   /** Fire and expire settlement-level events monthly. */
@@ -8100,8 +8196,10 @@ export class RegionSim {
       if (!n.alive) continue;
       n.age += 1 / 12;
 
-      // Health degrades monthly (scaled from annual rates)
-      const healthDecay = (Math.random() * 2 + (n.age > 70 ? 3 : 0)) / 12;
+      // Health degrades monthly (scaled from annual rates). Seeded (auxRng), not
+      // Math.random — a notable's health is serialized, so a non-deterministic
+      // draw made the save non-reproducible for a fixed seed.
+      const healthDecay = (this.auxRng.next() * 2 + (n.age > 70 ? 3 : 0)) / 12;
       n.health = Math.max(0, (n.health ?? 80) - healthDecay);
 
       // Death risk blended from age-based mortality and health
@@ -9944,6 +10042,16 @@ export class RegionSim {
 
   // ---- the bargaining table (GDD §6.3): baskets, valuation, counter-offers ----
 
+  /** How embattled a rival is, 0..1 (GDD §6.3). Currently: 1 while it is fighting
+   *  a foreign war, else 0. An embattled power fears a second front and needs income
+   *  and allies, so it comes to the player's table more readily (see
+   *  `SITUATION_TREATY_BONUS`). Pure read off the already-serialized `foreignWars`
+   *  ledger — no RNG, no mutation — and 0 in peacetime, so deal valuation is
+   *  unchanged in all current play. Surfacing it lets the UI flag a keen partner. */
+  rivalSituation(rv: RivalNation): number {
+    return this.foreignWars.some((w) => w.a === rv.id || w.b === rv.id) ? 1 : 0;
+  }
+
   /** What signing this treaty is worth *to the rival*, in diplomatic points —
    *  positive is appetite, negative is a concession it wants paying for. */
   treatyAppetite(rv: RivalNation, kind: TreatyKind): number {
@@ -9985,6 +10093,9 @@ export class RegionSim {
         if (rv.archetype === 'hegemon') appetite -= 2;
         break;
     }
+    // An embattled rival (fighting a foreign war) is keener on protection and
+    // income. Additive bonus, 0 at peace → byte-identical in all current play.
+    appetite += (SITUATION_TREATY_BONUS[kind] ?? 0) * this.rivalSituation(rv);
     return appetite;
   }
 
@@ -10491,8 +10602,9 @@ export class RegionSim {
           this.addLog(`${rv.name} proposes a Non-Aggression Pact — cold neighbors, fenced borders.`, 'info');
         }
       }
-      // Hostile mischief (GDD §6.4): town-scale friction, deniable and cheap
-      if (rv.relations < -40 && !rv.treaties.includes('non_aggression') && this.rng.chance(0.1 + rv.weights.risk * 0.015)) {
+      // Hostile mischief (GDD §6.4): town-scale friction, deniable and cheap.
+      // Difficulty-scaled (aggroChance) so harder tiers see nastier neighbours.
+      if (rv.relations < -40 && !rv.treaties.includes('non_aggression') && this.rng.chance(this.aggroChance(0.1 + rv.weights.risk * 0.015))) {
         if (!rv.borderSettled && (this.rng.chance(0.5) || this.tradeValueLastMonth <= 0)) {
           const t = this.settlements[this.rng.int(this.settlements.length)];
           if (t) {
@@ -12330,10 +12442,14 @@ export class RegionSim {
       mapSeed: this.map.seed,
       rng: this.rng.getState(),
       aiRng: this.aiRng.getState(),
+      auxRng: this.auxRng.getState(),
       minute: this.minute,
       settlements: this.settlements.map(s => ({
         ...s,
         factionStrengths: Object.fromEntries(s.factionStrengths),
+        // Normalize the Phase-14 fields the runtime founding sites never set, so a
+        // save byte-matches the form deserialize() restores (lossless round-trip).
+        ...cityServiceFields(s),
       })),
       notables: this.notables,
       expeditions: this.expeditions,
@@ -12502,6 +12618,14 @@ export class RegionSim {
       sectorOutputNorm: this.sectorOutputNorm,
       rawEmbargoes: this.rawEmbargoes,
       supplyChainHealth: this.supplyChainHealth,
+      // The two one-month-lagged supply-shock caches: set in tickIntermediateGoods
+      // and read the NEXT month (supplyShockMult by updateSectors, the disrupted
+      // flag by the research multiplier) before being recomputed. Persisting them
+      // keeps a save reloaded mid-shock byte-identical on the next tick; old saves
+      // backfill to the no-shock defaults (1 / false), the same values healthy play
+      // always holds, so the format gain is inert outside an active shock.
+      supplyShockMult: this.supplyShockMult,
+      electronicsDisrupted: this._electronicsDisrupted,
       tradeFlows: this.tradeFlows,
       currencyRegime: this.currencyRegime,
       currencyUnionPartnerId: this.currencyUnionPartnerId,
@@ -12543,25 +12667,24 @@ export class RegionSim {
       focus: s.focus ?? 'balanced',
       activeEvents: s.activeEvents ?? [],
       policies: s.policies ?? { ...DEFAULT_CITY_POLICIES },
-      // Phase 14: Zoning, Infrastructure & City Services
-      zoningMix: s.zoningMix ?? { residential: 0.5, commercial: 0.2, industrial: 0.2, office: 0.1 },
-      landValue: s.landValue ?? 30,
-      pollutionLevel: s.pollutionLevel ?? 0,
-      powerCapacity: s.powerCapacity ?? 0,
-      powerDemand: s.powerDemand ?? 0,
-      waterCoverage: s.waterCoverage ?? 0.5,
-      wasteCoverage: s.wasteCoverage ?? 0.3,
-      serviceCoverage: s.serviceCoverage ?? { health: 0.3, education: 0.2, safety: 0.2 },
+      // Phase 14: Zoning, Infrastructure & City Services — defaulted via the same
+      // helper serialize() uses, so old saves migrate AND the round-trip stays
+      // lossless (serialize emits these same normalized fields).
+      ...cityServiceFields(s),
     }));
     // Spatial-4X migration: site any building that has no placement yet (pre-Phase-B
     // saves, or AI grants) into the worked ring — deterministic, render-only.
     for (const t of r.settlements) r.ensurePlacements(t);
+    // Spread `...n` FIRST, then backfill missing fields — preserving the original
+    // key order so a save round-trips byte-for-byte. (Defaults-before-spread would
+    // hoist skill/health/children/loyalty to the front, reordering a present
+    // notable's keys and breaking the lossless round-trip the harness checks.)
     r.notables = (d.notables ?? []).map((n: any) => ({
-      skill: 50,
-      health: 80,
-      children: [],
-      loyalty: 80,
       ...n,
+      skill: n.skill ?? 50,
+      health: n.health ?? 80,
+      children: n.children ?? [],
+      loyalty: n.loyalty ?? 80,
     }));
     r.expeditions = d.expeditions;
     r.routes = (d.routes as Route[]).map((rt) => ({ ...rt, cargoType: rt.cargoType ?? null, cargoPriority: rt.cargoPriority ?? null }));
@@ -12728,6 +12851,9 @@ export class RegionSim {
     r.rng.setState(d.rng);
     // restore the AI stream too (older saves predate it — derive from main seed)
     if (typeof d.aiRng === 'number') r.aiRng.setState(d.aiRng);
+    // restore the incidental stream too (older saves predate it — keep the
+    // constructor-derived seed, which is deterministic from the main seed)
+    if (typeof d.auxRng === 'number') r.auxRng.setState(d.auxRng);
     // restore epilogue events (post-2100 flavor)
     r.triggeredEpilogueEvents = new Set(d.triggeredEpilogueEvents ?? []);
     r.epilogueShown = d.epilogueShown ?? false;
@@ -12823,7 +12949,11 @@ export class RegionSim {
         : { until: v.until, cut: v.cut ?? 1 };
     }
     r.supplyChainHealth = d.supplyChainHealth ?? 1.0;
-    r.tradeFlows = d.tradeFlows ?? [];
+    r.supplyShockMult = d.supplyShockMult ?? 1;            // no-shock default
+    r._electronicsDisrupted = d.electronicsDisrupted ?? false;
+    // Pre-transit-pipeline flows carried no pendingIncome — backfill to 0 (they
+    // simply transit out without a payout); new flows round-trip unchanged.
+    r.tradeFlows = (d.tradeFlows ?? []).map((f: { pendingIncome?: number }) => ({ ...f, pendingIncome: f.pendingIncome ?? 0 }));
     r.currencyRegime = d.currencyRegime ?? 'fiat';
     r.currencyUnionPartnerId = d.currencyUnionPartnerId ?? undefined;
     r.fxBoost = d.fxBoost ?? 1.0;
@@ -12877,7 +13007,7 @@ export class RegionSim {
 
     // Create and record the loan
     const loan: Loan = {
-      id: Math.random(),
+      id: this.auxRng.next(), // seeded, not Math.random — loan ids are serialized
       lenderId,
       principal: amount,
       borrowed: amount,
@@ -13138,6 +13268,16 @@ export class RegionSim {
    *  more from each hand; planning trades a slice of output for stability. */
   economyOutputMult(): number {
     return this.economicSystem === 'laissez-faire' ? 1.10 : this.economicSystem === 'planned' ? 0.92 : 1;
+  }
+
+  /** Farm-economy output multiplier from realized warming (GDD §8.2). The
+   *  agriculture sector's £/month output erodes linearly past
+   *  `AGRI_CLIMATE_THRESHOLD`°C, capped at `AGRI_CLIMATE_MAX_DRAG`; exactly 1.0
+   *  below the threshold. Distinct from the subsistence-food drag in dailyUpdate
+   *  (a different variable — the granary, not the cash-crop economy). Pure read,
+   *  no RNG, and a sink (warming is emissions-driven), so it can't diverge. */
+  agriClimateMult(): number {
+    return 1 - Math.min(AGRI_CLIMATE_MAX_DRAG, Math.max(0, this.warmingC - AGRI_CLIMATE_THRESHOLD) * AGRI_CLIMATE_SLOPE);
   }
 
   /**
@@ -13742,7 +13882,7 @@ export class RegionSim {
     // (only aggressive/expansionist types do this)
     if (
       rival.relations < -70 && rival.weights.expansion >= 7 && rival.pop > 15000 &&
-      !this.playerWar && this.aiRng.chance(0.012)
+      !this.playerWar && this.aiRng.chance(this.aggroChance(0.012))
     ) {
       const tributeDemand = Math.round(this.treasury * 0.1);
       this.addLog(

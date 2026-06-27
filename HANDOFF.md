@@ -1,52 +1,45 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-27 · **Tests:** 937 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway. **Latest arc — a SPATIAL 4X redesign (Civ/Age-of-Wonders, but "keep the 4X clear" is the north star):** design doc `docs/design/spatial-4x-redesign.md`; **Phase A (click-to-found) MERGED (PR #289)**; **Phase B (place buildings on hexes) committed on the working branch, not yet pushed/PR'd.** Also this arc: graded raw availability (PR #280), the `asset-generator` agent + `gen:local` local-AI image tool (PRs #281/#282), and visual-polish Phase 1 — sprite armies + shaded towns (PR #287).
+**Last updated:** 2026-06-27 · **Tests:** 964 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway. **This session: 8 PRs merged (#283–#286, #288)** — cost-push inflation; non-asset depth pass (export-drag trade leg + serialize-determinism harness & 3 bug fixes + first C1 extraction + perf-guard re-baseline); C1 services extraction + situation-aware deals; AI difficulty belligerence + intel-gated agenda; **#288 = Tier-2 climate farm drag (A) + Tier-3 goods-on-routes first slice (B), both merged.**
 
-## Recent session (2026-06-27) — spatial 4X: design + Phase A (merged) + Phase B (committed)
+> **PARALLEL TRACK — SPATIAL 4X redesign** (`docs/design/spatial-4x-redesign.md`): a second session is turning Centuria into a Civ/Age-of-Wonders spatial city game (found towns by clicking, place buildings on hexes) **while keeping the 4X clear**. **Phase A (click-to-found) MERGED #289**; **Phase B (place buildings on hexes) PR #291 open.** Next: Phase C (tile yields feed economy — intentional re-baseline), Phase D (districts/wonders). See `.handoff.md` §0. Lesson learned: AI text-to-image is the wrong tool for crisp foreground sprites — procedural rendering + the spatial layer is the win.
 
-The user wants Centuria to become a **Civ/Age-of-Wonders spatial city game** — found
-towns by clicking, place buildings/districts/wonders on hexes — **while staying a
-clear 4X** ("4X clarity is most important"). Plan: `docs/design/spatial-4x-redesign.md`
-(district-scale like Civ-6, NOT SimCity; macro empire view stays dominant). A big
-find: the hex grid (`hex.ts`), per-tile terrain, founding+min-spacing rule, and
-**faction territory + borders all already exist** — so we *extend*, not rebuild.
+> 🌾⚠️ **#288 — two intentional BALANCE changes (user picked A+B), UNVERIFIED-BY-HUMAN (unit + headless only):**
+> **A — agriculture climate drag:** warming past +1.5°C trims the agriculture *sector's*
+> GDP (`agriClimateMult`, ≤30%, distinct from the older +0.8°C subsistence-food drag).
+> Non-divergent (≤14% of the ag sector at the observed ~3.8°C; warming is a pure sink).
+> Dials: `AGRI_CLIMATE_THRESHOLD`/`_SLOPE`/`_MAX_DRAG`. **WANTS a late-game playtest.**
+> **B — physical goods on routes (first slice):** trade flows now *deliver* — arbitrage
+> profit (`pendingIncome`, serialized) pays out on ARRIVAL after `transitDays` of travel,
+> a severed route strands the cargo, and a long-standing inverted buy/sell direction bug
+> is fixed. Macro-neutral (arbitrage is minor; headless unchanged). **Follow-on:** per-good
+> prices (still a wage-gap proxy) and per-settlement goods stocks (the big rock — currently
+> `intermediateGoodStocks` is one nation-wide pool, so goods can't truly move *between*
+> settlements yet).
 
-- **Phase A — click-to-found (MERGED, PR #289).** The "Found Town" button now arms a
-  placement mode: legal sites highlight (green pulsing hexes — settleable land,
-  ≥ `MIN_SETTLEMENT_SPACING`, in reach), a click sends the expedition there. New
-  `canFoundAt` / `foundTownAt`; `launchExpedition` refactored to share
-  `launchExpeditionTo` (RNG-order identical → determinism holds). `tests/found-at.test.ts`.
-- **Phase B — place buildings on hexes (COMMITTED on the branch, needs push + PR).**
-  `Settlement.placedBuildings: {id,cell}[]` + `CityConstruction.cell?`. The build
-  button arms placement (amber legal-hex highlight in the `CITY_WORK_RADIUS=2` ring);
-  a click breaks ground there; buildings render as small sector-tinted shaded icons
-  on their hex (`drawPlacedBuildings`) — this also folds in the "town art is weak"
-  request (towns now have a footprint of buildings around the centre).
-  **Economy byte-identical:** `buildings[]` stays the source for `buildingBonus`;
-  `placedBuildings` is render/interaction-only. Old saves migrate (`ensurePlacements`,
-  deterministic auto-site). `tests/placement.test.ts` (8). **937 tests.**
-
-**Next:** push Phase B + open its PR. Then **Phase C** (tile yields + building
-adjacency feed the economy at the `buildingBonus` seam — the real "exploit" layer;
-re-baseline economy suites), then **Phase D** (districts + wonders). Keep playtesting
-that the **4X reads clearly** at each step. Open decisions still in the design doc §9.
-
-## Earlier this session (2026-06-26/27) — assets tooling + visual polish Phase 1
-
-- **`gen:local` — a free, local AI image generator** (`scripts/gen-local.ts`,
-  `scripts/png.ts`): drives a LOCAL Stable Diffusion server (AUTOMATIC1111 *or*
-  ComfyUI on 127.0.0.1 — not egress-blocked, runs on the user's GPU, no token).
-  `--init` diagnostics, `--max-dim` for low-VRAM (the user runs a 4 GB GTX 970 →
-  ComfyUI via Stability Matrix worked; cu126 build, `native` Maxwell support).
-  The user generated all 11 slots but **AI sprites look bad for tiny top-down town
-  icons** — verdict: **AI is the wrong tool for crisp foreground sprites/UI**; the
-  win is procedural rendering + the spatial layer (hence the redesign above).
-- **`asset-generator` subagent** (`.claude/agents/asset-generator.md`, gitignore
-  exception added) — operator playbook for the override seam.
-- **Visual polish Phase 1 (MERGED, PR #287):** armies render as animated pawn-sprite
-  squads (reusing the orphaned `sprites.ts` pawns via new `buildPawnSprites()`)
-  instead of `⚔N`; `drawTownTier` rewritten with shaded boxes / lit windows / roof
-  detail / chimney smoke; muted-text contrast fixed in `style.css`.
+> 🟢 **PR #284 (open, this session) — non-asset depth pass, 4 commits:**
+> 1. **D1-econ trade leg** — a supply shock now chokes *exports*
+>    (`exportEarningsLastMonth ×= 1 − severity·SUPPLY_SHOCK_EXPORT_DRAG`, 0.5). With
+>    the merged GDP drag + cost-push, all three legs (GDP, prices, trade) are wired.
+>    Byte-identical (severity 0 in healthy play).
+> 2. **Determinism + save-fidelity hardening (Track C guard).** A new full-state
+>    `serialize()` determinism harness (`tests/serialize-determinism.test.ts`) caught
+>    three latent defects, all fixed: (a) **5 `Math.random()` calls** made saves
+>    non-reproducible for a fixed seed — notable health decay + loan ids now use a new
+>    serialized **`auxRng`** (mirrors `aiRng`; main+AI streams stay byte-identical);
+>    (b) the one-month-lagged `supplyShockMult`/`_electronicsDisrupted` caches weren't
+>    serialized → a mid-shock reload dropped the drag, now persisted; (c) Phase-14
+>    city-service fields + notable defaults weren't round-trip-symmetric → a shared
+>    `cityServiceFields()` helper + spread-first notable backfill make a save lossless.
+> 3. **First C1 extraction** — `tickPollution` → `src/sim/systems/pollution.ts` as a
+>    free function `fn(r: RegionSim)` (the roadmap pattern; preserves RNG order),
+>    proven byte-identical by the harness. Establishes the `systems/` dir + convention.
+> 4. **Track D perf guard** — `bench-region` re-baselined off the obsolete "mean×64"
+>    model to the real wall-clock catch-up budget; hard gate is now the worst single
+>    tick (> 16.7 ms = stutter; currently ~10.6 ms, passes).
+>
+> **The determinism harness is the key unlock:** every future `region.ts` extraction
+> and every "byte-identical" claim now has a real PASS/FAIL gate, not a hand-wave.
 
 > ⚠️ **Untested-by-human balance change live on `main`:** PR #280's *Phase-2 graded
 > extraction proxy* (an ordinary contraction now drags industry via the chain) is
@@ -69,6 +62,121 @@ that the **4X reads clearly** at each step. Open decisions still in the design d
 > (parallax backdrops + era UI skins) and `B2-audio` (music stems + ambience + voice)
 > are the bold roadmap items and remain **un-started in earnest** — they need an env
 > with network egress + image/audio tooling to actually generate.
+
+## Recent session (2026-06-27 pm) — non-asset depth pass (PR #284): trade leg + the two guards + first extraction
+
+User brief: "finish the rest of the non-asset work." Ran a codebase-wide inventory
+workflow (8 readers — econ/military/AI/climate/zoning/modularization/UI/perf — +
+a synthesizer) to ground-truth the roadmap against the real code, then shipped the
+safest, highest-value byte-identical items from the resulting backlog (4 commits on
+PR #284; see the status block at the top of this file for the per-commit summary).
+
+**Ground-truth corrections the inventory surfaced (the handoff was stale):**
+- The **wall-clock sim catch-up budget is already in `main.ts`** (`runCatchUp`,
+  budgetMs≈8, not a 64-tick count) — the gap was the *bench guard* still using the
+  old "mean×64" verdict (now re-baselined).
+- **`drawBackdrop()` is already wired** into `regionview.ts draw()` (before the
+  mapCache blit) — not the gap the roadmap implied.
+- **Emergent FX already exists** (`computeExchangeRate` reads trade balance / rates /
+  confidence). The real gap is *two competing FX writers* (`tickMonetary` regime path
+  vs `tickFX`) — a consolidation, deferred (medium-risk).
+- **Phase-14 zoning is scalar state on `RegionSim`**, substantially implemented — NOT
+  greenfield; the `zoning-system.ts` grid-map vision is the unbuilt part.
+- The sim had **genuine non-determinism** (5 `Math.random()` sites) — now fixed.
+
+### Prioritized non-asset backlog (from the inventory synthesizer — pick up here)
+
+Order: byte-identical + low-risk + high-value first; deps noted. ✅ = shipped this PR.
+
+**Tier-0 guards (both ✅ this session — they gate everything else):**
+- ✅ Fixed-seed full-`serialize()` determinism harness (the byte-identical gate).
+- ✅ `bench-region` wall-clock + worst-tick gate.
+
+**Safe wave (byte-identical TRUE, low-risk — ship next):**
+1. ✅ **D1-econ trade leg** (supply shock → exports).
+2. ✅ **C1: extract `tickPollution`** → `systems/pollution.ts` (first leaf).
+3. ✅ **C1: extract `tickServiceCoverage`** → `systems/services.ts` (PR #285).
+4. ✅ **D3-ai: situation-aware `DealVerdict`** (PR #285) — `rivalSituation(rv)∈[0,1]`
+   (1 while fighting a foreign war), additive `SITUATION_TREATY_BONUS` for protection/
+   trade. Byte-identical (0 at peace; `evaluateDeal` is player-initiated only, not in
+   the tick/AI path, so headless is untouched). Keyed off foreign-war state (NOT
+   relations — that would have moved the existing diplomacy tests).
+5. ◑ **D3-ai: agenda legibility** (PR #286) — intel-gated agenda *display* shipped
+   (panel shows a rival's agenda only at `intelOf ≥ 0.5`; display-only, byte-identical).
+   The structured `AgendaKind` *enum* (prereq for agenda-driven behaviour) is still
+   open — note the agenda is already archetype-derived + shown "stated" at spawn, so
+   the enum's value is future behaviour, not display.
+6. ✅ **D3-ai: tier-asymmetry guardrail** (PR #286) — rival belligerence (hostile
+   mischief + tribute ultimatum) now runs through `aggroChance(p) = clamp(p ×
+   aiAggression)`, reusing the EXISTING `aiAggression` knob (not a new one). Scales
+   the threshold not the draw → byte-identical at the 1.0 default (all tests +
+   headless); only easy/hard tiers shift nastiness.
+7. **D2-mil: regime-modulated war-support DECAY rate** (`WAR_SUPPORT_DECAY_MULT`, all
+   1.0 → no-op now); **Front stub** (`front?:{position}` from `w.score`, write-only);
+   **post-war `warScars` record** (pure bookkeeping). All TRUE/low-risk — but pure
+   scaffolding (no immediate gameplay change), so weigh value before shipping.
+8. **UIUX: era skin via `data-era`**, decompose tooltips (render-only, TRUE).
+   ⚠️ **NOT the climate crop-yield drag** — the inventory mis-tagged it byte-identical;
+   verified `warmingC` reaches **2.0–4.7 °C by 2100** (not <1.5), so a "zero below
+   1.5 °C" drag fires in every run → it's a Tier-2 **re-baseline** balance change.
+
+**Tier-2 (needs re-baseline — own PRs):** revanchism CB + AI war-frequency shift;
+sea-wall overtopping / climate-refugee migration; brownout −30 % industrial output;
+live-stats skyline + Century Graph (new serialized field); **consolidate the two FX
+writers** (do after more of C1 lands so `region.ts` is calmer).
+
+**Tier-3 (large rewrites, last):** spatial military Front (full resolution rewrite,
+new RNG order — needs the Front stub first); physical-goods-on-routes → per-good
+prices → 44-good catalog (sequence in that order; the heart of making
+`intermediateGoodStocks` economically real); E2 R/C/I/O demand + land-value grid
+maps (trips the save-size guard by design); `drawBackdrop` parallax compositing.
+
+**Dependency rules:** the determinism harness (✅) precedes every "byteIdenticalSafe"
+claim; `bench-region` (✅) precedes large `region.ts` cost; **continue C1 leaf
+extractions before the big D1-econ goods/price/FX features** (they add hundreds of
+lines — land them in `systems/`, not the 14k-line monolith).
+
+## Recent session (2026-06-27) — supply shock → cost-push inflation: the stagflation half (D1-econ)
+
+The graded supply chain could *drag output* (`supplyShockMult`, ≤15% industry bite) and
+trigger two secondary effects, but a shortage's other half — **dearer goods** — was
+missing. The 1973 oil shock cut production and exports yet never touched prices; it read as
+a plain recession, not the stagflation it was. This session wires the **"prices" leg** of
+the handoff's D1-econ next step ("make goods read into the economy — GDP, prices, or trade").
+
+- **The mechanic.** `tickMonetary()`'s inflation target gains a cost-push term:
+  `inflTarget += supplyShockSeverity() × SUPPLY_SHOCK_INFLATION` (gain **0.30**, in
+  `region.ts` beside `SUPPLY_SHOCK_MAX_DRAG`). `supplyShockSeverity()` is the *same* signal
+  the output drag reads — how far supply health has fallen **below the era-structural
+  baseline** — so it is **exactly 0 in all healthy play** (raws flowing → actual == baseline).
+  The term is therefore +0 there and the whole monetary RNG stream stays byte-identical;
+  only a genuine cascade lifts prices. No new serialized field, no new RNG (severity is a
+  pure no-RNG read), one-month price lag (tickMonetary runs before tickIntermediateGoods in
+  the tick, reading last month's cached `supplyChainHealth`).
+- **Calibration.** Partial oil embargo (`OIL_EMBARGO_CUT` 0.6) → severity 0.15 → +4.5pp to
+  the target → inflation peaks ~4.5–4.8% over the window (from a 2% base); a total cut →
+  severity 0.25 → ~6.7%. Hard-capped by the existing 0.50 inflation ceiling. **Bounded and a
+  pure sink:** inflation feeds confidence/GDP but never sector output → the raw proxy, so it
+  *cannot* reinforce the shortage that caused it (verified: `currencyEfficiency`/
+  `economyOutputMult` don't read inflation). Non-divergent by construction.
+- **Verified end-to-end.** Unit suite `tests/supply-cost-push.test.ts` (6: inert-in-healthy,
+  push-vs-control, severity·gain closed form, scales-with-severity, 0.50-cap, heals). Real
+  tick-loop probe (seed 42, forced 1974 oil embargo): inflation 2.00% → **4.50%** peak →
+  mean-reverts to 2.01% by 1994 as the chain heals; GDP 19.6k → 39.6k and pop 2.0k → 4.6k
+  grow straight through — **no spiral**. 8-seed × 181y headless: all finite, all end at 2.0%
+  inflation (fully healed). **906 → 926 tests**, tsc clean, build green.
+- **UI.** Supply tab headline now reads both halves of a shock: `industry −X% · prices +Y.Ypp`
+  (the price line gated on `hasCentralBank()`, since that's what realizes the push).
+
+**Next on the economy (D1-econ):** two legs of "GDP, prices, trade" remain. **Trade** is the
+natural next one — a shortage should also choke *exports* (a nation short on fuel/components
+has less to sell), and the oil embargo already cuts export earnings via the depression path
+but not via the supply chain; route `supplyShockSeverity()` into `exportEarningsLastMonth` in
+`monthlyEconomy` the same byte-identical way (severity 0 → ×1). Or deepen **GDP**: today the
+chain only *drags* industry on a shock — nothing reads the *positive* breadth of a healthy
+goods mix into output. Or the bigger items: physical goods on routes, per-good prices, the
+full ~44-good set (current is the 16-good MVP-18 tier). Or pick up `C1` (region.ts is 14k
+lines; `supply.ts` is the free-function template).
 
 ## Recent session (2026-06-26) — graded raw availability: ordinary shortages bite (D1-econ)
 
