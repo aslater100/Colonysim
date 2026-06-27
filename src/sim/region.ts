@@ -3162,6 +3162,16 @@ export class RegionSim {
     return AI_DIFFICULTY[this.aiDifficulty] ?? AI_DIFFICULTY.normal;
   }
 
+  /** Scale a rival-belligerence probability by the `aiAggression` difficulty knob
+   *  (GDD §6.4): 1.0 on normal so the chance is unchanged, >1 on harder tiers makes
+   *  rival mischief and ultimatums more frequent, <1 on easier ones gentler. It
+   *  scales the THRESHOLD, not the draw, so the RNG stream is byte-identical on
+   *  normal (and in the headless sim and every test, which all run at the 1.0
+   *  default). Clamped to [0,1] so a high multiplier can't overflow a probability. */
+  aggroChance(p: number): number {
+    return Math.max(0, Math.min(1, p * this.difficultySettings.aiAggression));
+  }
+
   /** Get garrison strength of a settlement, including stationed units (GDD §7.1). */
   garrisonOf(settlement: Settlement): number {
     let strength = settlement.garrisonStrength || 0;
@@ -10397,8 +10407,9 @@ export class RegionSim {
           this.addLog(`${rv.name} proposes a Non-Aggression Pact — cold neighbors, fenced borders.`, 'info');
         }
       }
-      // Hostile mischief (GDD §6.4): town-scale friction, deniable and cheap
-      if (rv.relations < -40 && !rv.treaties.includes('non_aggression') && this.rng.chance(0.1 + rv.weights.risk * 0.015)) {
+      // Hostile mischief (GDD §6.4): town-scale friction, deniable and cheap.
+      // Difficulty-scaled (aggroChance) so harder tiers see nastier neighbours.
+      if (rv.relations < -40 && !rv.treaties.includes('non_aggression') && this.rng.chance(this.aggroChance(0.1 + rv.weights.risk * 0.015))) {
         if (!rv.borderSettled && (this.rng.chance(0.5) || this.tradeValueLastMonth <= 0)) {
           const t = this.settlements[this.rng.int(this.settlements.length)];
           if (t) {
@@ -13660,7 +13671,7 @@ export class RegionSim {
     // (only aggressive/expansionist types do this)
     if (
       rival.relations < -70 && rival.weights.expansion >= 7 && rival.pop > 15000 &&
-      !this.playerWar && this.aiRng.chance(0.012)
+      !this.playerWar && this.aiRng.chance(this.aggroChance(0.012))
     ) {
       const tributeDemand = Math.round(this.treasury * 0.1);
       this.addLog(
