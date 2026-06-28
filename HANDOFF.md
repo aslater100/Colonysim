@@ -1,6 +1,6 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-27 (latest) · **Tests:** 980 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway. **Latest session: C1 extraction — the trade-arbitrage subsystem (`tickPriceArbitrage` + `computeCongestionTariff`) lifted out of the 14k-line `region.ts` into `src/sim/systems/arbitrage.ts`** (the third Track-C leaf after `systems/pollution.ts` + `systems/services.ts`; the dependency-rule-mandated step *before* the big goods/price features, and the prior baton's named next task. Free functions `fn(r: RegionSim)`; `tick()` dispatches via `tickPriceArbitrage(this)`. First extracted subsystem that consumes RNG + mutates the per-town ledger, so the verbatim body preserves draw order. **Byte-identical** — determinism harness ✅, 8-seed × 181y headless **byte-for-byte identical** to base, 980 tests / tsc / build / bench-region all green; `addGoodStock`/`shipGoodFrom` made public for the seam). **Prior session: PR-3 slice 1 — "goods ride the rails"** (trade-route shipments now carry **real physical `cargo`**: units of the shipped good are debited from the source town's `goodStocks` on dispatch and credited to the destination's on arrival — a severed route now strands the **real units**, where before only abstract arbitrage profit moved and the flow's goodId/volume were decorative. The dispatch logic / `pendingIncome` are untouched and nothing reads intermediate-stock *magnitudes* into the economy, so it's **macro-neutral — proven by a byte-for-byte-identical 8-seed × 181y headless diff**. It's the substrate the *per-town supply solve* — PR-3 slice 2, the actual balance change — will consume). **Then: #294 merged — the per-settlement-stocks STORAGE SWAP (PR-2)** (the goods ledger moved onto **`Settlement.goodStocks`** per town; `produceGood` splits the tick's output by producing-sector, `drawGood` drains greedily in-order, both preserving the nation-wide aggregate exactly → **byte-identical gameplay**; built on **#292 — the per-settlement-stocks FOUNDATION** ledger seam). **Earlier: 8 PRs (#283–#286, #288)** — cost-push inflation; non-asset depth pass (export-drag trade leg + serialize-determinism harness & 3 bug fixes + first C1 extraction + perf-guard re-baseline); C1 services extraction + situation-aware deals; AI difficulty belligerence + intel-gated agenda; **#288 = Tier-2 climate farm drag (A) + Tier-3 goods-on-routes first slice (B).**
+**Last updated:** 2026-06-28 (latest) · **Tests:** 980 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway. **Latest session: C1 extraction — the intermediate-goods subsystem (`tickIntermediateGoods`) lifted out of the 14k-line `region.ts` into `src/sim/systems/goods.ts`** (the FOURTH Track-C leaf after `systems/pollution.ts` + `systems/services.ts` + `systems/arbitrage.ts`, and the method **PR-3 slice 2 will rewrite** — the dependency-rule-mandated step *before* that balance change, and the prior baton's named next task. Free function `fn(r: RegionSim)`; `tick()` dispatches via `tickIntermediateGoods(this)` in the same tick slot. Body moved **verbatim** (`this.`→`r.`), preserving the pharma/electronics RNG draw order; seam: `advanceSectorOutputNorms`/`rawSupplyLevel`/`_electronicsDisrupted`/`supplyShockMult` made public, `sectorRawLevel` stays private. **Byte-identical** — determinism harness ✅, 8-seed × 181y headless **byte-for-byte identical** to base (matching sha256), 980 tests / tsc / build / bench-region all green; a 3-lens adversarial review returned SHIP / zero defects). **Prior session: C1 extraction — the trade-arbitrage subsystem (`tickPriceArbitrage` + `computeCongestionTariff`) → `src/sim/systems/arbitrage.ts`** (the third Track-C leaf; first extracted subsystem that consumes RNG + mutates the per-town ledger; `addGoodStock`/`shipGoodFrom` made public; byte-identical). **Earlier: PR-3 slice 1 — "goods ride the rails"** (trade-route shipments now carry **real physical `cargo`**: units of the shipped good are debited from the source town's `goodStocks` on dispatch and credited to the destination's on arrival — a severed route now strands the **real units**, where before only abstract arbitrage profit moved and the flow's goodId/volume were decorative. The dispatch logic / `pendingIncome` are untouched and nothing reads intermediate-stock *magnitudes* into the economy, so it's **macro-neutral — proven by a byte-for-byte-identical 8-seed × 181y headless diff**. It's the substrate the *per-town supply solve* — PR-3 slice 2, the actual balance change — will consume). **Then: #294 merged — the per-settlement-stocks STORAGE SWAP (PR-2)** (the goods ledger moved onto **`Settlement.goodStocks`** per town; `produceGood` splits the tick's output by producing-sector, `drawGood` drains greedily in-order, both preserving the nation-wide aggregate exactly → **byte-identical gameplay**; built on **#292 — the per-settlement-stocks FOUNDATION** ledger seam). **Earlier: 8 PRs (#283–#286, #288)** — cost-push inflation; non-asset depth pass (export-drag trade leg + serialize-determinism harness & 3 bug fixes + first C1 extraction + perf-guard re-baseline); C1 services extraction + situation-aware deals; AI difficulty belligerence + intel-gated agenda; **#288 = Tier-2 climate farm drag (A) + Tier-3 goods-on-routes first slice (B).**
 
 > **PARALLEL TRACK — SPATIAL 4X redesign** (`docs/design/spatial-4x-redesign.md`): a second session is turning Centuria into a Civ/Age-of-Wonders spatial city game (found towns by clicking, place buildings on hexes) **while keeping the 4X clear**. **Phase A (click-to-found) MERGED #289**; **Phase B (place buildings on hexes) MERGED #291.** Next: Phase C (tile yields feed economy — intentional re-baseline), Phase D (districts/wonders). See `.handoff.md` §0. Lesson learned: AI text-to-image is the wrong tool for crisp foreground sprites — procedural rendering + the spatial layer is the win.
 
@@ -64,6 +64,51 @@
 > (parallax backdrops + era UI skins) and `B2-audio` (music stems + ambience + voice)
 > are the bold roadmap items and remain **un-started in earnest** — they need an env
 > with network egress + image/audio tooling to actually generate.
+
+## Recent session (2026-06-28) — C1 extraction: intermediate-goods subsystem → systems/goods.ts
+
+User said "continue". The economy track's headline next step is **PR-3 slice 2** (the per-town
+supply solve) — a *deliberate balance change* wanting a downturn playtest — and the project's
+own **dependency rules** + the prior baton both name the exact prerequisite leaf: *"`tickIntermediateGoods`
+is the next leaf — pull it into `systems/goods.ts` before PR-3 slice 2 rewrites it."* So this
+session shipped that de-risked, fully-verifiable prerequisite — the same "ship the verifiable
+slice, defer the unverifiable balance change" discipline that produced the prior three Track-C
+leaves and PR-3 slice 1.
+
+- **The move.** `tickIntermediateGoods` (the monthly intermediate-goods tick: advance sector
+  norms → prune embargoes → resolve the graded supply cascade → produce/draw the stock ledger →
+  fire the pharma plague-roll + electronics research-slow secondary effects) left `region.ts` for
+  a new **`src/sim/systems/goods.ts`** as a free function `tickIntermediateGoods(r: RegionSim)`.
+  `tick()` now dispatches `tickIntermediateGoods(this)` in the **same tick slot** (immediately
+  before `tickPriceArbitrage(this)`). The body moved **verbatim** (`this.`→`r.`); no logic changed.
+- **The FOURTH Track-C leaf** (after `systems/pollution.ts` #284, `systems/services.ts` #285, and
+  `systems/arbitrage.ts`). Like arbitrage it **consumes RNG** (the `0.15·pharmaShortfall` plague
+  draw, the `int(settlements.length)` target pick, the `0.3·electronicsShortfall` research-slow
+  draw) — the free-function form runs the body against the same `RegionSim`, so not one draw moves.
+- **Seam (the C1 recipe: every touched `r.x` must be public).** Made public on `RegionSim`:
+  methods `advanceSectorOutputNorms` + `rawSupplyLevel` (were `private`), and the two one-month
+  cache fields `_electronicsDisrupted` + `supplyShockMult` (were `private`). **`sectorRawLevel`
+  stays private** — it's only called by `rawSupplyLevel` (a method that stays on the class), so it
+  needn't be exposed (minimal surface). The unused `SUPPLY_FULL_EPS` import was dropped from
+  `region.ts` (its sole consumer was the moved method; `noUnusedLocals` would have failed tsc);
+  `resolveSupplyChainGraded` + `INTERMEDIATE_GOODS` stay (still used by `supplyChainSnapshot` /
+  `supplyChainBaselineHealth`). `goods.ts` imports `INTERMEDIATE_GOODS` (a *value*) from
+  `region.ts` call-time-only — the same safe runtime import cycle as `arbitrage.ts`.
+- **Byte-identical — proven, not asserted.** Pure code move → verified by the **determinism
+  harness** AND an **8-seed × 181y headless sweep diffed byte-for-byte against the pre-change
+  baseline (identical sha256)**. tsc clean, vite build green, **bench-region PASS** (worst tick
+  11.8 ms < 16.7 ms), save-size guard ✅. A **3-lens adversarial review** (move-fidelity /
+  test-fidelity / seam-minimality + synthesizer) returned **SHIP, zero confirmed defects**.
+- **Tests.** The six suites that called `r.tickIntermediateGoods()` (phase15, supply, supply-shock,
+  oil-shock-chain, supply-cost-push, supply-trade-leg) now import & call the free function
+  `tickIntermediateGoods(r)` (mirroring how phase14 calls `tickPollution` and phase15 calls
+  `tickPriceArbitrage`). Count unchanged at **980** — a pure refactor adds no behaviour to cover;
+  the harness is the gate. (Bonus: tightened one pre-existing tautological assertion in phase15 —
+  `chemicals >= 0` → `> 0` — now it actually verifies production, which the review confirmed holds.)
+- **Why this, not slice 2.** Slice 2 adds hundreds of lines to the goods system and is a real
+  balance change; landing it in the 14k-line monolith is what the dependency rule warns against.
+  With `tickIntermediateGoods` out, slice 2 can grow in `systems/goods.ts`. Slice 2 remains the
+  headline next step (see §5 of `.handoff.md`).
 
 ## Recent session (2026-06-27 latest) — C1 extraction: trade-arbitrage subsystem → systems/arbitrage.ts
 
@@ -315,10 +360,14 @@ compositing.
 **Dependency rules:** the determinism harness (✅) precedes every "byteIdenticalSafe"
 claim; `bench-region` (✅) precedes large `region.ts` cost; **continue C1 leaf
 extractions before the big D1-econ goods/price/FX features** (they add hundreds of
-lines — land them in `systems/`, not the 14k-line monolith). ✅ `tickPollution`,
-`tickServiceCoverage`, and now `tickPriceArbitrage`+`computeCongestionTariff`
-(`systems/arbitrage.ts`) are extracted; **`tickIntermediateGoods` is the next leaf — pull it
-into `systems/goods.ts` before PR-3 slice 2 rewrites it.**
+lines — land them in `systems/`, not the 14k-line monolith). ✅ `tickPollution`
+(`systems/pollution.ts`), ✅ `tickServiceCoverage` (`systems/services.ts`), ✅
+`tickPriceArbitrage`+`computeCongestionTariff` (`systems/arbitrage.ts`), and ✅
+`tickIntermediateGoods` (`systems/goods.ts`) are all extracted. **The goods system now has a
+home outside the monolith — PR-3 slice 2 (the per-town supply solve) is written *there*, not in
+`region.ts`.** The ledger accessors (`produceGood`/`drawGood`/`seedGoodStock`/`goodStock`) + the
+raw proxy (`rawSupplyLevel`/`sectorRawLevel`/`advanceSectorOutputNorms`) stay on `RegionSim`
+beside the per-town `goodStocks` store; slice 2 builds on the now-public `rawSupplyLevel` seam.
 
 ## Recent session (2026-06-27) — supply shock → cost-push inflation: the stagflation half (D1-econ)
 
