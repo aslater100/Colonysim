@@ -2767,6 +2767,10 @@ export class RegionSim {
   lastActionDay: Record<string, number> = {};
   /** True once the Science bottleneck event fires; cleared when player builds a school. */
   researchBottleneckActive = false;
+  /** Spatial-4X Phase C: per-settlement tile yield bonus cache, keyed by settlement
+   *  id. Terrain is static (never changes after worldgen), so this is computed once
+   *  and kept forever. Transient — NOT serialized; rebuilt lazily on first call. */
+  private _tileYieldCache?: Map<number, Partial<Record<SectorId, number>>>;
   // ---- Rival nations & diplomacy (GDD §5.4, §6.2–6.4) ----
   rivals: RivalNation[] = [];
   /** Named rival nations that have been used (to avoid duplicates). */
@@ -7713,13 +7717,124 @@ export class RegionSim {
     return true;
   }
 
-  /** Sum of building output bonuses for one sector in this town. */
+  // ---- Spatial-4X Phase C: tile yields → sector bonuses ----
+  // These scale the mean terrain features of the worked ring (d=1..CITY_WORK_RADIUS
+  // hexes, centre excluded — its fertility already lives in landTerm/landQuality)
+  // into per-sector bonuses that plug into `buildingBonus` at the same seam as
+  // the existing flat building bonuses.  Calibration: fertile plains → small +agri,
+  // mountain ore → bigger +industry; coastal/river → +services.  An intentional
+  // re-baseline — Phase C is the economy-activator the spatial-4X spec calls out.
+
+  /** Scales mean-fertility deviation from 1.0 into an agriculture bonus. */
+  private static readonly TILE_AGRI_SCALE = 0.20;
+  /** River-cell fraction of the ring → agriculture bonus. */
+  private static readonly TILE_RIVER_AGRI = 0.06;
+  /** Ore-cell fraction of the ring → industry bonus. */
+  private static readonly TILE_ORE_BONUS = 0.15;
+  /** Rough-terrain (hills/mountains) fraction of the ring → industry bonus. */
+  private static readonly TILE_ROUGH_BONUS = 0.10;
+  /** Forest fraction of the ring → industry bonus (timber/paper). */
+  private static readonly TILE_FOREST_BONUS = 0.06;
+  /** River-cell fraction of the ring → services bonus (trade/transport). */
+  private static readonly TILE_RIVER_SVC = 0.10;
+  /** Coastal site → services bonus (applied once, not per cell). */
+  private static readonly TILE_COASTAL_SVC = 0.08;
+  /** Extra bonus per placed building sited on terrain that matches its sector. */
+  private static readonly TILE_PLACE_BONUS = 0.05;
+
+  /** Per-sector tile yields from the worked ring around this town. Result is cached
+   *  permanently — terrain never changes after worldgen.  The ring (d=1,2) is read
+   *  from the live RegionMap; water cells are skipped.  Sector `information` is
+   *  reserved for later eras and always returns 0 here. */
+  private tileYieldFor(t: Settlement): Partial<Record<SectorId, number>> {
+    if (!this._tileYieldCache) this._tileYieldCache = new Map();
+    const cached = this._tileYieldCache.get(t.id);
+    if (cached) return cached;
+
+    const c = this.map.coordToCell(t.x, t.y);
+    const cx = c.x, cy = c.y;
+
+    let totalFertility = 0, oreCells = 0, roughCells = 0, forestCells = 0, riverCells = 0, count = 0;
+    for (let col = Math.max(0, cx - CITY_WORK_RADIUS); col <= Math.min(REGION_N - 1, cx + CITY_WORK_RADIUS); col++) {
+      for (let row = Math.max(0, cy - CITY_WORK_RADIUS); row <= Math.min(REGION_N - 1, cy + CITY_WORK_RADIUS); row++) {
+        const d = hexDistance(cx, cy, col, row);
+        if (d < 1 || d > CITY_WORK_RADIUS) continue; // ring only (exclude centre)
+        const cell = this.map.at(col, row);
+        if (cell.biome === 'sea' || cell.biome === 'lake') continue; // skip water
+        count++;
+        totalFertility += cell.fertility;
+        if (cell.ore) oreCells++;
+        if (cell.roughness > 0.35) roughCells++;
+        if (cell.forest > 0.5) forestCells++;
+        if (cell.river) riverCells++;
+      }
+    }
+
+    const n = Math.max(1, count);
+    const meanFertility = totalFertility / n;
+
+    // Agriculture: fertile ring soil + river access
+    const agri = Math.max(-0.15, Math.min(0.25,
+      (meanFertility - 1.0) * RegionSim.TILE_AGRI_SCALE +
+      (riverCells / n) * RegionSim.TILE_RIVER_AGRI));
+    // Industry: rough terrain (mining), ore deposits, and timber
+    const indust = Math.max(-0.05, Math.min(0.25,
+      (roughCells / n) * RegionSim.TILE_ROUGH_BONUS +
+      (oreCells / n) * RegionSim.TILE_ORE_BONUS +
+      (forestCells / n) * RegionSim.TILE_FOREST_BONUS));
+    // Services: river-trade access + coastal port bonus
+    const svc = Math.max(0, Math.min(0.20,
+      (riverCells / n) * RegionSim.TILE_RIVER_SVC +
+      (t.site.coastal ? RegionSim.TILE_COASTAL_SVC : 0)));
+
+    const result: Partial<Record<SectorId, number>> = {
+      agriculture: agri,
+      industry: indust,
+      services: svc,
+      information: 0,
+    };
+    this._tileYieldCache.set(t.id, result);
+    return result;
+  }
+
+  /** Extra bonus per placed building whose cell terrain matches its sector.
+   *  An agriculture building on a fertile/river cell, an industry building on
+   *  ore/rough ground, or a services building near water each earn one pulse.
+   *  Bonus scales with the number of well-sited buildings, capped by how many
+   *  buildings the town can physically place (bounded by ring size). */
+  private placedBuildingTerrainBonus(t: Settlement, sector: SectorId): number {
+    let bonus = 0;
+    for (const pb of t.placedBuildings) {
+      const def = REGION_BUILDINGS_MAP.get(pb.id);
+      if (!def) continue;
+      if (def.sector !== sector && def.sector !== 'all') continue;
+      const col = Math.floor(pb.cell / REGION_N);
+      const row = pb.cell % REGION_N;
+      const cell = this.map.at(col, row);
+      if (sector === 'agriculture' && (cell.fertility > 1.05 || cell.river))
+        bonus += RegionSim.TILE_PLACE_BONUS;
+      if (sector === 'industry' && (cell.ore || cell.roughness > 0.35))
+        bonus += RegionSim.TILE_PLACE_BONUS;
+      if (sector === 'services' && (cell.river || t.site.coastal))
+        bonus += RegionSim.TILE_PLACE_BONUS;
+    }
+    return bonus;
+  }
+
+  /** Sum of building output bonuses for one sector in this town.
+   *  Phase C extends this with spatial tile yields from the worked ring
+   *  and adjacency bonuses for buildings sited on matching terrain. */
   private buildingBonus(t: Settlement, sector: SectorId): number {
     let bonus = 0;
     for (const id of t.buildings) {
       const def = REGION_BUILDINGS_MAP.get(id);
       if (def && (def.sector === sector || def.sector === 'all')) bonus += def.bonus;
     }
+    // Phase C: terrain yields from the worked ring (static terrain, cached)
+    const yields = this.tileYieldFor(t);
+    bonus += yields[sector] ?? 0;
+    // Phase C: placed-building adjacency (building sited on matching terrain)
+    bonus += this.placedBuildingTerrainBonus(t, sector);
     return bonus;
   }
 
