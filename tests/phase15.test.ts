@@ -13,6 +13,7 @@ import {
 } from '../src/sim/region';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
 import { computeCongestionTariff, tickPriceArbitrage } from '../src/sim/systems/arbitrage';
+import { tickIntermediateGoods } from '../src/sim/systems/goods';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
 
@@ -133,21 +134,22 @@ describe('tickIntermediateGoods()', () => {
     }
 
     // Call directly
-    const priv = r as unknown as { tickIntermediateGoods(): void; year: number };
+    const priv = r as unknown as { year: number };
     // Patch year to unlock chemicals (1920)
     Object.defineProperty(priv, 'year', { get: () => 1930, configurable: true });
 
-    r.tickIntermediateGoods();
-    // chemicals should have been produced (coal input available via proxy or stock)
-    // After production, chemicals stock should increase
-    expect(r.goodStock('chemicals')).toBeGreaterThanOrEqual(0);
+    tickIntermediateGoods(r);
+    // chemicals should have been produced (coal/iron inputs available via the
+    // industry proxy at output 50), so the stock must actually rise above 0 —
+    // a real assertion of the test's name, not the old tautological `>= 0`.
+    expect(r.goodStock('chemicals')).toBeGreaterThan(0);
   });
 
   it('starts with supplyChainHealth at 1.0 before any goods unlock', () => {
     const r = twoTownSim(42);
     // Year 1900 — no goods unlocked yet
     expect(r.supplyChainHealth).toBe(1.0);
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
     expect(r.supplyChainHealth).toBe(1.0);
   });
 
@@ -165,7 +167,7 @@ describe('tickIntermediateGoods()', () => {
     // Directly test the logic: inject stock, call, check pharma output
     // chemicals input is available (stock=10), so pharmaceuticals (1940) can produce if year >= 1940
     // We'll check the method doesn't crash and stock is handled properly
-    r.tickIntermediateGoods(); // year ~1900, nothing unlocked
+    tickIntermediateGoods(r); // year ~1900, nothing unlocked
     // No goods unlocked yet at game start so stocks unchanged
     expect(r.goodStock('chemicals')).toBe(10);
   });
@@ -180,14 +182,14 @@ describe('tickIntermediateGoods()', () => {
     r.settlements[0].goodStocks['copper'] = 100;
 
     const chemBefore = r.goodStock('chemicals');
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
     // No production because no goods are unlocked at year ~1900
     expect(r.goodStock('chemicals')).toBe(chemBefore);
   });
 
   it('supplyChainHealth defaults to 1 when no goods are active', () => {
     const r = twoTownSim(42);
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
     expect(r.getSupplyChainHealth()).toBe(1.0);
   });
 });
@@ -311,7 +313,7 @@ describe('supply chain disruption effects', () => {
     const r = twoTownSim(42);
     const priv = r as unknown as { _electronicsDisrupted: boolean };
     priv._electronicsDisrupted = true;
-    r.tickIntermediateGoods(); // year ~1900, no goods active
+    tickIntermediateGoods(r); // year ~1900, no goods active
     expect(priv._electronicsDisrupted).toBe(false);
   });
 

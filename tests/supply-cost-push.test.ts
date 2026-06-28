@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RegionSim, OIL_EMBARGO_DAYS, SUPPLY_SHOCK_INFLATION } from '../src/sim/region';
+import { tickIntermediateGoods } from '../src/sim/systems/goods';
 import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
 
 /**
@@ -65,7 +66,7 @@ describe('cost-push is inert in healthy play', () => {
     const r = withCentralBank(freshSim());
     pinYear(r, 1975); // every good unlocked
     flowAllRaws(r);
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
     expect(r.supplyShockSeverity()).toBe(0); // the multiplicand — push is exactly 0
 
     // Starting at the base target, ticking the monetary system many times keeps
@@ -88,8 +89,8 @@ describe('an oil embargo drives cost-push inflation', () => {
       flowAllRaws(r);
     }
     embargoOil(shocked, 0.6); // the historical partial cut
-    control.tickIntermediateGoods();
-    shocked.tickIntermediateGoods();
+    tickIntermediateGoods(control);
+    tickIntermediateGoods(shocked);
 
     expect(control.supplyShockSeverity()).toBe(0);
     expect(shocked.supplyShockSeverity()).toBeGreaterThan(0);
@@ -108,7 +109,7 @@ describe('an oil embargo drives cost-push inflation', () => {
     pinYear(r, 1975);
     flowAllRaws(r);
     embargoOil(r, 0.6);
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
 
     // Severity for the partial cut: 4 oil-burning goods at level 0.4 of 16.
     const severity = 1 - (12 + 4 * 0.4) / 16; // 0.15
@@ -136,8 +137,8 @@ describe('cost-push scales with severity and is bounded', () => {
     }
     embargoOil(partial, 0.6);
     embargoOil(total, 1);
-    partial.tickIntermediateGoods();
-    total.tickIntermediateGoods();
+    tickIntermediateGoods(partial);
+    tickIntermediateGoods(total);
 
     expect(total.supplyShockSeverity()).toBeGreaterThan(partial.supplyShockSeverity());
     for (let i = 0; i < 12; i++) {
@@ -172,14 +173,14 @@ describe('cost-push heals with the chain', () => {
     pinYear(r, 1975);
     flowAllRaws(r);
     embargoOil(r, 1); // total cut → strong push
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
     for (let i = 0; i < 12; i++) tickMonetary(r);
     const shockedInflation = r.inflationRate;
     expect(shockedInflation).toBeGreaterThan(BASE_TARGET + 0.01);
 
     // Lift the embargo: prune it, re-resolve the chain → full health, severity 0.
     delete r.rawEmbargoes['oil'];
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
     expect(r.supplyShockSeverity()).toBe(0);
 
     for (let i = 0; i < 36; i++) tickMonetary(r);

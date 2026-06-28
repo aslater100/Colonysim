@@ -2,7 +2,7 @@
  * Supply-chain cascade solver (GDD §5.2, roadmap "D1-econ").
  *
  * Covers the pure `resolveSupplyChain` / `rawMaterialsOf` solver and its
- * integration through `RegionSim.tickIntermediateGoods` — in particular the
+ * integration through `tickIntermediateGoods` (systems/goods.ts) — in particular the
  * cascade the previous inline logic could not express: a downstream good must
  * fail when its *upstream* is cut, even if it still holds buffer stock of that
  * upstream.
@@ -15,6 +15,7 @@ import {
   type SupplyGood,
 } from '../src/sim/supply';
 import { RegionSim, INTERMEDIATE_GOODS } from '../src/sim/region';
+import { tickIntermediateGoods } from '../src/sim/systems/goods';
 
 /** A predicate that reports the given raw ids as available, all others not. */
 const rawsAvailable = (...available: string[]) => (id: string) => available.includes(id);
@@ -243,7 +244,7 @@ describe('resolveSupplyChainGraded()', () => {
 });
 
 // ============================================================
-// 5. Integration through RegionSim.tickIntermediateGoods
+// 5. Integration through tickIntermediateGoods (systems/goods.ts)
 // ============================================================
 /** Pin the sim's reported year so era-gated goods unlock for the test. */
 function pinYear(r: RegionSim, year: number): void {
@@ -267,7 +268,7 @@ describe('tickIntermediateGoods() cascade integration', () => {
     const r = freshSim();
     pinYear(r, 2000);
     flowAllRaws(r);
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
     expect(r.getSupplyChainHealth()).toBe(1);
     expect(r.goodStock('electronics')).toBeGreaterThan(0);
     expect(r.goodStock('food')).toBeGreaterThan(0);
@@ -287,7 +288,7 @@ describe('tickIntermediateGoods() cascade integration', () => {
     (r.settlements[0].goodStocks ??= {})['chemicals'] = 100; // a fat upstream buffer …
     r.settlements[0].goodStocks['pharmaceuticals'] = 0;
 
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
 
     // … that no longer rescues the downstream good.
     expect(r.goodStock('pharmaceuticals')).toBe(0);
@@ -303,7 +304,7 @@ describe('tickIntermediateGoods() cascade integration', () => {
       s.sectors.agriculture.output = 0;
     }
     const before = r.researchRate();
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
     // electronics disrupted (its components/copper chain is dead) → −10% research.
     expect(r.researchRate()).toBeCloseTo(before * 0.9, 6);
   });
@@ -311,7 +312,7 @@ describe('tickIntermediateGoods() cascade integration', () => {
   it('leaves health and the electronics flag untouched before any good unlocks', () => {
     const r = freshSim();
     pinYear(r, 1900);
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
     expect(r.getSupplyChainHealth()).toBe(1);
     expect(r.researchRate()).toBeGreaterThan(0);
   });

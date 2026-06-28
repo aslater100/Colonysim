@@ -8,6 +8,7 @@ import {
   RAW_SHORTAGE_MIN_LEVEL,
   type Settlement,
 } from '../src/sim/region';
+import { tickIntermediateGoods } from '../src/sim/systems/goods';
 
 /**
  * D1-econ follow-up: the supply-shock *output drag*. PR #276 made the cascade
@@ -52,7 +53,7 @@ describe('supply-shock drag — era-baselined (healthy play is a no-op)', () => 
     const r = freshSim();
     pinYear(r, 2000);
     setRawsFlowing(r, true);
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
     expect(r.getSupplyChainHealth()).toBe(1);
     expect(r.supplyShockSeverity()).toBe(0);
     expect(r.supplyShockOutputMult()).toBe(1);
@@ -66,7 +67,7 @@ describe('supply-shock drag — era-baselined (healthy play is a no-op)', () => 
     const r = freshSim();
     pinYear(r, 1927);
     setRawsFlowing(r, true);
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
     expect(r.getSupplyChainHealth()).toBeLessThan(1); // the structural dip is real …
     expect(r.supplyShockSeverity()).toBe(0); // … but baselined away
     expect(r.supplyShockOutputMult()).toBe(1);
@@ -75,7 +76,7 @@ describe('supply-shock drag — era-baselined (healthy play is a no-op)', () => 
   it('no drag before any good unlocks', () => {
     const r = freshSim();
     pinYear(r, 1900);
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
     expect(r.supplyShockSeverity()).toBe(0);
     expect(r.supplyShockOutputMult()).toBe(1);
   });
@@ -89,7 +90,7 @@ describe('supply-shock drag — a real raw collapse bites', () => {
     const r = freshSim();
     pinYear(r, 1950); // all five goods active
     setRawsFlowing(r, false); // cut every raw
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
     expect(r.getSupplyChainHealth()).toBe(0);
     expect(r.supplyShockSeverity()).toBe(1);
     expect(r.supplyShockOutputMult()).toBeCloseTo(FLOOR, 10);
@@ -100,7 +101,7 @@ describe('supply-shock drag — a real raw collapse bites', () => {
     pinYear(r, 2000);
     setRawsFlowing(r, true);
     (r.settlements[0].goodStocks ??= {})['copper'] = 0; // electronics + its dependent luxury_goods fall
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
     const n = INTERMEDIATE_GOODS.length; // 16
     expect(r.getSupplyChainHealth()).toBeCloseTo((n - 2) / n, 10); // 2 of 16 disrupted
     const severity = 2 / n;
@@ -112,7 +113,7 @@ describe('supply-shock drag — a real raw collapse bites', () => {
     const r = freshSim();
     pinYear(r, 1950);
     setRawsFlowing(r, false);
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
     const mult = r.supplyShockOutputMult();
     expect(mult).toBeGreaterThanOrEqual(FLOOR);
     expect(mult).toBeLessThanOrEqual(1);
@@ -185,7 +186,7 @@ describe('supply-shock drag — graded extraction proxy', () => {
     const r = freshSim();
     pinYear(r, 2000);
     setOutputVsNorm(r, 70, 100); // a ~30% dip below the trailing norm
-    r.tickIntermediateGoods(); // advances the norm, resolves the cascade, caches the drag
+    tickIntermediateGoods(r); // advances the norm, resolves the cascade, caches the drag
     expect(r.supplyShockSeverity()).toBeGreaterThan(0);
     expect(r.supplyShockOutputMult()).toBeLessThan(1);
     expect(r.supplyShockOutputMult()).toBeGreaterThanOrEqual(FLOOR); // still bounded

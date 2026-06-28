@@ -17,10 +17,11 @@ import { hexNeighbors, hexDistance } from './hex';
 import { Weather } from './weather';
 import type { Lender, Loan } from './economy';
 import { createInitialLenders } from './lenders';
-import { resolveSupplyChainGraded, SUPPLY_FULL_EPS } from './supply';
+import { resolveSupplyChainGraded } from './supply';
 import { tickPollution } from './systems/pollution';
 import { tickServiceCoverage } from './systems/services';
 import { tickPriceArbitrage } from './systems/arbitrage';
+import { tickIntermediateGoods } from './systems/goods';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -2716,8 +2717,9 @@ export class RegionSim {
    *  `tickIntermediateGoods` each month (health and `year` consistent there) and
    *  read by `updateSectors` the following month — a realistic one-month lag.
    *  Transient (derived from serialized `supplyChainHealth`); after load it
-   *  defaults to 1.0 until the next monthly tick re-derives it. */
-  private supplyShockMult = 1;
+   *  defaults to 1.0 until the next monthly tick re-derives it. Public so the
+   *  extracted goods system (systems/goods.ts) can cache it each month. */
+  supplyShockMult = 1;
   // ---- Phase 18: Advisor System Depth (GDD §8.7) ----
   /** Queue of advisor briefs from ministers (max 5, newest-first). */
   advisorBriefs: { portfolio: string; message: string; day: number }[] = [];
@@ -3677,8 +3679,9 @@ export class RegionSim {
     return base * mult;
   }
 
-  /** Set by tickIntermediateGoods() each month; true when electronics inputs are missing. */
-  private _electronicsDisrupted = false;
+  /** Set by tickIntermediateGoods() each month; true when electronics inputs are
+   *  missing. Public so the extracted goods system (systems/goods.ts) can set it. */
+  _electronicsDisrupted = false;
 
   /** Development factor for money costs (Baumol's cost disease): public works
    *  track the economy's wage/output level, which climbs as labor moves up the
@@ -5478,7 +5481,7 @@ export class RegionSim {
     if (this.month === 0) this.tickEducationLag();
 
     // Phase 15: Intermediate goods, arbitrage, and FX tick
-    this.tickIntermediateGoods();
+    tickIntermediateGoods(this); // Phase 15: intermediate-goods production + cascade (systems/goods.ts)
     tickPriceArbitrage(this); // Phase 15: price arbitrage + cargo shipments (systems/arbitrage.ts)
     this.tickFX();
 
@@ -6311,83 +6314,6 @@ export class RegionSim {
     for (const id of ids) this.addGoodStock(cap, id, data[id]);
   }
 
-  /** Process all intermediate goods that are unlocked in the current year.
-   *  A good produces its baseOutput only when its whole upstream chain is intact:
-   *  a raw-material outage cascades downstream (lose coal → lose chemicals → lose
-   *  pharmaceuticals/components → lose electronics/vehicles), per GDD §5.2. The
-   *  cascade itself is the pure `resolveSupplyChain` solver; this method owns the
-   *  stock ledger and the random secondary effects (disease risk, research penalty). */
-  tickIntermediateGoods(): void {
-    const currentYear = this.year;
-    // Advance the per-sector output norms first so the graded raw proxy measures
-    // this month against an up-to-date trailing average — and so the norm warms
-    // through the pre-1920 years before any good unlocks.
-    this.advanceSectorOutputNorms();
-    // Drop embargoes whose window has elapsed, so the chain heals on its own and
-    // the save ledger stays tidy (a stale entry would still read available, but
-    // pruning keeps `rawEmbargoes` to what's actually live).
-    for (const raw of Object.keys(this.rawEmbargoes)) {
-      if (this.day >= this.rawEmbargoes[raw].until) delete this.rawEmbargoes[raw];
-    }
-    const availableGoods = INTERMEDIATE_GOODS.filter(g => currentYear >= g.eraUnlock);
-    if (availableGoods.length === 0) {
-      this.supplyChainHealth = 1.0;
-      this._electronicsDisrupted = false;
-      this.supplyShockMult = 1; // no goods, no shock (defensive — already 1.0 here)
-      return;
-    }
-
-    const result = resolveSupplyChainGraded(INTERMEDIATE_GOODS, currentYear, (id) => this.rawSupplyLevel(id));
-
-    // Stock ledger: each good produces baseOutput × its supply level and draws
-    // that fraction of each held input. At level 1 (healthy play) this is
-    // +baseOutput and −1 per input — byte-identical to the old binary ledger; a
-    // partial level (graded embargo) accrues and consumes proportionally; level 0
-    // produces nothing (key seeded to 0, as before).
-    for (const good of availableGoods) {
-      const level = result.levels.get(good.id) ?? 0;
-      if (level >= SUPPLY_FULL_EPS) {
-        this.produceGood(good.id, good.baseOutput * level);
-        for (const inputId of good.inputs) {
-          this.drawGood(inputId, level);
-        }
-      } else {
-        this.seedGoodStock(good.id);
-      }
-    }
-
-    // Shortfalls (1 − level) drive the random secondary effects, scaled by how
-    // deep the cut is. A full cut → shortfall 1 → the exact pre-graded draw
-    // (chance 0.15 / 0.3); healthy play → shortfall 0 → no draw at all, so the RNG
-    // stream is byte-identical in every all-or-nothing scenario.
-    const pharmaShortfall = 1 - (result.levels.get('pharmaceuticals') ?? 1);
-    const electronicsShortfall = 1 - (result.levels.get('electronics') ?? 1);
-    this._electronicsDisrupted = electronicsShortfall > SUPPLY_FULL_EPS;
-    this.supplyChainHealth = result.health;
-    // Cache the industry-output drag now, while health and `year` are the same
-    // month (updateSectors reads it next month). Computing it later — at the next
-    // updateSectors, after a possible Jan year-roll — would compare this health
-    // against next year's structural baseline and fabricate a shock at era
-    // boundaries. Pure read; the order vs. the RNG effects below is irrelevant.
-    this.supplyShockMult = this.supplyShockOutputMult();
-
-    // Secondary effects
-    if (pharmaShortfall > SUPPLY_FULL_EPS && this.settlements.length > 0) {
-      // Health risk: increased disease probability (push a plague event to a random settlement)
-      if (this.rng.chance(0.15 * pharmaShortfall)) {
-        const target = this.settlements[this.rng.int(this.settlements.length)];
-        if (target && !target.activeEvents.some(e => e.kind === 'plague')) {
-          target.activeEvents.push({ kind: 'plague', untilDay: this.day + 30, severity: 0.5 });
-          this.addLog(`Pharmaceutical supply chain disruption — disease risk rising in ${target.name}.`, 'bad');
-        }
-      }
-    }
-
-    if (electronicsShortfall > SUPPLY_FULL_EPS && this.rng.chance(0.3 * electronicsShortfall)) {
-      this.addLog('Electronics supply chain disrupted — research slows.', 'bad');
-    }
-  }
-
   /** How freely a raw material flows this period, 0..1 (1 = no constraint). An
    *  active embargo runs it at `1 − cut` (the oil-shock anchor, a future blockade);
    *  otherwise it's full if held in stock, else proxied from the sector that
@@ -6396,8 +6322,10 @@ export class RegionSim {
    *  The graded solver only ever queries this for raws; intermediate inputs resolve
    *  through the graph (the cascade). Pure read — the same source the live UI
    *  snapshot uses. In healthy play every raw returns exactly 1.0, so the chain is
-   *  byte-identical; only an embargo or a strained extracting sector grades it down. */
-  private rawSupplyLevel(inputId: string): number {
+   *  byte-identical; only an embargo or a strained extracting sector grades it down.
+   *  Public so the extracted goods system (systems/goods.ts) and the UI snapshot can
+   *  read it. */
+  rawSupplyLevel(inputId: string): number {
     const embargo = this.rawEmbargoes[inputId];
     if (embargo !== undefined && this.day < embargo.until) {
       return Math.max(0, 1 - embargo.cut);
@@ -6436,8 +6364,10 @@ export class RegionSim {
   /** Advance each extracting sector's trailing output norm one month (EWMA). Seeds
    *  from the first non-zero output so the norm starts at parity (ratio 1, no
    *  phantom shock), then chases output at `SECTOR_NORM_ALPHA`. Called once per
-   *  monthly supply tick; isolated here so `sectorRawLevel` stays a pure read. */
-  private advanceSectorOutputNorms(): void {
+   *  monthly supply tick; isolated here so `sectorRawLevel` stays a pure read.
+   *  Public so the extracted goods system (systems/goods.ts) can advance the norms
+   *  at the head of its tick. */
+  advanceSectorOutputNorms(): void {
     for (const sector of ['industry', 'agriculture'] as const) {
       const output = this.settlements.reduce((s, t) => s + t.sectors[sector].output, 0);
       const norm = this.sectorOutputNorm[sector];

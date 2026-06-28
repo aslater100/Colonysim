@@ -7,6 +7,7 @@ import {
   SUPPLY_SHOCK_MAX_DRAG,
 } from '../src/sim/region';
 import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
+import { tickIntermediateGoods } from '../src/sim/systems/goods';
 
 /**
  * The 1970s oil-shock anchor, routed through the supply chain (GDD §5.4: "the
@@ -82,7 +83,7 @@ describe('total oil embargo cascade', () => {
     pinYear(r, 1975); // every good unlocked
     flowAllRaws(r);
     embargoOil(r, 1); // total cut
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
 
     const snap = r.supplyChainSnapshot();
     for (const id of OIL_DEPENDENT) {
@@ -100,7 +101,7 @@ describe('total oil embargo cascade', () => {
     pinYear(r, 1975);
     flowAllRaws(r);
     embargoOil(r, 1);
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
 
     const severity = OIL_DEPENDENT.length / N; // baseline 1.0 → shortfall = actual gap
     expect(r.supplyShockSeverity()).toBeCloseTo(severity, 10);
@@ -115,7 +116,7 @@ describe('total oil embargo cascade', () => {
     flowAllRaws(r);
     // An embargo already past its lift day is pruned and never bites.
     r.rawEmbargoes['oil'] = { until: r.day - 1, cut: 1 };
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
 
     expect(r.rawEmbargoes['oil']).toBeUndefined(); // pruned
     expect(r.getSupplyChainHealth()).toBe(1);
@@ -127,7 +128,7 @@ describe('total oil embargo cascade', () => {
     const r = freshSim();
     pinYear(r, 1975);
     flowAllRaws(r);
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
     expect(r.getSupplyChainHealth()).toBe(1);
     expect(r.supplyShockSeverity()).toBe(0);
     expect(r.supplyShockOutputMult()).toBe(1);
@@ -143,7 +144,7 @@ describe('partial oil embargo (graded cut)', () => {
     pinYear(r, 1975);
     flowAllRaws(r);
     embargoOil(r, 0.6); // oil at 40%
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
 
     const snap = r.supplyChainSnapshot();
     // The oil branch is partially supplied: present in `disrupted` (level < 1) but
@@ -162,7 +163,7 @@ describe('partial oil embargo (graded cut)', () => {
     pinYear(r, 1975);
     flowAllRaws(r);
     embargoOil(r, 0.6);
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
 
     // mean level = (12 full + 4 at 0.4) / 16
     const health = (12 + 4 * 0.4) / N;
@@ -234,7 +235,7 @@ describe('supplyChainSnapshot()', () => {
     pinYear(r, 1975);
     flowAllRaws(r);
     embargoOil(r, 1);
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
 
     const snap = r.supplyChainSnapshot();
     expect(snap.health).toBeCloseTo((N - OIL_DEPENDENT.length) / N, 10);
@@ -247,7 +248,7 @@ describe('supplyChainSnapshot()', () => {
     const r = freshSim();
     pinYear(r, 2000);
     flowAllRaws(r);
-    r.tickIntermediateGoods();
+    tickIntermediateGoods(r);
     const stocksBefore = JSON.stringify(r.goodStocksSnapshot());
     const healthBefore = r.getSupplyChainHealth();
     r.supplyChainSnapshot();

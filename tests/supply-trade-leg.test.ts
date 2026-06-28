@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RegionSim, OIL_EMBARGO_DAYS, SUPPLY_SHOCK_EXPORT_DRAG } from '../src/sim/region';
+import { tickIntermediateGoods } from '../src/sim/systems/goods';
 
 /**
  * Trade leg of the goods→economy coupling (GDD §5.2). A supply-chain shock does
@@ -58,8 +59,8 @@ function pair(embargoCut: number | null): { control: RegionSim; shocked: RegionS
     addTradeRival(r);
   }
   if (embargoCut !== null) embargoOil(shocked, embargoCut);
-  control.tickIntermediateGoods();
-  shocked.tickIntermediateGoods();
+  tickIntermediateGoods(control);
+  tickIntermediateGoods(shocked);
   runMonthlyEconomy(control);
   runMonthlyEconomy(shocked);
   return { control, shocked, severity: shocked.supplyShockSeverity() };
@@ -113,9 +114,9 @@ describe('the export drag is bounded', () => {
       flowAllRaws(r);
       addTradeRival(r);
     }
-    control.tickIntermediateGoods();
+    tickIntermediateGoods(control);
     // Force the worst case: zero supply health against a fully-unlocked baseline.
-    shocked.tickIntermediateGoods();
+    tickIntermediateGoods(shocked);
     shocked.supplyChainHealth = 0;
     expect(shocked.supplyShockSeverity()).toBeCloseTo(1, 10);
 
