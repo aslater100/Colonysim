@@ -1,10 +1,33 @@
 /**
- * NPC Lender system: bankers and merchants who offer loans at varying interest rates.
- * Lender availability is gated by tier and building requirements.
- * Interest is calculated annually; loans default if payments are missed.
+ * NPC Lender system: bankers and merchants who offer loans.
+ * Lenders and the loans they issue are the only economy types shared across
+ * tiers; the active monetary model (inflation, rates, FX, loan servicing)
+ * lives in RegionSim.tickMonetary / requestLoan, not here.
  */
 
-import { Lender, Loan } from './economy';
+/** A banker/merchant who can offer loans (region/nation tier). */
+export interface Lender {
+  id: number;
+  name: string;
+  maxLoan: number; // maximum loan this lender can give
+  interestRate: number; // annual interest rate for loans from this lender
+  reliability: number; // 0-100, affects willingness to lend
+  liquidCash: number; // how much cash the lender currently has available
+  headquartersSettlementId?: number; // where this lender is based (region tier)
+}
+
+/** An outstanding loan taken from a Lender (serialized on RegionSim). */
+export interface Loan {
+  id: number;
+  lenderId: number;
+  principal: number; // initial loan amount
+  borrowed: number; // amount still owed
+  interestRate: number; // annual interest rate
+  termYears: number; // loan duration in years
+  borrowedAt: number; // tick when loan was taken
+  nextPaymentDue: number; // next tick when payment is due
+  defaulted: boolean;
+}
 
 export function createInitialLenders(): Lender[] {
   const lenders: Lender[] = [];
@@ -28,126 +51,4 @@ export function createInitialLenders(): Lender[] {
   }
 
   return lenders;
-}
-
-/**
- * Check if a player can borrow from a lender.
- * Availability gates: region tier and building requirements.
- */
-export function canBorrowFromLender(
-  hasMarketBuilding: boolean,
-  hasBankBuilding: boolean,
-  tier: 'town' | 'region' | 'nation'
-): boolean {
-  // Town tier: no lending available
-  if (tier === 'town') return false;
-
-  // Region tier: requires Market building at minimum
-  if (tier === 'region') {
-    return hasMarketBuilding;
-  }
-
-  // Nation tier: Bank building unlocks better lenders
-  if (tier === 'nation') {
-    return hasBankBuilding;
-  }
-
-  return false;
-}
-
-/**
- * Calculate monthly payment amount for a loan using standard amortization.
- * Formula: P * [r(1+r)^n] / [(1+r)^n - 1]
- * where P = principal, r = monthly rate, n = number of months
- */
-export function calculateMonthlyPayment(
-  principal: number,
-  annualRate: number,
-  termMonths: number
-): number {
-  const monthlyRate = annualRate / 12;
-  if (monthlyRate === 0) {
-    return principal / termMonths; // no interest: simple division
-  }
-  const numerator = principal * monthlyRate * Math.pow(1 + monthlyRate, termMonths);
-  const denominator = Math.pow(1 + monthlyRate, termMonths) - 1;
-  return Math.round(numerator / denominator);
-}
-
-/**
- * Create a new loan from a lender to the player.
- */
-export function createLoan(
-  lender: Lender,
-  principal: number,
-  termMonths: number,
-  currentTick: number
-): Loan {
-  const ticksPerMonth = 30 * 24 * 60 / 4; // assuming 4-minute ticks, 30-day months
-  return {
-    // Deterministic unique id from (lender, tick) — never Math.random, so a
-    // serialized loan stays reproducible for a fixed seed.
-    id: lender.id * 1_000_000 + currentTick,
-    lenderId: lender.id,
-    principal,
-    borrowed: principal,
-    interestRate: lender.interestRate,
-    termYears: Math.round(termMonths / 12 * 100) / 100,
-    borrowedAt: currentTick,
-    nextPaymentDue: currentTick + ticksPerMonth, // first payment due 1 month from now
-    defaulted: false,
-  };
-}
-
-/**
- * Calculate total interest owed on a loan.
- * Interest = principal * rate * (time elapsed in years)
- */
-export function calculateTotalInterest(loan: Loan, currentTick: number): number {
-  const ticksPerYear = 365 * 24 * 60 / 4; // assuming 4-minute ticks
-  const yearsElapsed = Math.max(0, (currentTick - loan.borrowedAt) / ticksPerYear);
-  return loan.principal * loan.interestRate * yearsElapsed;
-}
-
-/**
- * Calculate total amount owed (principal + interest) on a loan.
- */
-export function calculateTotalOwed(loan: Loan, currentTick: number): number {
-  return loan.borrowed + calculateTotalInterest(loan, currentTick);
-}
-
-/**
- * Check if a loan payment is overdue.
- */
-export function isPaymentOverdue(loan: Loan, currentTick: number, gracePeriodTicks: number = 0): boolean {
-  return !loan.defaulted && currentTick > loan.nextPaymentDue + gracePeriodTicks;
-}
-
-/**
- * Process a loan payment by the player.
- * Returns the remaining balance after payment.
- */
-export function processLoanPayment(
-  loan: Loan,
-  paymentAmount: number,
-  currentTick: number
-): number {
-  if (loan.defaulted) {
-    return loan.borrowed; // no payment on defaulted loans
-  }
-
-  loan.borrowed = Math.max(0, loan.borrowed - paymentAmount);
-
-  // Move next payment due forward by 1 month
-  const ticksPerMonth = 30 * 24 * 60 / 4;
-  loan.nextPaymentDue = Math.max(loan.nextPaymentDue, currentTick) + ticksPerMonth;
-
-  return loan.borrowed;
-}
-
-/**
- * Mark a loan as defaulted when payment is missed beyond grace period.
- */
-export function defaultLoan(loan: Loan): void {
-  loan.defaulted = true;
 }

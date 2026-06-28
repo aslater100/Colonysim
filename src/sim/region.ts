@@ -15,8 +15,7 @@ import { RegionMap, REGION_N, CELL_SCALE } from './worldgen';
 import type { TownSite } from './worldgen';
 import { hexNeighbors, hexDistance } from './hex';
 import { Weather } from './weather';
-import type { Lender, Loan } from './economy';
-import { createInitialLenders } from './lenders';
+import { createInitialLenders, type Lender, type Loan } from './lenders';
 import { resolveSupplyChainGraded } from './supply';
 import { tickPollution } from './systems/pollution';
 import { tickServiceCoverage } from './systems/services';
@@ -850,7 +849,7 @@ export interface GovTypeDef {
   allowedLeanings: string[];
   /** Earliest year this regime can emerge. */
   minYear?: number;
-  /** After this year cannot be newly adopted. */
+  /** After this year the regime can no longer be newly adopted (historical window). */
   maxYear?: number;
   /** Multiplier on monthly legitimacy decay. */
   legitimacyDecayModifier: number;
@@ -9469,11 +9468,12 @@ export class RegionSim {
     gov: GovType,
     assignments: Partial<Record<MinisterRoleId, number | null>>,
   ): void {
-    if (gov === 'fascist' && this.year > 1955) {
-      // Cannot establish a new fascist government after 1955
+    const def = GOV_TYPES.find((g) => g.id === gov)!;
+    if (def.maxYear !== undefined && this.year > def.maxYear) {
+      // This regime can no longer be newly adopted past its historical
+      // window (e.g. a fascist government after 1955).
       return;
     }
-    const def = GOV_TYPES.find((g) => g.id === gov)!;
     this.nationName = name;
     this.govType = gov;
     this.legitimacy = def.startingLegitimacy;
