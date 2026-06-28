@@ -104,21 +104,28 @@ describe('Phase 8 — Notable Lifecycle: age ticks', () => {
 // ── 3. Notable Death — elevated probability for aged Notables ────────────────
 
 describe('Phase 8 — Notable Death', () => {
-  it('a very old Notable eventually dies during a long run', () => {
+  it('aged, unhealthy Notables die off over a long run (recording deathYear + bio)', () => {
     const r = flipped(42);
-    const n = r.notables.find((n) => n.alive)!;
-    n.age = 90; // near-certain mortality risk
-    n.health = 10; // very unhealthy
-    // annualRisk=0.12 + healthRisk=0.08 = 0.20/year = 0.0167/month
-    // P(survive 30 years = 360 months) = (1-0.0167)^360 ≈ 0.2% — near certain death
-    for (let i = 0; i < 1800 * ticksPerDay; i++) {
+    const aged = r.notables.filter((n) => n.alive);
+    for (const n of aged) { n.age = 90; n.health = 10; } // peak mortality risk
+    // The death roll (`this.rng.chance`) fires from tickNotableLifecycle, which
+    // runs every 30 days — i.e. TWICE per 60-day game-year, not monthly — so the
+    // effective annual mortality is ~2·(0.20/12) ≈ 3.3%, and ONE notable's death
+    // over a few decades is a coin-flip, not a certainty. That made the old
+    // single-notable assertion ~36% flaky and fully phase-dependent: any change
+    // to rival-AI timing (e.g. the Phase-D Wonder build-race) shifts the shared
+    // main-rng phase and flips it. Assert instead that the aged COHORT dies off
+    // across a century — P(all survive) is vanishingly small regardless of phase.
+    for (let i = 0; i < 6000 * ticksPerDay; i++) { // 100 game-years
       r.tick();
-      if (!n.alive) break;
+      if (aged.every((n) => !n.alive)) break;
     }
-    // After 30 game-years at 20% annual mortality, P(still alive) ≈ 0.2%
-    expect(n.alive).toBe(false);
-    expect(n.deathYear).toBeDefined();
-    expect(n.bio.some((b) => b.includes('Died'))).toBe(true);
+    const dead = aged.filter((n) => !n.alive);
+    expect(dead.length).toBeGreaterThan(0);
+    for (const n of dead) {
+      expect(n.deathYear).toBeDefined();
+      expect(n.bio.some((b) => b.includes('Died'))).toBe(true);
+    }
   });
 });
 

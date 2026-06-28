@@ -376,7 +376,7 @@ export class RegionMap {
       while (i > 0) {
         const p = (i - 1) >> 1;
         if (heap[p].f <= heap[i].f) break;
-        [heap[p], heap[i]] = [heap[i], heap[p]];
+        const tmp = heap[p]; heap[p] = heap[i]; heap[i] = tmp;
         i = p;
       }
     };
@@ -393,7 +393,7 @@ export class RegionMap {
           if (l < heap.length && heap[l].f < heap[m].f) m = l;
           if (r < heap.length && heap[r].f < heap[m].f) m = r;
           if (m === i) break;
-          [heap[m], heap[i]] = [heap[i], heap[m]];
+          const tmp = heap[m]; heap[m] = heap[i]; heap[i] = tmp;
           i = m;
         }
       }

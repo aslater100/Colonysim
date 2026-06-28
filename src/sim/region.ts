@@ -569,6 +569,20 @@ export const REGION_EVENT_DEFS: RegionalEventDef[] = [
 
 // Fast lookups for building and event definitions.
 const REGION_BUILDINGS_MAP = new Map(REGION_BUILDINGS.map((b) => [b.id, b]));
+// Spatial-4X Phase D slice 1b — per-update chance a rich, era-ready rival faction
+// bids for an unclaimed Wonder (scaled by the difficulty techMult). aiRng-gated.
+const RIVAL_WONDER_CHANCE = 0.1;
+// Fraction of a rival's own town output collected into its faction treasury each
+// month (the rival analogue of the player's tax take). Tuned so a developing
+// rival accrues enough to expand, advance, and fund full-price Wonders without
+// ballooning — rivals run the same economy as the player, just without the
+// player's nation-tier policy/central-bank/services machinery.
+const RIVAL_TAX_RATE = 0.06;
+// Ceiling on a rival's abstract `techProgress` float. It feeds militaryStrength
+// (×(1+tech·0.05)); with rivals now on a real (large) treasury the uncapped
+// value ran into the thousands → a 200×+ army. ~30 ≈ a fully-teched nation:
+// rivals advance far past their old single-digit ceiling, but stay pop-bounded.
+const RIVAL_TECH_CAP = 30;
 const REGION_EVENT_DEFS_MAP = new Map(REGION_EVENT_DEFS.map((d) => [d.kind, d]));
 
 // ---- Phase 5: Local Policies ----
@@ -2319,6 +2333,37 @@ const FACTION_GOAL_GENERATORS: Array<(faction: RegionalFaction, region: RegionSi
   },
 ];
 
+/** A FactionGoal's `successCondition` is a closure that JSON.stringify drops, so a
+ *  saved goal reloads without it. The continued run still holds the function and
+ *  evaluates it at the yearly goal-check (awarding treasury / logging "achieves
+ *  ambition"); a reloaded run, missing it, silently scored `false` — a real
+ *  save/load DIVERGENCE that surfaced once rivals ran a real economy and actually
+ *  pursued goals. Every condition is a pure closure over (faction, region), so we
+ *  rebuild an id→condition registry by probing the generators across a grid of
+ *  faction/era profiles wide enough to trip every gate (some are upper-bounded:
+ *  `treasury < 150`, `settlements < 3`, `year < 1950/1960`). Re-attached on load. */
+const GOAL_CONDITION_BY_ID: Record<string, FactionGoal['successCondition']> = (() => {
+  const map: Record<string, FactionGoal['successCondition']> = {};
+  const treasuries = [100, 250, 1_000_000];
+  const settlementSets = [[1], [1, 2], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]];
+  const years = [1850, 1920, 1945, 1958, 2000, 2080];
+  for (const treasury of treasuries) {
+    for (const settlementIds of settlementSets) {
+      for (const year of years) {
+        const probeF = { treasury, settlementIds, regime: 'junta' } as unknown as RegionalFaction;
+        const probeR = { year } as unknown as RegionSim;
+        for (const gen of FACTION_GOAL_GENERATORS) {
+          try {
+            const g = gen(probeF, probeR);
+            if (g && !(g.id in map)) map[g.id] = g.successCondition;
+          } catch { /* generator touched a field the probe lacks; another profile will catch it */ }
+        }
+      }
+    }
+  }
+  return map;
+})();
+
 /** Strategic families goals fall into — drives inter-faction conflict & alliance
  *  scoring. Conquering families (military/expansion) clash over scarce ground;
  *  building families (economic/cultural) coexist far more readily. */
@@ -2669,6 +2714,10 @@ export const MIN_SETTLEMENT_SPACING = 8;
 
 export class RegionSim {
   rng: Rng;
+  /** Per-tick memo of `routePath` BFS results (key `from:to:mode`). Transient —
+   *  NOT serialized; rebuilt lazily. Cleared at tick start and whenever the route
+   *  graph mutates (add/remove/kind-change), so it never returns a stale path. */
+  private _routePathCache = new Map<string, Route[] | null>();
   /** Separate deterministic stream for rival faction AI decisions. Kept apart
    *  from the main `rng` so AI choices never perturb the colony's own stochastic
    *  outcomes (events, washouts, raids) — preserving cross-feature determinism. */
@@ -3604,8 +3653,9 @@ export class RegionSim {
     const path = c ? c.path : [this.map.coordToCell(a.x, a.y), this.map.coordToCell(b.x, b.y)];
     this.routes.push({
       a: fromId, b: toId, kind: 'trail', condition: 100,
-      path, terrainCost: c ? c.cost : path.length * 2, freight: 0, cargoType: null,
+      path, terrainCost: c ? c.cost : path.length * 2, freight: 0, cargoType: null, cargoPriority: null,
     });
+    this._routePathCache.clear(); // route graph changed
   }
 
   /** Settlement ids reachable from `start` through the route graph (one BFS).
@@ -4419,8 +4469,9 @@ export class RegionSim {
       existing.path = c.path;
       existing.terrainCost = c.cost;
     } else {
-      this.routes.push({ a: aId, b: bId, kind, condition: 100, path: c.path, terrainCost: c.cost, freight: 0, cargoType: null });
+      this.routes.push({ a: aId, b: bId, kind, condition: 100, path: c.path, terrainCost: c.cost, freight: 0, cargoType: null, cargoPriority: null });
     }
+    this._routePathCache.clear(); // route graph changed (new link or kind upgrade)
     this.activeRailRoutes = this.routes.filter((r) => r.kind === 'rail' && r.condition > 50).length;
     this.addLog(
       kind === 'road'
@@ -4484,6 +4535,7 @@ export class RegionSim {
     r.kind = 'trail';
     r.condition = 100;
     r.cargoPriority = null;
+    this._routePathCache.clear(); // route kind changed (downgrade to trail)
     const a = this.settlement(aId)?.name ?? '?';
     const b = this.settlement(bId)?.name ?? '?';
     this.addLog(`The ${was} between ${a} and ${b} is torn up — only a trail remains.`, 'bad');
@@ -4503,15 +4555,32 @@ export class RegionSim {
 
   /** Shortest hop-path through the route graph; null when unconnected.
    *  `usable` narrows the graph (e.g. militia relief rides built links only). */
-  private routePath(fromId: number, toId: number, usable: (r: Route) => boolean = () => true): Route[] | null {
+  /** BFS over the route graph. Memoized per tick (`_routePathCache`, cleared at
+   *  tick start and on any route add/remove/kind-change) because the monthly
+   *  trade/caravan/migration passes call it O(n²) times over settlement pairs —
+   *  the dominant superlinear cost as the map fills with rival towns. `mode`
+   *  selects the edge filter ('no-trail' excludes footpaths); paths are only ever
+   *  consumed for length/connectivity/freight, so caching the (possibly reversed)
+   *  path is sound. The reload-keeps-ticking determinism test guards correctness. */
+  private routePath(fromId: number, toId: number, mode: 'all' | 'no-trail' = 'all'): Route[] | null {
     if (fromId === toId) return [];
+    const key = fromId + ':' + toId + ':' + mode;
+    const cached = this._routePathCache.get(key);
+    if (cached !== undefined) return cached;
+    const result = this.computeRoutePath(fromId, toId, mode);
+    this._routePathCache.set(key, result);
+    return result;
+  }
+
+  private computeRoutePath(fromId: number, toId: number, mode: 'all' | 'no-trail'): Route[] | null {
+    const usable = mode === 'no-trail' ? (r: Route) => r.kind !== 'trail' : null;
     const prev = new Map<number, { via: Route; from: number }>();
     const seen = new Set([fromId]);
     const queue = [fromId];
     while (queue.length > 0) {
       const cur = queue.shift()!;
       for (const r of this.routes) {
-        if (!usable(r)) continue;
+        if (usable && !usable(r)) continue;
         const other = r.a === cur ? r.b : r.b === cur ? r.a : -1;
         if (other < 0 || seen.has(other)) continue;
         seen.add(other);
@@ -4545,9 +4614,10 @@ export class RegionSim {
   /** A relief line (M6c): a built link — road or rail, in any state — to a
    *  larger town means reinforcements can ride in when raiders strike. */
   reliefLine(t: Settlement): boolean {
+    this._routePathCache.clear(); // fresh route memo: this is also a direct test entry point
     const pop = this.popOf(t);
     return this.settlements.some(
-      (o) => o !== t && this.popOf(o) > pop && this.routePath(t.id, o.id, (r) => r.kind !== 'trail') !== null,
+      (o) => o !== t && this.popOf(o) > pop && this.routePath(t.id, o.id, 'no-trail') !== null,
     );
   }
 
@@ -5185,6 +5255,7 @@ export class RegionSim {
 
   tick(): void {
     if (this.gameOver) return;
+    if (this._routePathCache.size) this._routePathCache.clear(); // fresh route memo each tick
     const prevDay = this.day;
     this.minute += REGION_MINUTES_PER_TICK * this.calendarAcceleration();
     if (this.day !== prevDay) this.dailyUpdate();
@@ -5273,26 +5344,35 @@ export class RegionSim {
         t.grievance = Math.max(0, Math.min(100, t.grievance + pressure));
       }
       this.updateMarket(t);
-      // Starvation: player-owned towns get a seasonal emergency grain purchase
-      // (once per 30 days), scaled to the town's population so it actually lasts.
+      // Starvation: every town draws a seasonal emergency grain purchase from its
+      // OWNING faction's purse (the player's treasury, or a rival faction's) —
+      // once per 30 days, scaled to population. Rival towns used to get no relief
+      // and starved outright, which capped rival growth; parity lets a solvent
+      // rival feed its people too. A famine only kills where the purse is empty.
       if (t.food < 0) {
-        if (t.factionId === this.playerFactionId && this.treasury >= 10) {
+        const isPlayer = t.factionId === this.playerFactionId;
+        const rivalFaction = isPlayer ? null : this.faction(t.factionId);
+        const purse = isPlayer ? this.treasury : (rivalFaction?.treasury ?? 0);
+        const pay = (c: number) => { if (isPlayer) this.treasury -= c; else if (rivalFaction) rivalFaction.treasury -= c; };
+        if (purse >= 10) {
           const daysSinceLast = this.day - (t.lastEmergencyGrainDay ?? -9999);
           if (daysSinceLast >= 30) {
             // 30 days of full consumption — enough to last a season change
             const relief = Math.max(500, Math.round(this.popOf(t) * 0.75 * 30));
             const cost = Math.max(10, Math.ceil(relief / 50));
-            if (this.treasury >= cost) {
+            if (purse >= cost) {
               t.food += relief;
               t.lastEmergencyGrainDay = this.day;
-              this.treasury -= cost;
+              pay(cost);
               if (t.food < 0) {
                 const starved = Math.min(pop * 0.01, -t.food / 20);
                 this.removePop(t, starved);
                 t.food = 0;
-                this.addLog(`Famine in ${t.name} — emergency grain bought, but not enough.`, 'bad');
-                this.townEvent(t, 'Famine — emergency rations exhausted.', 'bad');
-              } else {
+                if (isPlayer) {
+                  this.addLog(`Famine in ${t.name} — emergency grain bought, but not enough.`, 'bad');
+                  this.townEvent(t, 'Famine — emergency rations exhausted.', 'bad');
+                }
+              } else if (isPlayer) {
                 this.addLog(`Emergency grain purchased for ${t.name} (${formatCurrency(cost)} from treasury).`, 'info');
               }
             } else {
@@ -5306,7 +5386,7 @@ export class RegionSim {
           const starved = Math.min(pop * 0.01, -t.food / 20);
           this.removePop(t, starved);
           t.food = 0;
-          if (starved > 0.5 && this.rng.chance(0.2)) {
+          if (isPlayer && starved > 0.5 && this.rng.chance(0.2)) {
             this.addLog(`Hunger stalks ${t.name} — the granary is empty.`, 'bad');
             this.townEvent(t, 'Granary empty — hunger in the streets.', 'bad');
           }
@@ -5756,6 +5836,7 @@ export class RegionSim {
 
   traders(): void {
     if (this.settlements.length < 2) return;
+    this._routePathCache.clear(); // fresh route memo: this is also a direct test entry point
     let turnover = 0;
     for (const g of TRADE_GOODS) {
       // dearest market first: traders chase the widest margin
@@ -5833,6 +5914,7 @@ export class RegionSim {
    *  Public so tests and the harness can run a caravan season directly. */
   caravans(): void {
     if (this.settlements.length < 2) return;
+    this._routePathCache.clear(); // fresh route memo: this is also a direct test entry point
     for (const r of this.routes) r.freight = 0;
     for (const needy of this.settlements) {
       const need = this.popOf(needy) * 0.75 * 20 - needy.food; // 20-day buffer target
@@ -7166,8 +7248,11 @@ export class RegionSim {
     // Mid-century baby boom multiplier
     const boomMult = (birthRate > 25 && deathRate < 15 && yr >= 1945 && yr <= 1975) ? 1.2 : 1.0;
 
+    // Era-based natural growth applies to EVERY settlement, rival or player —
+    // rivals were previously skipped here, which (with no tax income to grow on)
+    // left their towns demographically stunted. Parity lets rival populations
+    // climb with the same birth/death/baby-boom curve the player's towns ride.
     for (const t of this.settlements) {
-      if (t.factionId !== this.playerFactionId) continue;
       const pop = this.popOf(t);
       if (pop <= 0) continue;
       const naturalGrowth = pop * (birthRate - deathRate) / 1000 / 12 * boomMult;
@@ -7471,7 +7556,7 @@ export class RegionSim {
     }
     if (def.coastal_only && !t.site.coastal) return { ok: false, reason: 'coastal settlements only' };
     if (this.buildingCount(t, def.id) >= def.max) return { ok: false, reason: 'already built' };
-    if (def.unique && this.wonderOwner[def.id] !== undefined) {
+    if (def.unique && this.wonderClaimed(def.id, t)) {
       return { ok: false, reason: 'this wonder already stands elsewhere' };
     }
     const cost = this.cityBuildCost(def);
@@ -7875,6 +7960,27 @@ export class RegionSim {
       }
     }
     return bonus;
+  }
+
+  /** Phase D — a unique Wonder is "claimed" once any empire owns it OR has it
+   *  under construction, making the build-race first-to-break-ground: neither a
+   *  rival nor the player can start a Wonder another empire is already raising.
+   *  `exceptTown` is excluded from the in-progress scan (a town's own project is
+   *  already rejected by the `t.construction` guard above it in cityBuildCheck). */
+  private wonderClaimed(id: string, exceptTown?: Settlement): boolean {
+    if (this.wonderOwner[id] !== undefined) return true;
+    for (const s of this.settlements) {
+      if (s === exceptTown) continue;
+      if (s.construction?.id === id) return true;
+    }
+    return false;
+  }
+
+  /** The world-year a Wonder's prereq tech becomes historically available — the
+   *  era gate a rival uses in lieu of the player's researched-node set. */
+  private wonderEraYear(def: RegionalBuildingDef): number {
+    if (!def.prereq) return START_YEAR;
+    return TECH_TREE.find((n) => n.id === def.prereq)?.era ?? START_YEAR;
   }
 
   /** Flat satisfaction bonus from civic works (waterworks, hospital…). */
@@ -12369,6 +12475,7 @@ export class RegionSim {
       const faction = this.faction(t.factionId);
       this.settlements = this.settlements.filter((s) => s !== t);
       this.routes = this.routes.filter((r) => r.a !== t.id && r.b !== t.id);
+      this._routePathCache.clear(); // routes removed with the destroyed settlement
       this.activeRailRoutes = this.routes.filter((r) => r.kind === 'rail' && r.condition > 50).length;
       this.notables = this.notables.filter((n) => n.settlementId !== t.id);
       if (faction) {
@@ -12754,6 +12861,7 @@ export class RegionSim {
       explorationMap: this.explorationMap.map((row) => row.map((v) => (v === 'fogged' ? '0' : '1')).join('')),
       scouts: this.scouts,
       playerRegionalWars: [...this.playerRegionalWars],
+      contactedFactionIds: [...this.contactedFactionIds],
       regionalFactions: this.regionalFactions,
       playerFactionId: this.playerFactionId,
       aiDifficulty: this.aiDifficulty,
@@ -12879,7 +12987,7 @@ export class RegionSim {
     const r = new RegionSim(rng, d.minute, map, weather);
     // pre-market saves carry no prices: open those towns at the base rates;
     // pre-faction saves fly the player's banner; pre-sector saves start at 1900 labor shares
-    r.settlements = (d.settlements as Settlement[]).map((s) => ({
+    r.settlements = (d.settlements as Settlement[]).map(({ goodStocks, lastEmergencyGrainDay, ...s }) => ({
       ...s,
       prices: s.prices ?? defaultPrices(),
       recentEvents: s.recentEvents ?? [],
@@ -12899,6 +13007,12 @@ export class RegionSim {
       // helper serialize() uses, so old saves migrate AND the round-trip stays
       // lossless (serialize emits these same normalized fields).
       ...cityServiceFields(s),
+      // goodStocks and lastEmergencyGrainDay are created lazily during play, so
+      // their key position in `...s` differs between a continued run and a reload.
+      // Pin them LAST (consistently) so the canonical save round-trip is byte-stable
+      // — the determinism harness compares serialized bytes, not just values.
+      ...(goodStocks !== undefined ? { goodStocks } : {}),
+      ...(lastEmergencyGrainDay !== undefined ? { lastEmergencyGrainDay } : {}),
     }));
     // Spatial-4X migration: site any building that has no placement yet (pre-Phase-B
     // saves, or AI grants) into the worked ring — deterministic, render-only.
@@ -13041,14 +13155,19 @@ export class RegionSim {
         // Older saves predate vassalage — backfill as independent.
         f.vassals = (f as unknown as { vassals?: number[] }).vassals ?? [];
         f.overlordId = (f as unknown as { overlordId?: number | null }).overlordId ?? null;
-        // successCondition is a function and doesn't survive JSON — the goal object itself
-        // is kept so the rng stream stays aligned; callers guard with typeof before invoking.
+        // Re-attach the goal's successCondition (JSON dropped the function). Without
+        // this the yearly goal-check scores differently after a reload — a real
+        // determinism divergence once rivals actively pursue goals.
+        if (f.currentGoal && typeof f.currentGoal.successCondition !== 'function') {
+          f.currentGoal.successCondition = GOAL_CONDITION_BY_ID[f.currentGoal.id] ?? (() => false);
+        }
       }
       r.playerFactionId = d.playerFactionId ?? 0;
       r.aiDifficulty = d.aiDifficulty ?? 'normal';
       r.factionAlliances = d.factionAlliances ?? [];
       r.scouts = d.scouts ?? [];
       r.playerRegionalWars = new Set(d.playerRegionalWars ?? []);
+      r.contactedFactionIds = new Set(d.contactedFactionIds ?? []);
       r.exchangeRates = d.exchangeRates ?? { '0:0': 1.0 };
       r.globalTradeVolume = d.globalTradeVolume ?? 0;
       r.nextScoutId = d.nextScoutId ?? 5000;
@@ -13594,8 +13713,16 @@ export class RegionSim {
 
     // Tech progression (simplified aggregate, no per-settlement detail). The
     // difficulty multiplier and a goal that focuses on technology both speed it up.
+    // techSpeed reads the (now real, much larger) treasury, so it is CAPPED at
+    // RIVAL_TECH_CAP — `techProgress` feeds `militaryStrength` (×(1+tech·0.05)),
+    // and an uncapped float would balloon into an unbeatable army once rivals run
+    // a real economy. The cap (~a fully-teched nation) keeps rivals strong but
+    // their strength pop-bounded, and still clears every goal threshold (≥8).
     const techSpeed = (faction.treasury * 0.0001 + factionPop * 0.00001) * knobs.techMult;
-    faction.techProgress += techSpeed * (faction.currentGoal?.sectorFocus === 'technology' ? 1.5 : 1);
+    faction.techProgress = Math.min(
+      RIVAL_TECH_CAP,
+      faction.techProgress + techSpeed * (faction.currentGoal?.sectorFocus === 'technology' ? 1.5 : 1),
+    );
 
     // Scout spawning: difficulty-scaled chance per update, if under the slot limit.
     if (this.aiRng.chance(knobs.scoutChance) && faction.settlementIds.length > 0) {
@@ -13629,13 +13756,69 @@ export class RegionSim {
     // Military scaling: garrison = pop * 0.01 * tech_mult
     faction.militaryStrength = Math.round(factionPop * 0.01 * (1 + faction.techProgress * 0.05));
 
-    // Tech → treasury income: high-tech factions earn passive revenue from efficiency gains
-    if (faction.techProgress > 0) {
-      faction.treasury += Math.round(factionPop * 0.002 * faction.techProgress * knobs.techMult);
+    // Treasury income: a rival now collects tax from the REAL sector output of
+    // its own towns — parity with the player's monthlyEconomy — instead of the
+    // near-zero tech-only trickle it earned before (factionPop·0.002·techProgress,
+    // which started at ~0 and never escaped the vicious cycle). This is the
+    // keystone that lets rivals accumulate wealth → expand, advance their tech
+    // (techProgress feeds off treasury above), field armies, and contest Wonders.
+    // Scaled to the staggered update period so income is cadence-independent.
+    let rivalOutput = 0;
+    for (const id of faction.settlementIds) {
+      const t = this.settlement(id);
+      if (t) rivalOutput += this.sectorOutputOf(t);
     }
+    const periodMonths = faction.updateFrequency / 30;
+    faction.treasury += Math.round(rivalOutput * RIVAL_TAX_RATE * periodMonths);
+
+    // Phase D slice 1b — Wonder build-race. A rich, era-ready rival may break
+    // ground on an unclaimed Wonder, reusing the player's construction pipeline
+    // (and its completion claim in updateConstruction) so a finished rival Wonder
+    // grants that empire the same realm-wide bonus. aiRng-gated → the main RNG
+    // stream is untouched (this is an intentional headless re-baseline).
+    this.maybeBuildRivalWonder(faction, knobs);
 
     // Check for goal conflicts with other factions (Phase 3a)
     this.checkFactionGoalConflicts(faction);
+  }
+
+  /** Phase D slice 1b — a rival faction's bid for a Wonder. Gated on the era,
+   *  a still-unclaimed Wonder, an idle host town, and a treasury that can pay up
+   *  front (mirroring the player's pay-on-break-ground). aiRng draws only. */
+  private maybeBuildRivalWonder(faction: RegionalFaction, knobs: typeof AI_DIFFICULTY[AiDifficulty]): void {
+    if (faction.settlementIds.length === 0) return;
+    if (!this.aiRng.chance(RIVAL_WONDER_CHANCE * knobs.techMult)) return;
+    // Raise it in the capital, else the most populous town; skip if it's busy.
+    const host = this.rivalWonderHost(faction);
+    if (!host || host.construction) return;
+    // Affordable (full price — rivals now fund their own economy), era-ready,
+    // still-unclaimed Wonders.
+    let pick: RegionalBuildingDef | null = null;
+    for (const b of REGION_BUILDINGS) {
+      if (!b.unique || faction.treasury < b.cost) continue;
+      if (this.year < this.wonderEraYear(b) || this.wonderClaimed(b.id)) continue;
+      // Chase the prize: the highest-prestige Wonder within reach.
+      if (!pick || (b.prestige ?? 0) > (pick.prestige ?? 0)) pick = b;
+    }
+    if (!pick) return;
+    faction.treasury -= pick.cost;
+    host.construction = { id: pick.id, doneDay: this.day + pick.days };
+    this.addLog(`${faction.name} breaks ground on the ${pick.name} at ${host.name}.`, 'info');
+  }
+
+  /** The town a rival raises a Wonder in: its capital if held, else its most
+   *  populous settlement. */
+  private rivalWonderHost(faction: RegionalFaction): Settlement | null {
+    const cap = faction.capital >= 0 ? this.settlement(faction.capital) : null;
+    if (cap) return cap;
+    let best: Settlement | null = null, bestPop = -1;
+    for (const id of faction.settlementIds) {
+      const s = this.settlement(id);
+      if (!s) continue;
+      const p = this.popOf(s);
+      if (p > bestPop) { bestPop = p; best = s; }
+    }
+    return best;
   }
 
   /** Detect and escalate goal conflicts between factions (Phase 3a).
