@@ -1,6 +1,6 @@
 # Handoff — Centuria Development Guide
 
-**Last updated:** 2026-06-28 (latest) · **Tests:** 980 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway. **Latest session: C1 extraction — the intermediate-goods subsystem (`tickIntermediateGoods`) lifted out of the 14k-line `region.ts` into `src/sim/systems/goods.ts`** (the FOURTH Track-C leaf after `systems/pollution.ts` + `systems/services.ts` + `systems/arbitrage.ts`, and the method **PR-3 slice 2 will rewrite** — the dependency-rule-mandated step *before* that balance change, and the prior baton's named next task. Free function `fn(r: RegionSim)`; `tick()` dispatches via `tickIntermediateGoods(this)` in the same tick slot. Body moved **verbatim** (`this.`→`r.`), preserving the pharma/electronics RNG draw order; seam: `advanceSectorOutputNorms`/`rawSupplyLevel`/`_electronicsDisrupted`/`supplyShockMult` made public, `sectorRawLevel` stays private. **Byte-identical** — determinism harness ✅, 8-seed × 181y headless **byte-for-byte identical** to base (matching sha256), 980 tests / tsc / build / bench-region all green; a 3-lens adversarial review returned SHIP / zero defects). **Prior session: C1 extraction — the trade-arbitrage subsystem (`tickPriceArbitrage` + `computeCongestionTariff`) → `src/sim/systems/arbitrage.ts`** (the third Track-C leaf; first extracted subsystem that consumes RNG + mutates the per-town ledger; `addGoodStock`/`shipGoodFrom` made public; byte-identical). **Earlier: PR-3 slice 1 — "goods ride the rails"** (trade-route shipments now carry **real physical `cargo`**: units of the shipped good are debited from the source town's `goodStocks` on dispatch and credited to the destination's on arrival — a severed route now strands the **real units**, where before only abstract arbitrage profit moved and the flow's goodId/volume were decorative. The dispatch logic / `pendingIncome` are untouched and nothing reads intermediate-stock *magnitudes* into the economy, so it's **macro-neutral — proven by a byte-for-byte-identical 8-seed × 181y headless diff**. It's the substrate the *per-town supply solve* — PR-3 slice 2, the actual balance change — will consume). **Then: #294 merged — the per-settlement-stocks STORAGE SWAP (PR-2)** (the goods ledger moved onto **`Settlement.goodStocks`** per town; `produceGood` splits the tick's output by producing-sector, `drawGood` drains greedily in-order, both preserving the nation-wide aggregate exactly → **byte-identical gameplay**; built on **#292 — the per-settlement-stocks FOUNDATION** ledger seam). **Earlier: 8 PRs (#283–#286, #288)** — cost-push inflation; non-asset depth pass (export-drag trade leg + serialize-determinism harness & 3 bug fixes + first C1 extraction + perf-guard re-baseline); C1 services extraction + situation-aware deals; AI difficulty belligerence + intel-gated agenda; **#288 = Tier-2 climate farm drag (A) + Tier-3 goods-on-routes first slice (B).**
+**Last updated:** 2026-06-28 (latest) · **Tests:** 988 passing · **Version:** v1.5.0 · **Status:** Phases 1–18 complete; deep-expansion underway. **Latest session: PR-3 slice 2 — the PER-TOWN SUPPLY SOLVE.** `tickIntermediateGoods` (in `src/sim/systems/goods.ts`) still resolves the nation-wide cascade ONCE for every macro signal (`supplyChainHealth`, severity, the output drag, the pharma/electronics RNG effects — byte-identical), but the **stock ledger is now resolved per town** (`distributeGoodProduction`): a town makes its sector-weighted share of `baseOutput·level` only to the extent it locally holds that good's INTERMEDIATE inputs (Liebig gate `min(1, have/need)`), consuming them from its OWN `goodStocks`; raws stay folded into `level` and never gate. A single-town nation (and any nation whose goods are co-located with their inputs) is **byte-identical** — every gate is 1, and the catalog is topological so a town's own upstream output this tick is in stock before downstream reads it (both invariants now guarded by tests). A **cross-sector** good in a **multi-town** nation diverges by design (`clothing`/`consumer_goods`/`luxury_goods` are industry-attributed yet need agri `textiles`: a pure-industry town makes none until textiles are shipped in). **Macro-neutral TODAY** — nothing reads good-stock *magnitudes* into GDP/inflation yet, so the headless 8-seed×181y **markers are byte-identical to base**; the divergence is confined to the per-town ledger (the substrate the per-good-prices slice will consume). 988 tests (8 new in `tests/goods-local.test.ts`), tsc/build/determinism-harness/bench(11.8ms)/save-size(83.5KiB) all green; a 4-lens adversarial review returned no blockers/majors. Seam: `goodProducingSector` exported, `capitalSettlement()` made public. **Prior session: C1 extraction — the intermediate-goods subsystem (`tickIntermediateGoods`) lifted out of the 14k-line `region.ts` into `src/sim/systems/goods.ts`** (the FOURTH Track-C leaf after `systems/pollution.ts` + `systems/services.ts` + `systems/arbitrage.ts`, and the method **PR-3 slice 2 will rewrite** — the dependency-rule-mandated step *before* that balance change, and the prior baton's named next task. Free function `fn(r: RegionSim)`; `tick()` dispatches via `tickIntermediateGoods(this)` in the same tick slot. Body moved **verbatim** (`this.`→`r.`), preserving the pharma/electronics RNG draw order; seam: `advanceSectorOutputNorms`/`rawSupplyLevel`/`_electronicsDisrupted`/`supplyShockMult` made public, `sectorRawLevel` stays private. **Byte-identical** — determinism harness ✅, 8-seed × 181y headless **byte-for-byte identical** to base (matching sha256), 980 tests / tsc / build / bench-region all green; a 3-lens adversarial review returned SHIP / zero defects). **Prior session: C1 extraction — the trade-arbitrage subsystem (`tickPriceArbitrage` + `computeCongestionTariff`) → `src/sim/systems/arbitrage.ts`** (the third Track-C leaf; first extracted subsystem that consumes RNG + mutates the per-town ledger; `addGoodStock`/`shipGoodFrom` made public; byte-identical). **Earlier: PR-3 slice 1 — "goods ride the rails"** (trade-route shipments now carry **real physical `cargo`**: units of the shipped good are debited from the source town's `goodStocks` on dispatch and credited to the destination's on arrival — a severed route now strands the **real units**, where before only abstract arbitrage profit moved and the flow's goodId/volume were decorative. The dispatch logic / `pendingIncome` are untouched and nothing reads intermediate-stock *magnitudes* into the economy, so it's **macro-neutral — proven by a byte-for-byte-identical 8-seed × 181y headless diff**. It's the substrate the *per-town supply solve* — PR-3 slice 2, the actual balance change — will consume). **Then: #294 merged — the per-settlement-stocks STORAGE SWAP (PR-2)** (the goods ledger moved onto **`Settlement.goodStocks`** per town; `produceGood` splits the tick's output by producing-sector, `drawGood` drains greedily in-order, both preserving the nation-wide aggregate exactly → **byte-identical gameplay**; built on **#292 — the per-settlement-stocks FOUNDATION** ledger seam). **Earlier: 8 PRs (#283–#286, #288)** — cost-push inflation; non-asset depth pass (export-drag trade leg + serialize-determinism harness & 3 bug fixes + first C1 extraction + perf-guard re-baseline); C1 services extraction + situation-aware deals; AI difficulty belligerence + intel-gated agenda; **#288 = Tier-2 climate farm drag (A) + Tier-3 goods-on-routes first slice (B).**
 
 > **PARALLEL TRACK — SPATIAL 4X redesign** (`docs/design/spatial-4x-redesign.md`): a second session is turning Centuria into a Civ/Age-of-Wonders spatial city game (found towns by clicking, place buildings on hexes) **while keeping the 4X clear**. **Phase A (click-to-found) MERGED #289**; **Phase B (place buildings on hexes) MERGED #291.** Next: Phase C (tile yields feed economy — intentional re-baseline), Phase D (districts/wonders). See `.handoff.md` §0. Lesson learned: AI text-to-image is the wrong tool for crisp foreground sprites — procedural rendering + the spatial layer is the win.
 
@@ -16,8 +16,11 @@
 > prices (still a wage-gap proxy) and per-settlement goods stocks — the big rock. **#292
 > laid its foundation (the ledger seam) and #294 DID THE SWAP:** the ledger now lives on
 > `Settlement.goodStocks` per town; the nation-wide totals the chain reads are the sum across
-> towns, so gameplay is still byte-identical. **From here it intentionally diverges** — PR-3
-> is consume-where-produced + ship surplus on routes (the first deliberate balance change).
+> towns, so gameplay is still byte-identical. **✅ PR-3 slice 2 then made the ledger diverge** —
+> each town consumes/produces against its OWN stock (`distributeGoodProduction`), so a cross-sector
+> good underproduces in a town lacking its input — but it stays **macro-neutral** (nothing reads
+> stock magnitudes yet, markers byte-identical to base). The deliberate macro balance change is
+> **slice 3 — per-good local prices**, where local stock finally feeds inflation/output.
 
 > 🟢 **PR #284 (open, this session) — non-asset depth pass, 4 commits:**
 > 1. **D1-econ trade leg** — a supply shock now chokes *exports*
@@ -64,6 +67,61 @@
 > (parallax backdrops + era UI skins) and `B2-audio` (music stems + ambience + voice)
 > are the bold roadmap items and remain **un-started in earnest** — they need an env
 > with network egress + image/audio tooling to actually generate.
+
+## Recent session (2026-06-28 latest) — PR-3 slice 2: the per-town supply solve
+
+User said "continue". Every prerequisite for **PR-3 slice 2** (the per-town supply solve) was in
+place — the storage swap (#294), slice 1's physical `cargo` on routes, and all four C1 extractions
+(`tickIntermediateGoods` already lives in `systems/goods.ts`) — so this session wrote slice 2
+there, in the goods system, not the 14k-line monolith.
+
+- **The mechanic.** The nation-wide cascade (`resolveSupplyChainGraded`) still resolves ONCE and
+  still drives every MACRO signal — `supplyChainHealth`, `supplyShockSeverity`, the output drag
+  `supplyShockMult`, `_electronicsDisrupted`, and the pharma plague / electronics research-slow RNG
+  effects — **byte-identical**, because a raw shortage still cascades through the graph exactly as
+  before. What changed is the **STOCK LEDGER**: the old nation-wide `produceGood`/`drawGood`
+  (deposit `baseOutput·level` split by sector weight, drain `level` of each input from one pool) is
+  replaced by a new free function `distributeGoodProduction(r, good, level)` that resolves supply
+  **per town** — each town makes its sector-weighted share of `baseOutput·level` only up to a
+  **local input gate** `min over intermediate inputs of min(1, town.stock[i] / need)`, and consumes
+  those inputs from its **own** `goodStocks` (`shipGoodFrom` debit, `addGoodStock` deposit). Raw
+  inputs stay folded into `level` (the sector proxy / embargoes) and never gate per-town.
+- **Single-town / co-located play is byte-identical.** A lone town produces every input it consumes
+  (stocks grow unbounded), so every gate is 1 and it banks the full `baseOutput·level`, exactly as
+  the old pool did. Two invariants make that hold even at unlock boundaries, both now guarded by
+  tests: (1) `INTERMEDIATE_GOODS` is **topologically ordered** (every intermediate input precedes
+  its consumer), and the loop runs in that order, so a town's own upstream output *this tick* is in
+  stock before its downstream goods read it; (2) `baseOutput(i) ≥ #consumers(i)` for every input,
+  so the first-tick gate is 1 before any buffer accrues.
+- **The intended divergence.** A **cross-sector** good in a **multi-town** nation:
+  `clothing`/`consumer_goods`/`luxury_goods` are industry-attributed yet need agri `textiles`. A
+  pure-industry town holds no textiles → makes none of them; the textiles strand, unused, in the
+  agri town (verified: `consumer_goods` 0, `textiles` 10 banked in the agri town) — until they are
+  **shipped in** (the gate reads current stock, which includes arrived cargo → production
+  restored). Mixed self-sufficient towns don't diverge — specialization is what triggers it.
+- **Macro-neutral today, by construction.** No economy path reads good-stock *magnitudes* (the
+  cascade reads `rawSupplyLevel` for raws only; the sole economy reader, `supplyShockMult`, derives
+  from `supplyChainHealth`/baseline, never a stock amount). So the per-town ledger divergence does
+  not reach GDP/inflation/etc.: the **headless 8-seed × 181y markers are byte-identical to base**
+  (stash-and-diff confirmed), with the divergence confined to the serialized per-town `goodStocks`.
+  This is the *deliberate* low-risk shape: slice 2 lands the substrate with zero balance risk; the
+  playtest-worthy macro shift arrives with **per-good local prices** (the next slice, which makes
+  local stock bite).
+- **Gates.** tsc clean; **988 tests** (980 + 8 new in `tests/goods-local.test.ts`: single-town full
+  production, specialized-multi-town divergence, shipping relief, mixed-town non-divergence,
+  non-negative/finite bounds, determinism, + the two invariant guards); determinism harness ✅
+  (multi-town centuries — determinism/load-stability is the gate now, not equivalence-to-base);
+  bench-region PASS (worst tick 11.8 ms < 16.7 ms); save-size 83.5 KiB < 192; headless stable +
+  markers byte-identical. A **4-lens adversarial review** (correctness / macro-neutrality+RNG-order
+  / seam+import-cycle / test-fidelity, each finding adversarially verified) returned **no blockers
+  or majors** — only confirmations + nits.
+- **Seam (the C1 recipe: expose only what's touched).** `goodProducingSector` exported and
+  `capitalSettlement()` made public on `RegionSim` — the two reads `distributeGoodProduction` needs.
+  The `INTERMEDIATE_IDS` set is built **lazily (call-time)** via a memo, never at module top level —
+  the region.ts↔goods.ts import cycle means a load-time read of `INTERMEDIATE_GOODS`/
+  `goodProducingSector` would see `undefined` (the gotcha the baton warned about; hit it once,
+  fixed it). `produceGood`/`drawGood` stay (still the tested ledger API) but no longer run in the
+  production tick.
 
 ## Recent session (2026-06-28) — C1 extraction: intermediate-goods subsystem → systems/goods.ts
 
@@ -350,12 +408,17 @@ migration; save-size guard re-checked, +<2 KiB) → **PR-3 goods consumed/shippe
 towns** (INTENTIONAL DIVERGENCE), itself sequenced: ✅ **slice 1 — "goods ride the rails"**
 (trade flows carry real `cargo`: debit source town on dispatch, credit destination on
 arrival, severed route strands the real units; dispatch/profit untouched → **macro-neutral**,
-headless byte-identical) → **slice 2 — per-town consume + LOCAL supply level** (the actual
-balance change: consume a good's inputs from the producing town, resolve supply per-town so
-imported stock matters; downturn playtest + re-baseline) → per-good local prices (drop the
-wage-gap proxy; the flow already carries a real good) → 44-good catalog; E2 R/C/I/O demand +
-land-value grid maps (trips the save-size guard by design); `drawBackdrop` parallax
-compositing.
+headless byte-identical) → ✅ **slice 2 — per-town consume + LOCAL supply level**
+(`distributeGoodProduction`: each town makes a good only up to a local-intermediate-input gate,
+consuming inputs from its own ledger; nation cascade still drives all macro signals → single-town
+byte-identical, cross-sector goods diverge in multi-town nations; **macro-neutral today** because
+nothing reads stock magnitudes yet — headless markers byte-identical to base, divergence confined
+to the per-town `goodStocks`) → **slice 3 — per-good local prices** (the first slice that moves the
+macro economy: price each good per town from local stock vs. demand, drop the wage-gap arbitrage
+proxy; a town short on a good — per slice 2's gate — sees its price rise, pulls a shipment, and the
+shortage feeds inflation/output → re-baseline + a downturn playtest; keep the "raws are never in
+`goodStocks`" invariant) → 44-good catalog; demand-aware shipping; E2 R/C/I/O demand + land-value
+grid maps (trips the save-size guard by design); `drawBackdrop` parallax compositing.
 
 **Dependency rules:** the determinism harness (✅) precedes every "byteIdenticalSafe"
 claim; `bench-region` (✅) precedes large `region.ts` cost; **continue C1 leaf
@@ -363,11 +426,12 @@ extractions before the big D1-econ goods/price/FX features** (they add hundreds 
 lines — land them in `systems/`, not the 14k-line monolith). ✅ `tickPollution`
 (`systems/pollution.ts`), ✅ `tickServiceCoverage` (`systems/services.ts`), ✅
 `tickPriceArbitrage`+`computeCongestionTariff` (`systems/arbitrage.ts`), and ✅
-`tickIntermediateGoods` (`systems/goods.ts`) are all extracted. **The goods system now has a
-home outside the monolith — PR-3 slice 2 (the per-town supply solve) is written *there*, not in
-`region.ts`.** The ledger accessors (`produceGood`/`drawGood`/`seedGoodStock`/`goodStock`) + the
-raw proxy (`rawSupplyLevel`/`sectorRawLevel`/`advanceSectorOutputNorms`) stay on `RegionSim`
-beside the per-town `goodStocks` store; slice 2 builds on the now-public `rawSupplyLevel` seam.
+`tickIntermediateGoods` (`systems/goods.ts`) are all extracted. **The goods system has a home
+outside the monolith, and ✅ PR-3 slice 2 (the per-town supply solve, `distributeGoodProduction`)
+was written *there*.** The ledger accessors (`produceGood`/`drawGood`/`seedGoodStock`/`goodStock`/
+`addGoodStock`/`shipGoodFrom`) + the raw proxy (`rawSupplyLevel`/`sectorRawLevel`/
+`advanceSectorOutputNorms`) stay on `RegionSim` beside the per-town `goodStocks` store; slice 3
+(per-good prices) builds on the per-town ledger slice 2 now maintains.
 
 ## Recent session (2026-06-27) — supply shock → cost-push inflation: the stagflation half (D1-econ)
 

@@ -261,8 +261,11 @@ const AGRI_ATTRIBUTED_GOODS = new Set(
   INTERMEDIATE_GOODS.filter((g) => g.inputs.some((i) => AGRICULTURAL_RAWS.has(i))).map((g) => g.id),
 );
 
-/** The extracting/producing sector a good's output is attributed to per-settlement. */
-function goodProducingSector(goodId: string): 'industry' | 'agriculture' {
+/** The extracting/producing sector a good's output is attributed to per-settlement.
+ *  Exported so the extracted goods system (systems/goods.ts) can weight each town's
+ *  share of a good's output by that sector when running the per-town supply solve
+ *  (PR-3 slice 2) — the same weighting `produceGood` uses. */
+export function goodProducingSector(goodId: string): 'industry' | 'agriculture' {
   return AGRI_ATTRIBUTED_GOODS.has(goodId) ? 'agriculture' : 'industry';
 }
 
@@ -6279,8 +6282,11 @@ export class RegionSim {
   }
 
   /** The settlement that banks unattributed deposits — a legacy-save migration, a
-   *  zero-output early-game seed: the player's capital, else the first settlement. */
-  private capitalSettlement(): Settlement | undefined {
+   *  zero-output early-game seed: the player's capital, else the first settlement.
+   *  Public so the extracted goods system (systems/goods.ts) can route the
+   *  no-producing-sector-output fallback of the per-town supply solve (PR-3 slice 2)
+   *  to the same town `produceGood` does. */
+  capitalSettlement(): Settlement | undefined {
     const capId = this.faction(this.playerFactionId)?.capital;
     return this.settlements.find((s) => s.id === capId) ?? this.settlements[0];
   }
