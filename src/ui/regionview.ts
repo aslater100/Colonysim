@@ -4,7 +4,7 @@
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
 import type { Settlement, Scout, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, DepressionMeasure, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType, TechNode, Province, DynastyNode } from '../sim/region';
-import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, INTERMEDIATE_GOODS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES, ESPIONAGE_OPS, BLOC_RELATIONS_FLOOR, DEPRESSION_MEASURES, SUPPLY_SHOCK_INFLATION, SUPPLY_SHOCK_EXPORT_DRAG, AGRI_CLIMATE_THRESHOLD } from '../sim/region';
+import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, DISTRICT_DEFS, INTERMEDIATE_GOODS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES, ESPIONAGE_OPS, BLOC_RELATIONS_FLOOR, DEPRESSION_MEASURES, SUPPLY_SHOCK_INFLATION, SUPPLY_SHOCK_EXPORT_DRAG, AGRI_CLIMATE_THRESHOLD } from '../sim/region';
 import type { EspionageOp } from '../sim/region';
 import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS } from '../sim/defs';
 import type { CurrencySymbol } from '../sim/defs';
@@ -87,6 +87,10 @@ export class RegionView {
    *  hex, plus the precomputed legal cells for the highlight overlay. */
   private buildingPlacement: { townId: number; defId: string } | null = null;
   private buildingValidCells: Set<number> | null = null;
+  /** Spatial-4X Phase D — district zoning placement mode (mutually exclusive with
+   *  building placement and founding). Same legal cells as a building. */
+  private districtPlacement: { townId: number; defId: string } | null = null;
+  private districtValidCells: Set<number> | null = null;
   /** Province overlay toggle (P key or State panel button). Shows province labels + stats on map. */
   provinceViewActive = false;
   /** Currently selected province id (= settlement id), null if none. */
@@ -497,6 +501,19 @@ export class RegionView {
       this.refreshPanel();
       return;
     }
+    // Zone district: in district-placement mode, a map click zones the chosen hex.
+    if (this.districtPlacement !== null) {
+      const W = this.canvas.width;
+      const H = this.canvas.height;
+      const { size, ox, oy } = hexLayoutParams(W, H, REGION_N, 60);
+      const { col, row } = screenToHex(mx, my, size, ox, oy);
+      if (col >= 0 && col < REGION_N && row >= 0 && row < REGION_N) {
+        this.region.placeDistrict(this.districtPlacement.townId, this.districtPlacement.defId, col * REGION_N + row);
+      }
+      this.cancelDistrictPlacement();
+      this.refreshPanel();
+      return;
+    }
     // Click-to-found: in placement mode, a map click sites the new town's
     // expedition at the chosen hex (validated by foundTownAt).
     if (this.foundingFromId !== null) {
@@ -705,10 +722,13 @@ export class RegionView {
     this.ensureMemFogCache(W, H);
     if (this.memFogCanvas) g.drawImage(this.memFogCanvas, 0, 0);
 
+    // Placed districts zone the worked ring underneath; then buildings, then overlays.
+    this.drawPlacedDistricts(W, H);
     // Placed buildings dot the worked ring; placement highlights when arming a build.
     this.drawPlacedBuildings(W, H);
     this.drawFoundingOverlay(W, H);
     this.drawBuildingPlacementOverlay(W, H);
+    this.drawDistrictPlacementOverlay(W, H);
 
     // Routes along their actual corridors (M6b/6c): dotted trails, solid
     // roads, cross-tied rail; line brightness is the route's condition.
@@ -1439,6 +1459,7 @@ export class RegionView {
       this.cancelBuildingPlacement(); return;
     }
     this.foundingFromId = null; this.foundingValidCells = null; // mutually exclusive
+    this.cancelDistrictPlacement();
     this.buildingPlacement = { townId, defId };
     this.buildingValidCells = new Set(this.region.buildablePlacementCells(townId));
   }
@@ -1446,6 +1467,22 @@ export class RegionView {
   private cancelBuildingPlacement(): void {
     this.buildingPlacement = null;
     this.buildingValidCells = null;
+  }
+
+  /** Arm (or cancel) DISTRICT-zoning placement mode for a town + district def. */
+  private toggleDistrictPlacement(townId: number, defId: string): void {
+    if (this.districtPlacement && this.districtPlacement.townId === townId && this.districtPlacement.defId === defId) {
+      this.cancelDistrictPlacement(); return;
+    }
+    this.foundingFromId = null; this.foundingValidCells = null; // mutually exclusive
+    this.cancelBuildingPlacement();
+    this.districtPlacement = { townId, defId };
+    this.districtValidCells = new Set(this.region.buildablePlacementCells(townId));
+  }
+
+  private cancelDistrictPlacement(): void {
+    this.districtPlacement = null;
+    this.districtValidCells = null;
   }
 
   /** Per-frame highlight of legal building sites. Amber for an ordinary building,
@@ -1488,6 +1525,80 @@ export class RegionView {
         g.textAlign = 'center';
         g.fillText(`+${Math.round(pv.total * 100)}%`, cx, cy + 3);
         g.textAlign = 'left';
+      }
+    }
+  }
+
+  /** Highlight legal district-zoning sites while in district-placement mode, tinted
+   *  by the themed sector and labelled with the zone bonus the site would earn (its
+   *  flat bonus + adjacency reward from neighbouring same-sector buildings). Render-
+   *  only — districtPlacementPreview is pure. */
+  private drawDistrictPlacementOverlay(W: number, H: number): void {
+    const cells = this.districtValidCells;
+    if (!this.districtPlacement || !cells || cells.size === 0) return;
+    const g = this.g;
+    const N = REGION_N;
+    const { size, ox, oy } = hexLayoutParams(W, H, N, 60);
+    const pulse = 0.18 + 0.12 * Math.abs(Math.sin(this.frame / 18));
+    const { townId, defId } = this.districtPlacement;
+    const sectorColor: Record<string, string> = {
+      agriculture: '138,154,74', industry: '154,106,58', services: '74,127,164', information: '122,90,154',
+    };
+    const sector = DISTRICT_DEFS.find((d) => d.id === defId)?.sector ?? 'agriculture';
+    const rgb = sectorColor[sector] ?? '138,154,74';
+    for (const key of cells) {
+      const col = Math.floor(key / N), row = key % N;
+      const { x: cx, y: cy } = hexCenter(col, row, size, ox, oy);
+      if (cx < this.vb.l - size || cx > this.vb.r + size || cy < this.vb.t - size || cy > this.vb.b + size) continue;
+      const corners = hexCorners(cx, cy, size);
+      g.lineWidth = 2;
+      g.fillStyle = `rgba(${rgb},${pulse.toFixed(3)})`;
+      fillHexPath(g, corners);
+      g.strokeStyle = `rgba(${rgb},0.9)`;
+      strokeHexPath(g, corners);
+      const pv = this.region.districtPlacementPreview(townId, key, defId);
+      if (pv && pv.total > 0) {
+        g.fillStyle = 'rgba(255,255,255,0.95)';
+        g.font = 'bold 10px monospace';
+        g.textAlign = 'center';
+        g.fillText(`+${Math.round(pv.total * 100)}%`, cx, cy + 3);
+        g.textAlign = 'left';
+      }
+    }
+  }
+
+  /** Render each town's placed DISTRICTS as a translucent themed hex zone with a
+   *  sector-tinted border and a short label (spatial-4X Phase D — render-only). Drawn
+   *  under the building icons so a building sited inside its zone reads on top. */
+  private drawPlacedDistricts(W: number, H: number): void {
+    const g = this.g;
+    const N = REGION_N;
+    const { size, ox, oy } = hexLayoutParams(W, H, N, 60);
+    const sectorColor: Record<string, string> = {
+      agriculture: '138,154,74', industry: '154,106,58', services: '74,127,164', information: '122,90,154',
+    };
+    for (const t of this.region.settlements) {
+      if (!t.placedDistricts || t.placedDistricts.length === 0) continue;
+      for (const p of t.placedDistricts) {
+        const def = DISTRICT_DEFS.find((d) => d.id === p.id);
+        const rgb = sectorColor[def?.sector ?? 'agriculture'] ?? '138,154,74';
+        const col = Math.floor(p.cell / N), row = p.cell % N;
+        const { x: cx, y: cy } = hexCenter(col, row, size, ox, oy);
+        if (cx < this.vb.l - size || cx > this.vb.r + size || cy < this.vb.t - size || cy > this.vb.b + size) continue;
+        const corners = hexCorners(cx, cy, size);
+        g.save();
+        g.fillStyle = `rgba(${rgb},0.28)`;
+        fillHexPath(g, corners);
+        g.lineWidth = 2;
+        g.strokeStyle = `rgba(${rgb},0.85)`;
+        strokeHexPath(g, corners);
+        // short tag (first letter of the themed sector) centred in the zone
+        g.fillStyle = 'rgba(255,255,255,0.92)';
+        g.font = `bold ${Math.max(8, Math.round(size * 0.5))}px monospace`;
+        g.textAlign = 'center';
+        g.fillText((def?.sector ?? '?').charAt(0).toUpperCase(), cx, cy + size * 0.18);
+        g.textAlign = 'left';
+        g.restore();
       }
     }
   }
@@ -4318,6 +4429,10 @@ export class RegionView {
       // building abstractly. Re-clicking the same building cancels.
       cb.onclick = () => { this.toggleBuildingPlacement(t.id, cb.dataset.b!); };
     }
+    for (const db of this.panel.querySelectorAll<HTMLButtonElement>('.district-build-btn')) {
+      // Spatial-4X Phase D: arm district-zoning mode (pick a hex). Re-click cancels.
+      db.onclick = () => { this.toggleDistrictPlacement(t.id, db.dataset.d!); };
+    }
     for (const fb of this.panel.querySelectorAll<HTMLButtonElement>('.focus-btn')) {
       fb.onclick = () => { this.region.setTownFocus(t.id, fb.dataset.f as TownFocus); this.refreshPanel(); };
     }
@@ -4556,6 +4671,17 @@ export class RegionView {
           `title="${def.desc}${check.ok ? '' : ' — ' + check.reason}">` + formatCurrency(r.cityBuildCost(def)) + ` · ${def.days}d</button></li>`;
       })
       .join('');
+    // Spatial-4X Phase D — district zoning: themed quarters placed in the worked ring.
+    const districtRows = DISTRICT_DEFS
+      .filter((def) => !def.prereq || r.has(def.prereq))
+      .map((def) => {
+        const check = r.districtBuildCheck(t, def);
+        const armed = this.districtPlacement?.townId === t.id && this.districtPlacement?.defId === def.id;
+        return `<li>${def.name} <button class="mini district-build-btn${armed ? ' armed' : ''}" data-d="${def.id}" ${check.ok ? '' : 'disabled'} ` +
+          `title="${def.desc}${check.ok ? '' : ' — ' + check.reason}">` + formatCurrency(r.districtCost(def)) + `</button></li>`;
+      })
+      .join('');
+    const districtHtml = districtRows ? `<p class="insp-skills">DISTRICTS</p><ul class="thoughts">${districtRows}</ul>` : '';
     const focusBtns = (['balanced', ...SECTOR_IDS] as TownFocus[])
       .map((f) => {
         const label = f === 'balanced' ? 'balanced' : SECTOR_NAMES[f].toLowerCase();
@@ -4568,6 +4694,7 @@ export class RegionView {
       `<p class="insp-skills">CITY WORKS</p>` +
       builtHtml + consHtml +
       (rows ? `<ul class="thoughts">${rows}</ul>` : '') +
+      districtHtml +
       `<p class="insp-skills">zoning: ${focusBtns}</p>`
     );
   }

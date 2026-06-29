@@ -108,6 +108,11 @@ export interface Settlement {
    *  this is purely additive. Stays in sync with `buildings` via completion +
    *  migration (`ensurePlacements`). */
   placedBuildings: PlacedBuilding[];
+  /** Spatial-4X Phase D: placed DISTRICTS — themed zones (`DistrictDef` ids on a
+   *  cell). Separate from `placedBuildings` so the building-bonus loops never pull
+   *  a district in. Player-only and additive — empty in autoplay, so a town with no
+   *  districts is byte-identical to base. */
+  placedDistricts: PlacedBuilding[];
   /** Construction underway, if any — one project at a time per town. */
   construction: CityConstruction | null;
   /** Development focus: biases where this town's labor drifts. */
@@ -460,6 +465,28 @@ export interface RegionalBuildingDef {
 
 export const REGION_BUILDINGS: RegionalBuildingDef[] = regionBuildingsJson.buildings as RegionalBuildingDef[];
 
+/** Spatial-4X Phase D — a DISTRICT placement category. Unlike a building (which is
+ *  one icon on one hex), a district is a themed zone the player places to designate
+ *  a quarter of the city: it grants its sector a flat bonus AND amplifies it for
+ *  every same-sector building sited on an adjacent hex (the zoning reward — site the
+ *  district at the heart of your matching cluster). One slot per sector per city
+ *  (`max`), so placement stays district-scale and strategic. Player-only: the AI
+ *  never zones, so a town with no districts is byte-identical to base. */
+export interface DistrictDef {
+  id: string;
+  name: string;
+  cost: number;     // £ from the treasury (paid on placement)
+  upkeep: number;   // £/month
+  max: number;      // per settlement
+  prereq?: string;  // tech node id
+  sector: SectorId; // themed sector (concrete — 'all' never zones)
+  bonus: number;    // flat sector output add the town gains for hosting the district
+  desc: string;
+}
+
+export const DISTRICT_DEFS: DistrictDef[] =
+  (regionBuildingsJson as { districts?: DistrictDef[] }).districts ?? [];
+
 /** A construction site in a managed city: one project at a time per town. */
 export interface CityConstruction {
   id: string;      // building def id
@@ -582,6 +609,7 @@ export const REGION_EVENT_DEFS: RegionalEventDef[] = [
 
 // Fast lookups for building and event definitions.
 const REGION_BUILDINGS_MAP = new Map(REGION_BUILDINGS.map((b) => [b.id, b]));
+const DISTRICT_DEFS_MAP = new Map(DISTRICT_DEFS.map((d) => [d.id, d]));
 // Spatial-4X Phase D slice 1b — per-update chance a rich, era-ready rival faction
 // bids for an unclaimed Wonder (scaled by the difficulty techMult). aiRng-gated.
 const RIVAL_WONDER_CHANCE = 0.1;
@@ -4793,6 +4821,7 @@ export class RegionSim {
       sectors: defaultSectors(),
       buildings: [],
       placedBuildings: [],
+      placedDistricts: [],
       construction: null,
       focus: 'balanced',
       activeEvents: [],
@@ -4968,6 +4997,7 @@ export class RegionSim {
         sectors: defaultSectors(),
         buildings: [],
         placedBuildings: [],
+        placedDistricts: [],
         construction: null,
         focus: townFocus,
         activeEvents: [],
@@ -7613,6 +7643,82 @@ export class RegionSim {
     return true;
   }
 
+  /** Cost to zone a district at the current development level (mirrors building cost). */
+  districtCost(def: DistrictDef): number {
+    return Math.round(def.cost * this.devFactor());
+  }
+
+  /** How many of district `id` this town already hosts (district-scale `max` cap). */
+  private districtCount(t: Settlement, id: string): number {
+    let n = 0;
+    for (const pd of t.placedDistricts) if (pd.id === id) n++;
+    return n;
+  }
+
+  /** Can the player zone district `defId` at `townId` right now? Same gate shape as
+   *  `cityBuildCheck` (own town, manageable, prereq, per-city max, treasury) — for
+   *  the placement UI. Districts take effect on placement (no construction slot). */
+  districtBuildCheck(t: Settlement, def: DistrictDef): { ok: boolean; reason: string } {
+    if (t.factionId !== this.playerFactionId) return { ok: false, reason: 'not your town' };
+    if (this.stateProclaimed) {
+      const manage = this.canManageCity(t);
+      if (!manage.ok) return manage;
+    }
+    if (def.prereq && !this.has(def.prereq)) {
+      const node = TECH_TREE.find((n) => n.id === def.prereq);
+      return { ok: false, reason: `requires ${node?.name ?? def.prereq}` };
+    }
+    if (this.districtCount(t, def.id) >= def.max) return { ok: false, reason: 'already zoned here' };
+    const cost = this.districtCost(def);
+    if (this.treasury < cost) return { ok: false, reason: `needs ` + formatCurrency(cost) };
+    return { ok: true, reason: '' };
+  }
+
+  /** Zone a district on a chosen cell. The treasury pays now and the bonus takes
+   *  effect immediately (a zoning designation, not a construction). Player-driven —
+   *  the AI never zones, so the headless sim never reaches this path. Returns false
+   *  on any failed gate or an illegal/occupied cell. */
+  placeDistrict(townId: number, defId: string, cell: number): boolean {
+    const t = this.settlement(townId);
+    const def = DISTRICT_DEFS_MAP.get(defId);
+    if (!t || !def || !this.districtBuildCheck(t, def).ok) return false;
+    if (!this.canPlaceBuildingAt(townId, cell)) return false; // shares building legality
+    const cost = this.districtCost(def);
+    this.treasury -= cost;
+    t.placedDistricts.push({ id: def.id, cell });
+    this.addLog(`${t.name} zones a ${def.name} — ` + formatCurrency(cost) + `.`, 'good');
+    this.townEvent(t, `A ${def.name} is zoned.`, 'good');
+    return true;
+  }
+
+  /** Placement-time preview for a DISTRICT zone (spatial-4X Phase D): the sector
+   *  output bonus the district `defId` WOULD earn if zoned on `cell` right now — its
+   *  flat `bonus` plus the adjacency reward from same-sector buildings already sited
+   *  next to the cell. Pure / read-only — mirrors `districtZoneBonus` exactly so the
+   *  UI can show WHY one hex beats another. Returns null for an illegal cell or
+   *  unknown def. */
+  districtPlacementPreview(townId: number, cell: number, defId: string): PlacementPreview | null {
+    const t = this.settlement(townId);
+    if (!t) return null;
+    const def = DISTRICT_DEFS_MAP.get(defId);
+    if (!def) return null;
+    if (!this.canPlaceBuildingAt(townId, cell)) return null;
+
+    const col = Math.floor(cell / REGION_N), row = cell % REGION_N;
+    let adj = 0;
+    for (const [ax, ay] of hexNeighbors(col, row)) {
+      const nCell = ax * REGION_N + ay;
+      const pb = t.placedBuildings.find((p) => p.cell === nCell);
+      if (!pb) continue;
+      const bd = REGION_BUILDINGS_MAP.get(pb.id);
+      if (bd && bd.sector === def.sector) adj++;
+    }
+    const districtBonus = Math.min(adj, RegionSim.DISTRICT_ZONE_CAP) * RegionSim.DISTRICT_ZONE_BONUS;
+    // `terrainBonus` carries the district's flat themed bonus (reusing the preview
+    // shape); `districtBonus` is the placement-sensitive adjacency reward.
+    return { sector: def.sector, terrainBonus: def.bonus, districtBonus, total: def.bonus + districtBonus };
+  }
+
   /** Cell index for (col,row) and back — the key used by `placedBuildings`. */
   private cellIndex(col: number, row: number): number { return col * REGION_N + row; }
 
@@ -7630,6 +7736,7 @@ export class RegionSim {
     if (d < 1 || d > CITY_WORK_RADIUS) return false; // not the centre, within the ring
     if (this.map.isWater(col, row)) return false;
     if (t.placedBuildings.some((p) => p.cell === cell)) return false;
+    if (t.placedDistricts.some((p) => p.cell === cell)) return false; // a zone occupies its hex
     if (t.construction?.cell === cell) return false;
     return true;
   }
@@ -7886,6 +7993,14 @@ export class RegionSim {
   /** Adjacency count past which a single building stops earning the district bonus
    *  — keeps a tight cluster strong but the total bounded and legible. */
   private static readonly DISTRICT_ADJ_CAP = 2;
+  /** Spatial-4X Phase D — a placed DISTRICT zone's per-adjacent-building synergy:
+   *  each same-sector building on a hex adjacent to the district earns the town this
+   *  much extra in that sector (the zoning reward — site the district among matching
+   *  buildings). */
+  private static readonly DISTRICT_ZONE_BONUS = 0.05;
+  /** Adjacent same-sector buildings past which a district stops paying — bounds the
+   *  zone bonus at DISTRICT_ZONE_CAP × DISTRICT_ZONE_BONUS on top of its flat bonus. */
+  private static readonly DISTRICT_ZONE_CAP = 3;
 
   /** Per-sector tile yields from the worked ring around this town. Result is cached
    *  permanently — terrain never changes after worldgen.  The ring (d=1,2) is read
@@ -8094,8 +8209,38 @@ export class RegionSim {
     bonus += this.placedBuildingTerrainBonus(t, sector);
     // Phase D slice 2: district synergy (same-sector buildings on adjacent hexes)
     bonus += this.districtAdjacencyBonus(t, sector);
+    // Phase D: placed-district zones (themed quarter + adjacency reward)
+    bonus += this.districtZoneBonus(t, sector);
     // Phase D: empire-wide Wonder bonuses (one-per-empire global effects)
     bonus += this.wonderBonus(t, sector);
+    return bonus;
+  }
+
+  /** Spatial-4X Phase D — output bonus this town gains from the DISTRICT zones it
+   *  hosts in `sector`: each district's flat `bonus`, plus DISTRICT_ZONE_BONUS for
+   *  every same-sector placed building on a hex adjacent to the district (capped at
+   *  DISTRICT_ZONE_CAP), so the reward is to site the zone amid its matching cluster.
+   *  Early-returns 0 for a town with no districts — autoplay never zones, so this is
+   *  byte-identical to base (the proven Wonders-slice-1 pattern). Not cached: it is
+   *  only ever non-zero for a handful of player towns. */
+  private districtZoneBonus(t: Settlement, sector: SectorId): number {
+    if (t.placedDistricts.length === 0) return 0;
+    let bonus = 0;
+    for (const pd of t.placedDistricts) {
+      const def = DISTRICT_DEFS_MAP.get(pd.id);
+      if (!def || def.sector !== sector) continue;
+      bonus += def.bonus;
+      const col = Math.floor(pd.cell / REGION_N), row = pd.cell % REGION_N;
+      let adj = 0;
+      for (const [ax, ay] of hexNeighbors(col, row)) {
+        const nCell = ax * REGION_N + ay;
+        const pb = t.placedBuildings.find((p) => p.cell === nCell);
+        if (!pb) continue;
+        const bd = REGION_BUILDINGS_MAP.get(pb.id);
+        if (bd && bd.sector === sector) adj++;
+      }
+      bonus += Math.min(adj, RegionSim.DISTRICT_ZONE_CAP) * RegionSim.DISTRICT_ZONE_BONUS;
+    }
     return bonus;
   }
 
@@ -8153,6 +8298,8 @@ export class RegionSim {
     for (const t of this.settlements) {
       if (t.factionId !== this.playerFactionId) continue;
       for (const id of t.buildings) total += REGION_BUILDINGS_MAP.get(id)?.upkeep ?? 0;
+      // Phase D: placed districts keep their lights on too (empty in autoplay).
+      for (const pd of t.placedDistricts) total += DISTRICT_DEFS_MAP.get(pd.id)?.upkeep ?? 0;
     }
     // Wagner tilt: the public sector's share of GDP rises as the nation develops.
     return total * this.devFactor() ** TUNING.wagnerExp;
@@ -9118,6 +9265,7 @@ export class RegionSim {
           sectors: defaultSectors(),
           buildings: [],
           placedBuildings: [],
+          placedDistricts: [],
           construction: null,
           focus: 'balanced',
           activeEvents: [],
@@ -13153,6 +13301,7 @@ export class RegionSim {
       sectors: s.sectors ?? defaultSectors(),
       buildings: s.buildings ?? [],
       placedBuildings: s.placedBuildings ?? [],
+      placedDistricts: s.placedDistricts ?? [],
       construction: s.construction ?? null,
       focus: s.focus ?? 'balanced',
       activeEvents: s.activeEvents ?? [],
@@ -14789,6 +14938,7 @@ export class RegionSim {
       sectors: defaultSectors(),
       buildings: [],
       placedBuildings: [],
+      placedDistricts: [],
       construction: null,
       focus: 'balanced' as TownFocus,
       activeEvents: [],

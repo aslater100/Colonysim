@@ -213,5 +213,49 @@
       "prestige": 50,
       "desc": "WONDER — the capstone of the century: a monument every citizen knows. All sectors +5% across the realm, and the greatest prestige of the age. One only, anywhere."
     }
+  ],
+  "districts": [
+    {
+      "id": "farming_district",
+      "name": "Farming District",
+      "cost": 130,
+      "upkeep": 2,
+      "max": 1,
+      "sector": "agriculture",
+      "bonus": 0.05,
+      "desc": "DISTRICT — a zoned belt of fields, granaries and irrigation. Agriculture +5%, and +5% more for each adjacent farm building (up to 3). Place it at the heart of your farms."
+    },
+    {
+      "id": "industrial_park",
+      "name": "Industrial Park",
+      "cost": 150,
+      "upkeep": 2,
+      "max": 1,
+      "prereq": "steel_industry",
+      "sector": "industry",
+      "bonus": 0.05,
+      "desc": "DISTRICT — a zoned quarter of mills, yards and rail spurs. Industry +5%, and +5% more for each adjacent works (up to 3). Cluster your factories around it."
+    },
+    {
+      "id": "commercial_district",
+      "name": "Commercial District",
+      "cost": 140,
+      "upkeep": 2,
+      "max": 1,
+      "sector": "services",
+      "bonus": 0.05,
+      "desc": "DISTRICT — a zoned downtown of exchanges, shops and offices. Services +5%, and +5% more for each adjacent market building (up to 3). Site it among your trade."
+    },
+    {
+      "id": "research_campus",
+      "name": "Research Campus",
+      "cost": 160,
+      "upkeep": 3,
+      "prereq": "computing",
+      "max": 1,
+      "sector": "information",
+      "bonus": 0.05,
+      "desc": "DISTRICT — a zoned campus of labs, libraries and lecture halls. Information +5%, and +5% more for each adjacent institute (up to 3). Anchor your knowledge quarter."
+    }
   ]
 }
