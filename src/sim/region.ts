@@ -473,6 +473,19 @@ export interface PlacedBuilding {
   cell: number; // col * REGION_N + row
 }
 
+/** Read-only result of `placementPreview` — the output bonuses a building would
+ *  earn if sited on a candidate cell, so the placement UI can show WHY one hex
+ *  beats another (spatial-4X Phase D). Never affects the sim. */
+export interface PlacementPreview {
+  sector: SectorId | 'all';
+  /** Terrain-match pulse if the cell's terrain suits the building's sector. */
+  terrainBonus: number;
+  /** Marginal district-synergy gain to the town from adding this building. */
+  districtBonus: number;
+  /** terrainBonus + districtBonus — total output bonus this site grants. */
+  total: number;
+}
+
 /** Worked-ring radius (in hexes) a city can place buildings within. District-scale
  *  per the spatial-4X north star — kept small so placement stays strategic. */
 export const CITY_WORK_RADIUS = 2;
@@ -7968,10 +7981,18 @@ export class RegionSim {
     if (cached && cached.len === len) return cached.byS[sector] ?? 0;
 
     // Recompute all sectors in one pass (placements changed or first call).
-    const byS: Partial<Record<SectorId, number>> = {};
-    // Group occupied cells by their building's concrete sector.
+    const byS = this.districtBonusByCells(this.districtCellsBySector(t.placedBuildings));
+    this._districtCache.set(t.id, { len, byS });
+    return byS[sector] ?? 0;
+  }
+
+  /** Group a town's placed buildings' cells by their concrete sector ('all' never
+   *  forms a district, so it is excluded), preserving placement order. The input
+   *  to `districtBonusByCells`; shared by the live bonus path and the placement
+   *  preview so the two can never drift. */
+  private districtCellsBySector(placed: PlacedBuilding[]): Map<SectorId, Set<number>> {
     const cellsBySector = new Map<SectorId, Set<number>>();
-    for (const pb of t.placedBuildings) {
+    for (const pb of placed) {
       const def = REGION_BUILDINGS_MAP.get(pb.id);
       if (!def || def.sector === 'all') continue;
       const s = def.sector as SectorId;
@@ -7979,6 +8000,15 @@ export class RegionSim {
       if (!set) { set = new Set(); cellsBySector.set(s, set); }
       set.add(pb.cell);
     }
+    return cellsBySector;
+  }
+
+  /** Pure core of the district-synergy sum: each building earns
+   *  `min(same-sector neighbours, cap) × DISTRICT_ADJ_BONUS`; a sector with fewer
+   *  than two placements scores 0. Iteration order matches the live path exactly,
+   *  so routing `districtAdjacencyBonus` through it stays byte-identical. */
+  private districtBonusByCells(cellsBySector: Map<SectorId, Set<number>>): Partial<Record<SectorId, number>> {
+    const byS: Partial<Record<SectorId, number>> = {};
     for (const [s, cells] of cellsBySector) {
       if (cells.size < 2) { byS[s] = 0; continue; }
       let bonus = 0;
@@ -7993,8 +8023,58 @@ export class RegionSim {
       }
       byS[s] = bonus;
     }
-    this._districtCache.set(t.id, { len, byS });
-    return byS[sector] ?? 0;
+    return byS;
+  }
+
+  /** Placement-time site preview (spatial-4X Phase D): the output bonus the building
+   *  `defId` WOULD earn if sited on `cell` right now — a terrain-match pulse (the
+   *  same rule as `placedBuildingTerrainBonus`) plus the MARGINAL district-synergy
+   *  gain to the town from adding it (which includes the lift it gives its
+   *  same-sector neighbours, not just what it earns itself). Pure / read-only — it
+   *  mutates nothing, so the sim stays byte-identical; returns null for an illegal
+   *  cell or unknown def. */
+  placementPreview(townId: number, cell: number, defId: string): PlacementPreview | null {
+    const t = this.settlement(townId);
+    if (!t) return null;
+    const def = REGION_BUILDINGS_MAP.get(defId);
+    if (!def) return null;
+    if (!this.canPlaceBuildingAt(townId, cell)) return null;
+
+    const col = Math.floor(cell / REGION_N), row = cell % REGION_N;
+    const tc = this.map.at(col, row);
+
+    // Terrain-match pulse — mirror placedBuildingTerrainBonus exactly. An 'all'
+    // building earns the pulse in every sector whose rule the cell satisfies.
+    const matchesAgri = tc.fertility > 1.05 || tc.river;
+    const matchesIndustry = tc.ore || tc.roughness > 0.35;
+    const matchesServices = tc.river || t.site.coastal;
+    let terrainBonus = 0;
+    if (def.sector === 'agriculture') { if (matchesAgri) terrainBonus = RegionSim.TILE_PLACE_BONUS; }
+    else if (def.sector === 'industry') { if (matchesIndustry) terrainBonus = RegionSim.TILE_PLACE_BONUS; }
+    else if (def.sector === 'services') { if (matchesServices) terrainBonus = RegionSim.TILE_PLACE_BONUS; }
+    else if (def.sector === 'all') {
+      if (matchesAgri) terrainBonus += RegionSim.TILE_PLACE_BONUS;
+      if (matchesIndustry) terrainBonus += RegionSim.TILE_PLACE_BONUS;
+      if (matchesServices) terrainBonus += RegionSim.TILE_PLACE_BONUS;
+    }
+
+    // Marginal district synergy — recompute the town's district bonus with the
+    // candidate hypothetically added, minus the current bonus. 0 for 'all'.
+    let districtBonus = 0;
+    if (def.sector !== 'all') {
+      const s = def.sector as SectorId;
+      const base = this.districtCellsBySector(t.placedBuildings);
+      const baseBonus = this.districtBonusByCells(base)[s] ?? 0;
+      const withCand = new Map<SectorId, Set<number>>();
+      for (const [sec, set] of base) withCand.set(sec, new Set(set));
+      let set = withCand.get(s);
+      if (!set) { set = new Set(); withCand.set(s, set); }
+      set.add(cell);
+      const withBonus = this.districtBonusByCells(withCand)[s] ?? 0;
+      districtBonus = Math.max(0, withBonus - baseBonus);
+    }
+
+    return { sector: def.sector, terrainBonus, districtBonus, total: terrainBonus + districtBonus };
   }
 
   /** Sum of building output bonuses for one sector in this town.

@@ -1458,19 +1458,37 @@ export class RegionView {
     const N = REGION_N;
     const { size, ox, oy } = hexLayoutParams(W, H, N, 60);
     const pulse = 0.16 + 0.12 * Math.abs(Math.sin(this.frame / 18));
-    const wonder = REGION_BUILDINGS.find((b) => b.id === this.buildingPlacement!.defId)?.unique === true;
+    const { townId, defId } = this.buildingPlacement;
+    const wonder = REGION_BUILDINGS.find((b) => b.id === defId)?.unique === true;
     const fill = wonder ? `rgba(245,205,70,${pulse.toFixed(3)})` : `rgba(228,178,90,${pulse.toFixed(3)})`;
     const stroke = wonder ? 'rgba(255,228,130,0.9)' : 'rgba(240,200,120,0.75)';
-    g.lineWidth = wonder ? 2 : 1.5;
     for (const key of cells) {
       const col = Math.floor(key / N), row = key % N;
       const { x: cx, y: cy } = hexCenter(col, row, size, ox, oy);
       if (cx < this.vb.l - size || cx > this.vb.r + size || cy < this.vb.t - size || cy > this.vb.b + size) continue;
       const corners = hexCorners(cx, cy, size);
+      // Base legal-site fill (amber for a building, gold for a Wonder).
+      g.lineWidth = wonder ? 2 : 1.5;
       g.fillStyle = fill;
       fillHexPath(g, corners);
       g.strokeStyle = stroke;
       strokeHexPath(g, corners);
+      // Spatial-4X Phase D — placement preview: tint the sites that pay off (terrain
+      // match + district synergy) green and label the bonus, so the player can read
+      // WHERE to build before committing. Render-only — placementPreview is pure.
+      const pv = this.region.placementPreview(townId, key, defId);
+      if (pv && pv.total > 0) {
+        const intensity = Math.min(1, pv.total / 0.16);
+        g.fillStyle = `rgba(110,210,120,${(0.18 + 0.32 * intensity).toFixed(3)})`;
+        fillHexPath(g, corners);
+        g.strokeStyle = `rgba(150,235,150,${(0.5 + 0.4 * intensity).toFixed(3)})`;
+        strokeHexPath(g, corners);
+        g.fillStyle = 'rgba(255,255,255,0.95)';
+        g.font = 'bold 10px monospace';
+        g.textAlign = 'center';
+        g.fillText(`+${Math.round(pv.total * 100)}%`, cx, cy + 3);
+        g.textAlign = 'left';
+      }
     }
   }
 
