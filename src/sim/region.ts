@@ -583,6 +583,21 @@ const RIVAL_TAX_RATE = 0.06;
 // value ran into the thousands → a 200×+ army. ~30 ≈ a fully-teched nation:
 // rivals advance far past their old single-digit ceiling, but stay pop-bounded.
 const RIVAL_TECH_CAP = 30;
+// Wagner-style state-cost sink. Rivals lack the player's policy/services/welfare/
+// central-bank machinery, so without a recurring drain they bank nearly the whole
+// 6% tax take and balloon to ~2 months of (enormous) late-game output. BUT the
+// rival treasury is also the FAMINE SHOCK-ABSORBER — emergency grain is paid from
+// the faction purse, and late-game climate warming drives widespread starvation —
+// so a flat output-share charge that fires during a crisis drains the purse to 0,
+// grain stops, and the population collapses (a death spiral, seen in testing).
+// Instead the state spends down only the SURPLUS above a prudent reserve that
+// scales with the economy, and STANDS DOWN entirely when the treasury dips below
+// that reserve (a crisis). This caps the hoard near ~1.5 months of output without
+// ever touching the buffer the rival needs to feed its people. Plus a tiny flat
+// per-settlement admin charge mirroring the player's `settlements.length * 5`.
+const RIVAL_RESERVE_MONTHS = 1.5; // months of output kept untouched (famine relief, expansion, Wonders)
+const RIVAL_SURPLUS_SKIM = 0.25; // monthly fraction of the above-reserve surplus the state spends down
+const RIVAL_ADMIN_PER_TOWN = 5; // gold/settlement/month — mirrors the player's `settlements.length * 5`
 const REGION_EVENT_DEFS_MAP = new Map(REGION_EVENT_DEFS.map((d) => [d.kind, d]));
 
 // ---- Phase 5: Local Policies ----
@@ -13830,6 +13845,14 @@ export class RegionSim {
     const periodMonths = faction.updateFrequency / 30;
     faction.treasury += Math.round(rivalOutput * RIVAL_TAX_RATE * periodMonths);
 
+    // Wagner-style state-cost sink. Rivals lack the player's policy/services/
+    // welfare/central-bank machinery, so without a recurring drain they bank
+    // nearly the whole tax take and balloon. The sink spends down only the
+    // surplus above a prudent, output-scaled reserve (and stands down below it),
+    // so it caps the hoard without ever starving the famine buffer. Cadence-
+    // scaled like the tax; the treasury can never go negative.
+    faction.treasury = Math.max(0, faction.treasury - this.rivalStateCost(faction, rivalOutput, periodMonths));
+
     // Phase D slice 1b — Wonder build-race. A rich, era-ready rival may break
     // ground on an unclaimed Wonder, reusing the player's construction pipeline
     // (and its completion claim in updateConstruction) so a finished rival Wonder
@@ -13839,6 +13862,21 @@ export class RegionSim {
 
     // Check for goal conflicts with other factions (Phase 3a)
     this.checkFactionGoalConflicts(faction);
+  }
+
+  /** Wagner-style recurring state cost a rival pays each AI update (admin +
+   *  services + defence). The state spends down only the SURPLUS above a prudent
+   *  reserve that scales with the economy (`RIVAL_RESERVE_MONTHS` of output), so
+   *  it caps the hoard without ever draining the buffer the rival needs to fund
+   *  emergency grain during a famine — when the treasury is below that reserve
+   *  the skim stands down and only the flat per-settlement admin is charged.
+   *  Scaled to the update period like the tax; always ≥0 and never below 0. */
+  private rivalStateCost(faction: RegionalFaction, rivalOutput: number, periodMonths: number): number {
+    const reserve = rivalOutput * RIVAL_RESERVE_MONTHS;
+    const surplus = Math.max(0, faction.treasury - reserve);
+    const admin = faction.settlementIds.length * RIVAL_ADMIN_PER_TOWN;
+    const monthly = surplus * RIVAL_SURPLUS_SKIM + admin;
+    return Math.max(0, Math.min(faction.treasury, Math.round(monthly * periodMonths)));
   }
 
   /** Phase D slice 1b — a rival faction's bid for a Wonder. Gated on the era,
