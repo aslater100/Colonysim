@@ -3,7 +3,7 @@
  * operating altitude after the flip (GDD §2.5). Painterly backdrop, town
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
-import type { Settlement, Scout, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, DepressionMeasure, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType, TechNode, Province, DynastyNode } from '../sim/region';
+import type { Settlement, Scout, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, DepressionMeasure, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType, TechNode, Province, DynastyNode, SectorBonusBreakdown } from '../sim/region';
 import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, DISTRICT_DEFS, INTERMEDIATE_GOODS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES, ESPIONAGE_OPS, BLOC_RELATIONS_FLOOR, DEPRESSION_MEASURES, SUPPLY_SHOCK_INFLATION, SUPPLY_SHOCK_EXPORT_DRAG, AGRI_CLIMATE_THRESHOLD } from '../sim/region';
 import type { EspionageOp } from '../sim/region';
 import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS } from '../sim/defs';
@@ -4724,6 +4724,14 @@ export class RegionView {
         return def && (def.sector === id || def.sector === 'all') && ev.untilDay > r.day;
       });
       const evtBadge = activeEvt ? ` <span class="insp-cond">[${REGION_EVENT_DEFS.find((d) => d.kind === activeEvt.kind)?.name ?? '!'}]</span>` : '';
+      // Spatial-bonus badge: surface WHY this sector earns what it does — the
+      // terrain/district/wonder bonuses are otherwise invisible after placement.
+      // Read-only (sectorBonusBreakdown is pure), shown only when there is a bonus.
+      const bd = r.sectorBonusBreakdown(t.id, id);
+      const spatialBadge = bd && bd.total > 0.0005
+        ? ` <span class="insp-state" style="min-width:42px;text-align:right" ` +
+          `title="${this.escapeAttr(this.spatialBonusTooltip(bd))}">+${Math.round(bd.total * 100)}%</span>`
+        : '';
       return (
         `<div class="bar-row">` +
         `<span style="color:${color};min-width:70px">${SECTOR_NAMES[id]}</span>` +
@@ -4734,12 +4742,31 @@ export class RegionView {
         `<span class="${arrowClass}" style="min-width:12px;text-align:center">${arrow}</span>` +
         `<span class="insp-skills" style="min-width:52px;text-align:right">${s.output.toFixed(1)}/m</span>` +
         `<span class="insp-skills" style="min-width:52px;text-align:right">` + formatCurrency(s.wage / 30, 2) + `/d</span>` +
+        spatialBadge +
         evtBadge +
         `</div>`
       );
     }).join('');
     const gdpNote = totalOutput > 0 ? `<span class="insp-skills">GDP contribution ` + formatCurrency(totalOutput * 1.08, 1) + `/month</span>` : '';
     return `<p class="insp-skills">SECTORS${gdpNote ? ' · ' : ''}${gdpNote}</p>${rows}`;
+  }
+
+  /** Plain-language decomposition of a sector's spatial output bonus, for the
+   *  `+N%` badge tooltip in sectorsHtml. Lists only the sources that contribute,
+   *  so the player can read exactly what terrain / districts / wonders are doing. */
+  private spatialBonusTooltip(bd: SectorBonusBreakdown): string {
+    const parts: string[] = [];
+    const add = (label: string, v: number) => {
+      if (Math.abs(v) > 0.0005) parts.push(`${label}: ${v >= 0 ? '+' : ''}${Math.round(v * 100)}%`);
+    };
+    add('Buildings', bd.buildings);
+    add('Terrain', bd.terrain);
+    add('Sited on matching terrain', bd.terrainMatch);
+    add('District clustering', bd.districtAdjacency);
+    add('District zones', bd.districtZone);
+    add('Wonders', bd.wonder);
+    const body = parts.length ? parts.join('\n') : 'no spatial bonus';
+    return `${SECTOR_NAMES[bd.sector]} output bonus +${Math.round(bd.total * 100)}%\n${body}`;
   }
 
   /** Phase 5: local governance policies panel — tax band, wage policy, service

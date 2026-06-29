@@ -513,6 +513,30 @@ export interface PlacementPreview {
   total: number;
 }
 
+/** Decomposition of a town's per-sector output bonus into its named spatial
+ *  sources — the read-only "why does this sector produce what it does" view
+ *  behind the city panel. Each field is the additive bonus that source grants
+ *  `sector`; `total` is their sum and equals the live `buildingBonus(t, sector)`
+ *  bit-for-bit (same summation order), so the displayed numbers can never drift
+ *  from the ones that actually drive output. */
+export interface SectorBonusBreakdown {
+  sector: SectorId;
+  /** Flat output bonus from constructed civic/economic buildings. */
+  buildings: number;
+  /** Worked-ring terrain yield from the surrounding hexes (Phase C). */
+  terrain: number;
+  /** Terrain-match pulse for placed buildings sited on suiting terrain (Phase C). */
+  terrainMatch: number;
+  /** Same-sector adjacent-building clustering synergy (Phase D slice 2). */
+  districtAdjacency: number;
+  /** Placed-district zone bonus — flat quarter + adjacent-cluster reward (Phase D). */
+  districtZone: number;
+  /** Empire-wide Wonder bonus the owning faction grants every town (Phase D). */
+  wonder: number;
+  /** Sum of the above — equals buildingBonus(t, sector) exactly. */
+  total: number;
+}
+
 /** Worked-ring radius (in hexes) a city can place buildings within. District-scale
  *  per the spatial-4X north star — kept small so placement stays strategic. */
 export const CITY_WORK_RADIUS = 2;
@@ -8197,23 +8221,44 @@ export class RegionSim {
    *  and adjacency bonuses for buildings sited on matching terrain;
    *  Phase D slice 2 adds the district-clustering synergy. */
   private buildingBonus(t: Settlement, sector: SectorId): number {
-    let bonus = 0;
+    return this.sectorBonusParts(t, sector).total;
+  }
+
+  /** Decompose a town's per-sector output bonus into its named spatial sources.
+   *  The SINGLE SOURCE OF TRUTH for both the live economy (`buildingBonus`
+   *  returns `.total`) and the city-panel readout (`sectorBonusBreakdown`), so
+   *  the numbers the player sees can never drift from the ones driving output.
+   *  The summation order is preserved exactly, so `.total` is bit-identical to
+   *  the prior inline `buildingBonus` — the determinism harness + headless diff
+   *  guard this. */
+  private sectorBonusParts(t: Settlement, sector: SectorId): SectorBonusBreakdown {
+    let buildings = 0;
     for (const id of t.buildings) {
       const def = REGION_BUILDINGS_MAP.get(id);
-      if (def && (def.sector === sector || def.sector === 'all')) bonus += def.bonus;
+      if (def && (def.sector === sector || def.sector === 'all')) buildings += def.bonus;
     }
     // Phase C: terrain yields from the worked ring (static terrain, cached)
-    const yields = this.tileYieldFor(t);
-    bonus += yields[sector] ?? 0;
+    const terrain = this.tileYieldFor(t)[sector] ?? 0;
     // Phase C: placed-building adjacency (building sited on matching terrain)
-    bonus += this.placedBuildingTerrainBonus(t, sector);
+    const terrainMatch = this.placedBuildingTerrainBonus(t, sector);
     // Phase D slice 2: district synergy (same-sector buildings on adjacent hexes)
-    bonus += this.districtAdjacencyBonus(t, sector);
+    const districtAdjacency = this.districtAdjacencyBonus(t, sector);
     // Phase D: placed-district zones (themed quarter + adjacency reward)
-    bonus += this.districtZoneBonus(t, sector);
+    const districtZone = this.districtZoneBonus(t, sector);
     // Phase D: empire-wide Wonder bonuses (one-per-empire global effects)
-    bonus += this.wonderBonus(t, sector);
-    return bonus;
+    const wonder = this.wonderBonus(t, sector);
+    const total = buildings + terrain + terrainMatch + districtAdjacency + districtZone + wonder;
+    return { sector, buildings, terrain, terrainMatch, districtAdjacency, districtZone, wonder, total };
+  }
+
+  /** Read-only decomposition of `townId`'s output bonus in `sector` — the city
+   *  panel's "why does this sector produce what it does" readout. Pure: it reads
+   *  the same idempotent caches the live tick does and mutates nothing, so the
+   *  sim stays byte-identical. Returns null for an unknown town. */
+  sectorBonusBreakdown(townId: number, sector: SectorId): SectorBonusBreakdown | null {
+    const t = this.settlement(townId);
+    if (!t) return null;
+    return this.sectorBonusParts(t, sector);
   }
 
   /** Spatial-4X Phase D — output bonus this town gains from the DISTRICT zones it
