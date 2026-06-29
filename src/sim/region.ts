@@ -698,6 +698,12 @@ const BUILD_LEAN_BLOC = 0.08;   // a regime bloc's pull toward its signature sec
 const BUILD_LEAN_FOCUS = 0.05;  // the faction's research focus (mining/forestry/farming) nudge
 const BUILD_LEAN_AGGR = 0.04;   // a belligerent power's extra weight on a war (industry) economy
 const BUILD_LEAN_AGGR_THRESHOLD = 60; // aggressiveness at/above which the war-economy nudge applies
+// The same personality lean (factionBuildLean) also pulls a rival toward the TERRAIN
+// that feeds its signature sector when siting a new town (agri→fertile/river,
+// industry→mountain/forest, services→coastal/river). Scaled into the expansion-site
+// score's units (~base 50 + terrain bonuses 2–5 + goal bias 20) so it only tips close
+// calls — a strong goal bias or the spacing penalty still dominates.
+const EXPAND_LEAN_SCALE = 30;
 const REGION_EVENT_DEFS_MAP = new Map(REGION_EVENT_DEFS.map((d) => [d.kind, d]));
 
 // ---- Phase 5: Local Policies ----
@@ -14466,7 +14472,8 @@ export class RegionSim {
    *  surplus above `reserve`. Districts take effect on placement (no construction
    *  slot). Returns true if a district was zoned. */
   private tryZoneRivalDistrict(faction: RegionalFaction, t: Settlement, reserve: number): boolean {
-    let pick: DistrictDef | null = null, bestCluster = 1; // need ≥2 to bother
+    const lean = this.factionBuildLean(faction);
+    let pick: DistrictDef | null = null, bestScore = -Infinity;
     for (const d of DISTRICT_DEFS) {
       if (this.districtCount(t, d.id) >= d.max) continue;
       if (d.prereq && this.year < this.prereqEraYear(d.prereq)) continue;
@@ -14475,7 +14482,14 @@ export class RegionSim {
       for (const p of t.placedBuildings) {
         if (REGION_BUILDINGS_MAP.get(p.id)?.sector === d.sector) cluster++;
       }
-      if (cluster > bestCluster) { bestCluster = cluster; pick = d; }
+      if (cluster < 2) continue; // need a ≥2 same-sector cluster to bother zoning
+      // Score by cluster size first (the zone bonus only pays where a cluster exists),
+      // then let personality tip BETWEEN comparable clusters — the lean (< 1) can never
+      // outweigh a strictly larger cluster, so it only decides close calls. So a liberal
+      // power zones its commercial quarter where an autocrat would zone its industrial
+      // one, given equal-size clusters in each sector.
+      const score = cluster + (lean[d.sector] ?? 0);
+      if (score > bestScore) { bestScore = score; pick = d; }
     }
     if (!pick) return false;
     const def = pick;
@@ -15160,6 +15174,12 @@ export class RegionSim {
     };
     // Bootstrap uses 8 samples for better initial placement; established factions use 5
     const effectiveSamples = faction.settlementIds.length === 0 ? Math.max(samples, 8) : samples;
+    // Personality terrain pull: the faction's sector lean (the SAME factionBuildLean
+    // that steers what it builds) gravitates it toward the terrain that feeds its
+    // signature sector — so a Merchant Republic settles the coast, a Military Junta the
+    // hills, an Absolute Monarchy the fertile plains. Derived purely from faction fields
+    // (no RNG draw) → the aiRng stream is untouched; only WHERE it lands changes.
+    const lean = this.factionBuildLean(faction);
 
     for (let i = 0; i < effectiveSamples; i++) {
       const x = this.aiRng.int(100), y = this.aiRng.int(100);
@@ -15192,6 +15212,14 @@ export class RegionSim {
       if (isCoastal) score += 5;
       if (isRiver) score += 3;
       if (isMountain) score += 2;
+
+      // Personality terrain pull (see `lean` above): map the sector lean onto the
+      // terrain that feeds it. Bounded by EXPAND_LEAN_SCALE so it only tips close calls.
+      let leanPull = 0;
+      if (isPlains || isRiver) leanPull += lean.agriculture;
+      if (isMountain || isForest) leanPull += lean.industry;
+      if (isCoastal || isRiver) leanPull += lean.services;
+      score += leanPull * EXPAND_LEAN_SCALE;
 
       // Compass-direction pull keeps rival factions in distinct map quadrants
       const aig = faction.aiGoal ?? '';
