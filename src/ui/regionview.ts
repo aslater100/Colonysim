@@ -1485,6 +1485,35 @@ export class RegionView {
     };
     for (const t of this.region.settlements) {
       if (!t.placedBuildings || t.placedBuildings.length === 0) continue;
+      // Spatial-4X Phase D slice 2: draw a faint connector glow between same-sector
+      // buildings on adjacent hexes, so a DISTRICT (the clustering synergy) reads at
+      // a glance. Render-only — mirrors the sim's districtAdjacencyBonus rule.
+      const cellSector = new Map<number, string>();
+      for (const p of t.placedBuildings) {
+        const def = REGION_BUILDINGS.find((b) => b.id === p.id);
+        if (def && def.sector !== 'all') cellSector.set(p.cell, def.sector);
+      }
+      if (cellSector.size >= 2) {
+        g.save();
+        g.lineWidth = Math.max(2, size * 0.16);
+        g.lineCap = 'round';
+        for (const [cell, sec] of cellSector) {
+          const col = Math.floor(cell / N), row = cell % N;
+          for (const [ax, ay] of hexNeighbors(col, row)) {
+            const nCell = ax * N + ay;
+            if (nCell <= cell) continue; // draw each pair once
+            if (cellSector.get(nCell) !== sec) continue;
+            const a = hexCenter(col, row, size, ox, oy);
+            const b = hexCenter(ax, ay, size, ox, oy);
+            if (Math.max(a.x, b.x) < this.vb.l - size || Math.min(a.x, b.x) > this.vb.r + size) continue;
+            if (Math.max(a.y, b.y) < this.vb.t - size || Math.min(a.y, b.y) > this.vb.b + size) continue;
+            g.strokeStyle = sectorColor[sec] ?? '#9a8a5a';
+            g.globalAlpha = 0.35;
+            g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
+          }
+        }
+        g.restore();
+      }
       for (const p of t.placedBuildings) {
         const col = Math.floor(p.cell / N), row = p.cell % N;
         const { x: cx, y: cy } = hexCenter(col, row, size, ox, oy);

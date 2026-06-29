@@ -2833,6 +2833,11 @@ export class RegionSim {
    *  id. Terrain is static (never changes after worldgen), so this is computed once
    *  and kept forever. Transient — NOT serialized; rebuilt lazily on first call. */
   private _tileYieldCache?: Map<number, Partial<Record<SectorId, number>>>;
+  /** Spatial-4X Phase D slice 2: per-settlement DISTRICT adjacency bonus cache,
+   *  keyed by settlement id. Depends only on placed-building cells (which only ever
+   *  grow), so it is keyed by the placement count and recomputed when that changes.
+   *  Transient — NOT serialized; rebuilt lazily. */
+  private _districtCache?: Map<number, { len: number; byS: Partial<Record<SectorId, number>> }>;
   // ---- Rival nations & diplomacy (GDD §5.4, §6.2–6.4) ----
   rivals: RivalNation[] = [];
   /** Named rival nations that have been used (to avoid duplicates). */
@@ -7846,6 +7851,13 @@ export class RegionSim {
   private static readonly TILE_COASTAL_SVC = 0.08;
   /** Extra bonus per placed building sited on terrain that matches its sector. */
   private static readonly TILE_PLACE_BONUS = 0.05;
+  /** Spatial-4X Phase D slice 2 — DISTRICTS. Output bonus a placed building earns
+   *  for each same-sector building on an adjacent hex (the Civ-6 district-synergy
+   *  hook: cluster like with like to specialise a quarter of the city). */
+  private static readonly DISTRICT_ADJ_BONUS = 0.04;
+  /** Adjacency count past which a single building stops earning the district bonus
+   *  — keeps a tight cluster strong but the total bounded and legible. */
+  private static readonly DISTRICT_ADJ_CAP = 2;
 
   /** Per-sector tile yields from the worked ring around this town. Result is cached
    *  permanently — terrain never changes after worldgen.  The ring (d=1,2) is read
@@ -7926,9 +7938,54 @@ export class RegionSim {
     return bonus;
   }
 
+  /** Phase D slice 2 — DISTRICT synergy. A placed building earns a bonus for every
+   *  same-sector building on an adjacent hex: clustering like with like turns a
+   *  cluster of placements into a specialised quarter (an industrial district, a
+   *  farming belt). The bonus is per-building × min(neighbours, cap), so a tight
+   *  three-building triangle pays the most while the total stays bounded. Mixed-
+   *  sector or 'all' buildings never form a district (kept legible — only concrete
+   *  same-sector neighbours count). Returns 0 for a town with <2 same-sector
+   *  placements, so a sparse town is unaffected. Cached by placement count. */
+  private districtAdjacencyBonus(t: Settlement, sector: SectorId): number {
+    if (!this._districtCache) this._districtCache = new Map();
+    const cached = this._districtCache.get(t.id);
+    const len = t.placedBuildings.length;
+    if (cached && cached.len === len) return cached.byS[sector] ?? 0;
+
+    // Recompute all sectors in one pass (placements changed or first call).
+    const byS: Partial<Record<SectorId, number>> = {};
+    // Group occupied cells by their building's concrete sector.
+    const cellsBySector = new Map<SectorId, Set<number>>();
+    for (const pb of t.placedBuildings) {
+      const def = REGION_BUILDINGS_MAP.get(pb.id);
+      if (!def || def.sector === 'all') continue;
+      const s = def.sector as SectorId;
+      let set = cellsBySector.get(s);
+      if (!set) { set = new Set(); cellsBySector.set(s, set); }
+      set.add(pb.cell);
+    }
+    for (const [s, cells] of cellsBySector) {
+      if (cells.size < 2) { byS[s] = 0; continue; }
+      let bonus = 0;
+      for (const cell of cells) {
+        const col = Math.floor(cell / REGION_N), row = cell % REGION_N;
+        let adj = 0;
+        for (const [ax, ay] of hexNeighbors(col, row)) {
+          const nCell = ax * REGION_N + ay;
+          if (nCell !== cell && cells.has(nCell)) adj++;
+        }
+        bonus += Math.min(adj, RegionSim.DISTRICT_ADJ_CAP) * RegionSim.DISTRICT_ADJ_BONUS;
+      }
+      byS[s] = bonus;
+    }
+    this._districtCache.set(t.id, { len, byS });
+    return byS[sector] ?? 0;
+  }
+
   /** Sum of building output bonuses for one sector in this town.
    *  Phase C extends this with spatial tile yields from the worked ring
-   *  and adjacency bonuses for buildings sited on matching terrain. */
+   *  and adjacency bonuses for buildings sited on matching terrain;
+   *  Phase D slice 2 adds the district-clustering synergy. */
   private buildingBonus(t: Settlement, sector: SectorId): number {
     let bonus = 0;
     for (const id of t.buildings) {
@@ -7940,6 +7997,8 @@ export class RegionSim {
     bonus += yields[sector] ?? 0;
     // Phase C: placed-building adjacency (building sited on matching terrain)
     bonus += this.placedBuildingTerrainBonus(t, sector);
+    // Phase D slice 2: district synergy (same-sector buildings on adjacent hexes)
+    bonus += this.districtAdjacencyBonus(t, sector);
     // Phase D: empire-wide Wonder bonuses (one-per-empire global effects)
     bonus += this.wonderBonus(t, sector);
     return bonus;
