@@ -509,7 +509,11 @@ export interface PlacementPreview {
   terrainBonus: number;
   /** Marginal district-synergy gain to the town from adding this building. */
   districtBonus: number;
-  /** terrainBonus + districtBonus — total output bonus this site grants. */
+  /** Marginal district-ZONE lift: extra bonus a placed district earns because this
+   *  same-sector building lands on a hex adjacent to it (mirrors `districtZoneBonus`,
+   *  capped at DISTRICT_ZONE_CAP). 0 unless the town has zoned a matching district. */
+  zoneBonus: number;
+  /** terrainBonus + districtBonus + zoneBonus — total output bonus this site grants. */
   total: number;
 }
 
@@ -7739,8 +7743,9 @@ export class RegionSim {
     }
     const districtBonus = Math.min(adj, RegionSim.DISTRICT_ZONE_CAP) * RegionSim.DISTRICT_ZONE_BONUS;
     // `terrainBonus` carries the district's flat themed bonus (reusing the preview
-    // shape); `districtBonus` is the placement-sensitive adjacency reward.
-    return { sector: def.sector, terrainBonus: def.bonus, districtBonus, total: def.bonus + districtBonus };
+    // shape); `districtBonus` is the placement-sensitive adjacency reward. A district
+    // never triggers another district's zone, so `zoneBonus` is always 0 here.
+    return { sector: def.sector, terrainBonus: def.bonus, districtBonus, zoneBonus: 0, total: def.bonus + districtBonus };
   }
 
   /** Cell index for (col,row) and back — the key used by `placedBuildings`. */
@@ -8213,7 +8218,19 @@ export class RegionSim {
       districtBonus = Math.max(0, withBonus - baseBonus);
     }
 
-    return { sector: def.sector, terrainBonus, districtBonus, total: terrainBonus + districtBonus };
+    // Marginal district-ZONE lift — a same-sector building adjacent to a zoned
+    // district raises that district's adjacency reward. Recompute the zone bonus
+    // with the candidate building hypothetically added, minus the current one;
+    // mirrors districtZoneBonus via the shared core. 0 for 'all' or no districts.
+    let zoneBonus = 0;
+    if (def.sector !== 'all' && t.placedDistricts.length > 0) {
+      const s = def.sector as SectorId;
+      const baseZone = this.districtZoneBonusFrom(t.placedDistricts, t.placedBuildings, s);
+      const withZone = this.districtZoneBonusFrom(t.placedDistricts, [...t.placedBuildings, { id: defId, cell }], s);
+      zoneBonus = Math.max(0, withZone - baseZone);
+    }
+
+    return { sector: def.sector, terrainBonus, districtBonus, zoneBonus, total: terrainBonus + districtBonus + zoneBonus };
   }
 
   /** Sum of building output bonuses for one sector in this town.
@@ -8270,8 +8287,17 @@ export class RegionSim {
    *  only ever non-zero for a handful of player towns. */
   private districtZoneBonus(t: Settlement, sector: SectorId): number {
     if (t.placedDistricts.length === 0) return 0;
+    return this.districtZoneBonusFrom(t.placedDistricts, t.placedBuildings, sector);
+  }
+
+  /** Pure core of the district-zone sum, parameterised on the district + building
+   *  sets so the live bonus and the placement preview share ONE source of truth
+   *  (the proven `districtBonusByCells` pattern). Iteration order + arithmetic match
+   *  the prior inline `districtZoneBonus` exactly, so routing through it is
+   *  byte-identical. */
+  private districtZoneBonusFrom(districts: PlacedBuilding[], buildings: PlacedBuilding[], sector: SectorId): number {
     let bonus = 0;
-    for (const pd of t.placedDistricts) {
+    for (const pd of districts) {
       const def = DISTRICT_DEFS_MAP.get(pd.id);
       if (!def || def.sector !== sector) continue;
       bonus += def.bonus;
@@ -8279,7 +8305,7 @@ export class RegionSim {
       let adj = 0;
       for (const [ax, ay] of hexNeighbors(col, row)) {
         const nCell = ax * REGION_N + ay;
-        const pb = t.placedBuildings.find((p) => p.cell === nCell);
+        const pb = buildings.find((p) => p.cell === nCell);
         if (!pb) continue;
         const bd = REGION_BUILDINGS_MAP.get(pb.id);
         if (bd && bd.sector === sector) adj++;

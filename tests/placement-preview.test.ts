@@ -16,6 +16,7 @@ import { hexNeighbors } from '../src/sim/hex';
 
 const TILE_PLACE_BONUS = 0.05; // mirrors RegionSim.TILE_PLACE_BONUS
 const DISTRICT_ADJ_BONUS = 0.04; // mirrors RegionSim.DISTRICT_ADJ_BONUS
+const DISTRICT_ZONE_BONUS = 0.05; // mirrors RegionSim.DISTRICT_ZONE_BONUS
 
 function colony(seed: number): RegionSim {
   const r = RegionSim.foundColony(new Rng(seed), new RegionMap(seed), new Weather(seed), {});
@@ -27,6 +28,7 @@ function colony(seed: number): RegionSim {
 type Cell = { fertility: number; river: boolean; ore: boolean; roughness: number };
 type Priv = {
   districtAdjacencyBonus: (t: object, s: string) => number;
+  districtZoneBonus: (t: object, s: string) => number;
   map: { at: (col: number, row: number) => Cell };
 };
 const priv = (r: RegionSim) => r as unknown as Priv;
@@ -212,8 +214,84 @@ describe('placementPreview — district synergy (marginal)', () => {
   });
 });
 
+describe('placementPreview — district-zone lift (marginal)', () => {
+  it('a same-sector building adjacent to a zoned district earns the zone reward', () => {
+    for (const seed of [3, 7, 11, 21, 42]) {
+      const r = colony(seed);
+      const t = r.settlements[0];
+      const pair = district(r, t.id, 2);
+      if (!pair) continue;
+      // Zone a farming district on one cell; preview a farm on the adjacent cell.
+      t.placedDistricts = [{ id: 'farming_district', cell: pair[0] }];
+      const pv = r.placementPreview(t.id, pair[1], 'grain_exchange')!;
+      expect(pv.zoneBonus).toBeCloseTo(DISTRICT_ZONE_BONUS, 10);
+      return;
+    }
+    throw new Error('no seed produced an adjacent buildable pair');
+  });
+
+  it('zoneBonus equals the live districtZoneBonus delta exactly', () => {
+    for (const seed of [3, 7, 11, 21, 42]) {
+      const r = colony(seed);
+      const t = r.settlements[0];
+      const pair = district(r, t.id, 2);
+      if (!pair) continue;
+      t.placedDistricts = [{ id: 'farming_district', cell: pair[0] }];
+      const before = priv(r).districtZoneBonus(t, 'agriculture');
+      const pv = r.placementPreview(t.id, pair[1], 'grain_exchange')!;
+      t.placedBuildings = [{ id: 'grain_exchange', cell: pair[1] }]; // commit the same site
+      const after = priv(r).districtZoneBonus(t, 'agriculture');
+      expect(pv.zoneBonus).toBeCloseTo(after - before, 10);
+      return;
+    }
+    throw new Error('no seed produced an adjacent buildable pair');
+  });
+
+  it('zoneBonus is 0 for a candidate not adjacent to any district', () => {
+    for (const seed of [3, 7, 11, 21, 42]) {
+      const r = colony(seed);
+      const t = r.settlements[0];
+      const cells = r.buildablePlacementCells(t.id);
+      if (cells.length < 2) continue;
+      const districtCell = cells[0];
+      const [dc, dr] = cellColRow(districtCell);
+      const neighbours = new Set(hexNeighbors(dc, dr).map(([ax, ay]) => ax * REGION_N + ay));
+      const far = cells.find((c) => c !== districtCell && !neighbours.has(c));
+      if (far === undefined) continue;
+      t.placedDistricts = [{ id: 'farming_district', cell: districtCell }];
+      const pv = r.placementPreview(t.id, far, 'grain_exchange')!;
+      expect(pv.zoneBonus).toBe(0);
+      return;
+    }
+    throw new Error('no seed produced a non-adjacent buildable cell');
+  });
+
+  it('zoneBonus is 0 for a different-sector building beside the district', () => {
+    for (const seed of [3, 7, 11, 21, 42]) {
+      const r = colony(seed);
+      const t = r.settlements[0];
+      const pair = district(r, t.id, 2);
+      if (!pair) continue;
+      t.placedDistricts = [{ id: 'farming_district', cell: pair[0] }]; // agriculture
+      const pv = r.placementPreview(t.id, pair[1], 'ironworks')!; // industry — no match
+      expect(pv.zoneBonus).toBe(0);
+      return;
+    }
+    throw new Error('no seed produced an adjacent buildable pair');
+  });
+
+  it('is inert (zoneBonus 0) when the town has zoned no district', () => {
+    const r = colony(11);
+    const t = r.settlements[0];
+    const pair = district(r, t.id, 2)!;
+    t.placedBuildings = [{ id: 'grain_exchange', cell: pair[0] }];
+    const pv = r.placementPreview(t.id, pair[1], 'grain_exchange')!;
+    expect(pv.zoneBonus).toBe(0);
+  });
+});
+
 describe('placementPreview — purity & totals', () => {
-  it('total is exactly terrainBonus + districtBonus', () => {
+  it('total is exactly terrainBonus + districtBonus + zoneBonus', () => {
     for (const seed of [3, 7, 11, 21, 42]) {
       const r = colony(seed);
       const t = r.settlements[0];
@@ -221,7 +299,7 @@ describe('placementPreview — purity & totals', () => {
       if (!pair) continue;
       t.placedBuildings = [{ id: 'grain_exchange', cell: pair[0] }];
       const pv = r.placementPreview(t.id, pair[1], 'grain_exchange')!;
-      expect(pv.total).toBeCloseTo(pv.terrainBonus + pv.districtBonus, 10);
+      expect(pv.total).toBeCloseTo(pv.terrainBonus + pv.districtBonus + pv.zoneBonus, 10);
       return;
     }
     throw new Error('no seed produced an adjacent buildable pair');
