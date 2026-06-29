@@ -24,7 +24,10 @@ function runDays(r: RegionSim, days: number): void {
 }
 
 type Sector = 'agriculture' | 'industry' | 'services' | 'information';
-type Faction = { treasury: number; settlementIds: number[] };
+type Faction = {
+  treasury: number; settlementIds: number[];
+  regime?: string; techFocus?: string; aggressiveness?: number;
+};
 type Settle = {
   id: number; factionId: number; site: { coastal: boolean };
   buildings: string[];
@@ -39,12 +42,19 @@ type Priv = {
   tileYieldFor: (t: Settle) => Record<Sector, number>;
   tryBuildRivalBuilding: (f: Faction, t: Settle, reserve: number) => boolean;
   tryZoneRivalDistrict: (f: Faction, t: Settle, reserve: number) => boolean;
+  factionBuildLean: (f: Faction) => Record<Sector, number>;
   buildingCount: (t: Settle, id: string) => number;
   cityBuildCost: (def: { cost: number }) => number;
   districtCost: (def: { cost: number }) => number;
   placementPreview: (townId: number, cell: number, defId: string) => { total: number } | null;
 };
 const priv = (r: RegionSim) => r as unknown as Priv;
+
+/** Build a test faction, defaulting the personality fields factionBuildLean reads.
+ *  A 'farming'/low-aggression default keeps the lean off industry unless asked. */
+function mkFaction(o: Partial<Faction> & { treasury: number; settlementIds: number[] }): Faction {
+  return { regime: 'parliamentary', techFocus: 'farming', aggressiveness: 0, ...o };
+}
 
 function colony(seed: number): RegionSim {
   return RegionSim.foundColony(new Rng(seed), new RegionMap(seed), new Weather(seed), {});
@@ -63,10 +73,13 @@ function townWithRing(seed: number): { r: RegionSim; t: Settle } {
 
 /** Reference re-implementation of tryBuildRivalBuilding's pick, for an independent
  *  expectation of WHICH building a rival raises (best fit = flat bonus + the town's
- *  terrain yield in that sector). First-wins on ties, mirroring the loop. */
+ *  terrain yield in that sector + the faction's personality lean). First-wins on
+ *  ties, mirroring the loop. Uses the real factionBuildLean as the single source of
+ *  truth for the personality term. */
 function refPickBuilding(r: RegionSim, t: Settle, faction: Faction, reserve: number): { id: string } | null {
   const P = priv(r);
   const yields = P.tileYieldFor(t);
+  const lean = P.factionBuildLean(faction);
   let pick: { id: string } | null = null, score = -Infinity;
   for (const b of REGION_BUILDINGS) {
     if (b.unique) continue;
@@ -75,7 +88,8 @@ function refPickBuilding(r: RegionSim, t: Settle, faction: Faction, reserve: num
     if (b.prereq && r.year < P.prereqEraYear(b.prereq)) continue;
     if (faction.treasury - P.cityBuildCost(b) < reserve) continue;
     const sy = b.sector === 'all' ? 0 : (yields[b.sector as Sector] ?? 0);
-    const s = b.bonus + sy;
+    const sl = b.sector === 'all' ? 0 : (lean[b.sector as Sector] ?? 0);
+    const s = b.bonus + sy + sl;
     if (s > score) { score = s; pick = b; }
   }
   return pick;
@@ -264,5 +278,142 @@ describe('rival development — integration', () => {
     expect(placementTotals(a)).toEqual(placementTotals(b));
     expect(a.treasury).toBe(b.treasury);
     expect(a.playerPop()).toBe(b.playerPop());
+  });
+});
+
+// ---- 7. factionBuildLean — personality steers the spatial buildout ----
+//
+// Before this, every rival picked buildings by pure terrain fit, so a Merchant
+// Republic and a Military Junta on the same land built the same town. The lean is a
+// modest, deterministic thumb on the terrain-fit score, derived purely from existing
+// faction fields (regime bloc + tech focus + belligerence) — no RNG, no new
+// serialized state — so rival town economies finally diverge by who the rival is.
+
+describe('factionBuildLean — regime bloc signature sector', () => {
+  // A neutral focus/aggression so the bloc term is isolated.
+  const neutral = { treasury: 0, settlementIds: [], techFocus: 'none', aggressiveness: 0 };
+
+  it('a liberal bloc leans commerce (services, then knowledge)', () => {
+    const lean = priv(colony(1)).factionBuildLean(mkFaction({ ...neutral, regime: 'parliamentary' }));
+    expect(lean.services).toBeGreaterThan(0);
+    expect(lean.information).toBeGreaterThan(0);
+    expect(lean.services).toBeGreaterThan(lean.information); // commerce first, knowledge a half-step behind
+    expect(lean.agriculture).toBe(0);
+    expect(lean.industry).toBe(0);
+  });
+
+  it('a traditional bloc leans the land (agriculture only)', () => {
+    const lean = priv(colony(1)).factionBuildLean(mkFaction({ ...neutral, regime: 'abs_monarchy' }));
+    expect(lean.agriculture).toBeGreaterThan(0);
+    expect(lean.industry).toBe(0);
+    expect(lean.services).toBe(0);
+    expect(lean.information).toBe(0);
+  });
+
+  it('an autocratic bloc leans industry only', () => {
+    const lean = priv(colony(1)).factionBuildLean(mkFaction({ ...neutral, regime: 'junta' }));
+    expect(lean.industry).toBeGreaterThan(0);
+    expect(lean.agriculture).toBe(0);
+    expect(lean.services).toBe(0);
+    expect(lean.information).toBe(0);
+  });
+
+  it('a revolutionary bloc mobilizes industry AND knowledge', () => {
+    const lean = priv(colony(1)).factionBuildLean(mkFaction({ ...neutral, regime: 'peoples_republic' }));
+    expect(lean.industry).toBeGreaterThan(0);
+    expect(lean.information).toBeGreaterThan(0);
+    expect(lean.agriculture).toBe(0);
+    expect(lean.services).toBe(0);
+  });
+
+  it('an unknown/empty regime falls back to the traditional (land) lean', () => {
+    const lean = priv(colony(1)).factionBuildLean(mkFaction({ ...neutral, regime: 'not_a_regime' }));
+    expect(lean.agriculture).toBeGreaterThan(0);
+    expect(lean.industry + lean.services + lean.information).toBe(0);
+  });
+});
+
+describe('factionBuildLean — tech focus and belligerence nudges', () => {
+  // Use a liberal bloc (touches only services/information) so a focus/aggression
+  // nudge onto agriculture or industry is isolated from the bloc term.
+  const base = { treasury: 0, settlementIds: [], regime: 'parliamentary', techFocus: 'none', aggressiveness: 0 };
+
+  it('a mining focus adds industry weight', () => {
+    const lean = priv(colony(1)).factionBuildLean(mkFaction({ ...base, techFocus: 'mining' }));
+    expect(lean.industry).toBeGreaterThan(0);
+  });
+
+  it('a forestry focus adds (less) industry weight than mining', () => {
+    const P = priv(colony(1));
+    const mining = P.factionBuildLean(mkFaction({ ...base, techFocus: 'mining' }));
+    const forestry = P.factionBuildLean(mkFaction({ ...base, techFocus: 'forestry' }));
+    expect(forestry.industry).toBeGreaterThan(0);
+    expect(forestry.industry).toBeLessThan(mining.industry);
+  });
+
+  it('a farming focus adds agriculture weight', () => {
+    const lean = priv(colony(1)).factionBuildLean(mkFaction({ ...base, techFocus: 'farming' }));
+    expect(lean.agriculture).toBeGreaterThan(0);
+  });
+
+  it('belligerence (≥ threshold) adds a war-economy industry nudge', () => {
+    const P = priv(colony(1));
+    const calm = P.factionBuildLean(mkFaction({ ...base, aggressiveness: 0 }));
+    const warlike = P.factionBuildLean(mkFaction({ ...base, aggressiveness: 80 }));
+    expect(calm.industry).toBe(0);
+    expect(warlike.industry).toBeGreaterThan(0);
+  });
+
+  it('the nudges stack on the bloc term (autocratic + mining + belligerent is most industrial)', () => {
+    const P = priv(colony(1));
+    const bloc = P.factionBuildLean(mkFaction({ treasury: 0, settlementIds: [], regime: 'junta', techFocus: 'none', aggressiveness: 0 }));
+    const stacked = P.factionBuildLean(mkFaction({ treasury: 0, settlementIds: [], regime: 'junta', techFocus: 'mining', aggressiveness: 80 }));
+    expect(stacked.industry).toBeGreaterThan(bloc.industry);
+  });
+
+  it('is pure — equal inputs give an equal lean and the call mutates nothing', () => {
+    const P = priv(colony(1));
+    const f = mkFaction({ treasury: 0, settlementIds: [], regime: 'junta', techFocus: 'mining', aggressiveness: 80 });
+    expect(P.factionBuildLean(f)).toEqual(P.factionBuildLean(f));
+    expect(f.regime).toBe('junta'); // untouched
+  });
+});
+
+describe('personality steers the building pick — divergence by who the rival is', () => {
+  it('the chosen building matches the lean-aware reference for distinct personalities', () => {
+    const { r, t } = townWithRing(7);
+    // A land-leaning traditional/farming power and a commerce-leaning liberal power.
+    const agrarian = mkFaction({ treasury: 100_000, settlementIds: [t.id], regime: 'abs_monarchy', techFocus: 'farming', aggressiveness: 0 });
+    const merchant = mkFaction({ treasury: 100_000, settlementIds: [t.id], regime: 'parliamentary', techFocus: 'none', aggressiveness: 0 });
+
+    const expAgrarian = refPickBuilding(r, t, agrarian, 0)!;
+    const okA = priv(r).tryBuildRivalBuilding(agrarian, t, 0);
+    expect(okA).toBe(true);
+    expect(t.construction!.id).toBe(expAgrarian.id);
+
+    // Fresh town for the merchant so the pick isn't constrained by the first build.
+    const { r: r2, t: t2 } = townWithRing(7);
+    const merchant2 = mkFaction({ ...merchant, settlementIds: [t2.id] });
+    const expMerchant = refPickBuilding(r2, t2, merchant2, 0)!;
+    expect(priv(r2).tryBuildRivalBuilding(merchant2, t2, 0)).toBe(true);
+    expect(t2.construction!.id).toBe(expMerchant.id);
+  });
+
+  it('different personalities diverge on the SAME land for at least some seeds (non-vacuous)', () => {
+    let diverged = 0, examined = 0;
+    for (let seed = 1; seed <= 30; seed++) {
+      const r = colony(seed);
+      const t = r.settlements[0] as unknown as Settle;
+      if (r.buildablePlacementCells(t.id).length === 0) continue;
+      examined++;
+      const agrarian = mkFaction({ treasury: 100_000, settlementIds: [t.id], regime: 'abs_monarchy', techFocus: 'farming', aggressiveness: 0 });
+      const industrial = mkFaction({ treasury: 100_000, settlementIds: [t.id], regime: 'junta', techFocus: 'mining', aggressiveness: 80 });
+      const a = refPickBuilding(r, t, agrarian, 0);
+      const b = refPickBuilding(r, t, industrial, 0);
+      if (a && b && a.id !== b.id) diverged++;
+    }
+    expect(examined).toBeGreaterThan(0);
+    // The whole point of the lean: who the rival is changes what it builds.
+    expect(diverged).toBeGreaterThan(0);
   });
 });
