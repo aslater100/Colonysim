@@ -684,6 +684,20 @@ const RIVAL_RESERVE_MONTHS = 1.5; // months of output kept untouched (famine rel
 const RIVAL_DEV_RESERVE_MONTHS = 0.5;
 const RIVAL_SURPLUS_SKIM = 0.25; // monthly fraction of the above-reserve surplus the state spends down
 const RIVAL_ADMIN_PER_TOWN = 5; // gold/settlement/month — mirrors the player's `settlements.length * 5`
+// Spatial-4X — personality-driven sector lean for a rival's spatial buildout. Before
+// this, EVERY rival picked buildings by pure terrain fit, so a Merchant Republic and
+// a Military Junta on the same land built the SAME town — the AI played spatially but
+// played the SAME spatially. These weights are a modest thumb on the terrain-fit score
+// (each ≤ a strong terrain yield, so a rival still builds to its land — the lean only
+// tips close calls and reorders the build sequence), derived PURELY from existing
+// serialized faction fields (regime bloc + tech focus + belligerence): no RNG and no
+// new serialized state, so the determinism and save-size gates stay green. The point is
+// to make rival town ECONOMIES diverge by who the rival is — an intentional headless
+// re-baseline that widens the spread the spatial layer produces.
+const BUILD_LEAN_BLOC = 0.08;   // a regime bloc's pull toward its signature sector
+const BUILD_LEAN_FOCUS = 0.05;  // the faction's research focus (mining/forestry/farming) nudge
+const BUILD_LEAN_AGGR = 0.04;   // a belligerent power's extra weight on a war (industry) economy
+const BUILD_LEAN_AGGR_THRESHOLD = 60; // aggressiveness at/above which the war-economy nudge applies
 const REGION_EVENT_DEFS_MAP = new Map(REGION_EVENT_DEFS.map((d) => [d.kind, d]));
 
 // ---- Phase 5: Local Policies ----
@@ -14382,13 +14396,45 @@ export class RegionSim {
     this.tryBuildRivalBuilding(faction, town, reserve);
   }
 
+  /** Personality-driven sector lean for a rival faction's spatial buildout. Derived
+   *  PURELY from existing serialized faction fields (regime bloc + tech focus +
+   *  belligerence) — no RNG, no new serialized state — so the determinism and
+   *  save-size gates stay green. It is a modest thumb on the scale (each term ≤ a
+   *  strong terrain yield), added to the terrain-fit score in `tryBuildRivalBuilding`:
+   *  a rival still builds to its land, but a liberal Merchant Republic leans commerce
+   *  (services + knowledge), a traditional Absolute Monarchy leans the land (agri),
+   *  an autocratic Military Junta leans industry, and a revolutionary People's Republic
+   *  mobilizes both industry and knowledge. This is what makes rival town economies
+   *  DIVERGE by who the rival is instead of every faction building the same
+   *  terrain-optimal town — an intentional headless re-baseline. */
+  private factionBuildLean(faction: RegionalFaction): Record<SectorId, number> {
+    const lean: Record<SectorId, number> = { agriculture: 0, industry: 0, services: 0, information: 0 };
+    const bloc = RIVAL_REGIMES.find((g) => g.id === faction.regime)?.bloc ?? 'traditional';
+    switch (bloc) {
+      case 'liberal':       lean.services += BUILD_LEAN_BLOC; lean.information += BUILD_LEAN_BLOC * 0.6; break;
+      case 'traditional':   lean.agriculture += BUILD_LEAN_BLOC; break;
+      case 'autocratic':    lean.industry += BUILD_LEAN_BLOC; break;
+      case 'revolutionary': lean.industry += BUILD_LEAN_BLOC * 0.75; lean.information += BUILD_LEAN_BLOC * 0.5; break;
+    }
+    switch (faction.techFocus) {
+      case 'mining':   lean.industry += BUILD_LEAN_FOCUS; break;
+      case 'forestry': lean.industry += BUILD_LEAN_FOCUS * 0.6; break;
+      case 'farming':  lean.agriculture += BUILD_LEAN_FOCUS; break;
+    }
+    // A belligerent power runs a war economy — extra weight on industry.
+    if (faction.aggressiveness >= BUILD_LEAN_AGGR_THRESHOLD) lean.industry += BUILD_LEAN_AGGR;
+    return lean;
+  }
+
   /** Pick the era-ready, under-max, affordable building that best fits a rival
-   *  town's land (its flat bonus plus the town's terrain yield in that sector), then
-   *  break ground on the hex that MAXIMIZES the realized spatial bonus (terrain
-   *  match + same-sector clustering). Pays the player's real `cityBuildCost`, drawn
-   *  from the surplus above `reserve`. Returns true if a project was started. */
+   *  town's land (its flat bonus plus the town's terrain yield in that sector) AND
+   *  its personality (the `factionBuildLean` thumb on the scale), then break ground
+   *  on the hex that MAXIMIZES the realized spatial bonus (terrain match + same-sector
+   *  clustering). Pays the player's real `cityBuildCost`, drawn from the surplus above
+   *  `reserve`. Returns true if a project was started. */
   private tryBuildRivalBuilding(faction: RegionalFaction, t: Settlement, reserve: number): boolean {
     const yields = this.tileYieldFor(t);
+    const lean = this.factionBuildLean(faction);
     let pick: RegionalBuildingDef | null = null, pickScore = -Infinity;
     for (const b of REGION_BUILDINGS) {
       if (b.unique) continue; // Wonders go through the build-race path
@@ -14397,7 +14443,10 @@ export class RegionSim {
       if (b.prereq && this.year < this.prereqEraYear(b.prereq)) continue;
       if (faction.treasury - this.cityBuildCost(b) < reserve) continue; // surplus-only
       const sectorYield = b.sector === 'all' ? 0 : (yields[b.sector] ?? 0);
-      const score = b.bonus + sectorYield; // fit the building to the town's terrain
+      const sectorLean = b.sector === 'all' ? 0 : (lean[b.sector] ?? 0);
+      // Fit the building to the town's terrain (yield), then let the faction's
+      // personality (lean) tip close calls — so WHO the rival is shapes its towns.
+      const score = b.bonus + sectorYield + sectorLean;
       if (score > pickScore) { pickScore = score; pick = b; }
     }
     if (!pick) return false;
