@@ -940,6 +940,12 @@ body {
   margin-left: 4px;
   cursor: pointer;
 }
+/* Spatial-4X Phase D — a district button armed for placement (pick a hex). */
+.mini.armed {
+  background: #3a5a3a;
+  border-color: #6aa46a;
+  color: #eafbea;
+}
 
 /* ---- Depression-response panel (GDD §8.1) ---- */
 .crisis-banner {
