@@ -2621,6 +2621,36 @@ export const ACCORD_DEFECT_THRESHOLD = 0.35;
 /** Maximum world-emissions cut from fully compliant accord coverage. */
 export const ACCORD_EMISSION_CUT = 0.28;
 
+// ---- Emergent world green transition (different timelines to 2100) ----
+// Before this, EVERY autoplay seed funnelled to the 'drowned' branch: the only
+// forces that bend the warming curve (green tech diffusion, carbon laws, climate
+// accords) are PLAYER-driven, and the autoplay player never even becomes a nation,
+// so the world ran a pure-fossil rail to proj ~5 °C every time. Now the rival WORLD
+// decarbonizes on its own initiative, at a rate that VARIES BY SEED with the rival
+// archetype mix — so the era branch (and the whole century's climate) diverges
+// across runs. Deterministic (archetypes are fixed at worldgen; no RNG, no new
+// serialized field) → the determinism/save-size gates stay green; it is an
+// intentional climate re-baseline.
+//
+// Per-archetype propensity to lead the clean-energy transition (GDD §6.3 flavour):
+// the commercial Trading Republic adopts what undercuts on cost; the Crusader
+// State makes it a mission; the Opportunist follows the money; the industrial
+// Hegemon and the isolationist Hermit Kingdom drag their feet.
+export const ARCHETYPE_GREEN_PROPENSITY: Record<RivalArchetype, number> = {
+  trading_republic: 1.0,
+  crusader_state: 0.9,
+  opportunist: 0.5,
+  hegemon: 0.2,
+  hermit_kingdom: 0.1,
+};
+export const WORLD_GREEN_START_YEAR = 1972;  // the transition can begin as renewables become conceivable
+export const WORLD_GREEN_RAMP_YEARS = 38;    // years from the start to a full ramp (≈2010)
+export const WORLD_GREEN_MAX_CUT = 0.92;     // a fully-green world cuts this fraction of its emissions
+export const WORLD_GREEN_URGENCY_C = 1.6;    // warming (°C) at which crisis urgency maxes the transition rate
+export const WORLD_GREEN_BASE = 0.55;        // baseline transition rate before warming urgency adds the rest
+export const PLAYER_GREEN_DIFFUSION = 0.6;   // how much of the world's transition spills into a passive player's own emissions (GDD §5.6 proven-tech diffusion)
+export const DROWNED_GREEN_RELIEF = 1.5;     // °C of projection credit per unit worldGreenShare at the era verdict (a transitioning world's flat projection overstates 2100 warming)
+
 /** The endgame's three skies (GDD §3.2): chosen by your climate, economy,
  *  and regime outcomes — not the calendar. */
 export type EraBranch = 'solarpunk' | 'dystopia' | 'drowned';
@@ -4020,6 +4050,11 @@ export class RegionSim {
     if (this.has('ev_adoption')) intensity *= 0.85;
     if (this.passedLaws.has('carbon_pricing')) intensity *= 0.75;
     if (this.passedLaws.has('cap_trade_law')) intensity *= 0.65;
+    // Proven clean tech diffuses from a greening rival world even to a passive
+    // player (GDD §5.6) — so a green century pulls everyone's chimneys down a
+    // little, the inverse of "one green player can't solo-fix the sky". An active
+    // player still does far more via their own tech/laws above.
+    intensity *= 1 - this.worldGreenShare() * PLAYER_GREEN_DIFFUSION;
     return (this.totalPop() / 1000) * intensity * 0.04;
   }
 
@@ -4049,7 +4084,36 @@ export class RegionSim {
       }
       if (totalPop > 0) accordFactor = 1 - (coveredPop / totalPop) * ACCORD_EMISSION_CUT;
     }
-    return worldPop * 0.045 * ramp * decarb * diffusion * accordFactor;
+    // Emergent world green transition: the rival world decarbonizes on its own
+    // initiative at a seed-varying rate (see worldGreenShare) — the term that makes
+    // the climate timeline diverge across runs instead of always drowning.
+    const greenFactor = 1 - this.worldGreenShare() * WORLD_GREEN_MAX_CUT;
+    return worldPop * 0.045 * ramp * decarb * diffusion * accordFactor * greenFactor;
+  }
+
+  /** The mean clean-energy propensity of the current rival world, set by its
+   *  archetype mix (ARCHETYPE_GREEN_PROPENSITY). Fixed at worldgen, so it is the
+   *  deterministic, per-seed dial that makes one century's world greener than
+   *  another's. Defaults to a middling 0.4 when no rivals exist. */
+  private archetypeGreenShare(): number {
+    if (this.rivals.length === 0) return 0.4;
+    let sum = 0;
+    for (const rv of this.rivals) sum += ARCHETYPE_GREEN_PROPENSITY[rv.archetype] ?? 0.3;
+    return sum / this.rivals.length;
+  }
+
+  /** Fraction [0,1] of the rival world that has transitioned to clean energy by
+   *  now — the emergent decarbonization force in `worldEmissions`. It climbs from
+   *  `WORLD_GREEN_START_YEAR` toward the archetype-set ceiling over
+   *  `WORLD_GREEN_RAMP_YEARS`, accelerated by the visible climate crisis (warming
+   *  urgency). Pure arithmetic over already-deterministic state — no RNG, no new
+   *  serialized field — so two same-seed runs decarbonize identically, but
+   *  different seeds (different archetype draws) reach 2100 on different curves. */
+  private worldGreenShare(): number {
+    const ceiling = this.archetypeGreenShare();
+    const ramp = Math.max(0, Math.min(1, (this.year - WORLD_GREEN_START_YEAR) / WORLD_GREEN_RAMP_YEARS));
+    const urgency = Math.max(0, Math.min(1, this.warmingC / WORLD_GREEN_URGENCY_C));
+    return ceiling * ramp * (WORLD_GREEN_BASE + (1 - WORLD_GREEN_BASE) * urgency);
   }
 
   /** The thin blue ghost-line (GDD §8.2): where the ledger lands by 2100
@@ -4215,7 +4279,15 @@ export class RegionSim {
   /** Era 8 opens and the verdict is read (GDD §3.2): the sky you get was
    *  chosen by climate, regime, and how your people live — not the calendar. */
   private decideBranch(): void {
-    const proj = this.projectedWarming();
+    // `projectedWarming` extrapolates today's emission rate FLAT to 2100 — a fair
+    // estimate for a static world, but pessimistic when the rival world is actively
+    // bending its own curve (worldGreenShare): a transition already under way keeps
+    // deepening, so the realized 2100 warming lands below the flat projection. The
+    // verdict therefore credits the world's mitigation — which is what lets a green
+    // century (high archetype green-share) escape the Drowned sky even when the
+    // naive projection still reads high, and is why the era branch now DIVERGES
+    // across seeds instead of always drowning. A do-nothing world earns no credit.
+    const proj = Math.max(0, this.projectedWarming() - this.worldGreenShare() * DROWNED_GREEN_RELIEF);
     const pops = this.settlements.filter((t) => this.popOf(t) >= 1);
     const avgSat = pops.length > 0 ? pops.reduce((s, t) => s + t.satisfaction, 0) / pops.length : 50;
     const gov = GOV_TYPES.find((g) => g.id === this.govType);
