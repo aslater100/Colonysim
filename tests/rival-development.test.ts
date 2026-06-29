@@ -27,6 +27,7 @@ type Sector = 'agriculture' | 'industry' | 'services' | 'information';
 type Faction = {
   treasury: number; settlementIds: number[];
   regime?: string; techFocus?: string; aggressiveness?: number;
+  name?: string; aiGoal?: string; currentGoal?: { settlementBias?: string[] } | null;
 };
 type Settle = {
   id: number; factionId: number; site: { coastal: boolean };
@@ -43,6 +44,7 @@ type Priv = {
   tryBuildRivalBuilding: (f: Faction, t: Settle, reserve: number) => boolean;
   tryZoneRivalDistrict: (f: Faction, t: Settle, reserve: number) => boolean;
   factionBuildLean: (f: Faction) => Record<Sector, number>;
+  findBestExpansionSite: (f: Faction, samples?: number) => { x: number; y: number; score: number } | null;
   buildingCount: (t: Settle, id: string) => number;
   cityBuildCost: (def: { cost: number }) => number;
   districtCost: (def: { cost: number }) => number;
@@ -250,6 +252,49 @@ describe('tryZoneRivalDistrict — rewards an existing cluster', () => {
   });
 });
 
+// ---- 5b. tryZoneRivalDistrict — personality tips the choice between equal clusters ----
+//
+// When a town holds equal-size same-sector clusters, WHICH district a rival zones now
+// depends on who the rival is (the same factionBuildLean that steers building choice),
+// instead of always falling to the first sector in DISTRICT_DEFS order.
+
+/** Seed a town with two equal-size clusters: `nAgri` agriculture + `nServices`
+ *  services placed buildings, on distinct ring cells. Returns the town. */
+function seedTwoClusters(r: RegionSim, t: Settle, nAgri: number, nServices: number): void {
+  const cells = r.buildablePlacementCells(t.id);
+  expect(cells.length, 'need enough ring cells for both clusters').toBeGreaterThanOrEqual(nAgri + nServices);
+  let c = 0;
+  for (let i = 0; i < nAgri; i++, c++) { t.placedBuildings.push({ id: 'grain_exchange', cell: cells[c] }); t.buildings.push('grain_exchange'); }
+  for (let i = 0; i < nServices; i++, c++) { t.placedBuildings.push({ id: 'waterworks', cell: cells[c] }); t.buildings.push('waterworks'); }
+}
+
+describe('tryZoneRivalDistrict — personality decides between comparable clusters', () => {
+  it('a traditional (agri-leaning) power zones its farming district on equal clusters', () => {
+    const { r, t } = townWithRing(7);
+    seedTwoClusters(r, t, 2, 2); // agri cluster 2 == services cluster 2
+    const trad = mkFaction({ treasury: 100_000, settlementIds: [t.id], regime: 'abs_monarchy', techFocus: 'none', aggressiveness: 0 });
+    expect(priv(r).tryZoneRivalDistrict(trad, t, 0)).toBe(true);
+    expect(t.placedDistricts[0].id).toBe('farming_district');
+  });
+
+  it('a liberal (services-leaning) power zones its commercial district on the SAME equal clusters', () => {
+    const { r, t } = townWithRing(7);
+    seedTwoClusters(r, t, 2, 2);
+    const liberal = mkFaction({ treasury: 100_000, settlementIds: [t.id], regime: 'parliamentary', techFocus: 'none', aggressiveness: 0 });
+    expect(priv(r).tryZoneRivalDistrict(liberal, t, 0)).toBe(true);
+    expect(t.placedDistricts[0].id).toBe('commercial_district'); // diverges from the traditional power
+  });
+
+  it('a strictly larger cluster still wins — the lean only tips ties, never overrides size', () => {
+    const { r, t } = townWithRing(7);
+    seedTwoClusters(r, t, 3, 2); // agri cluster 3 > services cluster 2
+    // A liberal power leans services, but the lean (< 1) cannot outweigh the bigger agri cluster.
+    const liberal = mkFaction({ treasury: 100_000, settlementIds: [t.id], regime: 'parliamentary', techFocus: 'none', aggressiveness: 0 });
+    expect(priv(r).tryZoneRivalDistrict(liberal, t, 0)).toBe(true);
+    expect(t.placedDistricts[0].id).toBe('farming_district');
+  });
+});
+
 // ---- 6. End-to-end: rivals actually build over a real run, deterministically ----
 
 function placementTotals(r: RegionSim): { buildings: number; districts: number; rivalBuildings: number } {
@@ -415,5 +460,52 @@ describe('personality steers the building pick — divergence by who the rival i
     expect(examined).toBeGreaterThan(0);
     // The whole point of the lean: who the rival is changes what it builds.
     expect(diverged).toBeGreaterThan(0);
+  });
+});
+
+// ---- 8. findBestExpansionSite — personality steers WHERE a rival settles ----
+//
+// The same lean now pulls a faction toward the terrain that feeds its signature
+// sector (agri→fertile/river, industry→mountain/forest, services→coastal/river) when
+// it sites a new town. Derived purely from faction fields (no extra RNG draw), so the
+// aiRng stream's draw order is untouched — only the chosen tile moves. Both factions
+// below evaluate the SAME sampled tiles with the SAME noise (fresh same-seed colony,
+// settlementIds: [] → identical bootstrap sample count), so the lean is the ONLY
+// differentiator: any divergence is the personality pull alone.
+
+function expandFaction(o: Partial<Faction>): Faction {
+  return { name: 'Probe', treasury: 1_000, settlementIds: [], regime: 'parliamentary', techFocus: 'none', aggressiveness: 0, aiGoal: '', currentGoal: null, ...o };
+}
+function expansionSite(seed: number, f: Faction) {
+  return priv(colony(seed)).findBestExpansionSite(f, 8);
+}
+
+describe('findBestExpansionSite — personality steers where a rival settles', () => {
+  it('is deterministic — same faction + seed reaches the identical site', () => {
+    const f = expandFaction({ regime: 'junta', techFocus: 'mining', aggressiveness: 80 });
+    expect(expansionSite(1234, f)).toEqual(expansionSite(1234, f));
+  });
+
+  it('an agrarian vs an industrial power diverge on WHERE to settle for some seeds (non-vacuous)', () => {
+    const agrarian = expandFaction({ regime: 'abs_monarchy', techFocus: 'farming', aggressiveness: 0 });
+    const industrial = expandFaction({ regime: 'junta', techFocus: 'mining', aggressiveness: 80 });
+    let diverged = 0, examined = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      const a = expansionSite(seed, agrarian);
+      const b = expansionSite(seed, industrial);
+      if (!a || !b) continue;
+      examined++;
+      if (a.x !== b.x || a.y !== b.y) diverged++;
+    }
+    expect(examined).toBeGreaterThan(0);
+    expect(diverged).toBeGreaterThan(0);
+  });
+
+  it('the lean only tips close calls — it never pushes a site below the spacing penalty', () => {
+    // Any returned site must still clear the hard gates (score > 0, spaced out): the
+    // lean is a bounded thumb on the scale, not an override.
+    const f = expandFaction({ regime: 'junta', techFocus: 'mining', aggressiveness: 80 });
+    const site = expansionSite(7, f);
+    if (site) expect(site.score).toBeGreaterThan(0);
   });
 });
