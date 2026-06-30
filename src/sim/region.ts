@@ -2663,6 +2663,10 @@ export const GEOENGINEER_DURATION_DAYS = 120;
 export const AGRI_CLIMATE_THRESHOLD = 1.5; // °C above 1900 before the farm economy bites
 export const AGRI_CLIMATE_SLOPE = 0.06;    // sector-output drag per °C above the threshold
 export const AGRI_CLIMATE_MAX_DRAG = 0.30; // cap: agricultural GDP down at most 30%
+/** Industrial brownout climate drag: kicks in at ≥3°C, linear, capped at 30%. */
+export const INDUSTRY_BROWNOUT_THRESHOLD = 3.0;
+export const INDUSTRY_BROWNOUT_SLOPE = 0.10;   // 10% drag per °C above threshold
+export const INDUSTRY_BROWNOUT_MAX_DRAG = 0.30; // cap: industrial GDP down at most 30%
 /** Accord compliance: below this fraction the signatory is a free-rider. */
 export const ACCORD_DEFECT_THRESHOLD = 0.35;
 /** Maximum world-emissions cut from fully compliant accord coverage. */
@@ -7286,8 +7290,10 @@ export class RegionSim {
       const supplyMult = id === 'industry'
         ? this.supplyShockMult * (1 - this.localGoodsScarcity * LOCAL_GOODS_OUTPUT_DRAG)
         : 1;
-      // A hotter century erodes the farm economy past +1.5°C (GDD §8.2); 1.0 below.
-      const climateMult = id === 'agriculture' ? this.agriClimateMult() : 1;
+      // A hotter century erodes the farm economy past +1.5°C and industry past +3°C.
+      const climateMult = id === 'agriculture' ? this.agriClimateMult()
+        : id === 'industry' ? this.industryClimateMult()
+        : 1;
       s.output = workers * s.share * perWorker * strike * loyalty * eventMult * svcMult * taxMult * fxMult * supplyMult * climateMult;
       // Phase 5: wage policy adjusts the migration signal without affecting output
       const wagePolicyMult = t.policies.wagePolicy === 'low' ? 0.85 : t.policies.wagePolicy === 'high' ? 1.20 : 1.0;
@@ -14254,6 +14260,13 @@ export class RegionSim {
    *  no RNG, and a sink (warming is emissions-driven), so it can't diverge. */
   agriClimateMult(): number {
     return 1 - Math.min(AGRI_CLIMATE_MAX_DRAG, Math.max(0, this.warmingC - AGRI_CLIMATE_THRESHOLD) * AGRI_CLIMATE_SLOPE);
+  }
+
+  /** Industrial brownout drag: at ≥3°C sustained warming, grid reliability degrades
+   *  and heat stress cuts manufacturing productivity. Linear above the threshold,
+   *  capped at 30%. Exactly 1.0 below INDUSTRY_BROWNOUT_THRESHOLD. */
+  industryClimateMult(): number {
+    return 1 - Math.min(INDUSTRY_BROWNOUT_MAX_DRAG, Math.max(0, this.warmingC - INDUSTRY_BROWNOUT_THRESHOLD) * INDUSTRY_BROWNOUT_SLOPE);
   }
 
   /**

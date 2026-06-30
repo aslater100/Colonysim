@@ -60,16 +60,16 @@ describe('agriClimateMult', () => {
   });
 });
 
-describe('warming erodes the agriculture sector only', () => {
-  it('lowers agriculture output by exactly the mult, leaving industry untouched', () => {
-    // Two identical same-seed nations; only warmingC differs, so one updateSectors
-    // each isolates the climate mult on agriculture.
+describe('warming erodes agriculture and (above 3°C) industry', () => {
+  it('lowers agriculture output by exactly the agri mult at moderate warming (below brownout threshold)', () => {
+    // Use warmingC = 2.5°C: above agri threshold (1.5°C) but below brownout threshold (3.0°C)
+    // so only agriculture is affected.
     const cool = nation();
     const warm = nation();
     const tc = playerTown(cool);
     const tw = playerTown(warm);
-    setWarming(cool, 0); // mult 1.0
-    setWarming(warm, 4.0); // mult < 1
+    setWarming(cool, 0);
+    setWarming(warm, 2.5); // above agri threshold, below brownout threshold
     updateSectors(cool, tc);
     updateSectors(warm, tw);
 
@@ -79,8 +79,24 @@ describe('warming erodes the agriculture sector only', () => {
       warm.agriClimateMult(),
       6,
     );
-    // Industry (and the other sectors) carry no warming term.
+    // At 2.5°C, brownout threshold not yet reached — industry and services untouched.
     expect(tw.sectors.industry.output).toBeCloseTo(tc.sectors.industry.output, 9);
+    expect(tw.sectors.services.output).toBeCloseTo(tc.sectors.services.output, 9);
+  });
+
+  it('lowers industry output by exactly the brownout mult at extreme warming (≥3°C)', () => {
+    const cool = nation();
+    const warm = nation();
+    const tc = playerTown(cool);
+    const tw = playerTown(warm);
+    setWarming(cool, 0);
+    setWarming(warm, 4.0); // above brownout threshold
+    updateSectors(cool, tc);
+    updateSectors(warm, tw);
+
+    expect((warm as any).industryClimateMult()).toBeLessThan(1);
+    expect(tw.sectors.industry.output).toBeLessThan(tc.sectors.industry.output);
+    // Services carry no warming term.
     expect(tw.sectors.services.output).toBeCloseTo(tc.sectors.services.output, 9);
   });
 });
