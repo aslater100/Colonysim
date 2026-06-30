@@ -44,6 +44,7 @@ import { updateCharter } from './systems/charter';
 import { updateLoans } from './systems/loans';
 import { updateExploration } from './systems/exploration';
 import { tickStatsHistory } from './systems/stats';
+import { updateMarket } from './systems/market';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -5507,7 +5508,7 @@ export class RegionSim {
           (this.eraBranch === 'dystopia' ? 0.15 : 0); // the neon century simmers
         t.grievance = Math.max(0, Math.min(100, t.grievance + pressure));
       }
-      this.updateMarket(t);
+      updateMarket(this, t);
       // Starvation: every town draws a seasonal emergency grain purchase from its
       // OWNING faction's purse (the player's treasury, or a rival faction's) —
       // once per 30 days, scaled to population. Rival towns used to get no relief
@@ -5968,12 +5969,12 @@ export class RegionSim {
 
   // ---- local markets & trade (GDD §5.2, first slice) ----
   /** A month's worth of demand: what this town wants on hand. */
-  private monthNeed(t: Settlement, g: TradeGood): number {
+  monthNeed(t: Settlement, g: TradeGood): number {
     const pop = this.popOf(t);
     return Math.max(1, g === 'food' ? pop * 0.75 * 30 : pop * 0.1 * 30);
   }
 
-  private stockOf(t: Settlement, g: TradeGood): number {
+  stockOf(t: Settlement, g: TradeGood): number {
     return g === 'food' ? t.food : t.wood;
   }
 
@@ -5982,17 +5983,6 @@ export class RegionSim {
     else t.wood += v;
   }
 
-  /** The GDD §5.2 price rule, verbatim at this altitude:
-   *  Δp = p × 0.05 × (demand − supply) / max(supply, ε), clamped ±2%/day. */
-  private updateMarket(t: Settlement): void {
-    for (const g of TRADE_GOODS) {
-      const supply = Math.max(1, this.stockOf(t, g));
-      const demand = this.monthNeed(t, g);
-      const raw = t.prices[g] * 0.05 * ((demand - supply) / supply);
-      const delta = Math.max(-t.prices[g] * 0.02, Math.min(t.prices[g] * 0.02, raw));
-      t.prices[g] = Math.max(BASE_PRICE[g] * 0.25, Math.min(BASE_PRICE[g] * 4, t.prices[g] + delta));
-    }
-  }
 
   /** Traders run the routes once a month, after the relief caravans: buy
    *  where a good is cheap, sell where it is dear, whenever the margin
