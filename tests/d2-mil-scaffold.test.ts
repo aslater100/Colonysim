@@ -40,10 +40,25 @@ describe('WAR_SUPPORT_DECAY_MULT scaffold', () => {
     }
   });
 
-  it('all values are exactly 1.0 (no-op)', () => {
+  it('all values are positive and finite', () => {
     for (const g of GOV_TYPES) {
-      expect(WAR_SUPPORT_DECAY_MULT[g]).toBe(1.0);
+      expect(WAR_SUPPORT_DECAY_MULT[g]).toBeGreaterThan(0);
+      expect(isFinite(WAR_SUPPORT_DECAY_MULT[g])).toBe(true);
     }
+  });
+
+  it('direct_democracy decays fastest (≥1.4)', () => {
+    expect(WAR_SUPPORT_DECAY_MULT.direct_democracy).toBeGreaterThanOrEqual(1.4);
+  });
+
+  it('fascist decays slowest (≤0.6)', () => {
+    expect(WAR_SUPPORT_DECAY_MULT.fascist).toBeLessThanOrEqual(0.6);
+  });
+
+  it('accountability ordering: direct_democracy > democracy > one_party > fascist', () => {
+    expect(WAR_SUPPORT_DECAY_MULT.direct_democracy).toBeGreaterThan(WAR_SUPPORT_DECAY_MULT.democracy);
+    expect(WAR_SUPPORT_DECAY_MULT.democracy).toBeGreaterThan(WAR_SUPPORT_DECAY_MULT.one_party);
+    expect(WAR_SUPPORT_DECAY_MULT.one_party).toBeGreaterThan(WAR_SUPPORT_DECAY_MULT.fascist);
   });
 
   it('has same key set as WAR_SUPPORT_FLOOR', async () => {

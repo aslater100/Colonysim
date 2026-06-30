@@ -2005,11 +2005,27 @@ export const WAR_SUPPORT_FLOOR: Record<GovType, number> = {
 
 /** Monthly war-support decay multiplier by regime — all 1.0 now (no-op scaffold);
  *  tune non-1.0 values to differentiate regimes without a re-baseline. */
+/** Per-government war-support decay multiplier. <1 = support decays slower (propaganda/control);
+ *  >1 = support decays faster (public accountability). Tuned to regime accountability model. */
 export const WAR_SUPPORT_DECAY_MULT: Record<GovType, number> = {
-  democracy: 1.0, republic: 1.0, monarchy: 1.0, junta: 1.0,
-  const_monarchy: 1.0, abs_monarchy: 1.0, oligarchy: 1.0, theocracy: 1.0,
-  direct_democracy: 1.0, corporatocracy: 1.0, fascist: 1.0,
-  social_democracy: 1.0, autocracy: 1.0, one_party: 1.0, technocracy: 1.0,
+  // High accountability: opposition can voice anti-war sentiment
+  direct_democracy:  1.5, // every vote counts; casualties trigger immediate backlash
+  democracy:         1.3,
+  social_democracy:  1.2,
+  republic:          1.1,
+  // Neutral: mixed accountability
+  const_monarchy:    1.0,
+  monarchy:          1.0,
+  oligarchy:         1.0,
+  corporatocracy:    0.9, // war if it's profitable — lobbies dampen backlash
+  technocracy:       0.9, // efficiency narrative insulates the regime
+  theocracy:         0.8, // holy war framing sustains support
+  // Low accountability: regime suppresses dissent
+  abs_monarchy:      0.75,
+  autocracy:         0.7,
+  junta:             0.65, // military culture normalizes conflict
+  one_party:         0.60,
+  fascist:           0.55, // propaganda + censorship: support barely decays
 };
 
 /** Bookkeeping record written when a war ends (GDD §7 post-war state). */
@@ -2696,14 +2712,14 @@ export const ARCHETYPE_GREEN_PROPENSITY: Record<RivalArchetype, number> = {
 };
 
 /** Per-archetype multiplier on the base AI war-declaration probability.
- *  All 1.0 now (no-op scaffold); tune to differentiate without a re-baseline.
- *  Applied on the p = 0.01 + risk×0.003 + expansion×0.002 roll in tickRivalAI. */
+ *  Applied on the p = 0.01 + risk×0.003 + expansion×0.002 roll in tickRivalAI.
+ *  Tuned to archetype personality: hegemons escalate, hermits hide, traders negotiate. */
 export const ARCHETYPE_WAR_FREQ_MULT: Record<RivalArchetype, number> = {
-  hegemon: 1.0,
-  trading_republic: 1.0,
-  hermit_kingdom: 1.0,
-  crusader_state: 1.0,
-  opportunist: 1.0,
+  hegemon:          1.6,  // expansion 9 + risk 7 → the natural warmonger
+  trading_republic: 0.4,  // expansion 3 + risk 3 → war disrupts trade; avoids conflict
+  hermit_kingdom:   0.3,  // expansion 2 + risk 2 → isolationist; only fights if cornered
+  crusader_state:   1.2,  // expansion 6 + risk 6 → ideological mission justifies campaigns
+  opportunist:      1.1,  // risk 9 but honorless; fights when the odds look good
 };
 export const WORLD_GREEN_START_YEAR = 1972;  // the transition can begin as renewables become conceivable
 export const WORLD_GREEN_RAMP_YEARS = 38;    // years from the start to a full ramp (≈2010)
