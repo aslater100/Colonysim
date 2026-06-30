@@ -3217,6 +3217,28 @@ export class RegionSim {
    *  the whole spatial economy is measured only via rival competition). Not
    *  serialized — it is a run-mode toggle, not game state. */
   autoDevelopPlayer = false;
+  /** Global-world leg 1 — the CONSUMER-DEMAND model (the structural fix that makes
+   *  the world market able to TIGHTEN). The goods demand functions count only
+   *  intermediate-INPUT demand (normalized to sector shares, O(1)/good) and have NO
+   *  final-consumption sink, while production deposits `baseOutput × level` units/tick
+   *  — so the 8 terminal goods (food/clothing/tools/vehicles/machinery/consumer_goods/
+   *  pharmaceuticals/luxury_goods) have ~0 demand, every good oversupplies by ~baseOutput×,
+   *  stocks accumulate unbounded, and `worldGoodScarcity = 1 − supply/demand` is pinned
+   *  at 0 FOREVER (not because play is balanced — because demand is mis-scaled). When set,
+   *  the world market reads a FLOW signal — this-tick production capacity (`baseOutput ×
+   *  level`) vs an exogenous final-consumption demand (`baseOutput × FINAL_APPETITE`, the
+   *  population's steady appetite, level-independent) tilted by the great powers — so a
+   *  supply shock, a great-power war, or a warming breadbasket finally lifts world scarcity
+   *  → the world-price anchor → arbitrage. Default OFF so live human play + the determinism
+   *  harness stay byte-identical (every demand fn returns its legacy value, every world
+   *  scarcity its legacy stock-based 0); the headless sweep turns it on (SIM_CONSUMER_DEMAND).
+   *  Not serialized — a run-mode toggle, not game state. */
+  consumerDemand = false;
+  /** Transient per-good supply LEVEL (∈[0,1], Liebig min of input availability) cached
+   *  by `tickIntermediateGoods` each month from the cascade solve, so the (consumer-demand)
+   *  flow scarcity can read this-tick production capacity without re-resolving the chain
+   *  per price query. Rebuilt every tick → NOT serialized (like `_districtCache`). */
+  goodLevels: Map<string, number> = new Map();
   /** Difficulty chosen at town design — tunes the regional AI competitors. */
   aiDifficulty: AiDifficulty = 'normal';
   /** Currency exchange rates: { from:factionId:to:factionId => rate } */
