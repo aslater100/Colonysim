@@ -3130,6 +3130,15 @@ export class RegionSim {
   regionalFactions: RegionalFaction[] = [];
   /** Player faction id (always 0 or first in list) */
   playerFactionId = 0;
+  /** Autoplay-only: when set, the player faction ALSO auto-develops its towns
+   *  spatially (raises terrain-fit buildings, zones districts), funded from the
+   *  national treasury and reserve-gated exactly like a rival. Default OFF so
+   *  live human play stays manual and byte-identical — the headless tuning
+   *  harness turns it on so the balance signal exercises the PLAYER's own
+   *  spatial path (otherwise a passive autoplay player holds one bare town and
+   *  the whole spatial economy is measured only via rival competition). Not
+   *  serialized — it is a run-mode toggle, not game state. */
+  autoDevelopPlayer = false;
   /** Difficulty chosen at town design — tunes the regional AI competitors. */
   aiDifficulty: AiDifficulty = 'normal';
   /** Currency exchange rates: { from:factionId:to:factionId => rate } */
@@ -14292,7 +14301,7 @@ export class RegionSim {
     // leaving nothing to build with); it is itself reserve-gated, so neither sink
     // ever touches the famine buffer. aiRng-gated → the main RNG stream is
     // untouched (intentional headless re-baseline).
-    this.maybeDevelopRivalTown(faction, knobs, rivalOutput);
+    this.maybeDevelopFactionTown(faction, knobs, rivalOutput);
 
     // Phase D slice 1b — Wonder build-race. A rich, era-ready rival may break
     // ground on an unclaimed Wonder, reusing the player's construction pipeline
@@ -14368,16 +14377,32 @@ export class RegionSim {
     return best;
   }
 
-  /** Spatial-4X — a rival faction develops one of its towns this update: it raises
-   *  a building on its best-fitting hex, or (once a same-sector cluster exists)
-   *  zones a district to multiply it. This is the change that makes the AI actually
-   *  PLAY SPATIALLY — before it, rivals held land but never built on it, so the
+  /** The purse a faction develops FROM: the national `treasury` for the player
+   *  faction (what a human spends when building via the UI), the faction's own
+   *  `treasury` for a rival. This is the single seam that lets `maybeDevelopFactionTown`
+   *  serve both — for a rival it reads/writes exactly `faction.treasury` in the same
+   *  order as before, so the rival path stays byte-identical. */
+  private factionDevPurse(faction: RegionalFaction): number {
+    return faction.id === this.playerFactionId ? this.treasury : faction.treasury;
+  }
+  private spendFactionDev(faction: RegionalFaction, cost: number): void {
+    if (faction.id === this.playerFactionId) this.treasury -= cost;
+    else faction.treasury -= cost;
+  }
+
+  /** Spatial-4X — a faction develops one of its towns this update: it raises a
+   *  building on its best-fitting hex, or (once a same-sector cluster exists) zones
+   *  a district to multiply it. This is the change that makes the AI actually PLAY
+   *  SPATIALLY — before it, factions held land but never built on it, so the
    *  terrain-match / district-adjacency / district-zone bonuses were all dormant in
-   *  autoplay. aiRng-gated (main stream untouched) and funded ONLY from the surplus
-   *  above the famine reserve, so it can never drain the buffer that feeds the
-   *  rival's people (the same discipline as `rivalStateCost`). Intentional
-   *  headless re-baseline. */
-  private maybeDevelopRivalTown(faction: RegionalFaction, knobs: typeof AI_DIFFICULTY[AiDifficulty], rivalOutput: number): void {
+   *  autoplay. Used for rivals every update, and (when `autoDevelopPlayer` is set)
+   *  for the player faction too so the headless balance signal exercises the player's
+   *  own spatial path. aiRng-gated (main stream untouched) and funded ONLY from the
+   *  surplus above the famine reserve (drawn from the faction's purse — the national
+   *  treasury for the player, the faction treasury for a rival), so it can never drain
+   *  the buffer that feeds the people (the same discipline as `rivalStateCost`).
+   *  Intentional headless re-baseline. */
+  private maybeDevelopFactionTown(faction: RegionalFaction, knobs: typeof AI_DIFFICULTY[AiDifficulty], output: number): void {
     if (faction.settlementIds.length === 0) return;
     if (!this.aiRng.chance(RIVAL_BUILD_CHANCE * knobs.techMult)) return;
     // Only ever spend what sits ABOVE a famine floor — emergency grain is paid from
@@ -14385,7 +14410,7 @@ export class RegionSim {
     // lesson behind rivalStateCost). The floor is far below the state-cost reserve
     // (which holds the hoard near 1.5mo, leaving no surplus a 1.5mo gate could see)
     // yet still ~50× the actual grain draw, so it builds freely without risk.
-    const reserve = rivalOutput * RIVAL_DEV_RESERVE_MONTHS;
+    const reserve = output * RIVAL_DEV_RESERVE_MONTHS;
     // Develop the LEAST-built idle town the faction holds (spreads growth across
     // the realm), tie-broken by id — fully deterministic, no RNG.
     let town: Settlement | null = null, fewest = Infinity;
@@ -14447,7 +14472,7 @@ export class RegionSim {
       if (this.buildingCount(t, b.id) >= b.max) continue;
       if (b.coastal_only && !t.site.coastal) continue;
       if (b.prereq && this.year < this.prereqEraYear(b.prereq)) continue;
-      if (faction.treasury - this.cityBuildCost(b) < reserve) continue; // surplus-only
+      if (this.factionDevPurse(faction) - this.cityBuildCost(b) < reserve) continue; // surplus-only
       const sectorYield = b.sector === 'all' ? 0 : (yields[b.sector] ?? 0);
       const sectorLean = b.sector === 'all' ? 0 : (lean[b.sector] ?? 0);
       // Fit the building to the town's terrain (yield), then let the faction's
@@ -14459,7 +14484,7 @@ export class RegionSim {
     const def = pick;
     const cell = this.bestPlacementCell(t, (c) => this.placementPreview(t.id, c, def.id)?.total ?? -Infinity);
     if (cell < 0) return false;
-    faction.treasury -= this.cityBuildCost(def);
+    this.spendFactionDev(faction, this.cityBuildCost(def));
     t.construction = { id: def.id, doneDay: this.day + def.days, cell };
     this.addLog(`${faction.name} breaks ground on a ${def.name} at ${t.name}.`, 'info');
     return true;
@@ -14477,7 +14502,7 @@ export class RegionSim {
     for (const d of DISTRICT_DEFS) {
       if (this.districtCount(t, d.id) >= d.max) continue;
       if (d.prereq && this.year < this.prereqEraYear(d.prereq)) continue;
-      if (faction.treasury - this.districtCost(d) < reserve) continue; // surplus-only
+      if (this.factionDevPurse(faction) - this.districtCost(d) < reserve) continue; // surplus-only
       let cluster = 0;
       for (const p of t.placedBuildings) {
         if (REGION_BUILDINGS_MAP.get(p.id)?.sector === d.sector) cluster++;
@@ -14495,7 +14520,7 @@ export class RegionSim {
     const def = pick;
     const cell = this.bestPlacementCell(t, (c) => this.districtPlacementPreview(t.id, c, def.id)?.total ?? -Infinity);
     if (cell < 0) return false;
-    faction.treasury -= this.districtCost(def);
+    this.spendFactionDev(faction, this.districtCost(def));
     t.placedDistricts.push({ id: def.id, cell });
     this.addLog(`${faction.name} zones a ${def.name} at ${t.name}.`, 'info');
     return true;
@@ -14885,12 +14910,37 @@ export class RegionSim {
     // Regional factions: staggered AI so not every faction acts each month.
     // Runs from tick 1 — rivals expand and scout regardless of player statehood.
     for (const faction of this.regionalFactions) {
-      if (faction.id === this.playerFactionId) continue;
+      if (faction.id === this.playerFactionId) {
+        // The player faction never runs the full rival AI (no procedural goals,
+        // expansion, military or diplomacy — those are the human's to drive). But
+        // in autoplay (flag-gated; OFF for live human play) it DOES exercise its
+        // own spatial path: develop the player's town(s) on the same cadence,
+        // funded from the national treasury and reserve-gated like a rival. This
+        // is what makes the headless balance signal reflect a player who actually
+        // builds, instead of one bare town carrying the whole economy on raw yields.
+        if (this.autoDevelopPlayer && this.day - faction.lastUpdateDay >= faction.updateFrequency) {
+          this.maybeDevelopFactionTown(faction, this.aiKnobs(), this.factionTownOutput(faction));
+          faction.lastUpdateDay = this.day;
+        }
+        continue;
+      }
       if (this.day - faction.lastUpdateDay >= faction.updateFrequency) {
         this.updateFactionAI(faction);
         faction.lastUpdateDay = this.day;
       }
     }
+  }
+
+  /** Total monthly sector output across a faction's towns — the reserve basis for
+   *  `maybeDevelopFactionTown` (development spends only the surplus above a fraction
+   *  of this). Mirrors the inline `rivalOutput` sum in `updateFactionAI`. */
+  private factionTownOutput(faction: RegionalFaction): number {
+    let output = 0;
+    for (const id of faction.settlementIds) {
+      const t = this.settlement(id);
+      if (t) output += this.sectorOutputOf(t);
+    }
+    return output;
   }
 
   /** Annual diplomatic round: AI initiates offers based on personality and relations. */
