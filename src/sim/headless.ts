@@ -19,8 +19,12 @@ const TICK_CAP = 20_000_000; // safety stop in case the calendar stalls
 // holds one bare town and the whole spatial economy is measured only via rivals.
 // Set SIM_PLAYER_MANUAL=1 to restore the old passive-player baseline for comparison.
 const autoDevelopPlayer = process.env.SIM_PLAYER_MANUAL !== '1';
+// Consumer-demand model (global-world leg 1) — OPT-IN (SIM_CONSUMER_DEMAND=1) so the
+// default sweep stays comparable to the legacy stock baseline. When on, the world market
+// reads the flow signal and `wMkt%` shows live tightness instead of the structural 0.
+const consumerDemand = process.env.SIM_CONSUMER_DEMAND === '1';
 
-console.log(`headless sim: ${years} game-year(s) × ${runs} run(s)  [player spatial play: ${autoDevelopPlayer ? 'AUTO' : 'manual'}]\n`);
+console.log(`headless sim: ${years} game-year(s) × ${runs} run(s)  [player spatial play: ${autoDevelopPlayer ? 'AUTO' : 'manual'}; consumer-demand: ${consumerDemand ? 'ON' : 'off'}]\n`);
 console.log('seed |  year | towns |    treasury |        GDP | treas/GDP(mo) | infl% |  pop   | sat | pBld | wMkt% |  gpP% | ticks | outcome');
 console.log('-----+-------+-------+-------------+------------+---------------+-------+--------+-----+------+-------+-------+-------+--------');
 
@@ -28,6 +32,7 @@ for (let run = 0; run < runs; run++) {
   const seed = 1000 + run * 7;
   const r = RegionSim.create(seed);
   r.autoDevelopPlayer = autoDevelopPlayer;
+  r.consumerDemand = consumerDemand;
   const target = r.year + years;
   let ticks = 0;
   while (r.year < target && !r.gameOver && ticks < TICK_CAP) { r.tick(); ticks++; }

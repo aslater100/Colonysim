@@ -171,6 +171,55 @@ function rivalNetDemandTilt(r: RegionSim, goodId: string): number {
        : tilt;
 }
 
+/**
+ * CONSUMER-DEMAND model (global-world leg 1) — the missing final-consumption SINK.
+ *
+ * The demand functions below count only intermediate-INPUT demand (a good is demanded
+ * solely as an input to OTHER goods), so the 8 terminal goods consume nothing and every
+ * good oversupplies by ~`baseOutput`× (production deposits `baseOutput × level`/tick while
+ * the only draw is the tiny per-input share). Stocks therefore accumulate without bound
+ * and `worldGoodScarcity = 1 − supply/demand` is pinned at 0 in every long run — the world
+ * market can NEVER tighten, regardless of how specialised or war-torn the world is.
+ *
+ * `finalGoodDemand` adds the population's steady appetite for each good, in the SAME units
+ * as production (`baseOutput`-scaled) and EXOGENOUS of supply-chain health (`level`), so a
+ * shock that cuts production below this steady appetite, or a great-power demand tilt that
+ * lifts it above capacity, finally registers as scarcity. It is gated behind
+ * `r.consumerDemand` → 0 when off → every demand/scarcity path is byte-identical to the
+ * legacy stock model.
+ */
+/** The population's steady final-consumption appetite for a good, as a fraction of its
+ *  full-supply production capacity (`baseOutput × level` at level 1). 1.0 = the world wants
+ *  exactly what a healthy chain makes → the world market is exactly balanced (scarcity 0)
+ *  in perfectly healthy play and tightens under ANY stress (a supply shock cutting `level`
+ *  below 1, or a great-power war/climate tilt lifting demand above capacity); a commercial
+ *  surplus (negative tilt) floors at 0 (relief, no scarcity). Tunable; 1.0 is the clean
+ *  "balanced-when-healthy" boundary. */
+const FINAL_APPETITE = 1.0;
+
+/** Monthly full-supply production capacity of a good (its `baseOutput`) — memoised
+ *  catalog read. The unit both production and the consumer-demand sink are measured in. */
+let _baseOutput: Map<string, number> | null = null;
+function goodBaseOutput(goodId: string): number {
+  if (_baseOutput === null) {
+    _baseOutput = new Map(INTERMEDIATE_GOODS.map((g) => [g.id, g.baseOutput]));
+  }
+  return _baseOutput.get(goodId) ?? 0;
+}
+
+/** Population's steady final-consumption demand for one good, in production units
+ *  (`baseOutput × FINAL_APPETITE`), exogenous of supply-chain health. 0 when the
+ *  consumer-demand model is off (`!r.consumerDemand`) or the good is not yet unlocked
+ *  → the legacy "intermediate-input demand only" model, byte-identical. This is the
+ *  final-demand SINK the world market needs to be able to tighten. */
+export function finalGoodDemand(r: RegionSim, goodId: string): number {
+  if (!r.consumerDemand) return 0;
+  if (!intermediateIds().has(goodId)) return 0;
+  const g = INTERMEDIATE_GOODS.find((x) => x.id === goodId);
+  if (g === undefined || r.year < g.eraUnlock) return 0;
+  return goodBaseOutput(goodId) * FINAL_APPETITE;
+}
+
 /** Base £-value of one unit of a good, by refinement depth: 1 + the count of its
  *  INTERMEDIATE inputs (raw-fed goods like lumber/steel are cheap, deeply-processed
  *  finals like vehicles/luxury_goods dear). Catalog-derived + memoised, so it needs
@@ -286,6 +335,15 @@ export function worldGoodSupply(r: RegionSim, goodId: string): number {
  *  the great powers are balanced (or none have emerged) → world demand unchanged →
  *  byte-identical; a war pulls it up (dearer world), a commercial surplus down. */
 export function worldGoodDemand(r: RegionSim, goodId: string): number {
+  // CONSUMER-DEMAND model (flag on): the population's steady final-consumption appetite
+  // (`baseOutput × FINAL_APPETITE`, exogenous of supply-chain health) tilted by the great
+  // powers — a FLOW commensurate with this-tick production, so the world market can tighten.
+  if (r.consumerDemand) {
+    const fd = finalGoodDemand(r, goodId);
+    if (fd <= 0) return 0;
+    return Math.max(0, fd * (1 + rivalNetDemandTilt(r, goodId)));
+  }
+  // Legacy stock-flow model (flag off): intermediate-input demand only → byte-identical.
   let demand = 0;
   for (const t of r.settlements) demand += localGoodDemand(r, t, goodId);
   if (demand <= 0) return demand; // an un-demanded good stays un-demanded (rivals can't conjure appetite from nothing)
@@ -301,6 +359,18 @@ export function worldGoodDemand(r: RegionSim, goodId: string): number {
  *  world-anchor. */
 export function worldGoodScarcity(r: RegionSim, goodId: string): number {
   if (!intermediateIds().has(goodId)) return 0;
+  // CONSUMER-DEMAND model (flag on): compare this-tick world production CAPACITY
+  // (`baseOutput × level`, the cascade's Liebig level) against the exogenous final
+  // demand — a FLOW vs FLOW measure, so it responds to a shock/war/climate within a
+  // tick instead of being swamped by the unbounded accumulated stock the legacy
+  // (stock vs flow) measure compares against (and which pins it at 0 forever).
+  if (r.consumerDemand) {
+    const demand = worldGoodDemand(r, goodId);
+    if (demand <= 0) return 0;
+    const level = r.goodLevels.get(goodId) ?? 1;
+    return stockScarcity(goodBaseOutput(goodId) * level, demand);
+  }
+  // Legacy stock model (flag off): total world stock vs intermediate demand → byte-identical.
   return stockScarcity(worldGoodSupply(r, goodId), worldGoodDemand(r, goodId));
 }
 
@@ -323,8 +393,9 @@ export function worldMarketTightness(r: RegionSim): number {
     if (r.year < g.eraUnlock) continue;
     const demand = worldGoodDemand(r, g.id);
     if (demand <= 0) continue;
-    const supply = worldGoodSupply(r, g.id);
-    weighted += stockScarcity(supply, demand) * demand;
+    // Route through worldGoodScarcity so tightness follows the active model: the legacy
+    // stock measure when the flag is off (byte-identical), the flow measure when on.
+    weighted += worldGoodScarcity(r, g.id) * demand;
     totalDemand += demand;
   }
   return totalDemand > 0 ? weighted / totalDemand : 0;
@@ -461,6 +532,7 @@ export function tickIntermediateGoods(r: RegionSim): void {
     r._electronicsDisrupted = false;
     r.supplyShockMult = 1; // no goods, no shock (defensive — already 1.0 here)
     r.localGoodsScarcity = 0; // no goods, no local shortage
+    r.goodLevels = new Map(); // no goods unlocked → no production capacity to cache
     return;
   }
 
@@ -470,6 +542,11 @@ export function tickIntermediateGoods(r: RegionSim): void {
   // graph the same way. What changed (PR-3 slice 2) is the STOCK LEDGER: production
   // and consumption are now resolved PER TOWN against each town's own holdings.
   const result = resolveSupplyChainGraded(INTERMEDIATE_GOODS, currentYear, (id) => r.rawSupplyLevel(id));
+  // Cache this-tick per-good supply levels for the (consumer-demand) flow scarcity
+  // signal, which reads production capacity (`baseOutput × level`) without re-resolving
+  // the chain. Transient (rebuilt every tick), never serialized. Read-only when the
+  // consumer-demand flag is off → byte-identical.
+  r.goodLevels = result.levels;
 
   // Per-town stock ledger (catalog order is topological — a good's inputs precede
   // it — so a town's own upstream output this tick is in stock before its
