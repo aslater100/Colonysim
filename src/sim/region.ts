@@ -25,6 +25,7 @@ import { tickAdvisorLoyalty, tickAdvisorEvents, tickLegitimacy, tickRegimeMechan
 import { tickDemographicTransition, tickAppealMigration, tickEducationLag, tickUnrestLadder } from './systems/demographics';
 import { tickClimate, checkStrandedAssets, tickAutomation } from './systems/climate';
 import { updateDiplomacy } from './systems/diplomacy';
+import { tickMonetary, tickFX } from './systems/monetary';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -1486,12 +1487,13 @@ export const SITUATION_TREATY_BONUS: Partial<Record<TreatyKind, number>> = {
 
 // ---- Monetary system constants (GDD §5.1) ----
 /** Credit-neutral policy rate; below this leverage builds, above it contracts. */
-const NEUTRAL_RATE = 0.05;
+export const NEUTRAL_RATE = 0.05;
 // Minsky instability dials — pulled from TUNING so they can be adjusted without
 // touching region.ts (see TUNING.leverageFragile / fragilityGain in defs.ts).
-const LEVERAGE_FRAGILITY = TUNING.leverageFragility;
-const LEVERAGE_FRAGILE   = TUNING.leverageFragile;
-const FRAGILITY_GAIN     = TUNING.fragilityGain;
+// Exported for systems/monetary.ts (the tickMonetary/tickFX seam).
+export const LEVERAGE_FRAGILITY = TUNING.leverageFragility;
+export const LEVERAGE_FRAGILE   = TUNING.leverageFragile;
+export const FRAGILITY_GAIN     = TUNING.fragilityGain;
 export const MIN_POLICY_RATE = 0.01;
 export const MAX_POLICY_RATE = 0.15;
 /** Credit spreads over policy rate by rating tier. */
@@ -3158,8 +3160,9 @@ export class RegionSim {
   private stimulusMonthsLeft = 0;
   /** Emergency depression measures already enacted this slump (once each). */
   depressionMeasuresUsed: DepressionMeasure[] = [];
-  /** Confidence-ceiling headroom earned by enacting emergency measures. */
-  private depressionCeilingBonus = 0;
+  /** Confidence-ceiling headroom earned by enacting emergency measures.
+   *  Public for systems/monetary.ts (read by tickMonetary's depression ceiling). */
+  depressionCeilingBonus = 0;
   /** Prevents the 1936–1948 world-war anchor from firing twice. */
   private worldWarFired = false;
   /** Prevents the 1970s oil-shock anchor from firing twice. */
@@ -5720,7 +5723,7 @@ export class RegionSim {
     tickClimate(this); // the ledger runs from the first decade (GDD §8.2)
     tickAutomation(this); // Phase 11: automation unemployment drift
     checkStrandedAssets(this); // Phase 11: fossil write-downs as clean energy arrives
-    if (this.hasCentralBank()) this.tickMonetary();
+    if (this.hasCentralBank()) tickMonetary(this);
     this.tickHistoricalAnchors(); // scripted world-events that rhyme with history (GDD §1)
     this.tickMedia(); // Phase 12: media reach, press freedom, misinformation era
     this.checkScenarioGoals();   // Phase 17: check active scenario goals monthly
@@ -5780,7 +5783,7 @@ export class RegionSim {
     // Phase 15: Intermediate goods, arbitrage, and FX tick
     tickIntermediateGoods(this); // Phase 15: intermediate-goods production + cascade (systems/goods.ts)
     tickPriceArbitrage(this); // Phase 15: price arbitrage + cargo shipments (systems/arbitrage.ts)
-    this.tickFX();
+    tickFX(this); // Phase 15: exchange-rate / regime-crisis tick (systems/monetary.ts)
 
     // Record monthly history for sparklines (last 12 months)
     const gdp = this.settlements.reduce((s, t) => s + SECTOR_IDS.reduce((ss, id) => ss + t.sectors[id].output, 0), 0);
@@ -6314,7 +6317,9 @@ export class RegionSim {
     this.addLog(`Monetary regime: ${labels[regime]}.`, 'info');
   }
 
-  private computeCreditRating(): CreditRating {
+  /** Public for systems/monetary.ts (tickMonetary refreshes the rating). Also
+   *  called by issueBonds. */
+  computeCreditRating(): CreditRating {
     const annualGDP = Math.max(1, this.gdpLastMonth * 12);
     const debtRatio = this.nationalDebt / annualGDP;
     let score = 6; // default AA
@@ -6329,146 +6334,6 @@ export class RegionSim {
     if (this.nationProclaimed && this.legitimacy < 25) score--;
     const ratings: CreditRating[] = ['D', 'CCC', 'B', 'BB', 'BBB', 'A', 'AA', 'AAA'];
     return ratings[Math.max(0, Math.min(7, score))];
-  }
-
-  /** Monthly tick of the credit cycle, inflation, FX, and bond service. */
-  private tickMonetary(): void {
-    const gdp = Math.max(1, this.gdpLastMonth);
-
-    // 1. Credit cycle: leverage grows below neutral rate, shrinks above it
-    const dLeverage = (NEUTRAL_RATE - this.policyRate) * 0.5 * (1 - this.privateLeverage / 5.0);
-    this.privateLeverage = Math.max(0, this.privateLeverage + dLeverage);
-
-    // 2. Inflation: credit expansion + money printing + supply-chain cost-push
-    const leverageInflation = Math.max(0, dLeverage) * 0.08;
-    const printInflation = this.monetaryRegime === 'print' ? 0.010 : 0;
-    // Cost-push (GDD §5.2): a real supply-chain shock makes goods dearer, not just
-    // scarcer — the stagflation half of the 1973 oil embargo (output already drags
-    // via supplyShockMult). `supplyShockSeverity()` reads last month's cached
-    // supplyChainHealth (tickIntermediateGoods runs later in the tick), a natural
-    // one-month price lag, and is a pure no-RNG read. It is exactly 0 whenever raws
-    // flow, so in all healthy play this term is +0 and the monetary stream is
-    // byte-identical; only a genuine cascade below the era baseline lifts the target.
-    const supplyPush = this.supplyShockSeverity() * SUPPLY_SHOCK_INFLATION;
-    // PR-3 slice 3 — the LOCAL-goods cost-push: when specialisation strands a
-    // cross-sector good (slice 2's per-town gate), the goods that can't reach the
-    // towns that need them are dearer there. `localGoodsScarcity` (cached last month
-    // from the production gates) is 0 in single-town / self-sufficient play — and 0
-    // under a *raw* shock too, since it's a pure gate ratio, never a stock or raw
-    // magnitude — so this term is +0 there (byte-identical, no double-count with
-    // `supplyPush`); it lifts the target only when local distribution actually fails.
-    const localGoodsPush = this.localGoodsScarcity * LOCAL_GOODS_INFLATION;
-    const inflTarget = 0.02 + leverageInflation + printInflation + supplyPush + localGoodsPush;
-    this.inflationRate += (inflTarget - this.inflationRate) * 0.15;
-    this.inflationRate = Math.max(0, Math.min(0.50, this.inflationRate));
-
-    // 3. Confidence: mean-reverts to 70, falls when debt service, inflation, or the
-    //    leverage *level* (Minsky fragility) is high
-    const debtService = this.privateLeverage * this.policyRate; // annual fraction
-    const leveragePressure = Math.max(0, debtService - LEVERAGE_FRAGILITY) * 80;
-    const inflPressure = Math.max(0, this.inflationRate - 0.08) * 40;
-    const fragilityPressure = Math.max(0, this.privateLeverage - LEVERAGE_FRAGILE) * FRAGILITY_GAIN;
-    // Depression ceiling: while depressionDepth > 0.05 confidence can't freely recover.
-    // At depth=1.0 ceiling is ~35; it lifts linearly as depth fades.
-    // Stimulus choice grants +10 to the ceiling; austerity +5.
-    const recoveryBonus = this.crashRecoveryChoice === 'stimulus' ? 10
-      : this.crashRecoveryChoice === 'austerity' ? 5 : 0;
-    const depressionCeiling = this.depressionDepth > 0.05
-      ? Math.round(35 + 65 * (1 - this.depressionDepth)) + recoveryBonus + this.depressionCeilingBonus
-      : 100;
-    const confTarget = Math.min(depressionCeiling, Math.max(5, 70 - leveragePressure - inflPressure - fragilityPressure));
-    this.confidence += (confTarget - this.confidence) * 0.12;
-    this.confidence = Math.max(0, Math.min(100, this.confidence));
-
-    // 4. Deleveraging bust: confidence crash forces rapid credit contraction
-    if (this.confidence < 30 && this.privateLeverage > 0.5) {
-      this.privateLeverage *= (1 - (0.05 + (30 - this.confidence) * 0.002));
-      if (this.rng.chance(0.2)) {
-        this.addLog('Credit markets freeze — banks call in loans as confidence breaks.', 'bad');
-      }
-    }
-
-    // 5. FX dynamics
-    if (this.monetaryRegime === 'peg') {
-      // Peg: hold exchange rate; drain reserves if trade is unfavorable
-      const deficit = Math.max(0, this.totalPop() * 0.025 - this.exportEarningsLastMonth);
-      this.treasury -= deficit * 0.12;
-      // An exhausted treasury cannot defend a peg at all; a thin one gambles.
-      if (this.treasury < gdp * 0.1 || (this.treasury < gdp * 0.25 && this.rng.chance(0.25))) {
-        this.monetaryRegime = 'float';
-        this.confidence = Math.max(5, this.confidence - 25);
-        this.exchangeRate = Math.max(this.exchangeRate * 0.82, 0.30);
-        this.addLog('The currency peg breaks — reserves exhausted. The exchange rate is in freefall.', 'bad');
-      }
-    } else {
-      // Float/print: market-driven exchange rate
-      const tradeUp = this.exportEarningsLastMonth > this.totalPop() * 0.025;
-      const rateDiff = (this.policyRate - NEUTRAL_RATE) * 0.04;
-      const confFlow = (this.confidence - 50) * 0.0003;
-      const printDrag = this.monetaryRegime === 'print' ? -0.012 : 0;
-      this.exchangeRate += (tradeUp ? 0.003 : -0.003) + rateDiff + confFlow + printDrag;
-      this.exchangeRate = Math.max(0.30, Math.min(2.0, this.exchangeRate));
-    }
-
-    // 7. Print regime: money creation boosts treasury
-    if (this.monetaryRegime === 'print') {
-      this.treasury += gdp * 0.018;
-    }
-
-    // 8. Bond debt service
-    if (this.nationalDebt > 0) {
-      const service = this.nationalDebt * this.bondRate / 12;
-      this.treasury -= service;
-      if (this.treasury < 0) {
-        this.nationalDebt -= this.treasury; // unpaid interest compounds into debt
-        this.treasury = 0;
-      }
-    }
-
-    // 9. Update credit rating
-    this.creditRating = this.computeCreditRating();
-
-    // 10. Inflation erodes satisfaction
-    if (this.inflationRate > 0.05) {
-      const drag = (this.inflationRate - 0.05) * 30;
-      for (const t of this.settlements) {
-        t.satisfaction = Math.max(0, t.satisfaction - drag);
-      }
-    }
-
-    // 11. Transmit policy rate to private lenders — banks price above the base rate
-    for (const lender of this.lenders) {
-      const spread = 0.02 + lender.id * 0.005; // 2–3.5% spread; riskier lenders charge more
-      lender.interestRate = Math.max(0.01, Math.min(0.20, this.policyRate + spread));
-    }
-
-    // 12. Lender liquidity regeneration — low rates encourage banks to lend freely
-    for (const lender of this.lenders) {
-      const recoveryRate = Math.max(0.04, 0.12 - this.policyRate); // 4–12% of max loan recovered per month
-      lender.liquidCash = Math.min(lender.maxLoan * 4, lender.liquidCash + lender.maxLoan * recoveryRate);
-    }
-
-    // 13. Accrue interest on outstanding Central Bank discount window loan
-    if (this.centralBankLoan > 0) {
-      this.centralBankLoan += this.centralBankLoan * (this.policyRate / 12);
-    }
-
-    // 14. Keep player faction's CentralBank metadata in sync (create lazily if missing)
-    const pf = this.faction(this.playerFactionId);
-    if (pf) {
-      if (!pf.centralBank) {
-        pf.centralBank = {
-          factionId: this.playerFactionId,
-          foundedDay: this.day,
-          reserves: {},
-          interestRate: this.policyRate,
-          inflationRate: this.inflationRate,
-        };
-      } else {
-        pf.centralBank.interestRate = this.policyRate;
-        pf.centralBank.inflationRate = this.inflationRate;
-      }
-    }
   }
 
   // ---- Phase 15: Intermediate Goods, Supply Chains, Arbitrage & FX (GDD §5.2) ----
@@ -6841,60 +6706,6 @@ export class RegionSim {
     if (prev !== regime) {
       // Confidence shift on regime change
       this.confidence = Math.max(5, Math.min(100, this.confidence + (regime === 'currency_union' ? 3 : -2)));
-    }
-  }
-
-  /** Monthly FX tick: recompute exchange rate, decay fxBoost, handle regime crises. */
-  tickFX(): void {
-    // Recompute exchange rate based on current conditions
-    const newRate = this.computeExchangeRate();
-
-    if (this.currencyRegime === 'gold_standard') {
-      // Gold standard: rate fixed at 1.0
-      this.exchangeRate = 1.0;
-      // Policy rate constrained to 3–8%
-      this.policyRate = Math.max(0.03, Math.min(0.08, this.policyRate));
-      // Deflation pressure
-      this.inflationRate = Math.max(-0.05, this.inflationRate - 0.002);
-      // Crisis: if confidence drops below 40, gold standard collapses
-      if (this.confidence < 40) {
-        this.currencyRegime = 'fiat';
-        this.exchangeRate = Math.max(0.5, this.exchangeRate - 0.2);
-        this.addLog(
-          'GOLD STANDARD CRISIS: Market confidence collapses. The gold peg is abandoned. ' +
-          'Exchange rate falls sharply.',
-          'bad'
-        );
-      }
-    } else if (this.currencyRegime === 'fiat') {
-      this.exchangeRate = newRate;
-      // Fiat at very low rates: inflation creep
-      if (this.policyRate < 0.02) {
-        this.inflationRate = Math.min(0.50, this.inflationRate + 0.003);
-      }
-    } else if (this.currencyRegime === 'currency_union') {
-      // Auto-exit if partner is at war with us
-      const partnerAtWar = this.currencyUnionPartnerId !== undefined &&
-        (this.playerWar?.rivalId === this.currencyUnionPartnerId ||
-         this.foreignWars.some(w =>
-           (w.a === this.currencyUnionPartnerId || w.b === this.currencyUnionPartnerId)
-         ));
-      if (partnerAtWar) {
-        this.currencyRegime = 'fiat';
-        this.currencyUnionPartnerId = undefined;
-        this.addLog('Currency union dissolved — partner nation at war. Currency floats independently.', 'bad');
-      } else {
-        // Lock rate to partner
-        const partnerRate = this.currencyUnionPartnerId !== undefined
-          ? (this.exchangeRates[`0:${this.currencyUnionPartnerId}`] ?? 1.0)
-          : 1.0;
-        this.exchangeRate = partnerRate;
-      }
-    }
-
-    // Decay fxBoost toward 1.0 by 10%/month
-    if (this.fxBoost > 1.0) {
-      this.fxBoost = Math.max(1.0, 1.0 + (this.fxBoost - 1.0) * 0.9);
     }
   }
 

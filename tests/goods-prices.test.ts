@@ -7,6 +7,7 @@ import {
   type Settlement,
 } from '../src/sim/region';
 import { tickIntermediateGoods, localGoodDemand, localGoodPrice, worldGoodDemand } from '../src/sim/systems/goods';
+import { tickMonetary } from '../src/sim/systems/monetary';
 
 /**
  * PR-3 slice 3 — per-good LOCAL prices + the local-goods macro coupling (the first
@@ -218,8 +219,7 @@ describe('local-goods cost-push inflation', () => {
   const NEUTRAL_RATE = 0.05;
   const BASE_TARGET = 0.02;
   const REVERT = 0.15;
-  const tickMonetary = (r: RegionSim): void =>
-    (r as unknown as { tickMonetary(): void }).tickMonetary();
+  // tickMonetary now lives in systems/monetary.ts (Track-C extraction); imported above.
 
   /** A specialised 2-town nation (pure industry + pure agri) with a central bank, so
    *  every raw still flows (each extracting sector has output somewhere → severity 0)
