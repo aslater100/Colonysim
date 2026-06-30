@@ -76,6 +76,17 @@ function intermediateIds(): ReadonlySet<string> {
  *  live in region.ts beside the other goods→economy coupling constants.) */
 const LOCAL_GOODS_PRICE_GAIN = 1.0;
 
+/** World-price anchor weight (global-world leg 1): the fraction of the way a town's
+ *  local price is lifted toward the (higher) WORLD scarcity price. 0 → purely local
+ *  (the pre-anchor behaviour); 1 → a town fully prices the world's scarcity even when
+ *  its own shelf is full. 0.5 → a town splits the difference: global scarcity is
+ *  half-felt locally, local scarcity still dominates its own price. The lift is
+ *  ONE-SIDED (it only ever RAISES a town's effective scarcity toward the world's), so
+ *  it never erodes the local relief signal arbitrage already ships on, and it is +0
+ *  whenever the world is collectively self-sufficient (every good's world scarcity 0
+ *  in balanced play) → the local price is byte-identical to the pre-anchor curve. */
+const WORLD_PRICE_ANCHOR = 0.5;
+
 /** Base £-value of one unit of a good, by refinement depth: 1 + the count of its
  *  INTERMEDIATE inputs (raw-fed goods like lumber/steel are cheap, deeply-processed
  *  finals like vehicles/luxury_goods dear). Catalog-derived + memoised, so it needs
@@ -138,7 +149,18 @@ function stockScarcity(stock: number, demand: number): number {
 export function localGoodPrice(r: RegionSim, t: Settlement, goodId: string): number {
   const demand = localGoodDemand(r, t, goodId);
   const stock = t.goodStocks?.[goodId] ?? 0;
-  return goodBasePrice(goodId) * (1 + stockScarcity(stock, demand) * LOCAL_GOODS_PRICE_GAIN);
+  const localScar = stockScarcity(stock, demand);
+  // World-price anchor (global-world leg 1): a town's price reflects WORLD scarcity,
+  // not just its own shelf. When the WHOLE world is short of a good it is dear
+  // everywhere, so lift the local scarcity a `WORLD_PRICE_ANCHOR` fraction of the way
+  // toward the (higher) world scarcity. `max(0, world − local)` makes the lift
+  // ONE-SIDED: a locally-short town's price is never pulled BELOW its local-only value
+  // (local relief is preserved), and a locally-stocked town gains the global-scarcity
+  // premium it would otherwise miss. In balanced / self-sufficient play world scarcity
+  // is 0 for every good → the lift is +0 → byte-identical to the pre-anchor curve.
+  const worldScar = worldGoodScarcity(r, goodId);
+  const eff = localScar + WORLD_PRICE_ANCHOR * Math.max(0, worldScar - localScar);
+  return goodBasePrice(goodId) * (1 + eff * LOCAL_GOODS_PRICE_GAIN);
 }
 
 /**
@@ -180,15 +202,24 @@ export function worldGoodDemand(r: RegionSim, goodId: string): number {
   return demand;
 }
 
+/** World market SCARCITY ∈ [0,1] for a good: how far TOTAL world supply (every
+ *  faction's stock) falls short of TOTAL world demand (every settlement's appetite) —
+ *  the `stockScarcity` curve lifted to the whole world. 0 when the world holds at
+ *  least its collective demand (balanced play), up to 1 when the world demands a good
+ *  but holds none of it. A 0-demand or un-tracked (raw) good has scarcity 0. The
+ *  town-independent driver of both the world clearing price and the `localGoodPrice`
+ *  world-anchor. */
+export function worldGoodScarcity(r: RegionSim, goodId: string): number {
+  if (!intermediateIds().has(goodId)) return 0;
+  return stockScarcity(worldGoodSupply(r, goodId), worldGoodDemand(r, goodId));
+}
+
 /** World market CLEARING price (£/unit): basePrice × (1 + worldScarcity × GAIN) —
  *  the `localGoodPrice` curve lifted from one town to the whole world. base when
  *  world supply meets world demand, up to (1+GAIN)× when the world holds none of a
  *  demanded good. A 0-demand (or un-tracked) good prices at base. */
 export function worldGoodPrice(r: RegionSim, goodId: string): number {
-  if (!intermediateIds().has(goodId)) return goodBasePrice(goodId);
-  const demand = worldGoodDemand(r, goodId);
-  const supply = worldGoodSupply(r, goodId);
-  return goodBasePrice(goodId) * (1 + stockScarcity(supply, demand) * LOCAL_GOODS_PRICE_GAIN);
+  return goodBasePrice(goodId) * (1 + worldGoodScarcity(r, goodId) * LOCAL_GOODS_PRICE_GAIN);
 }
 
 /** World market TIGHTNESS ∈ [0,1]: the demand-weighted mean world scarcity across
