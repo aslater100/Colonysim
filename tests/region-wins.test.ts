@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { RegionSim } from '../src/sim/region';
 import type { CenturyReport } from '../src/sim/region';
+import { checkWinConditions, checkProclamationGate } from '../src/sim/systems/victory';
 
 /**
  * The four victory paths are the climax of the whole game, yet nothing
@@ -14,7 +15,7 @@ function region(seed = 1): RegionSim {
   return RegionSim.create(seed);
 }
 
-const checkWins = (r: RegionSim) => (r as unknown as { checkWinConditions(): void }).checkWinConditions();
+const checkWins = (r: RegionSim) => checkWinConditions(r);
 const checkCenturyWins = (r: RegionSim) => (r as unknown as { checkCenturyWins(): void }).checkCenturyWins();
 
 function report(grades: CenturyReport['grades']): CenturyReport {
@@ -87,7 +88,7 @@ describe('Win conditions fire', () => {
 
   it('nation gate opens once a proclaimed state holds half the map', () => {
     const r = region();
-    const gate = () => (r as unknown as { checkProclamationGate(): void }).checkProclamationGate();
+    const gate = () => checkProclamationGate(r);
     r.stateProclaimed = true;
     r.playerTerritoryControl = () => 0.4; // below the hegemon threshold
     gate();
@@ -100,7 +101,7 @@ describe('Win conditions fire', () => {
   it('nation gate stays shut before statehood', () => {
     const r = region();
     r.playerTerritoryControl = () => 0.9; // holds the map but is not yet a state
-    (r as unknown as { checkProclamationGate(): void }).checkProclamationGate();
+    checkProclamationGate(r);
     expect(r.proclamationReady).toBe(false);
   });
 

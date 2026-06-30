@@ -21,7 +21,7 @@ import { tickPollution } from './systems/pollution';
 import { tickServiceCoverage } from './systems/services';
 import { tickPriceArbitrage } from './systems/arbitrage';
 import { tickIntermediateGoods, worldGoodPrice, worldGoodScarcity, worldMarketTightness, worldPowerPressure } from './systems/goods';
-import { tickAdvisorLoyalty, tickAdvisorEvents, tickLegitimacy, tickRegimeMechanics } from './systems/regime';
+import { tickLegitimacy, tickRegimeMechanics } from './systems/regime';
 import { tickDemographicTransition, tickAppealMigration, tickEducationLag, tickUnrestLadder } from './systems/demographics';
 import { tickClimate, checkStrandedAssets, tickAutomation } from './systems/climate';
 import { updateDiplomacy } from './systems/diplomacy';
@@ -46,6 +46,7 @@ import { updateExploration } from './systems/exploration';
 import { tickStatsHistory } from './systems/stats';
 import { updateMarket } from './systems/market';
 import { checkScenarioGoals } from './systems/scenarios';
+import { checkWinConditions, checkProclamationGate } from './systems/victory';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -5719,8 +5720,8 @@ export class RegionSim {
     checkScenarioGoals(this);   // Phase 17: check active scenario goals monthly (systems/scenarios.ts)
     updateLoans(this); // process loan interest and check for defaults (systems/loans.ts)
     if (this.stateProclaimed) this.collectVassalTribute();
-    this.checkProclamationGate();
-    this.checkWinConditions();
+    checkProclamationGate(this);
+    checkWinConditions(this);
     // Early solarpunk trigger: beaten the oil barons when renewables are cheap + available tech
     if (!this.beatOilBarons && this.year >= 1980 && this.year < EARLY_SOLARPUNK_YEAR) {
       const hasRenewables = this.has('solar_cells') || this.has('wind_power') || this.has('hydro_power');
@@ -5785,34 +5786,6 @@ export class RegionSim {
 
   /** Check all four victory paths; set winCondition on the first achieved.
    *  Sandbox continues after any win — the modal is informational, not a forced stop. */
-  private checkWinConditions(): void {
-    if (this.winCondition) return; // already won — don't overwrite
-
-    // Solarpunk: democratic + warm satisfaction + clean sky — can win from 2040 onward
-    if (this.eraBranch === 'solarpunk') {
-      this.winCondition = {
-        path: 'solarpunk',
-        year: this.year,
-        details: `The grid hums clean. ${Math.round(this.warmingC * 10) / 10}°C above baseline — the gardens hold.`,
-      };
-      this.addLog('VICTORY — THE GARDEN PATH: solarpunk conditions achieved. The century belongs to you.', 'good');
-      return;
-    }
-
-    // Unification: control 75%+ of region by 2070, or 90%+ at any point
-    if (this.nationProclaimed) {
-      const terr = this.playerTerritoryControl();
-      if ((terr >= 0.75 && this.year <= 2070) || terr >= 0.9) {
-        this.winCondition = {
-          path: 'unification',
-          year: this.year,
-          details: `${Math.round(terr * 100)}% of the region under one banner.`,
-        };
-        this.addLog('VICTORY — UNIFICATION: the region bends to your flag. The era of division is over.', 'good');
-        return;
-      }
-    }
-  }
 
   /** Check legacy and domination wins at century end; called from buildCenturyReport(). */
   private checkCenturyWins(): void {
@@ -5934,21 +5907,6 @@ export class RegionSim {
   }
 
   /** One-time latch: set proclamationReady once player territory ≥50%, log the milestone. */
-  private checkProclamationGate(): void {
-    if (this.proclamationReady || !this.stateProclaimed) return;
-    if (this.playerTerritoryControl() >= 0.5) {
-      this.proclamationReady = true;
-      this.addLog(
-        'REGIONAL HEGEMON: Your state controls more than half the known territory. ' +
-        'The path to nationhood lies before you — open the State panel to Proclaim the Nation.',
-        'good',
-      );
-    }
-    // Phase 18: Advisor System Depth (GDD §8.7)
-    this.generateAdvisorBriefs();
-    tickAdvisorLoyalty(this);
-    tickAdvisorEvents(this);
-  }
 
   // ---- local markets & trade (GDD §5.2, first slice) ----
   /** A month's worth of demand: what this town wants on hand. */
