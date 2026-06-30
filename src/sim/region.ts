@@ -3342,6 +3342,7 @@ export class RegionSim {
   warScars: WarScar[] = [];
   seaRiseAnnounced = false;
   private lastTidalLogDay = -999;
+  private lastRefugeesLogDay = -999;
   private lastExtremeWeatherDay = -999;
   private droughtAnnounced = false;
   // ---- Phase 17: Historical Scenarios & Alternate Starts (GDD §8.8, §6.1) ----
@@ -4259,6 +4260,38 @@ export class RegionSim {
           'King tides take the low streets again — unwalled coastal towns pump out cellars and count who left.',
           'bad',
         );
+      }
+    }
+    // Climate refugee migration (GDD §8.2): coastal flooding bleeds population
+    // inland. Flight rate is mild (0.1% per severity unit/tick) so the effect
+    // builds gradually, matching the slow-burn feel of sea-level rise.
+    if (this.year >= 2035 && this.warmingC > 1.5) {
+      const severity = (this.warmingC - 1.5) * (this.eraBranch === 'drowned' ? 1.5 : 1);
+      const playerSettlements = this.settlements.filter((t) => t.factionId === this.playerFactionId);
+      const flooded = playerSettlements.filter((t) => t.site.coastal && !t.seaWall && this.popOf(t) > 5);
+      const inland = playerSettlements.filter((t) => !t.site.coastal);
+      if (flooded.length > 0 && inland.length > 0) {
+        const dest = inland.reduce((best, t) => (this.popOf(t) > this.popOf(best) ? t : best));
+        let totalMovers = 0;
+        for (const from of flooded) {
+          const fromPop = this.popOf(from);
+          if (fromPop < 5) continue;
+          const flightRate = Math.min(0.01, 0.001 * severity);
+          const movers = fromPop * flightRate;
+          if (movers < 0.1) continue;
+          this.removePop(from, movers);
+          dest.cohorts.bands[1] += movers * 0.7;
+          dest.cohorts.bands[2] += movers * 0.3;
+          totalMovers += movers;
+        }
+        if (totalMovers >= 1 && this.day - this.lastRefugeesLogDay > 365) {
+          this.lastRefugeesLogDay = this.day;
+          this.addLog(
+            `Tidal flooding pushes families inland — ${Math.round(totalMovers)} people arrive at ${dest.name} ` +
+            `seeking higher ground (+${this.warmingC.toFixed(1)}°C warming).`,
+            'bad',
+          );
+        }
       }
     }
     // Sea-wall overtopping (GDD §8.2): at ≥4°C even walled towns are breached.
@@ -13527,6 +13560,7 @@ export class RegionSim {
       centuryReport: this.centuryReport,
       seaRiseAnnounced: this.seaRiseAnnounced,
       lastTidalLogDay: this.lastTidalLogDay,
+      lastRefugeesLogDay: this.lastRefugeesLogDay,
       lastExtremeWeatherDay: this.lastExtremeWeatherDay,
       accordCompliance: this.accordCompliance,
       geoDeployed: this.geoDeployed,
@@ -13797,6 +13831,7 @@ export class RegionSim {
     r.centuryReport = d.centuryReport ?? null;
     r.seaRiseAnnounced = d.seaRiseAnnounced ?? false;
     r.lastTidalLogDay = d.lastTidalLogDay ?? -999;
+    r.lastRefugeesLogDay = d.lastRefugeesLogDay ?? -999;
     r.lastExtremeWeatherDay = d.lastExtremeWeatherDay ?? -999;
     r.accordCompliance = d.accordCompliance ?? {};
     r.geoDeployed = d.geoDeployed ?? false;
