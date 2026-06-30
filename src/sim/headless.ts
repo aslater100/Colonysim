@@ -21,8 +21,8 @@ const TICK_CAP = 20_000_000; // safety stop in case the calendar stalls
 const autoDevelopPlayer = process.env.SIM_PLAYER_MANUAL !== '1';
 
 console.log(`headless sim: ${years} game-year(s) × ${runs} run(s)  [player spatial play: ${autoDevelopPlayer ? 'AUTO' : 'manual'}]\n`);
-console.log('seed |  year | towns |    treasury |        GDP | treas/GDP(mo) | infl% |  pop   | sat | pBld | wMkt% | ticks | outcome');
-console.log('-----+-------+-------+-------------+------------+---------------+-------+--------+-----+------+-------+-------+--------');
+console.log('seed |  year | towns |    treasury |        GDP | treas/GDP(mo) | infl% |  pop   | sat | pBld | wMkt% |  gpP% | ticks | outcome');
+console.log('-----+-------+-------+-------------+------------+---------------+-------+--------+-----+------+-------+-------+-------+--------');
 
 for (let run = 0; run < runs; run++) {
   const seed = 1000 + run * 7;
@@ -54,6 +54,7 @@ for (let run = 0; run < runs; run++) {
     `${r.avgSatisfaction().toFixed(0).padStart(3)} | ` +
     `${String(pBld).padStart(4)} | ` +
     `${(r.worldMarketTightness() * 100).toFixed(1).padStart(5)} | ` +
+    `${(r.worldPowerPressure() * 100).toFixed(1).padStart(5)} | ` +
     `${String(ticks).padStart(5)} | ` +
     `${outcome}`,
   );

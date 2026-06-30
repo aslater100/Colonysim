@@ -20,7 +20,7 @@ import { resolveSupplyChainGraded } from './supply';
 import { tickPollution } from './systems/pollution';
 import { tickServiceCoverage } from './systems/services';
 import { tickPriceArbitrage } from './systems/arbitrage';
-import { tickIntermediateGoods, worldGoodPrice, worldGoodScarcity, worldMarketTightness } from './systems/goods';
+import { tickIntermediateGoods, worldGoodPrice, worldGoodScarcity, worldMarketTightness, worldPowerPressure } from './systems/goods';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -7294,6 +7294,15 @@ export class RegionSim {
    *  The single-number read of the global market's state (pure, read-only). */
   worldMarketTightness(): number {
     return worldMarketTightness(this);
+  }
+
+  /** GREAT-POWER market pressure ∈ [−0.6, +0.6] — the demand-weighted mean of the
+   *  off-map great powers' net pull on the world market: positive when they
+   *  collectively tighten it (a great-power war, a warming-hit global breadbasket,
+   *  isolationist hoarding), negative when a commercial power's surplus relieves it.
+   *  The "world stage" read the on-map tightness can't show — pure, read-only. */
+  worldPowerPressure(): number {
+    return worldPowerPressure(this);
   }
 
   /** Employment-weighted average wage — the migration signal. */

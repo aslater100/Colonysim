@@ -87,6 +87,90 @@ const LOCAL_GOODS_PRICE_GAIN = 1.0;
  *  in balanced play) → the local price is byte-identical to the pre-anchor curve. */
 const WORLD_PRICE_ANCHOR = 0.5;
 
+/**
+ * GLOBAL-WORLD ARC, leg 1 — THE GREAT POWERS JOIN THE WORLD MARKET.
+ *
+ * Leg 1 built one clearing price per good, but it only ever saw the ON-MAP towns
+ * (`worldGoodSupply`/`worldGoodDemand` iterate `r.settlements`). The off-map
+ * `RivalNation` great powers — nation-scale economies that fight, trade and burn
+ * carbon — sat outside it entirely ("rivals trade in no market at all"). So the
+ * "world" market was really just the on-map factions; a great-power war or a
+ * commercial republic's surplus moved nothing.
+ *
+ * These constants tilt WORLD DEMAND by the great powers' collective economic
+ * posture, so the one world market finally reflects them. The tilt is a fraction
+ * of the on-map world demand, summed over rivals and weighted by each rival's
+ * `pop` (great-power scale): a power AT WAR imports (war strips its own output and
+ * its appetite swells → it pulls on the world's goods, dearer for everyone — the
+ * WWII-rationing channel); a COMMERCIAL power exports its surplus (relieves the
+ * world, cheaper for everyone — centred on the mean commerce so isolationist
+ * Hermit Kingdoms tilt the other way and HOARD); and WARMING makes every great
+ * power a net importer of AGRI goods (climate hits the GLOBAL breadbasket, not
+ * just on-map towns — the leg-3 "shared shock" reaching the market).
+ *
+ * It is derived PURELY from already-serialized rival state (`pop`, archetype
+ * `weights.commerce`, the `foreignWars` ledger, `warmingC`) → no RNG, no new
+ * field, `worldGoodDemand` stays pure. When the great powers are collectively
+ * balanced the tilt is ~0 → world demand unchanged → byte-identical. It bites only
+ * when the on-map world is itself non-uniformly short (the world anchor then
+ * reroutes arbitrage); in balanced self-sufficient autoplay every town is
+ * uniformly slack, so the lift is uniform → no price gaps → no flows → the
+ * serialized economy is byte-identical (telemetry only). */
+/** Great-power `pop` at which one rival counts as a full on-map-world-equivalent
+ *  participant (its tilt term reaches its archetype coefficient). Rivals spawn at
+ *  ~2.5–5.5k and grow to great-power / continental-hegemon scale (20–40k+) over the
+ *  century, so a mid-century power weighs ~0.4–0.8 and a bloc of them a few tenths. */
+const RIVAL_WORLD_POP_NORM = 50000;
+/** Clamp on the AGGREGATE great-power tilt for any one good, so the bloc can move
+ *  world demand by at most ±this fraction however large/numerous the powers grow —
+ *  the world market reflects them but is never dominated by them. */
+const RIVAL_WORLD_TILT_CAP = 0.6;
+/** A great power AT WAR imports this fraction (× pop weight) — its war economy
+ *  outruns its disrupted output and it draws on the world's goods. */
+const RIVAL_WAR_IMPORT = 0.5;
+/** Commercial tilt per unit of `commerce` weight away from the archetype mean
+ *  (commerce ∈ [0,9], centred at `RIVAL_COMMERCE_MEAN`): a Trading Republic
+ *  (commerce 9) is a net EXPORTER (relief), a Hermit Kingdom (commerce 2) a net
+ *  IMPORTER (hoard). Sign: + commerce ⇒ − net demand (export). */
+const RIVAL_COMMERCE_TILT = 0.4;
+const RIVAL_COMMERCE_MEAN = 4.5;
+/** Warming (°C) at which the great powers' agri-import tilt maxes — the climate
+ *  drag on the GLOBAL breadbasket, mirroring the on-map agri-climate threshold. */
+const RIVAL_CLIMATE_C = 3.0;
+/** Peak agri-good import tilt (× pop weight) a fully-warmed world imposes on every
+ *  great power's food balance. */
+const RIVAL_CLIMATE_FOOD_IMPORT = 0.4;
+
+/** Aggregate great-power NET-IMPORT tilt for one good, ∈ [−CAP, +CAP]. Positive =
+ *  the great powers collectively tighten the world for this good (war, a warming-hit
+ *  food, isolationist hoarding); negative = they relieve it (commercial surplus).
+ *  Summed over `r.rivals`, each weighted by `pop / RIVAL_WORLD_POP_NORM`. Pure read
+ *  of serialized rival state — no RNG, no mutation. 0 when there are no great powers
+ *  (early game, before any rival emerges) → byte-identical to the pre-slice world. */
+function rivalNetDemandTilt(r: RegionSim, goodId: string): number {
+  const rivals = r.rivals;
+  if (rivals.length === 0) return 0;
+  // Climate hits the GLOBAL breadbasket: agri goods (food/textiles line) gain an
+  // import tilt as the world warms — the same channel the on-map agri-climate drag
+  // runs, now reaching the world market every actor clears against (leg-3 shared shock).
+  const agriImport = goodProducingSector(goodId) === 'agriculture'
+    ? RIVAL_CLIMATE_FOOD_IMPORT * Math.max(0, Math.min(1, r.warmingC / RIVAL_CLIMATE_C))
+    : 0;
+  let tilt = 0;
+  for (const rv of rivals) {
+    const weight = Math.max(0, rv.pop) / RIVAL_WORLD_POP_NORM;
+    if (weight <= 0) continue;
+    const atWar = r.foreignWars.some((w) => w.a === rv.id || w.b === rv.id) ? 1 : 0;
+    // commerce above the mean → export (− demand); below → import (+ demand).
+    const commerceTilt = -RIVAL_COMMERCE_TILT * ((rv.weights.commerce - RIVAL_COMMERCE_MEAN) / 9);
+    const netImport = RIVAL_WAR_IMPORT * atWar + agriImport + commerceTilt;
+    tilt += weight * netImport;
+  }
+  return tilt < -RIVAL_WORLD_TILT_CAP ? -RIVAL_WORLD_TILT_CAP
+       : tilt > RIVAL_WORLD_TILT_CAP ? RIVAL_WORLD_TILT_CAP
+       : tilt;
+}
+
 /** Base £-value of one unit of a good, by refinement depth: 1 + the count of its
  *  INTERMEDIATE inputs (raw-fed goods like lumber/steel are cheap, deeply-processed
  *  finals like vehicles/luxury_goods dear). Catalog-derived + memoised, so it needs
@@ -195,11 +279,17 @@ export function worldGoodSupply(r: RegionSim, goodId: string): number {
   return supply;
 }
 
-/** Total monthly DEMAND for a good across EVERY settlement in the world. */
+/** Total monthly DEMAND for a good across EVERY settlement in the world, PLUS the
+ *  off-map great powers' net pull on it (`rivalNetDemandTilt`): a fraction of the
+ *  on-map demand reflecting the rivals' war/commerce/climate posture. The tilt is a
+ *  proportion of the on-map figure (not an absolute add), so it is exactly 0 when
+ *  the great powers are balanced (or none have emerged) → world demand unchanged →
+ *  byte-identical; a war pulls it up (dearer world), a commercial surplus down. */
 export function worldGoodDemand(r: RegionSim, goodId: string): number {
   let demand = 0;
   for (const t of r.settlements) demand += localGoodDemand(r, t, goodId);
-  return demand;
+  if (demand <= 0) return demand; // an un-demanded good stays un-demanded (rivals can't conjure appetite from nothing)
+  return Math.max(0, demand * (1 + rivalNetDemandTilt(r, goodId)));
 }
 
 /** World market SCARCITY ∈ [0,1] for a good: how far TOTAL world supply (every
@@ -236,6 +326,29 @@ export function worldMarketTightness(r: RegionSim): number {
     const supply = worldGoodSupply(r, g.id);
     weighted += stockScarcity(supply, demand) * demand;
     totalDemand += demand;
+  }
+  return totalDemand > 0 ? weighted / totalDemand : 0;
+}
+
+/** GREAT-POWER market PRESSURE ∈ [−CAP, +CAP]: the demand-weighted mean of the
+ *  off-map great powers' net-import tilt across every unlocked good. Positive = the
+ *  great powers are collectively TIGHTENING the world market (a great-power war, a
+ *  warming-hit breadbasket, isolationist hoarding) → goods dear for everyone;
+ *  negative = RELIEVING it (commercial surplus) → cheaper for everyone; 0 when no
+ *  great power has emerged or they net out. The single-number read of how the
+ *  off-map world is bearing on the one global market — the "world stage" the on-map
+ *  tightness alone cannot show (it stays slack while on-map stock dwarfs demand). */
+export function worldPowerPressure(r: RegionSim): number {
+  if (r.rivals.length === 0) return 0;
+  let weighted = 0;
+  let totalDemand = 0;
+  for (const g of INTERMEDIATE_GOODS) {
+    if (r.year < g.eraUnlock) continue;
+    let onmap = 0;
+    for (const t of r.settlements) onmap += localGoodDemand(r, t, g.id);
+    if (onmap <= 0) continue;
+    weighted += rivalNetDemandTilt(r, g.id) * onmap;
+    totalDemand += onmap;
   }
   return totalDemand > 0 ? weighted / totalDemand : 0;
 }
