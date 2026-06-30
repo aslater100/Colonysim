@@ -4261,6 +4261,28 @@ export class RegionSim {
         );
       }
     }
+    // Sea-wall overtopping (GDD §8.2): at ≥4°C even walled towns are breached.
+    // Sea walls buy time, not immunity — extreme warming overwashes any earthwork.
+    if (this.warmingC >= 4.0 && this.year >= 2060) {
+      const overtopSeverity = (this.warmingC - 4.0) * 0.4; // gentler than unprotected
+      let overtopHit = false;
+      for (const t of this.settlements) {
+        if (!t.site.coastal || !t.seaWall || this.popOf(t) < 1) continue;
+        const damageScale = t.floodProofed ? 0.3 : 0.6;
+        t.food *= Math.max(0.85, 1 - 0.03 * overtopSeverity * damageScale);
+        this.removePop(t, this.popOf(t) * 0.0008 * overtopSeverity * damageScale);
+        t.satisfaction = Math.max(0, t.satisfaction - 1.5 * overtopSeverity * damageScale);
+        overtopHit = true;
+      }
+      if (overtopHit && this.day - this.lastTidalLogDay > 600) {
+        this.lastTidalLogDay = this.day;
+        this.addLog(
+          `+${this.warmingC.toFixed(1)}°C: The sea walls weren't built for this. Storm surge overtops the ` +
+          `barriers; the walled districts flood behind their own defences. Even protection has its ceiling.`,
+          'bad',
+        );
+      }
+    }
     // Extreme weather amplification: warming > 1.5°C makes storms and droughts
     // more frequent (GDD §8.2: "extreme-weather frequency ↑ with temperature rise").
     // Monthly probability: ~4% at +2°C, ~8% at +2.5°C.
@@ -11609,6 +11631,17 @@ export class RegionSim {
       casualties: w.casualties,
       durationMonths,
     });
+    // Post-war relations shift: the loser resents, the winner grows confident.
+    if (outcome === 'victory') {
+      // Defeated rival resents the player; grudge scales with occupation depth.
+      rv.relations = this.clampRel(rv.relations - 30 - w.occupied * 5);
+      this.noteHistory(rv, `Defeated by ${this.stateName || 'the State'} in ${this.year} — the wound festers.`);
+    } else if (outcome === 'defeat') {
+      // Victor gains leverage; the player's humiliation emboldens them.
+      rv.relations = this.clampRel(rv.relations + 15);
+      this.noteHistory(rv, `Defeated ${this.stateName || 'the State'} in ${this.year}.`);
+    }
+    // negotiated and status_quo leave relations unchanged — both sides agreed.
   }
 
   /** A rival's government falls — by slow drift or by losing a war. The
