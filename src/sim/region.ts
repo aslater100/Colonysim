@@ -2690,6 +2690,17 @@ export const ARCHETYPE_GREEN_PROPENSITY: Record<RivalArchetype, number> = {
   hegemon: 0.2,
   hermit_kingdom: 0.1,
 };
+
+/** Per-archetype multiplier on the base AI war-declaration probability.
+ *  All 1.0 now (no-op scaffold); tune to differentiate without a re-baseline.
+ *  Applied on the p = 0.01 + risk×0.003 + expansion×0.002 roll in tickRivalAI. */
+export const ARCHETYPE_WAR_FREQ_MULT: Record<RivalArchetype, number> = {
+  hegemon: 1.0,
+  trading_republic: 1.0,
+  hermit_kingdom: 1.0,
+  crusader_state: 1.0,
+  opportunist: 1.0,
+};
 export const WORLD_GREEN_START_YEAR = 1972;  // the transition can begin as renewables become conceivable
 export const WORLD_GREEN_RAMP_YEARS = 38;    // years from the start to a full ramp (≈2010)
 export const WORLD_GREEN_MAX_CUT = 0.92;     // a fully-green world cuts this fraction of its emissions
@@ -11522,7 +11533,7 @@ export class RegionSim {
       if (
         !this.playerWar && this.nationProclaimed && rv.relations < -60 &&
         !rv.treaties.includes('non_aggression') &&
-        this.rng.chance(0.01 + rv.weights.risk * 0.003 + rv.weights.expansion * 0.002)
+        this.rng.chance((0.01 + rv.weights.risk * 0.003 + rv.weights.expansion * 0.002) * ARCHETYPE_WAR_FREQ_MULT[rv.archetype])
       ) {
         // a settled frontier leaves them no honest grievance — they stage one
         this.startPlayerWar(rv, rv.borderSettled ? 'fabricated' : 'border_dispute', true);
