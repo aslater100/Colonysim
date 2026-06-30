@@ -3441,6 +3441,10 @@ export class RegionSim {
     t = Math.max(t, this.maxGrievance / 100);
     // Economic crisis: a deep depression is dread even at peace.
     t = Math.max(t, this.depressionDepth);
+    // Climate dread: warming above 2°C adds ambient tension (the century closing in).
+    if (this.warmingC > 2.0) t = Math.max(t, Math.min(0.45, (this.warmingC - 2.0) * 0.15));
+    // Era branch dread: dystopia/drowned branches carry an undercurrent of unease.
+    if (this.eraBranch === 'drowned' || this.eraBranch === 'dystopia') t = Math.max(t, 0.25);
     return Math.max(0, Math.min(1, t));
   }
 
@@ -10503,6 +10507,21 @@ export class RegionSim {
 
     if (this.legitimacy < 60 && (100 - this.legitimacy) > 40 && this.rng.chance(0.08)) {
       this.addLog(`PRESS SECRETARY: The credibility gap is accelerating — recommend addressing fiscal transparency and public services.`, 'bad');
+    }
+
+    // Revanchism advisory: surface available revanchism CB (once after each defeat scar)
+    if (!this.playerWar && this.warScars.length > 0 && this.rng.chance(0.04)) {
+      const defeatScar = this.warScars.find((s) => s.outcome === 'defeat');
+      if (defeatScar) {
+        const offender = this.rivals.find((rv) => rv.id === defeatScar.rivalId);
+        if (offender && this.availableCasusBelli(offender).includes('revanchism')) {
+          this.addLog(
+            `FOREIGN SECRETARY: The humiliation of our defeat against ${defeatScar.rivalName} in ${defeatScar.yearEnded} still rankles. ` +
+            `Nationalists demand satisfaction — a revanchist campaign is available if the State has the will.`,
+            'info',
+          );
+        }
+      }
     }
   }
 
