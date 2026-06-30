@@ -142,6 +142,74 @@ export function localGoodPrice(r: RegionSim, t: Settlement, goodId: string): num
 }
 
 /**
+ * LEG 1 of the global-world arc — the WORLD MARKET reference price.
+ *
+ * Until now every price was per-town and the only market that ever cleared was
+ * the PLAYER nation's: `tickPriceArbitrage` ships goods only between the player's
+ * own settlements (arbitrage.ts), rivals trade in no market at all, and a good's
+ * scarcity is read only into the player's macro. The world is REGIONAL — the
+ * headline structural weak area.
+ *
+ * This is the first global-market substrate: a single CLEARING price per good,
+ * formed from TOTAL world supply (every faction's held stock of the good) vs.
+ * TOTAL world demand (every settlement's local appetite for it). It is the same
+ * scarcity→price curve `localGoodPrice` uses, lifted from one town to the whole
+ * world, so a good the world is collectively short of prices dear and a glut
+ * prices at base.
+ *
+ * Pure / read-only — it reads the existing `goodStocks` + the demand the towns
+ * already imply, mutates nothing, and is consumed by telemetry only (no tick math,
+ * no serialized field) → BYTE-IDENTICAL. In balanced / self-sufficient play every
+ * town holds its own demand, so world supply ≥ world demand → tightness 0 → price
+ * == base, exactly mirroring `localGoodPrice`'s dormancy. The ACTIVATION (cross-
+ * faction trade clearing at this price; anchoring `localGoodPrice` to it) is a
+ * deliberate later re-baseline, sequenced in the handoff.
+ */
+
+/** Total units of a good held across EVERY settlement in the world (all factions). */
+export function worldGoodSupply(r: RegionSim, goodId: string): number {
+  let supply = 0;
+  for (const t of r.settlements) supply += t.goodStocks?.[goodId] ?? 0;
+  return supply;
+}
+
+/** Total monthly DEMAND for a good across EVERY settlement in the world. */
+export function worldGoodDemand(r: RegionSim, goodId: string): number {
+  let demand = 0;
+  for (const t of r.settlements) demand += localGoodDemand(r, t, goodId);
+  return demand;
+}
+
+/** World market CLEARING price (£/unit): basePrice × (1 + worldScarcity × GAIN) —
+ *  the `localGoodPrice` curve lifted from one town to the whole world. base when
+ *  world supply meets world demand, up to (1+GAIN)× when the world holds none of a
+ *  demanded good. A 0-demand (or un-tracked) good prices at base. */
+export function worldGoodPrice(r: RegionSim, goodId: string): number {
+  if (!intermediateIds().has(goodId)) return goodBasePrice(goodId);
+  const demand = worldGoodDemand(r, goodId);
+  const supply = worldGoodSupply(r, goodId);
+  return goodBasePrice(goodId) * (1 + stockScarcity(supply, demand) * LOCAL_GOODS_PRICE_GAIN);
+}
+
+/** World market TIGHTNESS ∈ [0,1]: the demand-weighted mean world scarcity across
+ *  every unlocked good — 0 when the world is collectively self-sufficient (balanced
+ *  play, every good), rising toward 1 as the world runs collectively short. The
+ *  single-number read of the world market's state (telemetry / a future coupling). */
+export function worldMarketTightness(r: RegionSim): number {
+  let weighted = 0;
+  let totalDemand = 0;
+  for (const g of INTERMEDIATE_GOODS) {
+    if (r.year < g.eraUnlock) continue;
+    const demand = worldGoodDemand(r, g.id);
+    if (demand <= 0) continue;
+    const supply = worldGoodSupply(r, g.id);
+    weighted += stockScarcity(supply, demand) * demand;
+    totalDemand += demand;
+  }
+  return totalDemand > 0 ? weighted / totalDemand : 0;
+}
+
+/**
  * PR-3 slice 2 — distribute one good's monthly output across the towns that make
  * it, gated by each town's LOCAL holdings of the good's INTERMEDIATE inputs.
  *

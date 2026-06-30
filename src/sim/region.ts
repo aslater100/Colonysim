@@ -20,7 +20,7 @@ import { resolveSupplyChainGraded } from './supply';
 import { tickPollution } from './systems/pollution';
 import { tickServiceCoverage } from './systems/services';
 import { tickPriceArbitrage } from './systems/arbitrage';
-import { tickIntermediateGoods } from './systems/goods';
+import { tickIntermediateGoods, worldGoodPrice, worldMarketTightness } from './systems/goods';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -7270,6 +7270,22 @@ export class RegionSim {
   /** Total sector output, £/month — the town's contribution to GDP. */
   sectorOutputOf(t: Settlement): number {
     return SECTOR_IDS.reduce((sum, id) => sum + t.sectors[id].output, 0);
+  }
+
+  /** WORLD MARKET reference price (£/unit) for a good — the single clearing price
+   *  formed from total world supply vs. total world demand across EVERY faction's
+   *  towns (leg 1 of the global-world arc; `systems/goods.ts`). Pure read-only:
+   *  feeds telemetry only, no tick math → byte-identical. base when the world is
+   *  self-sufficient (balanced play), dearer as the world runs collectively short. */
+  worldGoodPrice(goodId: string): number {
+    return worldGoodPrice(this, goodId);
+  }
+
+  /** WORLD MARKET tightness ∈ [0,1] — the demand-weighted mean world scarcity
+   *  across every unlocked good; 0 when the world is collectively self-sufficient.
+   *  The single-number read of the global market's state (pure, read-only). */
+  worldMarketTightness(): number {
+    return worldMarketTightness(this);
   }
 
   /** Employment-weighted average wage — the migration signal. */
