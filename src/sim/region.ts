@@ -11649,6 +11649,21 @@ export class RegionSim {
         } else if (!rv.treaties.includes('non_aggression') && rv.relations < -10 && rv.relations > -50 && rv.weights.risk <= 5 && this.rng.chance(0.08)) {
           this.offers.push({ rivalId: rv.id, kind: 'non_aggression', expiresDay: this.day + 90 });
           this.addLog(`${rv.name} proposes a Non-Aggression Pact — cold neighbors, fenced borders.`, 'info');
+        } else if (
+          !rv.treaties.includes('climate_accord') &&
+          this.accordUnlocked() &&
+          this.warmingC > 1.8 &&
+          this.year >= 2020 &&
+          (ARCHETYPE_GREEN_PROPENSITY[rv.archetype] ?? 0.5) >= 0.6 &&
+          this.rng.chance(0.06)
+        ) {
+          // High-propensity rival (trading republic or crusader) invites player to the Climate Accord
+          this.offers.push({ rivalId: rv.id, kind: 'climate_accord', expiresDay: this.day + 180 });
+          this.addLog(
+            `${rv.name} extends a formal invitation to the Climate Accord — ` +
+            `warming is past +${this.warmingC.toFixed(1)}°C and they call for collective action.`,
+            'info',
+          );
         }
       }
       // Hostile mischief (GDD §6.4): town-scale friction, deniable and cheap.
