@@ -2729,6 +2729,24 @@ export const WORLD_GREEN_BASE = 0.55;        // baseline transition rate before 
 export const PLAYER_GREEN_DIFFUSION = 0.6;   // how much of the world's transition spills into a passive player's own emissions (GDD §5.6 proven-tech diffusion)
 export const DROWNED_GREEN_RELIEF = 1.5;     // °C of projection credit per unit worldGreenShare at the era verdict (a transitioning world's flat projection overstates 2100 warming)
 
+/** Maximum annual snapshots retained in statsHistory (one per year, 200y of coverage). */
+export const STATS_HISTORY_MAX = 200;
+
+/** One annual data point for the Century Graph. Sampled each January. */
+export interface StatSnapshot {
+  year: number;
+  /** Annualised GDP (gdpLastMonth × 12). */
+  gdp: number;
+  /** Total population across all player settlements. */
+  pop: number;
+  /** Global warming in °C above 1900 baseline. */
+  warmingC: number;
+  /** Player national treasury at snapshot time. */
+  treasury: number;
+  /** Mean satisfaction across player settlements (0–100). */
+  satisfaction: number;
+}
+
 /** The endgame's three skies (GDD §3.2): chosen by your climate, economy,
  *  and regime outcomes — not the calendar. */
 export type EraBranch = 'solarpunk' | 'dystopia' | 'drowned';
@@ -3184,6 +3202,8 @@ export class RegionSim {
   scouts: Scout[] = [];
   /** Monthly history for sparklines: last 12 months of key metrics. */
   monthlyHistory: Array<{ gdp: number; treasury: number; inflation: number; employment: number }> = [];
+  /** Annual snapshots for the Century Graph (sampled each January; ring buffer, max STATS_HISTORY_MAX). */
+  statsHistory: StatSnapshot[] = [];
   /** Regional factions competing for dominance (includes player faction) */
   regionalFactions: RegionalFaction[] = [];
   /** Player faction id (always 0 or first in list) */
@@ -5945,7 +5965,10 @@ export class RegionSim {
     this.tickUnrestLadder();
     this.tickOpinionDynamics();
     // Push education coverage to lag buffer once a year (month 0 = January)
-    if (this.month === 0) this.tickEducationLag();
+    if (this.month === 0) {
+      this.tickEducationLag();
+      this.tickStatsHistory();
+    }
 
     // Phase 15: Intermediate goods, arbitrage, and FX tick
     tickIntermediateGoods(this); // Phase 15: intermediate-goods production + cascade (systems/goods.ts)
@@ -7670,6 +7693,25 @@ export class RegionSim {
     const coverage = this.currentSchoolCoverage();
     this.educationLag.unshift(coverage);
     if (this.educationLag.length > 25) this.educationLag.pop();
+  }
+
+  /** Sample annual stats for the Century Graph. Called each January from monthlyUpdate. */
+  private tickStatsHistory(): void {
+    const playerSettlements = this.settlements.filter((t) => t.factionId === this.playerFactionId);
+    const pop = playerSettlements.reduce((s, t) => s + this.popOf(t), 0);
+    const satisfaction =
+      playerSettlements.length > 0
+        ? playerSettlements.reduce((s, t) => s + t.satisfaction, 0) / playerSettlements.length
+        : 0;
+    this.statsHistory.push({
+      year: this.year,
+      gdp: this.gdpLastMonth * 12,
+      pop,
+      warmingC: this.warmingC,
+      treasury: this.treasury,
+      satisfaction,
+    });
+    if (this.statsHistory.length > STATS_HISTORY_MAX) this.statsHistory.shift();
   }
 
   /** Tick the unrest ladder — escalate or de-escalate based on grievance. */
@@ -13558,6 +13600,7 @@ export class RegionSim {
       eraBranch: this.eraBranch,
       beatOilBarons: this.beatOilBarons,
       centuryReport: this.centuryReport,
+      statsHistory: this.statsHistory,
       seaRiseAnnounced: this.seaRiseAnnounced,
       lastTidalLogDay: this.lastTidalLogDay,
       lastRefugeesLogDay: this.lastRefugeesLogDay,
@@ -13829,6 +13872,7 @@ export class RegionSim {
     r.eraBranch = d.eraBranch ?? null;
     r.beatOilBarons = d.beatOilBarons ?? false;
     r.centuryReport = d.centuryReport ?? null;
+    r.statsHistory = d.statsHistory ?? [];
     r.seaRiseAnnounced = d.seaRiseAnnounced ?? false;
     r.lastTidalLogDay = d.lastTidalLogDay ?? -999;
     r.lastRefugeesLogDay = d.lastRefugeesLogDay ?? -999;

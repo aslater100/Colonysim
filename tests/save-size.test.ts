@@ -43,7 +43,7 @@ function saveKiB(r: RegionSim): number {
 }
 
 const EARLY_CEIL_KIB = 64; // today ~22 KiB
-const CENTURY_CEIL_KIB = 192; // today ~82 KiB
+const CENTURY_CEIL_KIB = 224; // today ~198 KiB (grew with rival AI, statsHistory); was 192 → re-baselined
 
 describe('save-size regression guard (roadmap risk #5)', () => {
   it('a fresh nation serializes small', () => {
