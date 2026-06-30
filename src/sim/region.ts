@@ -1818,7 +1818,7 @@ export interface ProvincialArmy {
 // ---- War (GDD §7): casus belli → mobilization → war score → negotiated peace ----
 
 /** Why we fight (GDD §7.1): CB quality sets home-front war support at declaration. */
-export type CasusBelli = 'sponsored_raids' | 'border_dispute' | 'fabricated';
+export type CasusBelli = 'sponsored_raids' | 'border_dispute' | 'fabricated' | 'revanchism';
 
 export const CASUS_BELLI_DEFS: Record<CasusBelli, { name: string; support: number; desc: string }> = {
   sponsored_raids: {
@@ -1832,6 +1832,10 @@ export const CASUS_BELLI_DEFS: Record<CasusBelli, { name: string; support: numbe
   fabricated: {
     name: 'Fabricated Incident', support: 40,
     desc: 'A staged provocation. Legitimacy −10 at home, and every chancery prices the lie like a broken seal.',
+  },
+  revanchism: {
+    name: 'Revanchism', support: 85,
+    desc: 'They dictated humiliating terms last time. The home front has not forgotten — this war needs no pretext.',
   },
 };
 
@@ -1925,7 +1929,7 @@ export interface ArmyUnit {
 // ---- Phase 16: Warfare System Depth (GDD §7) ----
 
 /** Casus Belli type for Phase 16 structured CB system. */
-export type CBType = 'border_dispute' | 'treaty_violation' | 'protect_ideology' | 'resource_denial' | 'fabricated';
+export type CBType = 'border_dispute' | 'treaty_violation' | 'protect_ideology' | 'resource_denial' | 'fabricated' | 'revanchism';
 
 /** A structured casus belli with effects (Phase 16). */
 export interface CBDef {
@@ -11846,6 +11850,10 @@ export class RegionSim {
     if (rv.relations < -40 && !rv.treaties.includes('non_aggression')) list.push('sponsored_raids');
     if (rv.relations < -20 && !rv.borderSettled) list.push('border_dispute'); // a signed survey leaves nothing to dispute
     list.push('fabricated');
+    // Revanchism: available if we lost a war against this rival — warScars records it.
+    if (this.warScars.some((s) => s.rivalId === rv.id && s.outcome === 'defeat')) {
+      list.push('revanchism');
+    }
     return list;
   }
 
@@ -12190,6 +12198,15 @@ export class RegionSim {
         type: 'resource_denial',
         targetRivalId: rivalId,
         warSupportBonus: 15,
+        reputationCost: 0,
+      });
+    }
+    // revanchism: available if we previously lost a war against this rival
+    if (this.warScars.some((s) => s.rivalId === rivalId && s.outcome === 'defeat')) {
+      result.push({
+        type: 'revanchism',
+        targetRivalId: rivalId,
+        warSupportBonus: 25,
         reputationCost: 0,
       });
     }

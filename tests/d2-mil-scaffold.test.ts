@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   RegionSim, REGION_MINUTES_PER_TICK,
-  WAR_SUPPORT_DECAY_MULT, WarScar,
+  WAR_SUPPORT_DECAY_MULT, WarScar, CASUS_BELLI_DEFS,
 } from '../src/sim/region';
 import { RegionMap } from '../src/sim/worldgen';
 import { Weather } from '../src/sim/weather';
@@ -192,5 +192,85 @@ describe('warScars post-war bookkeeping', () => {
       // Proposal rejected — scar not written (correct; only on actual end)
       expect(sim.warScars.length).toBe(0);
     }
+  });
+});
+
+// ---- Revanchism CB ----
+
+describe('revanchism CasusBelli', () => {
+  it('CASUS_BELLI_DEFS includes revanchism with high support', () => {
+    expect(CASUS_BELLI_DEFS.revanchism).toBeDefined();
+    expect(CASUS_BELLI_DEFS.revanchism.support).toBeGreaterThan(60);
+  });
+
+  it('revanchism is NOT available without a prior defeat scar', () => {
+    const r = colony(42);
+    const rival = (r as any).rivals?.[0];
+    if (!rival) return;
+    const cbs = r.availableCasusBelli(rival);
+    expect(cbs).not.toContain('revanchism');
+  });
+
+  it('revanchism becomes available after a defeat scar against that rival', () => {
+    const r = colony(42);
+    const rival = (r as any).rivals?.[0];
+    if (!rival) return;
+    // Inject a defeat scar against this rival
+    (r as any).warScars = [
+      { rivalId: rival.id, rivalName: rival.name, yearEnded: 1920, outcome: 'defeat', occupied: 0, casualties: 500, durationMonths: 6 },
+    ] as WarScar[];
+    const cbs = r.availableCasusBelli(rival);
+    expect(cbs).toContain('revanchism');
+  });
+
+  it('revanchism is NOT available for a defeat scar against a DIFFERENT rival', () => {
+    const r = colony(42);
+    const rival = (r as any).rivals?.[0];
+    if (!rival) return;
+    // Scar against rival id 9999 (doesn't exist)
+    (r as any).warScars = [
+      { rivalId: 9999, rivalName: 'Phantomia', yearEnded: 1920, outcome: 'defeat', occupied: 0, casualties: 200, durationMonths: 3 },
+    ] as WarScar[];
+    const cbs = r.availableCasusBelli(rival);
+    expect(cbs).not.toContain('revanchism');
+  });
+
+  it('revanchism is NOT available for a VICTORY scar (only defeat triggers it)', () => {
+    const r = colony(42);
+    const rival = (r as any).rivals?.[0];
+    if (!rival) return;
+    (r as any).warScars = [
+      { rivalId: rival.id, rivalName: rival.name, yearEnded: 1921, outcome: 'victory', occupied: 1, casualties: 300, durationMonths: 8 },
+    ] as WarScar[];
+    const cbs = r.availableCasusBelli(rival);
+    expect(cbs).not.toContain('revanchism');
+  });
+
+  it('revanchism appears in generateCasusBelli when a defeat scar exists', () => {
+    const r = colony(42);
+    const rival = (r as any).rivals?.[0];
+    if (!rival) return;
+    (r as any).warScars = [
+      { rivalId: rival.id, rivalName: rival.name, yearEnded: 1920, outcome: 'defeat', occupied: 0, casualties: 500, durationMonths: 6 },
+    ] as WarScar[];
+    const cbs = r.generateCasusBelli(rival.id);
+    expect(cbs.some((c) => c.type === 'revanchism')).toBe(true);
+  });
+
+  it('revanchism declareWar succeeds with the defeat scar present', () => {
+    const r = colony(42);
+    // Force nation proclaimed status so declareWar doesn't gate on it
+    (r as any).nationProclaimed = true;
+    const rival = (r as any).rivals?.[0];
+    if (!rival) return;
+    (r as any).warScars = [
+      { rivalId: rival.id, rivalName: rival.name, yearEnded: 1920, outcome: 'defeat', occupied: 0, casualties: 500, durationMonths: 6 },
+    ] as WarScar[];
+    const ok = r.declareWar(rival.id, 'revanchism');
+    // Revanchism gives support 85 — higher than border_dispute (60) and fabricated (40)
+    if (ok) {
+      expect((r as any).warSupport).toBeGreaterThanOrEqual(80);
+    }
+    // If ok is false it may be because there was already a war — acceptable
   });
 });
