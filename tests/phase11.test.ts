@@ -18,6 +18,7 @@ import {
   RegionSim, REGION_MINUTES_PER_TICK, BRANCH_YEAR, TECH_TREE, REGION_LAWS,
 } from '../src/sim/region';
 import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
+import { checkStrandedAssets, tickAutomation } from '../src/sim/systems/climate';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
 
@@ -158,7 +159,7 @@ describe('checkStrandedAssets()', () => {
     const r = nationReady();
     r.gdpLastMonth = 1000;
     // No solar_wind_parity in researched list
-    expect(r.checkStrandedAssets()).toBe(0);
+    expect(checkStrandedAssets(r)).toBe(0);
     expect(r.strandedAssetLoss).toBe(0);
   });
 
@@ -171,7 +172,7 @@ describe('checkStrandedAssets()', () => {
     // Run many checks to ensure at least one stranding event fires (25% chance per call)
     let totalLoss = 0;
     for (let i = 0; i < 50; i++) {
-      totalLoss += r.checkStrandedAssets();
+      totalLoss += checkStrandedAssets(r);
     }
     expect(totalLoss).toBeGreaterThan(0);
     expect(r.strandedAssetLoss).toBeGreaterThan(0);
@@ -194,8 +195,8 @@ describe('checkStrandedAssets()', () => {
     let loss2 = 0;
     const RUNS = 100;
     for (let i = 0; i < RUNS; i++) {
-      loss1 += r1.checkStrandedAssets();
-      loss2 += r2.checkStrandedAssets();
+      loss1 += checkStrandedAssets(r1);
+      loss2 += checkStrandedAssets(r2);
     }
 
     // With green_industry_act, losses should be less (buffered at 40%)
@@ -332,7 +333,7 @@ describe('Automation unemployment drift', () => {
     setYear(r, 2030);
     r.gdpLastMonth = 1000;
     // Run several monthly ticks
-    const monthTick = (reg: RegionSim) => (reg as unknown as { tickAutomation(): void }).tickAutomation();
+    const monthTick = (reg: RegionSim) => tickAutomation(reg);
     for (let i = 0; i < 12; i++) monthTick(r);
     expect(r.automationUnemployment).toBe(0);
   });
@@ -340,7 +341,7 @@ describe('Automation unemployment drift', () => {
   it('automationUnemployment drifts upward with ai_automation', () => {
     const r = nationReady();
     r.researched.add('ai_automation');
-    const monthTick = (reg: RegionSim) => (reg as unknown as { tickAutomation(): void }).tickAutomation();
+    const monthTick = (reg: RegionSim) => tickAutomation(reg);
     for (let i = 0; i < 24; i++) monthTick(r);
     expect(r.automationUnemployment).toBeGreaterThan(0);
   });
@@ -353,7 +354,7 @@ describe('Automation unemployment drift', () => {
     r2.researched.add('ai_automation');
     r2.ubsActive = true;
 
-    const tick1 = (reg: RegionSim) => (reg as unknown as { tickAutomation(): void }).tickAutomation();
+    const tick1 = (reg: RegionSim) => tickAutomation(reg);
     const MONTHS = 24;
     for (let i = 0; i < MONTHS; i++) {
       tick1(r1);
@@ -366,7 +367,7 @@ describe('Automation unemployment drift', () => {
     const r = nationReady();
     r.researched.add('ai_automation');
     r.automationUnemployment = 0.29;
-    const tick = (reg: RegionSim) => (reg as unknown as { tickAutomation(): void }).tickAutomation();
+    const tick = (reg: RegionSim) => tickAutomation(reg);
     for (let i = 0; i < 10; i++) tick(r);
     expect(r.automationUnemployment).toBeLessThanOrEqual(0.3);
   });

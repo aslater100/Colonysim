@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { RegionSim, CO2_BASE_PPM, SEA_WALL_YEAR, REGION_MINUTES_PER_TICK } from '../src/sim/region';
 import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
+import { tickClimate } from '../src/sim/systems/climate';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
 
@@ -123,9 +124,7 @@ describe('Climate: sea-rise announcement', () => {
       r.settlements[0].site = { ...r.settlements[0].site, coastal: true };
     }
     r.warmingC = 1.25;
-    // tickClimate is private; drive it via tick()
-    const priv = r as unknown as { tickClimate(): void };
-    priv.tickClimate();
+    tickClimate(r);
     expect(r.seaRiseAnnounced).toBe(true);
     expect(r.log.some((l) => l.text.includes('waterline'))).toBe(true);
   });
@@ -229,15 +228,13 @@ describe('Climate: flood-proofing', () => {
     baseTarget.satisfaction = 60;
     baseTarget.food = 500;
     base.warmingC = 2.0;
-    const priv = base as unknown as { tickClimate(): void };
-    priv.tickClimate();
+    tickClimate(base);
     const baseSatLoss = 60 - baseTarget.satisfaction;
 
     // Flood-proofed damage
     target.floodProofed = true;
     r.warmingC = 2.0;
-    const privR = r as unknown as { tickClimate(): void };
-    privR.tickClimate();
+    tickClimate(r);
     const satLoss = 60 - target.satisfaction;
 
     expect(satLoss).toBeLessThan(baseSatLoss);
@@ -293,8 +290,7 @@ describe('Climate: managed retreat', () => {
     const satAfterRetreat = target.satisfaction;
     // Now force a high-warming tick — shouldn't damage the retreated settlement
     r.warmingC = 2.5;
-    const priv = r as unknown as { tickClimate(): void };
-    priv.tickClimate();
+    tickClimate(r);
     // Settlement is no longer coastal so flood loop skips it
     expect(target.satisfaction).toBeGreaterThanOrEqual(satAfterRetreat);
   });

@@ -23,6 +23,7 @@ import { tickPriceArbitrage } from './systems/arbitrage';
 import { tickIntermediateGoods, worldGoodPrice, worldGoodScarcity, worldMarketTightness, worldPowerPressure } from './systems/goods';
 import { tickAdvisorLoyalty, tickAdvisorEvents, tickLegitimacy, tickRegimeMechanics } from './systems/regime';
 import { tickDemographicTransition, tickAppealMigration, tickEducationLag, tickUnrestLadder } from './systems/demographics';
+import { tickClimate, checkStrandedAssets, tickAutomation } from './systems/climate';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -2650,11 +2651,11 @@ const ROUTE_CONDITION_FLOOR = 15;
 /** Atmospheric CO₂ at the wagon's arrival, 1900 (GDD §8.2). */
 export const CO2_BASE_PPM = 295;
 /** Warming equilibrium per ppm above base: 600 ppm ≈ +3.4°C at rest. */
-const WARMING_PER_PPM = 0.011;
+export const WARMING_PER_PPM = 0.011;
 /** The ~20-year lag (GDD §8.2): warming closes 1/40th of the gap per
  *  climate tick (two ticks a game-year) — the bill arrives two governments
  *  after the smoke. */
-const WARMING_LAG_TICKS = 40;
+export const WARMING_LAG_TICKS = 40;
 /** Adaptation works open once the threat is on the survey maps. */
 export const SEA_WALL_YEAR = 2025;
 /** Era 8 begins: the century's verdict is read (GDD §3.2). */
@@ -3107,7 +3108,7 @@ export class RegionSim {
    *  ACCORD_DEFECT_THRESHOLD = free-rider. Cleared when accord torn. */
   accordCompliance: Record<number, number> = {};
   /** Rivals whose defection has already triggered a log (transient: resets on load). */
-  private accordDefectLogged = new Set<number>();
+  accordDefectLogged = new Set<number>();
   /** True once Deploy is activated; the aerosols are in the stratosphere. */
   geoDeployed = false;
   /** Day the aerosols were injected; used to phase the cooling. */
@@ -3385,9 +3386,9 @@ export class RegionSim {
   /** Post-war bookkeeping: one entry per finished war, oldest first. */
   warScars: WarScar[] = [];
   seaRiseAnnounced = false;
-  private lastTidalLogDay = -999;
-  private lastRefugeesLogDay = -999;
-  private lastExtremeWeatherDay = -999;
+  lastTidalLogDay = -999;
+  lastRefugeesLogDay = -999;
+  lastExtremeWeatherDay = -999;
   private droughtAnnounced = false;
   // ---- Phase 17: Historical Scenarios & Alternate Starts (GDD §8.8, §6.1) ----
   /** Scenario id currently in play, or null for sandbox. */
@@ -4262,164 +4263,6 @@ export class RegionSim {
     return Math.max(0, (ppm2100 - CO2_BASE_PPM) * WARMING_PER_PPM);
   }
 
-  /** The climate tick — runs with every monthly update, from the first
-   *  decade (the ledger runs from day one; only its payoff waits). No RNG
-   *  draws here: climate is arithmetic, not luck. */
-  private tickClimate(): void {
-    const emit = this.playerEmissions() + this.worldEmissions();
-    this.emissionsLastMonth = emit;
-    this.co2ppm += emit;
-    const equilibrium = Math.max(0, (this.co2ppm - CO2_BASE_PPM) * WARMING_PER_PPM);
-    this.warmingC += (equilibrium - this.warmingC) / WARMING_LAG_TICKS;
-    // Geoengineering: phased aerosol cooling over the active window
-    if (this.geoDeployed && this.day - this.geoDeployDay < GEOENGINEER_DURATION_DAYS) {
-      const ticksInWindow = GEOENGINEER_DURATION_DAYS / 30; // 30-day climate ticks
-      this.warmingC = Math.max(0, this.warmingC - GEOENGINEER_COOLING / ticksInWindow);
-    }
-    this.tickAccords();
-    // The ghost-line announcement: quiet dread as UI (GDD §8.2)
-    if (!this.seaRiseAnnounced && this.warmingC >= 1.2 && this.settlements.some((t) => t.site.coastal)) {
-      this.seaRiseAnnounced = true;
-      this.addLog(
-        `+${this.warmingC.toFixed(1)}°C: State surveyors pencil the projected 2100 waterline onto the coastal charts. ` +
-        `It runs through streets people live on.`,
-        'bad',
-      );
-    }
-    // The sea collects (GDD §8.2): tidal flooding on unwalled coastal towns
-    if (this.year >= 2035 && this.warmingC > 1.5) {
-      const severity = (this.warmingC - 1.5) * (this.eraBranch === 'drowned' ? 1.5 : 1);
-      let hit = false;
-      for (const t of this.settlements) {
-        if (!t.site.coastal || t.seaWall || this.popOf(t) < 1) continue;
-        const damageScale = t.floodProofed ? 0.5 : 1.0;
-        t.food *= Math.max(0.7, 1 - 0.05 * severity * damageScale);
-        this.removePop(t, this.popOf(t) * 0.0015 * severity * damageScale);
-        t.satisfaction = Math.max(0, t.satisfaction - 2 * severity * damageScale);
-        hit = true;
-      }
-      if (hit && this.day - this.lastTidalLogDay > 300) {
-        this.lastTidalLogDay = this.day;
-        this.addLog(
-          'King tides take the low streets again — unwalled coastal towns pump out cellars and count who left.',
-          'bad',
-        );
-      }
-    }
-    // Climate refugee migration (GDD §8.2): coastal flooding bleeds population
-    // inland. Flight rate is mild (0.1% per severity unit/tick) so the effect
-    // builds gradually, matching the slow-burn feel of sea-level rise.
-    if (this.year >= 2035 && this.warmingC > 1.5) {
-      const severity = (this.warmingC - 1.5) * (this.eraBranch === 'drowned' ? 1.5 : 1);
-      const playerSettlements = this.settlements.filter((t) => t.factionId === this.playerFactionId);
-      const flooded = playerSettlements.filter((t) => t.site.coastal && !t.seaWall && this.popOf(t) > 5);
-      const inland = playerSettlements.filter((t) => !t.site.coastal);
-      if (flooded.length > 0 && inland.length > 0) {
-        const dest = inland.reduce((best, t) => (this.popOf(t) > this.popOf(best) ? t : best));
-        let totalMovers = 0;
-        for (const from of flooded) {
-          const fromPop = this.popOf(from);
-          if (fromPop < 5) continue;
-          const flightRate = Math.min(0.01, 0.001 * severity);
-          const movers = fromPop * flightRate;
-          if (movers < 0.1) continue;
-          this.removePop(from, movers);
-          dest.cohorts.bands[1] += movers * 0.7;
-          dest.cohorts.bands[2] += movers * 0.3;
-          totalMovers += movers;
-        }
-        if (totalMovers >= 1 && this.day - this.lastRefugeesLogDay > 365) {
-          this.lastRefugeesLogDay = this.day;
-          this.addLog(
-            `Tidal flooding pushes families inland — ${Math.round(totalMovers)} people arrive at ${dest.name} ` +
-            `seeking higher ground (+${this.warmingC.toFixed(1)}°C warming).`,
-            'bad',
-          );
-        }
-      }
-    }
-    // Sea-wall overtopping (GDD §8.2): at ≥4°C even walled towns are breached.
-    // Sea walls buy time, not immunity — extreme warming overwashes any earthwork.
-    if (this.warmingC >= 4.0 && this.year >= 2060) {
-      const overtopSeverity = (this.warmingC - 4.0) * 0.4; // gentler than unprotected
-      let overtopHit = false;
-      for (const t of this.settlements) {
-        if (!t.site.coastal || !t.seaWall || this.popOf(t) < 1) continue;
-        const damageScale = t.floodProofed ? 0.3 : 0.6;
-        t.food *= Math.max(0.85, 1 - 0.03 * overtopSeverity * damageScale);
-        this.removePop(t, this.popOf(t) * 0.0008 * overtopSeverity * damageScale);
-        t.satisfaction = Math.max(0, t.satisfaction - 1.5 * overtopSeverity * damageScale);
-        overtopHit = true;
-      }
-      if (overtopHit && this.day - this.lastTidalLogDay > 600) {
-        this.lastTidalLogDay = this.day;
-        this.addLog(
-          `+${this.warmingC.toFixed(1)}°C: The sea walls weren't built for this. Storm surge overtops the ` +
-          `barriers; the walled districts flood behind their own defences. Even protection has its ceiling.`,
-          'bad',
-        );
-      }
-    }
-    // Extreme weather amplification: warming > 1.5°C makes storms and droughts
-    // more frequent (GDD §8.2: "extreme-weather frequency ↑ with temperature rise").
-    // Monthly probability: ~4% at +2°C, ~8% at +2.5°C.
-    if (this.warmingC >= 1.5 && this.stateProclaimed) {
-      const extraChance = (this.warmingC - 1.5) * 0.08;
-      if (this.rng.next() < extraChance && this.day - this.lastExtremeWeatherDay > 60) {
-        const playerTowns = this.settlements.filter((t) => t.factionId === this.playerFactionId);
-        const target = playerTowns[this.rng.int(playerTowns.length)];
-        if (target && !target.activeEvents.some((e) => e.kind === 'drought' || e.kind === 'flood')) {
-          const isDrought = this.rng.next() < 0.55;
-          const kind: RegionalEventKind = isDrought ? 'drought' : 'flood';
-          target.activeEvents.push({ kind, untilDay: this.day + 50, severity: 0.8 });
-          this.lastExtremeWeatherDay = this.day;
-          this.addLog(
-            isDrought
-              ? `Climate volatility: prolonged drought scorches the fields around ${target.name} (+${this.warmingC.toFixed(1)}°C warming effect).`
-              : `Climate volatility: storm surge overwhelms drainage at ${target.name} — farmland underwater.`,
-            'bad',
-          );
-        }
-      }
-    }
-    // Era branching: early path (1990) if oil barons beaten, otherwise standard (2040)
-    if (this.eraBranch === null && this.year >= EARLY_SOLARPUNK_YEAR && this.beatOilBarons) this.decideBranch();
-    if (this.eraBranch === null && this.year >= BRANCH_YEAR) this.decideBranch();
-    if (!this.centuryReport && this.year >= CENTURY_YEAR) this.buildCenturyReport();
-    this.triggerEpilogueEvent(); // post-2100 flavor events
-  }
-
-  /** Monthly: drift accord compliance and detect free-riders (GDD §8.2).
-   *  Commerce-driven signatories stay honest; expansion-minded ones quietly
-   *  cheat. First detection triggers one log entry; the player can sanction. */
-  private tickAccords(): void {
-    for (const rv of this.rivals) {
-      if (!rv.treaties.includes('climate_accord')) {
-        if (this.accordCompliance[rv.id] !== undefined) {
-          delete this.accordCompliance[rv.id];
-          this.accordDefectLogged.delete(rv.id);
-        }
-        continue;
-      }
-      let comp = this.accordCompliance[rv.id] ?? 1.0;
-      // High-commerce powers keep their word; expansion hawks cut corners
-      const drift = (rv.weights.commerce - rv.weights.expansion) * 0.006;
-      comp = Math.max(0, Math.min(1, comp + drift + (this.rng.next() - 0.55) * 0.04));
-      this.accordCompliance[rv.id] = comp;
-      if (comp < ACCORD_DEFECT_THRESHOLD && !this.accordDefectLogged.has(rv.id)) {
-        this.accordDefectLogged.add(rv.id);
-        this.addLog(
-          `ACCORD DEFECTION: satellite readings show ${rv.name}'s emissions climbing behind diplomatic smiles. ` +
-          `Sanction them (−20 relations, accord torn) or absorb the betrayal to keep the network intact.`,
-          'bad',
-        );
-      }
-      if (comp >= ACCORD_DEFECT_THRESHOLD + 0.1) {
-        this.accordDefectLogged.delete(rv.id);
-      }
-    }
-  }
-
   /** True once `environmentalism` is researched and the year is right —
    *  this gates the Climate Accord treaty type in diplomacy. */
   accordUnlocked(): boolean {
@@ -4470,7 +4313,7 @@ export class RegionSim {
 
   /** Era 8 opens and the verdict is read (GDD §3.2): the sky you get was
    *  chosen by climate, regime, and how your people live — not the calendar. */
-  private decideBranch(): void {
+  decideBranch(): void {
     // `projectedWarming` extrapolates today's emission rate FLAT to 2100 — a fair
     // estimate for a static world, but pessimistic when the rival world is actively
     // bending its own curve (worldGreenShare): a transition already under way keeps
@@ -4607,7 +4450,7 @@ export class RegionSim {
 
   /** 1 Jan 2100: the Century Report (GDD §8.4) — a verdict, not a win
    *  screen. The sandbox keeps running afterward if you wish. */
-  private buildCenturyReport(): void {
+  buildCenturyReport(): void {
     const pop = this.totalPop();
     const gdpPerHead = pop > 0 ? this.gdpLastMonth / pop : 0;
     const gov = GOV_TYPES.find((g) => g.id === this.govType);
@@ -4656,46 +4499,6 @@ export class RegionSim {
   }
 
   // ---- Phase 11: Renewables, Automation & Carbon Pricing ----
-
-  /** Check whether fossil-fuel infrastructure has become stranded as clean
-   *  energy undercuts coal and oil on cost. Called monthly once solar_wind_parity
-   *  is researched. Each stranded-asset event deducts a treasury write-down and
-   *  logs the transition. Returns the loss amount (0 if no stranding occurred). */
-  checkStrandedAssets(): number {
-    if (!this.has('solar_wind_parity')) return 0;
-    // Stranding risk scales with how far the energy transition has progressed
-    // and how many fossil-era investments the economy carries.
-    const fossilDepth =
-      (this.has('combustion_engine') ? 1 : 0) +
-      (this.has('mass_production') ? 1 : 0) +
-      (this.has('electrical_grid') ? 1 : 0);
-    if (fossilDepth === 0) return 0;
-
-    // Each clean tech node reduces the stranding risk (assets are already written off or avoided)
-    const cleanDepth =
-      (this.has('solar_wind_parity') ? 1 : 0) +
-      (this.has('battery_storage') ? 1 : 0) +
-      (this.has('ev_adoption') ? 1 : 0);
-
-    // Green Industry Act buffers losses — the state absorbs them via the treasury
-    const buffered = this.passedLaws.has('green_industry_act');
-
-    // Base write-down: £ per stranded unit of fossil infrastructure
-    const baseWrite = this.gdpLastMonth * 0.015 * (fossilDepth / 3) * (1 - cleanDepth / 4);
-    if (baseWrite <= 0) return 0;
-
-    // Probabilistic: stranding events happen ~quarterly at peak
-    if (!this.rng.chance(0.25)) return 0;
-
-    const loss = buffered ? baseWrite * 0.4 : baseWrite;
-    this.treasury = Math.max(0, this.treasury - loss);
-    this.strandedAssetLoss += loss;
-    const msg = buffered
-      ? `GREEN TRANSITION: a tranche of fossil infrastructure is written down — state policy absorbs ${formatCurrency(loss)} of the stranded-asset loss.`
-      : `STRANDED ASSETS: coal and oil infrastructure loses ${formatCurrency(loss)} of book value as renewables undercut on cost. The write-down lands on the treasury.`;
-    this.addLog(msg, 'bad');
-    return loss;
-  }
 
   /** Enact Universal Basic Support — a monthly stipend for workers displaced
    *  by automation. Requires the universal_basic_support law to be passed.
@@ -4795,27 +4598,6 @@ export class RegionSim {
         t.satisfaction = Math.min(100, t.satisfaction + 5);
       }
     }
-  }
-
-  /** Monthly drift of automation unemployment. Called from monthlyUpdate when
-   *  ai_automation is researched. UBS halves the drift rate. */
-  private tickAutomation(): void {
-    if (!this.has('ai_automation')) return;
-    // Automation steadily displaces workers; UBS softens the drift
-    const rate = this.ubsActive ? 0.001 : 0.002;
-    this.automationUnemployment = Math.min(0.3, this.automationUnemployment + rate);
-
-    // High automation reduces services sector wages and satisfaction
-    if (this.automationUnemployment > 0.05) {
-      const displaceEffect = (this.automationUnemployment - 0.05) * 40;
-      for (const t of this.settlements) {
-        t.satisfaction = Math.max(0, t.satisfaction - displaceEffect * 0.01);
-        t.grievance = Math.min(100, t.grievance + displaceEffect * 0.005);
-      }
-    }
-
-    // Information sector booms (offsetting for those who can access it)
-    // This is a GDP effect, reflected through sector output in updateSectors
   }
 
   /** Built links are State works, paid from the treasury; links only upgrade. */
@@ -5934,9 +5716,9 @@ export class RegionSim {
     if (this.playerWar) this.tickWarSupport(); // Phase 16: war support
     this.updateRivalAI(); // staggered AI updates for rivals (GDD §6.2)
     this.updateScouts(); // update faction scouts: movement, spawning, expiry (GDD §6.2)
-    this.tickClimate(); // the ledger runs from the first decade (GDD §8.2)
-    this.tickAutomation(); // Phase 11: automation unemployment drift
-    this.checkStrandedAssets(); // Phase 11: fossil write-downs as clean energy arrives
+    tickClimate(this); // the ledger runs from the first decade (GDD §8.2)
+    tickAutomation(this); // Phase 11: automation unemployment drift
+    checkStrandedAssets(this); // Phase 11: fossil write-downs as clean energy arrives
     if (this.hasCentralBank()) this.tickMonetary();
     this.tickHistoricalAnchors(); // scripted world-events that rhyme with history (GDD §1)
     this.tickMedia(); // Phase 12: media reach, press freedom, misinformation era
@@ -6091,7 +5873,7 @@ export class RegionSim {
   }
 
   /** Post-2100 epilogue flavor events: era-specific achievements and narrative beats. */
-  private triggerEpilogueEvent(): void {
+  triggerEpilogueEvent(): void {
     if (this.year < CENTURY_YEAR) return;
 
     const epilogueEvents = this.getEpilogueEventPool();

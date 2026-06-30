@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { RegionSim } from '../src/sim/region';
+import { tickClimate } from '../src/sim/systems/climate';
 
 /**
  * Climate refugee migration (GDD §8.2).
@@ -43,7 +44,7 @@ describe('climate refugee migration', () => {
     const { r, coast, inland } = makeRegion(2.5, 2030);
     const coastPopBefore = (r as any).popOf(coast);
     const inlandPopBefore = (r as any).popOf(inland);
-    (r as any).tickClimate?.();
+    tickClimate(r);
     expect((r as any).popOf(coast)).toBe(coastPopBefore);
     expect((r as any).popOf(inland)).toBe(inlandPopBefore);
   });
@@ -52,7 +53,7 @@ describe('climate refugee migration', () => {
     const { r, coast, inland } = makeRegion(1.0, 2050);
     const coastPopBefore = (r as any).popOf(coast);
     const inlandPopBefore = (r as any).popOf(inland);
-    (r as any).tickClimate?.();
+    tickClimate(r);
     expect((r as any).popOf(coast)).toBe(coastPopBefore);
     expect((r as any).popOf(inland)).toBe(inlandPopBefore);
   });
@@ -63,7 +64,7 @@ describe('climate refugee migration', () => {
     const inlandPopBefore = (r as any).popOf(inland);
     if (coastPopBefore <= 5) return; // nothing to flee
 
-    (r as any).tickClimate?.();
+    tickClimate(r);
 
     const coastPopAfter = (r as any).popOf(coast);
     const inlandPopAfter = (r as any).popOf(inland);
@@ -78,7 +79,7 @@ describe('climate refugee migration', () => {
     coast.seaWall = true;
     const coastPopBefore = (r as any).popOf(coast);
     const inlandPopBefore = (r as any).popOf(inland);
-    (r as any).tickClimate?.();
+    tickClimate(r);
     // Walled — no refugee flow from this gate (overtopping is a separate block)
     const inlandPopAfter = (r as any).popOf(inland);
     // Inland pop should not grow from refugees when coastal is walled
@@ -95,8 +96,8 @@ describe('climate refugee migration', () => {
     const inland1Before = (r1 as any).popOf(i1);
     const inland2Before = (r2 as any).popOf(i2);
 
-    (r1 as any).tickClimate?.();
-    (r2 as any).tickClimate?.();
+    tickClimate(r1);
+    tickClimate(r2);
 
     const loss1 = pop1Before - (r1 as any).popOf(c1);
     const loss2 = pop2Before - (r2 as any).popOf(c2);
@@ -116,7 +117,7 @@ describe('climate refugee migration', () => {
     // Remove inland settlements (keep only the coastal one)
     r.settlements = r.settlements.filter((t: any) => t.id === coast.id);
     const popBefore = (r as any).popOf(coast);
-    (r as any).tickClimate?.();
+    tickClimate(r);
     // No destination → no migration → pop unchanged by refugee block
     const popAfter = (r as any).popOf(coast);
     // Pop may fall from tidal flooding, but not FROM the refugee block

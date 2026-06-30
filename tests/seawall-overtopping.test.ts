@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { RegionSim } from '../src/sim/region';
+import { tickClimate } from '../src/sim/systems/climate';
 
 /**
  * Sea-wall overtopping at extreme warming (≥4°C, year ≥2060).
@@ -41,7 +42,7 @@ describe('sea-wall overtopping', () => {
     const popBefore = (r as any).popOf(walledTown);
     // Run tickClimate (called from monthlyUpdate via the tick chain)
     // We poke the private method directly via any-cast
-    (r as any).tickClimate?.();
+    tickClimate(r);
     const popAfter = (r as any).popOf(walledTown);
     // Below 4°C, overtopping block does not fire — pop unchanged
     expect(popAfter).toBe(popBefore);
@@ -56,7 +57,7 @@ describe('sea-wall overtopping', () => {
 
     // Prime lastTidalLogDay far in the past so the log gate passes
     (r as any).lastTidalLogDay = 0;
-    (r as any).tickClimate?.();
+    tickClimate(r);
 
     const popAfter = (r as any).popOf(walledTown);
     // Some pop loss expected (may be tiny but > 0 when warming is high enough)
@@ -71,7 +72,7 @@ describe('sea-wall overtopping', () => {
     const walledPopBefore = (r as any).popOf(walledTown);
     const unwalledPopBefore = (r as any).popOf(unwalledTown);
     (r as any).lastTidalLogDay = 0;
-    (r as any).tickClimate?.();
+    tickClimate(r);
     const walledPopAfter = (r as any).popOf(walledTown);
     const unwalledPopAfter = (r as any).popOf(unwalledTown);
 
@@ -87,7 +88,7 @@ describe('sea-wall overtopping', () => {
     const { r, walledTown } = coastalNation(5.0, 2050); // year 2050 < gate
     const popBefore = (r as any).popOf(walledTown);
     (r as any).lastTidalLogDay = 0;
-    (r as any).tickClimate?.();
+    tickClimate(r);
     const popAfter = (r as any).popOf(walledTown);
     // Year gate prevents overtopping
     expect(popAfter).toBe(popBefore);
@@ -104,8 +105,8 @@ describe('sea-wall overtopping', () => {
 
     const pop1Before = (r1 as any).popOf(t1);
     const pop2Before = (r2 as any).popOf(t2);
-    (r1 as any).tickClimate?.();
-    (r2 as any).tickClimate?.();
+    tickClimate(r1);
+    tickClimate(r2);
     const loss1 = pop1Before - (r1 as any).popOf(t1);
     const loss2 = pop2Before - (r2 as any).popOf(t2);
 
