@@ -39,17 +39,20 @@ export function computeCongestionTariff(r: RegionSim, fromId: number, toId: numb
   return Math.max(0.05, Math.min(0.3, tariff));
 }
 
-/** Tick price arbitrage between player settlements (GDD §5.2: physical goods on
- *  routes, transit × congestion). Goods physically travel: a flow's arbitrage
- *  profit is paid out only when the shipment ARRIVES (after `transitDays` of
- *  travel, which congestion lengthens), and a flow whose route is severed
- *  mid-transit is lost. Where a price differential exceeds congestion costs and
- *  no shipment is already en route, a new flow is dispatched. */
+/** Tick price arbitrage between all settlements across every faction (GDD §5.2:
+ *  physical goods on routes, transit × congestion). Goods physically travel: a
+ *  flow's arbitrage profit is paid out only when the shipment ARRIVES (after
+ *  `transitDays` of travel, which congestion lengthens), and a flow whose route
+ *  is severed mid-transit is lost. Where a price differential exceeds congestion
+ *  costs and no shipment is already en route, a new flow is dispatched. Profit
+ *  is credited to the SOURCE faction's treasury (player national treasury or the
+ *  rival's own faction treasury) so cross-faction trade enriches the seller. */
 export function tickPriceArbitrage(r: RegionSim): void {
   // 1. Advance in-transit shipments. Deliver those that arrive (pay out their
-  //    pending income); strand those whose route has been severed.
+  //    pending income to the SOURCE faction); strand those whose route is severed.
   const stillMoving: typeof r.tradeFlows = [];
-  let delivered = 0;
+  let totalDelivered = 0;
+  let playerDelivered = 0;
   let stranded = 0;
   for (const flow of r.tradeFlows) {
     // A flow needs a live route the whole way; a SEVERED lane loses its cargo.
@@ -66,7 +69,11 @@ export function tickPriceArbitrage(r: RegionSim): void {
     }
     flow.transitDays -= DAYS_PER_MONTH;
     if (flow.transitDays <= 0) {
-      delivered += flow.pendingIncome;
+      // Credit the SOURCE faction's treasury (the seller of the surplus good).
+      const srcFactionId = r.settlement(flow.fromSettlementId)?.factionId ?? r.playerFactionId;
+      r.addFactionTreasury(srcFactionId, flow.pendingIncome);
+      totalDelivered += flow.pendingIncome;
+      if (srcFactionId === r.playerFactionId) playerDelivered += flow.pendingIncome;
       // Land the physical cargo in the destination town's ledger (the source was
       // debited on dispatch). A vanished destination simply drops the cargo.
       if (flow.cargo > 0) {
@@ -78,10 +85,12 @@ export function tickPriceArbitrage(r: RegionSim): void {
     }
   }
   r.tradeFlows = stillMoving;
-  if (delivered > 0) {
-    r.treasury += delivered;
-    if (r.rng.chance(0.1)) {
-      r.addLog(`Goods arrive: shipments deliver ${formatCurrency(Math.round(delivered))} in arbitrage profit.`, 'good');
+  // Gate the RNG call on any delivery (same pattern as before) so the random
+  // stream is minimally perturbed in self-sufficient autoplay (no deliveries →
+  // no call). Log only shows player-visible income.
+  if (totalDelivered > 0) {
+    if (r.rng.chance(0.1) && playerDelivered > 0) {
+      r.addLog(`Goods arrive: shipments deliver ${formatCurrency(Math.round(playerDelivered))} in arbitrage profit.`, 'good');
     }
   }
   if (stranded > 0 && r.rng.chance(0.15)) {
@@ -105,8 +114,12 @@ export function tickPriceArbitrage(r: RegionSim): void {
   //    per-pair form did (byte-identical until a real shortage opens a spread). Step 2
   //    consumes no RNG, so the global ordering cannot move the RNG stream — only WHICH
   //    lanes ship under a genuine shortage.
-  const playerSettlements = r.settlements.filter(s => s.factionId === r.playerFactionId);
-  if (playerSettlements.length < 2) return;
+  // All settlements across every faction participate in arbitrage. A rival's towns
+  // trade with each other (intra-faction) AND with the player's towns IF a route
+  // connects them. `computeCongestionTariff` returns 0.3 (max) when no route exists,
+  // so the tariff ≥ 0.3 guard below ensures only routed pairs ever dispatch.
+  const allSettlements = r.settlements;
+  if (allSettlements.length < 2) return;
 
   const goodIds = INTERMEDIATE_GOODS
     .filter(g => r.year >= g.eraUnlock)
@@ -118,10 +131,10 @@ export function tickPriceArbitrage(r: RegionSim): void {
   // cheap→dear whose per-unit price gap clears the per-unit congestion friction.
   type Opp = { goodId: string; source: Settlement; market: Settlement; gap: number; tariff: number };
   const opps: Opp[] = [];
-  for (let i = 0; i < playerSettlements.length; i++) {
-    for (let j = i + 1; j < playerSettlements.length; j++) {
-      const a = playerSettlements[i];
-      const b = playerSettlements[j];
+  for (let i = 0; i < allSettlements.length; i++) {
+    for (let j = i + 1; j < allSettlements.length; j++) {
+      const a = allSettlements[i];
+      const b = allSettlements[j];
       const tariff = computeCongestionTariff(r, a.id, b.id);
       if (tariff >= 0.3) continue; // no route
       for (const goodId of goodIds) {

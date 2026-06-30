@@ -14413,6 +14413,17 @@ export class RegionSim {
     if (faction.id === this.playerFactionId) this.treasury -= cost;
     else faction.treasury -= cost;
   }
+  /** Credit `amount` to the faction identified by `factionId` — the national treasury
+   *  for the player, the faction's own treasury for a rival (the public complement of
+   *  the private factionDevPurse / spendFactionDev seam, used by the arbitrage subsystem
+   *  to route trade-flow profits to the correct purse). */
+  public addFactionTreasury(factionId: number, amount: number): void {
+    if (factionId === this.playerFactionId) this.treasury += amount;
+    else {
+      const fac = this.faction(factionId);
+      if (fac) fac.treasury += amount;
+    }
+  }
 
   /** Spatial-4X — a faction develops one of its towns this update: it raises a
    *  building on its best-fitting hex, or (once a same-sector cluster exists) zones

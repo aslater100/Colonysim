@@ -166,3 +166,41 @@ describe('autoDevelopPlayer — deterministic re-baseline', () => {
     expect(a.playerPop()).toBe(b.playerPop());
   });
 });
+
+// ---- 5. Balance-bound guard — locks the flag-ON spatial re-baseline ----
+//
+// The headless sweep (8-seed × 181y, flag ON) produces pop 21.6–22.9k, treasury
+// 8.9–12.6 months of GDP, inflation pinned 2.0%. This guard asserts the same
+// bounds hold across 3 seeds over 60 years so any future change that silently
+// breaks the spatial buildout triggers a red test rather than a silent drift.
+
+describe('autoDevelopPlayer — flag-ON balance bounds (locks the spatial re-baseline)', () => {
+  for (const seed of [1000, 1007, 1021]) {
+    it(`seed ${seed}: pop bounded, treasury finite, inflation ~2%, player builds`, () => {
+      const r = colony(seed);
+      r.autoDevelopPlayer = true;
+      runDays(r, 60 * 100); // 100 game-years of autoplay (~year 2000)
+
+      const last = r.monthlyHistory[r.monthlyHistory.length - 1];
+      const gdp = last ? last.gdp : 0;
+      const treasMonths = gdp > 0 ? r.treasury / (gdp / 12) : 0;
+
+      // Treasury must not balloon (>30 mo = unrealistic hoard) or collapse (<1 mo = famine risk).
+      // Probe (3 seeds × 100y): 6.7–10.3 months of GDP — bounds below are generous guards.
+      expect(treasMonths, 'treasury should sit 1–30 months of GDP').toBeGreaterThan(1);
+      expect(treasMonths).toBeLessThan(30);
+
+      // Population stays in the expected spatial-economy range.
+      // Probe (3 seeds × 100y): 15.6k–17.1k — lower bound guards against collapse.
+      expect(r.playerPop(), 'player pop should be within the spatial range').toBeGreaterThan(5_000);
+      expect(r.playerPop()).toBeLessThan(50_000);
+
+      // Inflation stays pinned at the model's long-run equilibrium.
+      expect(r.inflationRate * 100, 'inflation should be ~2%').toBeGreaterThan(1.0);
+      expect(r.inflationRate * 100).toBeLessThan(4.0);
+
+      // Player actually builds something with the flag on.
+      expect(playerPlaced(r), 'player should raise at least 3 placed buildings/districts').toBeGreaterThanOrEqual(3);
+    });
+  }
+});
