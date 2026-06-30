@@ -21,6 +21,13 @@ import {
   CBDef,
   PeaceTermDef,
 } from '../src/sim/region';
+import {
+  tickMobilization,
+  resolveArmyGroupBattle,
+  tickSupplyLines,
+  tickOccupation,
+  tickWarSupport,
+} from '../src/sim/systems/military';
 
 // ---- helpers ----
 
@@ -255,7 +262,7 @@ describe('tickMobilization()', () => {
     for (let i = 0; i < 6; i++) {
       (r as unknown as { mobilizationMonths: number }).mobilizationMonths++;
       if ((r as unknown as { mobilizationMonths: number }).mobilizationMonths >= 6) {
-        r.tickMobilization();
+        tickMobilization(r);
         break;
       }
     }
@@ -272,7 +279,7 @@ describe('tickMobilization()', () => {
     (r as unknown as { gdpLastMonth: number }).gdpLastMonth = 10000;
     r.mobilizationLevel = 2;
     const initialTreasury = r.treasury;
-    r.tickMobilization();
+    tickMobilization(r);
     expect(r.treasury).toBeLessThan(initialTreasury);
   });
 });
@@ -333,7 +340,7 @@ describe('resolveArmyGroupBattle()', () => {
     // Rival army: very weak
     const rivalArmy: ArmyGroup = { id: groups.nextArmyGroupId++, ownerId: rivalId, provinceId, transitDays: 0, manpower: rivalInitialManpower, equipmentLevel: 10, supply: 0.5, doctrine: 10, morale: 20 };
     groups.armyGroups.push(rivalArmy);
-    r.resolveArmyGroupBattle(provinceId);
+    resolveArmyGroupBattle(r, provinceId);
     // After battle rival army should have taken losses (×0.7 = 35) and/or retreated
     // Player wins is deterministic given massive power ratio — rival loses manpower
     const remainingRivalArmies = groups.armyGroups.filter((a) => a.ownerId === rivalId);
@@ -357,7 +364,7 @@ describe('resolveArmyGroupBattle()', () => {
     groups.armyGroups = [playerArmy, rivalArmy];
     const playerManBefore = playerArmy.manpower;
     const rivalManBefore = rivalArmy.manpower;
-    r.resolveArmyGroupBattle(provinceId);
+    resolveArmyGroupBattle(r, provinceId);
     // Player lost some manpower (×0.9); rival lost more (×0.7)
     const playerLoss = (playerManBefore - playerArmy.manpower) / playerManBefore;
     const rivalLoss = (rivalManBefore - rivalArmy.manpower) / rivalManBefore;
@@ -369,7 +376,7 @@ describe('resolveArmyGroupBattle()', () => {
     const groups = r as unknown as { armyGroups: ArmyGroup[]; nextArmyGroupId: number };
     groups.armyGroups.push({ id: 1, ownerId: 0, provinceId: 1000, transitDays: 0, manpower: 100, equipmentLevel: 80, supply: 1.0, doctrine: 60, morale: 90 });
     // No rival army — should not throw
-    expect(() => r.resolveArmyGroupBattle(1000)).not.toThrow();
+    expect(() => resolveArmyGroupBattle(r, 1000)).not.toThrow();
     expect(groups.armyGroups.length).toBe(1);
   });
 });
@@ -383,7 +390,7 @@ describe('tickSupplyLines()', () => {
     const groups = r as unknown as { armyGroups: ArmyGroup[]; nextArmyGroupId: number };
     const army: ArmyGroup = { id: 1, ownerId: 0, provinceId: playerProvinceId, transitDays: 0, manpower: 100, equipmentLevel: 80, supply: 0.5, doctrine: 60, morale: 80 };
     groups.armyGroups.push(army);
-    r.tickSupplyLines();
+    tickSupplyLines(r);
     expect(army.supply).toBeGreaterThan(0.5);
   });
 
@@ -394,7 +401,7 @@ describe('tickSupplyLines()', () => {
     const army: ArmyGroup = { id: 1, ownerId: 0, provinceId: 9999, transitDays: 0, manpower: 100, equipmentLevel: 80, supply: 0.8, doctrine: 60, morale: 80 };
     groups.armyGroups.push(army);
     // Ensure there's no settlement with id 9999 (army is in hostile territory)
-    r.tickSupplyLines();
+    tickSupplyLines(r);
     // Supply should either stay or decay (when province not recognized as player territory)
     expect(army.supply).toBeLessThanOrEqual(0.8);
   });
@@ -406,7 +413,7 @@ describe('tickSupplyLines()', () => {
     groups.armyGroups.push(army);
     const initialMorale = army.morale;
     const initialEquip = army.equipmentLevel;
-    r.tickSupplyLines();
+    tickSupplyLines(r);
     expect(army.morale).toBeLessThan(initialMorale);
     expect(army.equipmentLevel).toBeLessThan(initialEquip);
   });
@@ -417,7 +424,7 @@ describe('tickSupplyLines()', () => {
     const groups = r as unknown as { armyGroups: ArmyGroup[]; nextArmyGroupId: number };
     const army: ArmyGroup = { id: 1, ownerId: 0, provinceId: playerProvinceId, transitDays: 0, manpower: 100, equipmentLevel: 80, supply: 1.0, doctrine: 60, morale: 90 };
     groups.armyGroups.push(army);
-    r.tickSupplyLines();
+    tickSupplyLines(r);
     expect(army.supply).toBeLessThanOrEqual(1.0);
   });
 });
@@ -433,7 +440,7 @@ describe('tickOccupation()', () => {
       provincialOccupations: Record<number, { occupiedBy: number; resistanceLevel: number; occupationPolicy: string; brutalPolicyPenalty: number }>;
     };
     occ.provincialOccupations[provinceId] = { occupiedBy: rivalId, resistanceLevel: 10, occupationPolicy: 'normal', brutalPolicyPenalty: 0 };
-    r.tickOccupation();
+    tickOccupation(r);
     expect(occ.provincialOccupations[provinceId].resistanceLevel).toBeGreaterThan(10);
   });
 
@@ -453,8 +460,8 @@ describe('tickOccupation()', () => {
     };
     occ.provincialOccupations[pId1] = { occupiedBy: rivalId, resistanceLevel: 10, occupationPolicy: 'conciliatory', brutalPolicyPenalty: 0 };
     occ2.provincialOccupations[pId2] = { occupiedBy: rivalId, resistanceLevel: 10, occupationPolicy: 'normal', brutalPolicyPenalty: 0 };
-    r.tickOccupation();
-    r2.tickOccupation();
+    tickOccupation(r);
+    tickOccupation(r2);
     const conciliatoryGrowth = occ.provincialOccupations[pId1].resistanceLevel;
     const normalGrowth = occ2.provincialOccupations[pId2].resistanceLevel;
     expect(conciliatoryGrowth).toBeGreaterThan(normalGrowth);
@@ -468,7 +475,7 @@ describe('tickOccupation()', () => {
       provincialOccupations: Record<number, { occupiedBy: number; resistanceLevel: number; occupationPolicy: string; brutalPolicyPenalty: number }>;
     };
     occ.provincialOccupations[provinceId] = { occupiedBy: rivalId, resistanceLevel: 10, occupationPolicy: 'brutal', brutalPolicyPenalty: 0 };
-    r.tickOccupation();
+    tickOccupation(r);
     expect(occ.provincialOccupations[provinceId].brutalPolicyPenalty).toBeGreaterThan(0);
   });
 
@@ -480,7 +487,7 @@ describe('tickOccupation()', () => {
       provincialOccupations: Record<number, { occupiedBy: number; resistanceLevel: number; occupationPolicy: string; brutalPolicyPenalty: number }>;
     };
     occ.provincialOccupations[provinceId] = { occupiedBy: rivalId, resistanceLevel: 92, occupationPolicy: 'normal', brutalPolicyPenalty: 0 };
-    r.tickOccupation();
+    tickOccupation(r);
     // Province should be freed — no longer in occupations
     expect(occ.provincialOccupations[provinceId]).toBeUndefined();
   });
@@ -494,14 +501,14 @@ describe('tickWarSupport()', () => {
     const rivalId = injectRival(r);
     forceWar(r, rivalId);
     r.warSupport = 80;
-    r.tickWarSupport();
+    tickWarSupport(r);
     expect(r.warSupport).toBeLessThan(80);
   });
 
   it('does not run if no active war', () => {
     const r = makeRegion();
     r.warSupport = 60;
-    r.tickWarSupport(); // should not throw or modify
+    tickWarSupport(r); // should not throw or modify
     expect(r.warSupport).toBe(60);
   });
 
@@ -512,7 +519,7 @@ describe('tickWarSupport()', () => {
     r.warSupport = 10;
     const playerSettlement = r.settlements.find((s) => s.factionId === r.playerFactionId)!;
     const initialGrievance = playerSettlement.grievance;
-    r.tickWarSupport();
+    tickWarSupport(r);
     expect(playerSettlement.grievance).toBeGreaterThan(initialGrievance);
   });
 
@@ -522,7 +529,7 @@ describe('tickWarSupport()', () => {
     forceWar(r, rivalId);
     (r as unknown as { legitimacy: number }).legitimacy = 50;
     r.warSupport = 3;
-    r.tickWarSupport();
+    tickWarSupport(r);
     expect((r as unknown as { legitimacy: number }).legitimacy).toBeLessThan(50);
   });
 
@@ -532,7 +539,7 @@ describe('tickWarSupport()', () => {
     forceWar(r, rivalId);
     r.warSupport = 80;
     r.mobilizationLevel = 2;
-    r.tickWarSupport();
+    tickWarSupport(r);
     // Should lose base -1 + rationing -2 = at least -3
     expect(r.warSupport).toBeLessThanOrEqual(77);
   });

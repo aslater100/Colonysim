@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { RegionSim, OIL_EMBARGO_DAYS, SUPPLY_SHOCK_INFLATION } from '../src/sim/region';
 import { tickIntermediateGoods } from '../src/sim/systems/goods';
+import { tickMonetary } from '../src/sim/systems/monetary';
 import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
 
 /**
@@ -48,8 +49,7 @@ function embargoOil(r: RegionSim, cut: number): void {
   r.rawEmbargoes['oil'] = { until: r.day + OIL_EMBARGO_DAYS, cut };
 }
 
-const tickMonetary = (r: RegionSim): void =>
-  (r as unknown as { tickMonetary(): void }).tickMonetary();
+// tickMonetary now lives in systems/monetary.ts (Track-C extraction); imported above.
 
 /** Closed form for the mean-reversion in tickMonetary with a constant target:
  *  x_K = target + (x0 − target)·(1 − REVERT)^K. With default policyRate the

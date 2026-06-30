@@ -25,6 +25,23 @@ import { tickAdvisorLoyalty, tickAdvisorEvents, tickLegitimacy, tickRegimeMechan
 import { tickDemographicTransition, tickAppealMigration, tickEducationLag, tickUnrestLadder } from './systems/demographics';
 import { tickClimate, checkStrandedAssets, tickAutomation } from './systems/climate';
 import { updateDiplomacy } from './systems/diplomacy';
+import { tickMonetary, tickFX } from './systems/monetary';
+import {
+  updateArmyMovement,
+  tickRivalArmyAI,
+  consumeWarSupply,
+  tickMobilization,
+  tickSupplyLines,
+  tickOccupation,
+  tickWarSupport,
+  abandonGhostTowns,
+} from './systems/military';
+import { tickHistoricalAnchors } from './systems/historical';
+import { tickNotableLifecycle } from './systems/notables';
+import { tickResearch } from './systems/research';
+import { updateRouteCargo } from './systems/trade';
+import { updateCharter } from './systems/charter';
+import { updateLoans } from './systems/loans';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -1486,12 +1503,13 @@ export const SITUATION_TREATY_BONUS: Partial<Record<TreatyKind, number>> = {
 
 // ---- Monetary system constants (GDD §5.1) ----
 /** Credit-neutral policy rate; below this leverage builds, above it contracts. */
-const NEUTRAL_RATE = 0.05;
+export const NEUTRAL_RATE = 0.05;
 // Minsky instability dials — pulled from TUNING so they can be adjusted without
 // touching region.ts (see TUNING.leverageFragile / fragilityGain in defs.ts).
-const LEVERAGE_FRAGILITY = TUNING.leverageFragility;
-const LEVERAGE_FRAGILE   = TUNING.leverageFragile;
-const FRAGILITY_GAIN     = TUNING.fragilityGain;
+// Exported for systems/monetary.ts (the tickMonetary/tickFX seam).
+export const LEVERAGE_FRAGILITY = TUNING.leverageFragility;
+export const LEVERAGE_FRAGILE   = TUNING.leverageFragile;
+export const FRAGILITY_GAIN     = TUNING.fragilityGain;
 export const MIN_POLICY_RATE = 0.01;
 export const MAX_POLICY_RATE = 0.15;
 /** Credit spreads over policy rate by rating tier. */
@@ -2644,8 +2662,9 @@ export const HIGHWAY_ERA_YEAR = 1945;
  *  from 2005 — colossal to build, nearly free to run once it floats. */
 export const MAGLEV_ERA_YEAR = 2005;
 
-/** A rotted route is still a walkable track — people keep using it. */
-const ROUTE_CONDITION_FLOOR = 15;
+/** A rotted route is still a walkable track — people keep using it.
+ *  Exported for systems/military.ts (tickPlayerWar's interdiction). */
+export const ROUTE_CONDITION_FLOOR = 15;
 
 // ---- Climate & the reckoning (GDD §8.2, §3.2 eras 7–8) ----
 
@@ -2947,8 +2966,9 @@ export class RegionSim {
   rng: Rng;
   /** Per-tick memo of `routePath` BFS results (key `from:to:mode`). Transient —
    *  NOT serialized; rebuilt lazily. Cleared at tick start and whenever the route
-   *  graph mutates (add/remove/kind-change), so it never returns a stale path. */
-  private _routePathCache = new Map<string, Route[] | null>();
+   *  graph mutates (add/remove/kind-change), so it never returns a stale path.
+   *  Public for systems/military.ts (abandonGhostTowns clears it on town death). */
+  _routePathCache = new Map<string, Route[] | null>();
   /** Separate deterministic stream for rival faction AI decisions. Kept apart
    *  from the main `rng` so AI choices never perturb the colony's own stochastic
    *  outcomes (events, washouts, raids) — preserving cross-feature determinism. */
@@ -3147,25 +3167,26 @@ export class RegionSim {
   /** Domestic currency value (1.0 = par; < 1.0 = devalued). */
   exchangeRate = 1.0;
   /** Prevents the 1929-analog crash from firing twice. */
-  private crashFired = false;
+  crashFired = false;
   /** 0→1 measure of depression severity; set to 1.0 when crash fires, decays ~5%/month. */
   depressionDepth = 0;
   /** Months since the crash fired — drives the recovery-crossroads timing. */
-  private crashMonthCounter = 0;
+  crashMonthCounter = 0;
   /** Player's chosen recovery path once the crossroads event fires. */
   crashRecoveryChoice: 'pending' | 'stimulus' | 'austerity' | null = null;
   /** Months of stimulus spending remaining (set to 24 on stimulus choice). */
   private stimulusMonthsLeft = 0;
   /** Emergency depression measures already enacted this slump (once each). */
   depressionMeasuresUsed: DepressionMeasure[] = [];
-  /** Confidence-ceiling headroom earned by enacting emergency measures. */
-  private depressionCeilingBonus = 0;
+  /** Confidence-ceiling headroom earned by enacting emergency measures.
+   *  Public for systems/monetary.ts (read by tickMonetary's depression ceiling). */
+  depressionCeilingBonus = 0;
   /** Prevents the 1936–1948 world-war anchor from firing twice. */
-  private worldWarFired = false;
+  worldWarFired = false;
   /** Prevents the 1970s oil-shock anchor from firing twice. */
-  private oilShockFired = false;
+  oilShockFired = false;
   /** Prevents the 2020-analog pandemic anchor from firing twice. */
-  private pandemicFired = false;
+  pandemicFired = false;
   // ---- Lender system: NPC bankers and merchants offering loans ----
   lenders: Lender[] = [];
   /** Player's active loans from lenders. */
@@ -3293,7 +3314,8 @@ export class RegionSim {
   // ---- Phase 7: Inter-provincial army movement ----
   /** Armies stationed at or marching between provinces. */
   provincialArmies: ProvincialArmy[] = [];
-  private nextArmyId = 1;
+  /** Public for systems/military.ts (tickRivalArmyAI mints rival army ids). */
+  nextArmyId = 1;
   // ---- Phase 12: Media & Misinformation System (GDD §8.3) ----
   /** Current media reach tier — transitions over the century as technology advances. */
   mediaReach: 'word_of_mouth' | 'press' | 'radio' | 'television' | 'internet' | 'algorithmic' = 'word_of_mouth';
@@ -4128,21 +4150,6 @@ export class RegionSim {
   cancelResearch(): void {
     this.activeResearch = null;
     this.researchProgress = 0;
-  }
-
-  /** Called once per game-day; drains the rate into the active node. */
-  private tickResearch(): void {
-    if (!this.activeResearch) return;
-    const node = TECH_TREE.find((n) => n.id === this.activeResearch);
-    if (!node) { this.activeResearch = null; return; }
-    this.researchProgress += this.researchRate();
-    if (this.researchProgress >= this.techCost(node)) {
-      this.researched.add(this.activeResearch);
-      const label = node.tree === 'tech' ? 'Technology' : 'Civics';
-      this.addLog(`${label} breakthrough: "${node.name}". ${node.desc.split('.')[0]}.`, 'good');
-      this.activeResearch = null;
-      this.researchProgress = 0;
-    }
   }
 
   /** The Railworks gate: steel needs both a State and the 1912 era.
@@ -5548,7 +5555,7 @@ export class RegionSim {
         }
       }
     }
-    this.abandonGhostTowns();
+    abandonGhostTowns(this);
     // Drought is regional news: announce on onset, during growing seasons
     if (drought && !this.droughtAnnounced && this.seasonIndex < 3) {
       this.droughtAnnounced = true;
@@ -5593,7 +5600,7 @@ export class RegionSim {
     this.totalWood = tw;
     this.maxGrievance = mg;
 
-    this.tickResearch();
+    tickResearch(this);
     this.checkElection();
     if (this.day % 30 === 0) this.monthlyUpdate();
     if (this.day >= this.nextEventDay) {
@@ -5603,7 +5610,7 @@ export class RegionSim {
       this.nextEventDay = this.day + eventGap;
     }
     this.updateExpeditions();
-    this.updateCharter();
+    updateCharter(this);
     this.updateConstruction(); // Phase 2: scaffolding comes down, doors open
     this.updateExploration(); // Phase 0: Update fog of war based on scouts and settlements
     if (this.totalPop() <= 0) {
@@ -5692,12 +5699,12 @@ export class RegionSim {
         t.landValue = this.computeLandValue(t.id);
       }
     }
-    this.updateRouteCargo();   // Phase 6: cargo labels follow sector surplus
+    updateRouteCargo(this);   // Phase 6: cargo labels follow sector surplus (systems/trade.ts)
     this.migrate();
     this.caravans();
     this.traders();
     this.navalTradeIncome();
-    this.tickNotableLifecycle();
+    tickNotableLifecycle(this);
     // The treasury runs even before the Charter: pre-statehood the Mayor still
     // taxes the towns and pays for services/militia, so the player has real
     // economic levers to climb out of a deficit toward the £8k Charter gate
@@ -5708,23 +5715,23 @@ export class RegionSim {
     if (this.stateProclaimed) this.updateSettlementFactions();
     updateDiplomacy(this);
     this.applyProvincePolicyEffects(); // Phase 5: province governance effects
-    this.updateArmyMovement();         // Phase 7: army marching, battles
-    this.tickRivalArmyAI();            // Phase 7: rival army planning
-    this.consumeWarSupply(); // deplete supply reserves based on army size and supply consumption rate
-    this.tickMobilization();           // Phase 16: mobilization effects
-    this.tickSupplyLines();            // Phase 16: supply line decay for army groups
-    this.tickOccupation();             // Phase 16: occupation resistance
-    if (this.playerWar) this.tickWarSupport(); // Phase 16: war support
+    updateArmyMovement(this);         // Phase 7: army marching, battles (systems/military.ts)
+    tickRivalArmyAI(this);            // Phase 7: rival army planning
+    consumeWarSupply(this); // deplete supply reserves based on army size and supply consumption rate
+    tickMobilization(this);           // Phase 16: mobilization effects
+    tickSupplyLines(this);            // Phase 16: supply line decay for army groups
+    tickOccupation(this);             // Phase 16: occupation resistance
+    if (this.playerWar) tickWarSupport(this); // Phase 16: war support
     this.updateRivalAI(); // staggered AI updates for rivals (GDD §6.2)
     this.updateScouts(); // update faction scouts: movement, spawning, expiry (GDD §6.2)
     tickClimate(this); // the ledger runs from the first decade (GDD §8.2)
     tickAutomation(this); // Phase 11: automation unemployment drift
     checkStrandedAssets(this); // Phase 11: fossil write-downs as clean energy arrives
-    if (this.hasCentralBank()) this.tickMonetary();
-    this.tickHistoricalAnchors(); // scripted world-events that rhyme with history (GDD §1)
+    if (this.hasCentralBank()) tickMonetary(this);
+    tickHistoricalAnchors(this); // scripted world-events that rhyme with history (systems/historical.ts, GDD §1)
     this.tickMedia(); // Phase 12: media reach, press freedom, misinformation era
     this.checkScenarioGoals();   // Phase 17: check active scenario goals monthly
-    this.updateLoans(); // process loan interest and check for defaults
+    updateLoans(this); // process loan interest and check for defaults (systems/loans.ts)
     if (this.stateProclaimed) this.collectVassalTribute();
     this.checkProclamationGate();
     this.checkWinConditions();
@@ -5780,7 +5787,7 @@ export class RegionSim {
     // Phase 15: Intermediate goods, arbitrage, and FX tick
     tickIntermediateGoods(this); // Phase 15: intermediate-goods production + cascade (systems/goods.ts)
     tickPriceArbitrage(this); // Phase 15: price arbitrage + cargo shipments (systems/arbitrage.ts)
-    this.tickFX();
+    tickFX(this); // Phase 15: exchange-rate / regime-crisis tick (systems/monetary.ts)
 
     // Record monthly history for sparklines (last 12 months)
     const gdp = this.settlements.reduce((s, t) => s + SECTOR_IDS.reduce((ss, id) => ss + t.sectors[id].output, 0), 0);
@@ -6314,7 +6321,9 @@ export class RegionSim {
     this.addLog(`Monetary regime: ${labels[regime]}.`, 'info');
   }
 
-  private computeCreditRating(): CreditRating {
+  /** Public for systems/monetary.ts (tickMonetary refreshes the rating). Also
+   *  called by issueBonds. */
+  computeCreditRating(): CreditRating {
     const annualGDP = Math.max(1, this.gdpLastMonth * 12);
     const debtRatio = this.nationalDebt / annualGDP;
     let score = 6; // default AA
@@ -6329,146 +6338,6 @@ export class RegionSim {
     if (this.nationProclaimed && this.legitimacy < 25) score--;
     const ratings: CreditRating[] = ['D', 'CCC', 'B', 'BB', 'BBB', 'A', 'AA', 'AAA'];
     return ratings[Math.max(0, Math.min(7, score))];
-  }
-
-  /** Monthly tick of the credit cycle, inflation, FX, and bond service. */
-  private tickMonetary(): void {
-    const gdp = Math.max(1, this.gdpLastMonth);
-
-    // 1. Credit cycle: leverage grows below neutral rate, shrinks above it
-    const dLeverage = (NEUTRAL_RATE - this.policyRate) * 0.5 * (1 - this.privateLeverage / 5.0);
-    this.privateLeverage = Math.max(0, this.privateLeverage + dLeverage);
-
-    // 2. Inflation: credit expansion + money printing + supply-chain cost-push
-    const leverageInflation = Math.max(0, dLeverage) * 0.08;
-    const printInflation = this.monetaryRegime === 'print' ? 0.010 : 0;
-    // Cost-push (GDD §5.2): a real supply-chain shock makes goods dearer, not just
-    // scarcer — the stagflation half of the 1973 oil embargo (output already drags
-    // via supplyShockMult). `supplyShockSeverity()` reads last month's cached
-    // supplyChainHealth (tickIntermediateGoods runs later in the tick), a natural
-    // one-month price lag, and is a pure no-RNG read. It is exactly 0 whenever raws
-    // flow, so in all healthy play this term is +0 and the monetary stream is
-    // byte-identical; only a genuine cascade below the era baseline lifts the target.
-    const supplyPush = this.supplyShockSeverity() * SUPPLY_SHOCK_INFLATION;
-    // PR-3 slice 3 — the LOCAL-goods cost-push: when specialisation strands a
-    // cross-sector good (slice 2's per-town gate), the goods that can't reach the
-    // towns that need them are dearer there. `localGoodsScarcity` (cached last month
-    // from the production gates) is 0 in single-town / self-sufficient play — and 0
-    // under a *raw* shock too, since it's a pure gate ratio, never a stock or raw
-    // magnitude — so this term is +0 there (byte-identical, no double-count with
-    // `supplyPush`); it lifts the target only when local distribution actually fails.
-    const localGoodsPush = this.localGoodsScarcity * LOCAL_GOODS_INFLATION;
-    const inflTarget = 0.02 + leverageInflation + printInflation + supplyPush + localGoodsPush;
-    this.inflationRate += (inflTarget - this.inflationRate) * 0.15;
-    this.inflationRate = Math.max(0, Math.min(0.50, this.inflationRate));
-
-    // 3. Confidence: mean-reverts to 70, falls when debt service, inflation, or the
-    //    leverage *level* (Minsky fragility) is high
-    const debtService = this.privateLeverage * this.policyRate; // annual fraction
-    const leveragePressure = Math.max(0, debtService - LEVERAGE_FRAGILITY) * 80;
-    const inflPressure = Math.max(0, this.inflationRate - 0.08) * 40;
-    const fragilityPressure = Math.max(0, this.privateLeverage - LEVERAGE_FRAGILE) * FRAGILITY_GAIN;
-    // Depression ceiling: while depressionDepth > 0.05 confidence can't freely recover.
-    // At depth=1.0 ceiling is ~35; it lifts linearly as depth fades.
-    // Stimulus choice grants +10 to the ceiling; austerity +5.
-    const recoveryBonus = this.crashRecoveryChoice === 'stimulus' ? 10
-      : this.crashRecoveryChoice === 'austerity' ? 5 : 0;
-    const depressionCeiling = this.depressionDepth > 0.05
-      ? Math.round(35 + 65 * (1 - this.depressionDepth)) + recoveryBonus + this.depressionCeilingBonus
-      : 100;
-    const confTarget = Math.min(depressionCeiling, Math.max(5, 70 - leveragePressure - inflPressure - fragilityPressure));
-    this.confidence += (confTarget - this.confidence) * 0.12;
-    this.confidence = Math.max(0, Math.min(100, this.confidence));
-
-    // 4. Deleveraging bust: confidence crash forces rapid credit contraction
-    if (this.confidence < 30 && this.privateLeverage > 0.5) {
-      this.privateLeverage *= (1 - (0.05 + (30 - this.confidence) * 0.002));
-      if (this.rng.chance(0.2)) {
-        this.addLog('Credit markets freeze — banks call in loans as confidence breaks.', 'bad');
-      }
-    }
-
-    // 5. FX dynamics
-    if (this.monetaryRegime === 'peg') {
-      // Peg: hold exchange rate; drain reserves if trade is unfavorable
-      const deficit = Math.max(0, this.totalPop() * 0.025 - this.exportEarningsLastMonth);
-      this.treasury -= deficit * 0.12;
-      // An exhausted treasury cannot defend a peg at all; a thin one gambles.
-      if (this.treasury < gdp * 0.1 || (this.treasury < gdp * 0.25 && this.rng.chance(0.25))) {
-        this.monetaryRegime = 'float';
-        this.confidence = Math.max(5, this.confidence - 25);
-        this.exchangeRate = Math.max(this.exchangeRate * 0.82, 0.30);
-        this.addLog('The currency peg breaks — reserves exhausted. The exchange rate is in freefall.', 'bad');
-      }
-    } else {
-      // Float/print: market-driven exchange rate
-      const tradeUp = this.exportEarningsLastMonth > this.totalPop() * 0.025;
-      const rateDiff = (this.policyRate - NEUTRAL_RATE) * 0.04;
-      const confFlow = (this.confidence - 50) * 0.0003;
-      const printDrag = this.monetaryRegime === 'print' ? -0.012 : 0;
-      this.exchangeRate += (tradeUp ? 0.003 : -0.003) + rateDiff + confFlow + printDrag;
-      this.exchangeRate = Math.max(0.30, Math.min(2.0, this.exchangeRate));
-    }
-
-    // 7. Print regime: money creation boosts treasury
-    if (this.monetaryRegime === 'print') {
-      this.treasury += gdp * 0.018;
-    }
-
-    // 8. Bond debt service
-    if (this.nationalDebt > 0) {
-      const service = this.nationalDebt * this.bondRate / 12;
-      this.treasury -= service;
-      if (this.treasury < 0) {
-        this.nationalDebt -= this.treasury; // unpaid interest compounds into debt
-        this.treasury = 0;
-      }
-    }
-
-    // 9. Update credit rating
-    this.creditRating = this.computeCreditRating();
-
-    // 10. Inflation erodes satisfaction
-    if (this.inflationRate > 0.05) {
-      const drag = (this.inflationRate - 0.05) * 30;
-      for (const t of this.settlements) {
-        t.satisfaction = Math.max(0, t.satisfaction - drag);
-      }
-    }
-
-    // 11. Transmit policy rate to private lenders — banks price above the base rate
-    for (const lender of this.lenders) {
-      const spread = 0.02 + lender.id * 0.005; // 2–3.5% spread; riskier lenders charge more
-      lender.interestRate = Math.max(0.01, Math.min(0.20, this.policyRate + spread));
-    }
-
-    // 12. Lender liquidity regeneration — low rates encourage banks to lend freely
-    for (const lender of this.lenders) {
-      const recoveryRate = Math.max(0.04, 0.12 - this.policyRate); // 4–12% of max loan recovered per month
-      lender.liquidCash = Math.min(lender.maxLoan * 4, lender.liquidCash + lender.maxLoan * recoveryRate);
-    }
-
-    // 13. Accrue interest on outstanding Central Bank discount window loan
-    if (this.centralBankLoan > 0) {
-      this.centralBankLoan += this.centralBankLoan * (this.policyRate / 12);
-    }
-
-    // 14. Keep player faction's CentralBank metadata in sync (create lazily if missing)
-    const pf = this.faction(this.playerFactionId);
-    if (pf) {
-      if (!pf.centralBank) {
-        pf.centralBank = {
-          factionId: this.playerFactionId,
-          foundedDay: this.day,
-          reserves: {},
-          interestRate: this.policyRate,
-          inflationRate: this.inflationRate,
-        };
-      } else {
-        pf.centralBank.interestRate = this.policyRate;
-        pf.centralBank.inflationRate = this.inflationRate;
-      }
-    }
   }
 
   // ---- Phase 15: Intermediate Goods, Supply Chains, Arbitrage & FX (GDD §5.2) ----
@@ -6844,228 +6713,7 @@ export class RegionSim {
     }
   }
 
-  /** Monthly FX tick: recompute exchange rate, decay fxBoost, handle regime crises. */
-  tickFX(): void {
-    // Recompute exchange rate based on current conditions
-    const newRate = this.computeExchangeRate();
-
-    if (this.currencyRegime === 'gold_standard') {
-      // Gold standard: rate fixed at 1.0
-      this.exchangeRate = 1.0;
-      // Policy rate constrained to 3–8%
-      this.policyRate = Math.max(0.03, Math.min(0.08, this.policyRate));
-      // Deflation pressure
-      this.inflationRate = Math.max(-0.05, this.inflationRate - 0.002);
-      // Crisis: if confidence drops below 40, gold standard collapses
-      if (this.confidence < 40) {
-        this.currencyRegime = 'fiat';
-        this.exchangeRate = Math.max(0.5, this.exchangeRate - 0.2);
-        this.addLog(
-          'GOLD STANDARD CRISIS: Market confidence collapses. The gold peg is abandoned. ' +
-          'Exchange rate falls sharply.',
-          'bad'
-        );
-      }
-    } else if (this.currencyRegime === 'fiat') {
-      this.exchangeRate = newRate;
-      // Fiat at very low rates: inflation creep
-      if (this.policyRate < 0.02) {
-        this.inflationRate = Math.min(0.50, this.inflationRate + 0.003);
-      }
-    } else if (this.currencyRegime === 'currency_union') {
-      // Auto-exit if partner is at war with us
-      const partnerAtWar = this.currencyUnionPartnerId !== undefined &&
-        (this.playerWar?.rivalId === this.currencyUnionPartnerId ||
-         this.foreignWars.some(w =>
-           (w.a === this.currencyUnionPartnerId || w.b === this.currencyUnionPartnerId)
-         ));
-      if (partnerAtWar) {
-        this.currencyRegime = 'fiat';
-        this.currencyUnionPartnerId = undefined;
-        this.addLog('Currency union dissolved — partner nation at war. Currency floats independently.', 'bad');
-      } else {
-        // Lock rate to partner
-        const partnerRate = this.currencyUnionPartnerId !== undefined
-          ? (this.exchangeRates[`0:${this.currencyUnionPartnerId}`] ?? 1.0)
-          : 1.0;
-        this.exchangeRate = partnerRate;
-      }
-    }
-
-    // Decay fxBoost toward 1.0 by 10%/month
-    if (this.fxBoost > 1.0) {
-      this.fxBoost = Math.max(1.0, 1.0 + (this.fxBoost - 1.0) * 0.9);
-    }
-  }
-
   // ---- Historical Anchors (GDD §1) ----
-
-  /** Scripted world-events that rhyme with history without reciting it.
-   *  Each fires at most once, gated on world-state conditions and era window. */
-  private tickHistoricalAnchors(): void {
-    // Phase 17: difficulty wiring — skip entirely or use only base probabilities
-    if (this.difficultySettings.historicalAnchors === 'off') return;
-    const anchorsEmergent = this.difficultySettings.historicalAnchors === 'emergent';
-
-    const y = this.year;
-
-    // 1. World-war window (GDD §1, 1936–1948): great-power tensions ignite.
-    // Fires when rival powers are hostile to each other AND an expansionist is in the mix.
-    // In 'emergent' mode, drop the year constraint so it can fire at any time.
-    const wwInWindow = anchorsEmergent ? this.rivals.length >= 2 : (y >= 1936 && y <= 1948 && this.rivals.length >= 2);
-    if (!this.worldWarFired && wwInWindow) {
-      // Find the most hostile pair among rivals
-      let worstRel = -35;
-      let warA = -1;
-      let warB = -1;
-      for (let i = 0; i < this.rivals.length; i++) {
-        for (let j = i + 1; j < this.rivals.length; j++) {
-          const rel = this.pairRelations(this.rivals[i].id, this.rivals[j].id);
-          if (rel < worstRel) {
-            worstRel = rel;
-            warA = this.rivals[i].id;
-            warB = this.rivals[j].id;
-          }
-        }
-      }
-      const hasExpansionist = this.rivals.some((rv) => rv.weights.expansion >= 6);
-      // Needs at least one hostile pair + an expansionist drive + era roll
-      if (warA >= 0 && hasExpansionist && this.rng.chance(0.08)) {
-        this.worldWarFired = true;
-        // Escalate the most hostile pair into open war if not already fighting
-        if (!this.warBetween(warA, warB)) this.startForeignWar(warA, warB);
-        // The wider world tenses: all rival-player relations drift more hostile
-        for (const rv of this.rivals) {
-          if (rv.relations > -10) rv.relations -= 8;
-        }
-        // Confidence takes a hit — war news shakes markets
-        this.confidence = Math.max(5, this.confidence - 12);
-        const aName = this.rival(warA)?.name ?? 'one power';
-        const bName = this.rival(warB)?.name ?? 'another';
-        this.addLog(
-          `THE CONFLAGRATION: ${aName} and ${bName} are no longer trading ultimatums — ` +
-          `they are trading artillery. The great powers are choosing sides. ` +
-          `Will you hold the line, or join the storm?`,
-          'bad',
-        );
-      }
-    }
-
-    // 2. Oil shock (1970s-equivalent): fossil dependency meets a supply embargo.
-    // Fires when combustion-engine tech is researched but no clean energy exists yet.
-    const oilInWindow = anchorsEmergent ? true : (y >= 1970 && y <= 1985);
-    if (!this.oilShockFired && oilInWindow) {
-      const hasFossil = this.has('combustion_engine');
-      const hasCleanEnergy = this.has('renewables') || this.has('fusion_power');
-      if (hasFossil && !hasCleanEnergy && this.rng.chance(0.06)) {
-        this.oilShockFired = true;
-        // Route the shock through the supply chain: embargo the `oil` raw so the
-        // cut cascades oil → fuel → trucking/plastics and the supply-chain drag
-        // bites for the window — the shock is a fuel price the economy keeps
-        // paying, not just a one-off popup (GDD §5.4).
-        this.rawEmbargoes['oil'] = { until: this.day + OIL_EMBARGO_DAYS, cut: OIL_EMBARGO_CUT };
-        // Economic hit: treasury drain + inflation spike + currency devaluation
-        const gdp = this.settlements.reduce(
-          (s, t) => s + SECTOR_IDS.reduce((ss, id) => ss + t.sectors[id].output, 0), 0,
-        );
-        const hit = Math.round(gdp * 0.14 + 150);
-        this.treasury -= hit;
-        this.inflationRate = Math.min(0.28, this.inflationRate + 0.07);
-        this.exchangeRate = Math.max(0.3, this.exchangeRate - 0.14);
-        this.confidence = Math.max(5, this.confidence - 18);
-        // Add a brief industry slump event to each player settlement
-        for (const t of this.settlements) {
-          if (t.factionId !== this.playerFactionId) continue;
-          if (!t.activeEvents.some((ev) => ev.kind === 'labor_shortage')) {
-            t.activeEvents.push({ kind: 'labor_shortage', untilDay: this.day + 90, severity: 1 });
-            t.satisfaction = Math.max(0, t.satisfaction - 5);
-            t.grievance = Math.min(100, t.grievance + 6);
-          }
-        }
-        this.addLog(
-          `OIL EMBARGO: Exporting nations choke the supply lines. Fuel prices triple overnight — ` +
-          `${formatCurrency(hit)} drained from reserves, inflation surges, industry stalls. ` +
-          `The answer is in the renewables labs.`,
-          'bad',
-        );
-      }
-    }
-
-    // 3. Great Depression analog (1927–1936): credit bubble meets a confidence
-    // collapse. Fires once when leverage is stretched and confidence is already
-    // fragile in the historical window — the sim sets the fuse, the era strikes it.
-    const depressionInWindow = anchorsEmergent ? true : (y >= 1927 && y <= 1936);
-    if (!this.crashFired && depressionInWindow) {
-      if (this.privateLeverage * this.policyRate > 0.12 && this.confidence < 55) {
-        this.crashFired = true;
-        // Credit implosion
-        this.confidence = Math.max(5, this.confidence - 40);
-        this.privateLeverage *= 0.65;
-        // Depression depth: drives ongoing export suppression and confidence ceiling for ~30 months
-        this.depressionDepth = 1.0;
-        this.crashMonthCounter = 0;
-        this.depressionMeasuresUsed = [];
-        this.depressionCeilingBonus = 0;
-        // Bank failures drain reserves
-        const gdp = this.settlements.reduce(
-          (s, t) => s + SECTOR_IDS.reduce((ss, id) => ss + t.sectors[id].output, 0), 0,
-        );
-        this.treasury -= Math.round(gdp * 0.12 + 80);
-        // Political radicalization: unemployment and hunger push factions to extremes
-        for (const t of this.settlements) {
-          if (t.factionId !== this.playerFactionId) continue;
-          t.grievance = Math.min(100, t.grievance + 25);
-          t.satisfaction = Math.max(0, t.satisfaction - 15);
-          if (!t.activeEvents.some((ev) => ev.kind === 'labor_shortage')) {
-            t.activeEvents.push({ kind: 'labor_shortage', untilDay: this.day + 150, severity: 1 });
-          }
-        }
-        if (this.nationProclaimed) {
-          this.legitimacy = Math.max(0, this.legitimacy - 12);
-        }
-        this.addLog(
-          `THE CRASH: credit markets seize. Banks close their doors overnight — ` +
-          `savings vanish, factories idle, bread lines stretch around city blocks. ` +
-          `The world has not seen this before. A generation will remember.`,
-          'bad',
-        );
-        this.addLog(
-          `DEPRESSION: unemployment surges across every settlement. ` +
-          `Radical movements — left and right — are filling the void that hunger leaves.`,
-          'bad',
-        );
-      }
-    }
-
-    // 4. 2020-analog pandemic: a novel pathogen sweeps the globe.
-    // Fires once in the 2012–2027 window; antibiotics tech halves the severity.
-    const pandemicInWindow = anchorsEmergent ? this.rng.chance(0.04) : (y >= 2012 && y <= 2027 && this.rng.chance(0.04));
-    if (!this.pandemicFired && pandemicInWindow) {
-      this.pandemicFired = true;
-      const hasAntibiotics = this.has('antibiotics') || this.has('welfare_state');
-      const duration = hasAntibiotics ? 60 : 120;
-      const mult = hasAntibiotics ? 0.86 : 0.72;
-      // Push a severe pandemic_wave onto every settlement
-      for (const t of this.settlements) {
-        t.activeEvents = t.activeEvents.filter((ev) => ev.kind !== 'pandemic_wave');
-        t.activeEvents.push({ kind: 'pandemic_wave', untilDay: this.day + duration, severity: 1 });
-        const satHit = hasAntibiotics ? 6 : 14;
-        const grHit = hasAntibiotics ? 5 : 11;
-        t.satisfaction = Math.max(0, t.satisfaction - satHit);
-        t.grievance = Math.min(100, t.grievance + grHit);
-        // Manually apply output multiplier to current sector outputs
-        for (const id of SECTOR_IDS) {
-          t.sectors[id].output = Math.max(0.1, t.sectors[id].output * mult);
-        }
-      }
-      this.confidence = Math.max(5, this.confidence - (hasAntibiotics ? 12 : 28));
-      this.exportEarningsLastMonth *= 0.65;
-      const msg = hasAntibiotics
-        ? `PANDEMIC: A novel pathogen spreads across the world. Modern medicine blunts the worst — cities lock down for weeks, not years. Trade slows; recovery is measured in months.`
-        : `PANDEMIC: A novel pathogen sweeps the globe. Without modern medical infrastructure the toll is heavy — cities shutter, commerce stops, the dead are counted in silence.`;
-      this.addLog(msg, 'bad');
-    }
-  }
 
   // ---- Phase 1: the sectoral economy (GDD §5.2) ----
 
@@ -8769,27 +8417,6 @@ export class RegionSim {
 
   // ---- Phase 6: Trade Route Cargo ----
 
-  /** Monthly: tag each route with its dominant cargo based on the output gap
-   *  between connected settlements. The greater the surplus difference in a
-   *  sector, the more that sector's goods fill the wagons. */
-  private updateRouteCargo(): void {
-    for (const route of this.routes) {
-      const a = this.settlement(route.a);
-      const b = this.settlement(route.b);
-      if (!a || !b) { route.cargoType = null; continue; }
-      // A governor's manual pin (Phase A route-network controls) wins over the
-      // auto reading — the wagons carry what the state directs.
-      if (route.cargoPriority) { route.cargoType = route.cargoPriority; continue; }
-      let maxDiff = 0;
-      let dominant: SectorId | null = null;
-      for (const id of SECTOR_IDS) {
-        const diff = Math.abs(a.sectors[id].output - b.sectors[id].output);
-        if (diff > maxDiff) { maxDiff = diff; dominant = id; }
-      }
-      route.cargoType = maxDiff > 0.5 ? dominant : null;
-    }
-  }
-
   /** Finish any construction whose day has come. */
   private updateConstruction(): void {
     for (const t of this.settlements) {
@@ -8844,93 +8471,9 @@ export class RegionSim {
     }
   }
 
-  private tickNotableLifecycle(): void {
-    // --- age, health degradation, death ---
-    for (const n of this.notables) {
-      if (!n.alive) continue;
-      n.age += 1 / 12;
-
-      // Health degrades monthly (scaled from annual rates). Seeded (auxRng), not
-      // Math.random — a notable's health is serialized, so a non-deterministic
-      // draw made the save non-reproducible for a fixed seed.
-      const healthDecay = (this.auxRng.next() * 2 + (n.age > 70 ? 3 : 0)) / 12;
-      n.health = Math.max(0, (n.health ?? 80) - healthDecay);
-
-      // Death risk blended from age-based mortality and health
-      const annualRisk = n.age > 75 ? 0.12 : n.age > 60 ? 0.03 : 0.004;
-      const healthRisk = n.health < 20 ? 0.08 : n.health < 40 ? 0.02 : 0;
-      if (this.rng.chance((annualRisk + healthRisk) / 12)) {
-        n.alive = false;
-        n.deathYear = this.year;
-        n.bio.push(`Died ${this.year}, aged ${Math.floor(n.age)}.`);
-        this.addLog(`${n.name}, ${n.role} of ${this.settlement(n.settlementId)?.name ?? 'the colony'}, has died, aged ${Math.floor(n.age)}.`, 'bad');
-        // If minister, select a successor
-        const mIdx = this.ministers.findIndex((m) => m.notableId === n.id);
-        if (mIdx >= 0) {
-          this.selectSuccessor(mIdx);
-        } else {
-          this.mintNotable(n.role, n.settlementId);
-        }
-      }
-    }
-
-    // --- birth of heirs (5% annual = ~0.417%/month) ---
-    const alive = this.notables.filter((n) => n.alive);
-    for (const n of alive) {
-      if (n.age >= 25 && n.age <= 50 && this.rng.chance(0.05 / 12)) {
-        const child = this.mintNotable(n.role, n.settlementId, { parentId: n.id, age: 0 });
-        child.bio = [`Born to ${n.name}, ${this.year}.`];
-        child.age = 0;
-        n.children = n.children ?? [];
-        n.children.push(child.id);
-        this.addLog(`${n.name} welcomes a child, ${child.name}, born ${this.year}.`, 'info');
-      }
-    }
-
-    // --- minister loyalty decay and defection ---
-    if (this.nationProclaimed) {
-      for (const m of this.ministers) {
-        if (m.notableId === null) continue;
-        const notable = this.notables.find((n) => n.id === m.notableId && n.alive);
-        if (!notable) continue;
-
-        // Loyalty decays 0.5/month for all ministers
-        notable.loyalty = Math.max(0, (notable.loyalty ?? 80) - 0.5);
-        notable.monthsIgnored = (notable.monthsIgnored ?? 0) + 1;
-
-        // Defection: loyalty < 20 and 5% annual = ~0.4%/month chance
-        if ((notable.loyalty ?? 80) < 20 && this.rng.chance(0.05 / 12)) {
-          const mIdx = this.ministers.indexOf(m);
-          this.addLog(`${notable.name}, ${m.title}, has defected — disillusioned with the government.`, 'bad');
-          this.legitimacy = Math.max(0, this.legitimacy - 5);
-          // Boost rival faction power if one exists
-          const factionId = notable.factionAlignment ?? 'workers';
-          const rivalFaction = this.factions?.find((f) => f.id === factionId);
-          if (rivalFaction) rivalFaction.support = Math.min(100, (rivalFaction.support ?? 0) + 8);
-          m.notableId = null;
-          this.selectSuccessor(mIdx);
-        }
-      }
-
-      // --- scandal: 2% annual per minister in role 5+ years (~0.17%/month) ---
-      for (const m of this.ministers) {
-        if (m.notableId === null) continue;
-        const notable = this.notables.find((n) => n.id === m.notableId && n.alive);
-        if (!notable) continue;
-        const yearsInRole = this.year - (notable.yearEnteredRole ?? this.year);
-        if (yearsInRole >= 5 && this.rng.chance(0.02 / 12)) {
-          this.legitimacy = Math.max(0, this.legitimacy - 3);
-          // Reduce satisfaction in notable's home settlement
-          const t = this.settlement(notable.settlementId);
-          if (t) t.satisfaction = Math.max(0, (t.satisfaction ?? 50) - 5);
-          this.addLog(`SCANDAL: ${notable.name}, ${m.title}, embroiled in scandal. Public trust shaken.`, 'bad');
-        }
-      }
-    }
-  }
-
   /** New Notables rise from the cohorts when a role falls vacant (GDD §2.4). */
-  private mintNotable(
+  /** Public for systems/notables.ts (heir birth / vacancy fill). */
+  mintNotable(
     role: NotableRole,
     settlementId: number,
     overrides?: {
@@ -9350,20 +8893,6 @@ export class RegionSim {
     const totalGarrison = playerSettlements.reduce((sum, s) => sum + this.garrisonOf(s), 0);
     if (totalGarrison < 10) return false;
     return true;
-  }
-
-  private updateCharter(): void {
-    if (this.stateProclaimed || this.ceremonyPending) return;
-    if (this.charterEligible()) {
-      // The Mayor drafts the Regional Charter — the slice's civics gate.
-      this.charterProgress = Math.min(100, this.charterProgress + 100 / 90); // ~90 days of drafting
-      if (this.charterProgress >= 100) {
-        this.ceremonyPending = true;
-        this.addLog('The Regional Charter is drafted. The towns await your word. (Incorporation ceremony)', 'good');
-      }
-    } else {
-      this.charterProgress = Math.max(0, this.charterProgress - 0.5);
-    }
   }
 
   // ---- Phase 0: Exploration & Fog of War ----
@@ -11397,91 +10926,6 @@ export class RegionSim {
     return true;
   }
 
-  /** Monthly: advance armies, resolve battles on arrival, drain supply. */
-  private updateArmyMovement(): void {
-    for (const army of this.provincialArmies) {
-      army.supply = Math.max(0, army.supply - 1 / 30);
-      if (army.supply <= 0) {
-        for (const u of army.units) u.morale = Math.max(0, u.morale - 5);
-      }
-    }
-    for (const army of [...this.provincialArmies]) {
-      if (!army.destinationId) continue;
-      army.transitDays -= 30;
-      if (army.transitDays <= 0) {
-        const toName = this.settlement(army.destinationId)?.name ?? 'destination';
-        const ownerName = army.ownerId === 0 ? 'Our army' : (this.rival(army.ownerId)?.name ?? 'Enemy force');
-        army.provinceId = army.destinationId;
-        army.destinationId = null;
-        army.transitDays = 0;
-        this.addLog(`${ownerName} arrives at ${toName}.`, 'info');
-        this.resolveProvinceBattle(army.provinceId);
-      }
-    }
-    this.provincialArmies = this.provincialArmies.filter(
-      (a) => a.units.reduce((s, u) => s + u.count, 0) > 0,
-    );
-  }
-
-  /** Resolve combat when opposing armies occupy the same province. */
-  private resolveProvinceBattle(provinceId: number): void {
-    const playerArmies = this.provincialArmies.filter((a) => a.ownerId === 0 && a.provinceId === provinceId && !a.destinationId);
-    const rivalArmies = this.provincialArmies.filter((a) => a.ownerId !== 0 && a.provinceId === provinceId && !a.destinationId);
-    if (!playerArmies.length || !rivalArmies.length) return;
-    const sName = this.settlement(provinceId)?.name ?? 'the province';
-    const calcPower = (armies: ProvincialArmy[], rivalBoost = 1) =>
-      armies.reduce((sum, a) => sum + a.units.reduce((s, u) =>
-        s + u.count * UNIT_TYPES[u.type].powerPerUnit * (u.morale / 100), 0) * rivalBoost, 0);
-    const rvId = rivalArmies[0].ownerId;
-    const rv = this.rival(rvId);
-    const rivalBoost = rv ? 0.6 + rv.weights.expansion * 0.04 : 0.6;
-    const playerPower = calcPower(playerArmies);
-    const rivalPower = calcPower(rivalArmies, rivalBoost);
-    const playerWins = playerPower >= rivalPower * (0.8 + this.rng.next() * 0.4);
-    if (playerWins) {
-      this.provincialArmies = this.provincialArmies.filter((a) => !(a.ownerId === rvId && a.provinceId === provinceId));
-      for (const a of playerArmies) {
-        for (const u of a.units) { u.count = Math.max(1, Math.round(u.count * 0.8)); u.morale = Math.max(40, u.morale - 10); }
-      }
-      if (rv) rv.relations = this.clampRel(rv.relations - 5);
-      this.addLog(`BATTLE of ${sName}: our forces rout ${rv?.name ?? 'the enemy'}!`, 'good');
-    } else {
-      const homeId = this.settlements.find((s) => s.factionId === this.playerFactionId)?.id ?? provinceId;
-      for (const a of playerArmies) {
-        a.provinceId = homeId;
-        a.destinationId = null;
-        for (const u of a.units) { u.count = Math.max(1, Math.round(u.count * 0.7)); u.morale = Math.max(20, u.morale - 20); }
-      }
-      this.addLog(`BATTLE of ${sName}: ${rv?.name ?? 'the enemy'} drives our forces back!`, 'bad');
-    }
-  }
-
-  /** Monthly: rival AI spawns and manoeuvres armies (expansion-minded powers threaten borders). */
-  private tickRivalArmyAI(): void {
-    // Phase 17: scale expansion chance by aiAggression difficulty knob
-    const aggressionScale = this.difficultySettings.aiAggression;
-    for (const rv of this.rivals) {
-      if (rv.weights.expansion < 6) continue;
-      if (!this.rng.chance(0.025 * aggressionScale)) continue;
-      const rvArmies = this.provincialArmies.filter((a) => a.ownerId === rv.id);
-      if (rvArmies.length >= 2) continue;
-      const targets = this.settlements.filter((s) => s.factionId === this.playerFactionId);
-      if (!targets.length) continue;
-      const target = targets[this.rng.int(targets.length)];
-      const armySize = 2 + this.rng.int(4);
-      this.provincialArmies.push({
-        id: this.nextArmyId++,
-        ownerId: rv.id,
-        provinceId: target.id,
-        destinationId: null,
-        transitDays: 0,
-        units: [{ type: 'militia', count: armySize, morale: 70, suppliedDays: 60 }],
-        supply: 1.5,
-      });
-      this.addLog(`Intelligence: ${rv.name} is massing troops near ${target.name}!`, 'bad');
-    }
-  }
-
   // ---- Phase 16: Warfare System Depth (GDD §7) ----
 
   /** Generate available casus belli against a rival (Phase 16 CB system). */
@@ -11596,36 +11040,6 @@ export class RegionSim {
     return true;
   }
 
-  /** Monthly tick: mobilization effects and auto-demobilization (Phase 16). */
-  tickMobilization(): void {
-    if (this.mobilizationLevel === 0) return;
-    this.mobilizationMonths++;
-    const atWar = this.playerWar !== null;
-    // Auto-reduce to 0 if not at war for 6 months
-    if (!atWar && this.mobilizationMonths >= 6) {
-      this.mobilizationLevel = 0;
-      this.mobilizationMonths = 0;
-      this.addLog('Mobilization expires — no active war after 6 months. Forces stand down.', 'info');
-      return;
-    }
-    // Total mobilization costs
-    if (this.mobilizationLevel === 2) {
-      const gdp = this.gdpLastMonth;
-      const cost = gdp * 0.03;
-      this.treasury -= cost;
-      // Satisfaction -3/month
-      for (const s of this.settlements) {
-        if (s.factionId === this.playerFactionId) {
-          s.satisfaction = Math.max(0, s.satisfaction - 3);
-        }
-      }
-      // WarSupport drain from rationing
-      if (atWar && this.playerWar) {
-        this.warSupport = Math.max(0, this.warSupport - 0.5);
-      }
-    }
-  }
-
   /** Compute combat power for an Army Group (Phase 16 formula). */
   computeCombatPower(army: ArmyGroup): number {
     return (
@@ -11635,136 +11049,6 @@ export class RegionSim {
       (army.doctrine / 100 + 0.5) *
       (army.morale / 100 + 0.3)
     );
-  }
-
-  /** Resolve a battle between Army Groups at a province (Phase 16). */
-  resolveArmyGroupBattle(provinceId: number): void {
-    const playerArmies = this.armyGroups.filter((a) => a.ownerId === 0 && a.provinceId === provinceId && !a.destinationId);
-    const rivalArmies = this.armyGroups.filter((a) => a.ownerId !== 0 && a.provinceId === provinceId && !a.destinationId);
-    if (!playerArmies.length || !rivalArmies.length) return;
-    const sName = this.settlement(provinceId)?.name ?? `Province ${provinceId}`;
-    const playerPower = playerArmies.reduce((s, a) => s + this.computeCombatPower(a), 0);
-    const rivalPower = rivalArmies.reduce((s, a) => s + this.computeCombatPower(a), 0);
-    const playerWins = playerPower >= rivalPower * (0.8 + this.rng.next() * 0.4);
-    const rvId = rivalArmies[0].ownerId;
-    const rv = this.rival(rvId);
-    const rvName = rv?.name ?? 'rival forces';
-    if (playerWins) {
-      // Loser retreats to adjacent province
-      const retreatTarget = this.settlements.find((s) => s.factionId === rvId)?.id ?? provinceId;
-      for (const a of rivalArmies) {
-        a.manpower = Math.round(a.manpower * 0.7); // loser manpower ×0.7
-        a.morale = Math.max(0, a.morale - 20);     // loser morale -20
-        a.provinceId = retreatTarget;
-      }
-      for (const a of playerArmies) {
-        a.manpower = Math.round(a.manpower * 0.9); // winner manpower ×0.9
-        a.morale = Math.min(100, a.morale + 5);    // winner morale +5
-        a.wonBattleThisMonth = true;
-      }
-      this.lastBattleWon = true;
-      const casualties = Math.round(rivalPower * 0.3 + playerPower * 0.1);
-      this.addLog(`BATTLE OF ${sName.toUpperCase()}: our forces prevail, ${rvName} retreats — ${casualties} casualties.`, 'good');
-    } else {
-      // Player loses — retreat to nearest player province
-      const homeId = this.settlements.find((s) => s.factionId === this.playerFactionId)?.id ?? provinceId;
-      for (const a of playerArmies) {
-        a.manpower = Math.round(a.manpower * 0.7); // loser manpower ×0.7
-        a.morale = Math.max(0, a.morale - 20);     // loser morale -20
-        a.provinceId = homeId;
-      }
-      for (const a of rivalArmies) {
-        a.manpower = Math.round(a.manpower * 0.9); // winner manpower ×0.9
-        a.morale = Math.min(100, a.morale + 5);    // winner morale +5
-      }
-      this.lastBattleWon = false;
-      const casualties = Math.round(playerPower * 0.3 + rivalPower * 0.1);
-      this.addLog(`BATTLE OF ${sName.toUpperCase()}: our forces lose, ${rvName} holds the field — ${casualties} casualties.`, 'bad');
-    }
-    // Remove armies with no manpower
-    this.armyGroups = this.armyGroups.filter((a) => a.manpower > 0);
-  }
-
-  /** Monthly tick: supply line decay for Army Groups (Phase 16). */
-  tickSupplyLines(): void {
-    const playerProvinces = new Set(
-      this.settlements.filter((s) => s.factionId === this.playerFactionId).map((s) => s.id)
-    );
-    for (const army of this.armyGroups) {
-      const atPlayerProvince = playerProvinces.has(army.provinceId);
-      if (atPlayerProvince) {
-        // Supply recovers at player province
-        army.supply = Math.min(1.0, army.supply + 0.05);
-      } else {
-        // Check distance: more than 2 hexes from nearest player province
-        const prov = this.settlement(army.provinceId);
-        if (prov) {
-          const minDist = this.settlements
-            .filter((s) => s.factionId === this.playerFactionId)
-            .reduce((minD, ps) => Math.min(minD, Math.hypot(prov.x - ps.x, prov.y - ps.y)), Infinity);
-          if (minDist > 20) { // ~2 hexes in 0–100 coord space
-            army.supply = Math.max(0, army.supply - 0.08);
-          }
-        }
-      }
-      // Low supply penalties
-      if (army.supply < 0.4) {
-        army.morale = Math.max(0, army.morale - 3);
-        army.equipmentLevel = Math.max(0, army.equipmentLevel - 2);
-      }
-      // Critical supply: forced retreat
-      if (army.supply < 0.2 && army.ownerId === 0) {
-        const home = this.settlements.find((s) => s.factionId === this.playerFactionId);
-        if (home && army.provinceId !== home.id) {
-          army.provinceId = home.id;
-          this.addLog(`Supply critical — army at ${this.settlement(army.provinceId)?.name ?? 'field'} falls back to home territory.`, 'bad');
-        }
-      }
-    }
-  }
-
-  /** Monthly tick: occupation resistance and events (Phase 16). */
-  tickOccupation(): void {
-    for (const [provIdStr, occ] of Object.entries(this.provincialOccupations)) {
-      const provId = Number(provIdStr);
-      const province = this.settlement(provId);
-      if (!province) continue;
-      const rv = this.rival(occ.occupiedBy);
-      // Ideology distance: compare player bloc to occupier bloc
-      const playerBloc = this.playerBloc() ?? 'liberal';
-      const occupierBloc = rv ? this.regimeOf(rv).bloc : 'autocratic';
-      const ideologyDistance = Math.max(0, -blocAffinity(playerBloc, occupierBloc));
-      let resistanceGrowth = 1 + ideologyDistance * 0.5;
-      // Policy modifiers
-      if (occ.occupationPolicy === 'brutal') {
-        resistanceGrowth *= 0.7; // slower now, worse postwar
-        occ.brutalPolicyPenalty = Math.min(100, occ.brutalPolicyPenalty + 1);
-      } else if (occ.occupationPolicy === 'conciliatory') {
-        resistanceGrowth *= 1.4;
-      }
-      occ.resistanceLevel = Math.min(100, occ.resistanceLevel + resistanceGrowth);
-      // Guerrilla events at high resistance
-      if (occ.resistanceLevel > 70 && this.rng.chance(0.4)) {
-        const gdp = this.gdpLastMonth;
-        this.treasury -= gdp * 0.01;
-        // Supply penalty on any army groups at enemy provinces
-        for (const ag of this.armyGroups) {
-          if (ag.ownerId !== 0 && ag.provinceId === provId) {
-            ag.supply = Math.max(0, ag.supply - 0.1);
-          }
-        }
-        this.addLog(`Guerrilla activity in ${province.name} — partisans raid supply lines and drain treasury.`, 'bad');
-      }
-      // Province liberation at extreme resistance
-      if (occ.resistanceLevel > 90) {
-        delete this.provincialOccupations[provId];
-        // Expel occupying armies
-        this.armyGroups = this.armyGroups.filter(
-          (ag) => !(ag.ownerId !== 0 && ag.provinceId === provId)
-        );
-        this.addLog(`LIBERATION: the people of ${province.name} expel the occupying forces — the province is free!`, 'good');
-      }
-    }
   }
 
   /** Set occupation policy for a province occupied by the player (Phase 16). */
@@ -11778,60 +11062,6 @@ export class RegionSim {
       this.addLog(`Conciliatory policy in ${this.settlement(provinceId)?.name ?? 'province'} — resistance grows but locals cooperate more.`, 'info');
     }
     return true;
-  }
-
-  /** Monthly tick: war support decay and rally (Phase 16). */
-  tickWarSupport(): void {
-    if (!this.playerWar) return;
-    // Base decay — scaled by regime's decay multiplier (all 1.0 now; tune later)
-    const decayMult = WAR_SUPPORT_DECAY_MULT[this.govType ?? 'democracy'];
-    this.warSupport = Math.max(0, this.warSupport - 1 * decayMult);
-    // Decay from mobilization level 2 (rationing)
-    if (this.mobilizationLevel === 2) {
-      this.warSupport = Math.max(0, this.warSupport - 2);
-    }
-    // Decay from casualties (rough estimate from player war casualties)
-    const totalPop = this.totalPop();
-    if (totalPop > 0 && this.playerWar.casualties > 0) {
-      const casualtyRate = this.playerWar.casualties / totalPop;
-      this.warSupport = Math.max(0, this.warSupport - casualtyRate * 50);
-    }
-    // Rally: won a battle this month
-    if (this.lastBattleWon) {
-      this.warSupport = Math.min(100, this.warSupport + 5);
-    }
-    // Rally: rival attacks player home province
-    const playerProvinces = this.settlements.filter((s) => s.factionId === this.playerFactionId).map((s) => s.id);
-    const enemyAtHome = this.armyGroups.some(
-      (ag) => ag.ownerId !== 0 && playerProvinces.includes(ag.provinceId)
-    );
-    if (enemyAtHome) {
-      this.warSupport = Math.min(100, this.warSupport + 10);
-      this.addLog('Enemy forces threaten the homeland — war support surges!', 'bad');
-    }
-    // Events at low war support
-    if (this.warSupport < 20) {
-      // Draft riots
-      for (const s of this.settlements) {
-        if (s.factionId === this.playerFactionId) {
-          s.grievance = Math.min(100, s.grievance + 15);
-          s.satisfaction = Math.max(0, s.satisfaction - 10);
-        }
-      }
-      if (this.rng.chance(0.5)) {
-        this.addLog('DRAFT RIOTS: war weariness boils over — grievance surges in the streets.', 'bad');
-      }
-    }
-    if (this.warSupport < 5) {
-      // Coup risk
-      this.legitimacy = Math.max(0, this.legitimacy - 25);
-      if (this.mobilizationLevel > 0) {
-        this.mobilizationLevel = Math.max(0, this.mobilizationLevel - 1) as 0 | 1 | 2;
-      }
-      this.addLog('COUP RISK: the government teeters — legitimacy collapses, mobilization falters.', 'bad');
-    }
-    // Reset battle flag
-    this.lastBattleWon = false;
   }
 
   /** Compute war score from battlefield situation (Phase 16). */
@@ -12007,50 +11237,6 @@ export class RegionSim {
     w.mobilization = m;
     this.addLog(`MOBILIZATION: ${MOBILIZATION_DEFS[m].name.toLowerCase()} — ${MOBILIZATION_DEFS[m].desc}`, 'info');
     return true;
-  }
-
-  /** Consume supply reserves based on army size and unit types (GDD §7.1, §7.3). */
-  private consumeWarSupply(): void {
-    const w = this.playerWar;
-    if (!w || w.units.length === 0) return;
-
-    // Calculate monthly supply demand from all units
-    const monthDays = 30;
-    const supplyDemand = w.units.reduce((total, unit) => {
-      const unitDef = UNIT_TYPES[unit.type];
-      return total + unit.count * unitDef.supplyCost * monthDays;
-    }, 0);
-
-    // Deduct from supply reserve
-    w.supplyReserve -= supplyDemand;
-
-    // Log supply status
-    if (w.supplyReserve > 3) {
-      // Army is well-supplied
-    } else if (w.supplyReserve > 1) {
-      if (this.rng.chance(0.3)) this.addLog('Supply lines stretching thin — rations cut.', 'info');
-    } else if (w.supplyReserve > 0) {
-      if (this.rng.chance(0.3)) this.addLog('SUPPLY CRISIS: The army goes hungry. Morale plummets.', 'bad');
-      // Reduce morale on critical shortage
-      for (const unit of w.units) {
-        unit.morale = Math.max(30, unit.morale - 10);
-      }
-    } else {
-      // No supply left — army begins to disband
-      if (this.rng.chance(0.5)) {
-        const disbanded = Math.ceil(w.units.reduce((sum, u) => sum + u.count, 0) * 0.1);
-        let remaining = disbanded;
-        for (const unit of w.units) {
-          const loss = Math.min(remaining, unit.count);
-          unit.count -= loss;
-          remaining -= loss;
-          if (remaining === 0) break;
-        }
-        w.units = w.units.filter(u => u.count > 0);
-        this.addLog(`DESERTION: ${disbanded} troops abandon the army — supply exhausted.`, 'bad');
-      }
-      w.supplyReserve = 0;
-    }
   }
 
   /** What the enemy wants on the scoreboard before signing — the §6.3
@@ -12284,150 +11470,11 @@ export class RegionSim {
     return true;
   }
 
-  /** Monthly war resolution (GDD §7.3–7.4): the front moves on the power
-   *  ratio, attrition bleeds the cohorts, and the home front keeps score. */
-  tickPlayerWar(): void {
-    const w = this.playerWar;
-    if (!w) return;
-    if (w.startedDay === this.day) return; // the declaration day musters; the front resolves with the month
-    const rv = this.rival(w.rivalId);
-    if (!rv) {
-      // Rival no longer exists — inconclusive end (bookkeep with a placeholder name)
-      this.warScars.push({ rivalId: w.rivalId, rivalName: `rival#${w.rivalId}`, yearEnded: this.year, outcome: 'status_quo', occupied: w.occupied, casualties: w.casualties, durationMonths: Math.round((this.day - w.startedDay) / 30) });
-      this.playerWar = null;
-      return;
-    }
-    const mob = MOBILIZATION_DEFS[w.mobilization];
-    const P = this.warPower();
-    const R = this.rivalWarPower(rv);
-    const delta = 16 * ((P - R) / (P + R)) + this.rng.int(9) - 4;
-    w.score = Math.max(-100, Math.min(100, w.score + delta));
-    if (w.blockade) {
-      rv.pop *= 0.997; // the quays starve before the trenches do
-      w.score = Math.min(100, w.score + 1.5);
-    }
-    // Front stub: mirrors war score; future Front system will read this position.
-    w.front = { position: w.score };
-    // Attrition (GDD §7.3): burns even on quiet fronts; the pyramid keeps the scar
-    const lossRate =
-      (w.mobilization === 'total' ? 0.006 : w.mobilization === 'partial' ? 0.004 : 0.003) +
-      (delta < 0 ? 0.002 : 0);
-    let lost = 0;
-    for (const t of this.settlements) {
-      const l = (t.cohorts.bands[1] + t.cohorts.bands[2]) * lossRate;
-      t.cohorts.bands[1] -= l * 0.7;
-      t.cohorts.bands[2] -= l * 0.3;
-      t.satisfaction = Math.max(0, t.satisfaction + mob.satMonthly); // rationing bites
-      lost += l;
-    }
-    w.casualties += lost;
-    rv.pop *= 1 - lossRate * (delta > 0 ? 1.2 : 0.8);
-    // co-belligerents bleed beside you, at half the rate (GDD §7.3)
-    for (const id of w.allies) {
-      const ally = this.rival(id);
-      if (ally) ally.pop *= 1 - lossRate * 0.5;
-    }
-    // Interdiction runs both ways (GDD §7.3): their raiders cut your routes
-    if (this.routes.length > 0 && this.rng.chance(0.3)) {
-      const rt = this.routes[this.rng.int(this.routes.length)];
-      rt.condition = Math.max(ROUTE_CONDITION_FLOOR, rt.condition - 12);
-      const an = this.settlement(rt.a)?.name ?? '?';
-      const bn = this.settlement(rt.b)?.name ?? '?';
-      this.addLog(`Enemy raiders fire the depots — the ${an}–${bn} ${rt.kind} is cut about.`, 'bad');
-    }
-    // War support (GDD §7.4): decays with duration and defeat, rallies on victories
-    w.support += delta > 4 ? 2 : delta < -4 ? -4 : -1.5;
-    if (w.mobilization === 'total') w.support -= 1.5;
-    w.support = Math.max(0, Math.min(100, w.support));
-    // Occupation (GDD §7.4): a winning front takes ground; a losing one cedes it
-    if (w.score >= 35 && w.occupied < MAX_OCCUPIED_MARCHES && this.rng.chance(0.3)) {
-      w.occupied++;
-      w.support = Math.min(100, w.support + 3); // the parade writes the headline
-      this.addLog(`Our columns take one of ${rv.name}'s marches — military administration begins (${w.occupied} occupied).`, 'good');
-    } else if (w.score < 0 && w.occupied > 0 && this.rng.chance(0.25)) {
-      w.occupied--;
-      if (w.occupied === 0) w.resistance = 0;
-      this.addLog(`${rv.name}'s counterattack retakes its march — the garrison falls back (${w.occupied} occupied).`, 'bad');
-    }
-    if (w.occupied > 0) {
-      const occ = OCCUPATION_DEFS[w.occupationPolicy];
-      // resistance scales with ideology distance and your policy (GDD §7.4)
-      const distance = blocAffinity(this.playerBloc() ?? 'liberal', this.regimeOf(rv).bloc) < 0 ? 1.5 : 1;
-      w.resistance = Math.min(100, w.resistance + occ.resistance * distance);
-      this.treasury += w.occupied * (occ.yield - occ.garrison); // partial output, garrisons paid
-      if (w.resistance > 50 && this.rng.chance(w.resistance / 120)) {
-        w.casualties += w.occupied * 1.5;
-        w.score = Math.max(-100, w.score - 2);
-        w.support = Math.max(0, w.support - 1.5);
-        this.addLog('Partisans burn the depots in the occupied marches — garrisons bleed and the occupation sours.', 'bad');
-      }
-    }
-    if (this.rng.chance(0.35)) {
-      this.addLog(
-        delta > 4
-          ? `The front moves: our columns push into ${rv.name}'s marches.`
-          : delta < -4
-            ? `Bad news from the front: ${rv.name}'s offensive gains ground.`
-            : `Stalemate on the ${rv.name} front. The shells fall; the line holds.`,
-        delta < -4 ? 'bad' : 'info',
-      );
-    }
-    // The regime's consent floor (GDD §7.5)
-    const floor = WAR_SUPPORT_FLOOR[this.govType ?? 'democracy'];
-    if (w.support < floor) {
-      this.legitimacy = Math.max(0, this.legitimacy - 2);
-      for (const t of this.settlements) t.grievance = Math.min(100, t.grievance + 4);
-      if (this.rng.chance(0.3)) this.addLog('War weariness: draft riots and strike talk — the home front is buckling.', 'bad');
-      if (w.support <= floor - 15) {
-        this.addLog('THE HOME FRONT BREAKS: the government cannot continue the war.', 'bad');
-        this.capitulate();
-        return;
-      }
-    }
-    // The enemy dictates when the scoreboard is theirs
-    if (w.score <= -60) {
-      this.capitulate();
-      return;
-    }
-    // A beaten enemy lets you know the table is set (GDD §7.4)
-    if (w.score >= 60 && this.rng.chance(0.25)) {
-      this.addLog(`${rv.name} sues for peace — its envoys ask what the guns will cost to stop.`, 'info');
-    }
-  }
-
   removePop(t: Settlement, count: number): void {
     const pop = this.popOf(t);
     if (pop <= 0) return;
     const frac = Math.min(1, count / pop);
     for (let i = 0; i < t.cohorts.bands.length; i++) t.cohorts.bands[i] *= 1 - frac;
-  }
-
-  /** An AI settlement whose population decays below one person is a ghost town:
-   *  removePop is multiplicative, so without this a starved rival town would
-   *  linger forever displaying a fractional "pop 0.004" (the collapsed outposts
-   *  players kept seeing on the map). Remove it from the map and its faction,
-   *  hand the capital to a survivor, and let a faction with no towns left die.
-   *  RNG-free so determinism holds. The player's own towns are left alone —
-   *  those are visible and managed, and colony death is the town tier's call. */
-  private abandonGhostTowns(): void {
-    const doomed = this.settlements.filter(
-      (t) => t.factionId !== this.playerFactionId && this.popOf(t) < 1,
-    );
-    for (const t of doomed) {
-      const faction = this.faction(t.factionId);
-      this.settlements = this.settlements.filter((s) => s !== t);
-      this.routes = this.routes.filter((r) => r.a !== t.id && r.b !== t.id);
-      this._routePathCache.clear(); // routes removed with the destroyed settlement
-      this.activeRailRoutes = this.routes.filter((r) => r.kind === 'rail' && r.condition > 50).length;
-      this.notables = this.notables.filter((n) => n.settlementId !== t.id);
-      if (faction) {
-        faction.settlementIds = faction.settlementIds.filter((id) => id !== t.id);
-        if (faction.capital === t.id) {
-          faction.capital = faction.settlementIds[0] ?? -1;
-        }
-      }
-      this.addLog(`${t.name} is abandoned — the last of its people have drifted away. A ghost town now.`, 'bad');
-    }
   }
 
   // ---- Phase 12: Media & Misinformation System (GDD §8.3) ----
@@ -13409,37 +12456,6 @@ export class RegionSim {
     this.centralBankLoan = Math.max(0, this.centralBankLoan - paid);
     this.addLog(`Repaid ` + formatCurrency(Math.floor(paid)) + ` to the Central Bank.`, 'info');
     return { ok: true };
-  }
-
-  /**
-   * Called monthly to process loan interest accrual and check for defaults.
-   */
-  updateLoans(): void {
-    for (const loan of this.loans) {
-      if (loan.defaulted) continue;
-
-      // Calculate interest accrued this month
-      const monthlyRate = loan.interestRate / 12;
-      const interestThisMonth = loan.borrowed * monthlyRate;
-      loan.borrowed += interestThisMonth;
-
-      // Check for default: payment overdue by 90+ days (3 months grace)
-      if (this.day > loan.nextPaymentDue + 90 && !loan.defaulted) {
-        loan.defaulted = true;
-        const lender = this.lenders.find((l) => l.id === loan.lenderId);
-        if (lender) {
-          lender.reliability = Math.max(0, lender.reliability - 10); // lender loses confidence in player
-          lender.liquidCash = 0; // lender becomes cautious
-        }
-        this.addLog(
-          `Loan from ${lender?.name ?? 'lender'} has defaulted. Credit damaged.`,
-          'bad',
-        );
-      }
-    }
-
-    // Remove fully repaid loans
-    this.loans = this.loans.filter((l) => l.borrowed > 0.01 || l.defaulted);
   }
 
   /**

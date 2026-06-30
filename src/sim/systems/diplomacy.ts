@@ -9,8 +9,8 @@
  *
  * `updateDiplomacy` is the orchestrator: it drives the relations drift / AI offers /
  * mischief loop, then calls the other diplomacy ticks as module siblings — and
- * `r.tickPlayerWar()`, which stays on RegionSim with the rest of the warfare system
- * (a future systems/military.ts). The player ACTIONS and queries in this region
+ * `tickPlayerWar(r)`, the player-war resolver now in systems/military.ts (the rest
+ * of the warfare system). The player ACTIONS and queries in this region
  * (proposeDeal, sendEnvoy, imposeSanction, startForeignWar, the sanction queries, …)
  * and the helpers `noteHistory`/`changeRegime`/`clampRel`/`playerBloc`/`startPlayerWar`
  * stay on RegionSim — the moved bodies reach them through `r`, so those (and the
@@ -26,6 +26,7 @@ import {
   ARCHETYPE_WAR_FREQ_MULT,
 } from '../region';
 import { formatCurrency } from '../defs';
+import { tickPlayerWar } from './military';
 
   /** Monthly diplomacy tick: emergence, relations drift, AI offers,
    *  hostile mischief, regime change abroad, and foreign wars. */
@@ -109,7 +110,7 @@ export function updateDiplomacy(r: RegionSim): void {
       if (r.rng.chance(0.01)) r.changeRegime(rv, 'drift');
     }
     tickForeignRelations(r);
-    r.tickPlayerWar();
+    tickPlayerWar(r);
     tickRivalEspionage(r);       // Phase 6: rivals spy on the player
     tickRivalTradeBlocActivity(r); // Phase 6: rivals form their own blocs
     tickRivalProvinceGovernance(r); // Phase 5: rivals invest in provinces

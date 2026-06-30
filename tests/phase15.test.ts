@@ -13,6 +13,7 @@ import {
 } from '../src/sim/region';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
 import { computeCongestionTariff, tickPriceArbitrage } from '../src/sim/systems/arbitrage';
+import { tickFX } from '../src/sim/systems/monetary';
 import { tickIntermediateGoods } from '../src/sim/systems/goods';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
@@ -645,7 +646,7 @@ describe('devalue()', () => {
     const r = twoTownSim(42);
     r.devalue(0.2);
     const initial = r.fxBoost; // 1.3
-    r.tickFX();
+    tickFX(r);
     // 1.0 + (1.3 - 1.0) * 0.9 = 1.27
     expect(r.fxBoost).toBeCloseTo(1.0 + (initial - 1.0) * 0.9, 4);
   });
@@ -653,7 +654,7 @@ describe('devalue()', () => {
   it('fxBoost never goes below 1.0 after decay', () => {
     const r = twoTownSim(42);
     r.fxBoost = 1.001;
-    r.tickFX();
+    tickFX(r);
     expect(r.fxBoost).toBeGreaterThanOrEqual(1.0);
   });
 });
@@ -713,7 +714,7 @@ describe('tickFX()', () => {
     r.switchCurrencyRegime('gold_standard');
     r.confidence = 30; // below 40
     const prevRate = r.exchangeRate;
-    r.tickFX();
+    tickFX(r);
     // Crisis should switch to fiat and drop exchange rate
     expect(r.currencyRegime).toBe('fiat');
     expect(r.exchangeRate).toBeLessThan(prevRate + 0.01); // rate fell or stayed same
@@ -723,7 +724,7 @@ describe('tickFX()', () => {
     const r = twoTownSim(42);
     r.switchCurrencyRegime('gold_standard');
     r.confidence = 60;
-    r.tickFX();
+    tickFX(r);
     expect(r.currencyRegime).toBe('gold_standard');
     expect(r.exchangeRate).toBe(1.0);
   });
@@ -754,7 +755,7 @@ describe('tickFX()', () => {
       cb: 'rivalry',
     };
 
-    r.tickFX();
+    tickFX(r);
     expect(r.currencyRegime).toBe('fiat');
     expect(r.currencyUnionPartnerId).toBeUndefined();
   });
@@ -766,7 +767,7 @@ describe('tickFX()', () => {
     r.inflationRate = 0.02;
     r.gdpLastMonth = 100;
     r.exportEarningsLastMonth = 5;
-    r.tickFX();
+    tickFX(r);
     expect(r.inflationRate).toBeGreaterThan(0.02);
   });
 });

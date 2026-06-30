@@ -8,6 +8,7 @@ import {
 } from '../src/sim/region';
 import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
 import { tickIntermediateGoods } from '../src/sim/systems/goods';
+import { tickHistoricalAnchors } from '../src/sim/systems/historical';
 
 /**
  * The 1970s oil-shock anchor, routed through the supply chain (GDD §5.4: "the
@@ -44,8 +45,7 @@ function fireOilShock(r: RegionSim, year = 1975, times = 400): void {
   r.researched.add('combustion_engine');
   r.researched.delete('renewables');
   r.researched.delete('fusion_power');
-  const priv = r as unknown as { tickHistoricalAnchors(): void };
-  for (let i = 0; i < times; i++) priv.tickHistoricalAnchors();
+  for (let i = 0; i < times; i++) tickHistoricalAnchors(r);
 }
 
 /** A standing oil embargo `OIL_EMBARGO_DAYS` out at the given cut depth. */

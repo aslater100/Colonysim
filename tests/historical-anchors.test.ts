@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { RegionSim, REGION_MINUTES_PER_TICK } from '../src/sim/region';
+import { tickHistoricalAnchors } from '../src/sim/systems/historical';
 import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
@@ -27,8 +28,7 @@ function runMonth(r: RegionSim): void {
 function fireAnchor(r: RegionSim, year: number, times = 300): void {
   // Set the internal minute so year getter returns the target value.
   r.minute = (year - START_YEAR) * DAYS_PER_YEAR * MINUTES_PER_DAY;
-  const priv = r as unknown as { tickHistoricalAnchors(): void };
-  for (let i = 0; i < times; i++) priv.tickHistoricalAnchors();
+  for (let i = 0; i < times; i++) tickHistoricalAnchors(r);
 }
 
 // ---- World-war window ----
