@@ -37,6 +37,7 @@ import {
   abandonGhostTowns,
 } from './systems/military';
 import { tickHistoricalAnchors } from './systems/historical';
+import { tickNotableLifecycle } from './systems/notables';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -5714,7 +5715,7 @@ export class RegionSim {
     this.caravans();
     this.traders();
     this.navalTradeIncome();
-    this.tickNotableLifecycle();
+    tickNotableLifecycle(this);
     // The treasury runs even before the Charter: pre-statehood the Mayor still
     // taxes the towns and pays for services/militia, so the player has real
     // economic levers to climb out of a deficit toward the £8k Charter gate
@@ -8502,93 +8503,9 @@ export class RegionSim {
     }
   }
 
-  private tickNotableLifecycle(): void {
-    // --- age, health degradation, death ---
-    for (const n of this.notables) {
-      if (!n.alive) continue;
-      n.age += 1 / 12;
-
-      // Health degrades monthly (scaled from annual rates). Seeded (auxRng), not
-      // Math.random — a notable's health is serialized, so a non-deterministic
-      // draw made the save non-reproducible for a fixed seed.
-      const healthDecay = (this.auxRng.next() * 2 + (n.age > 70 ? 3 : 0)) / 12;
-      n.health = Math.max(0, (n.health ?? 80) - healthDecay);
-
-      // Death risk blended from age-based mortality and health
-      const annualRisk = n.age > 75 ? 0.12 : n.age > 60 ? 0.03 : 0.004;
-      const healthRisk = n.health < 20 ? 0.08 : n.health < 40 ? 0.02 : 0;
-      if (this.rng.chance((annualRisk + healthRisk) / 12)) {
-        n.alive = false;
-        n.deathYear = this.year;
-        n.bio.push(`Died ${this.year}, aged ${Math.floor(n.age)}.`);
-        this.addLog(`${n.name}, ${n.role} of ${this.settlement(n.settlementId)?.name ?? 'the colony'}, has died, aged ${Math.floor(n.age)}.`, 'bad');
-        // If minister, select a successor
-        const mIdx = this.ministers.findIndex((m) => m.notableId === n.id);
-        if (mIdx >= 0) {
-          this.selectSuccessor(mIdx);
-        } else {
-          this.mintNotable(n.role, n.settlementId);
-        }
-      }
-    }
-
-    // --- birth of heirs (5% annual = ~0.417%/month) ---
-    const alive = this.notables.filter((n) => n.alive);
-    for (const n of alive) {
-      if (n.age >= 25 && n.age <= 50 && this.rng.chance(0.05 / 12)) {
-        const child = this.mintNotable(n.role, n.settlementId, { parentId: n.id, age: 0 });
-        child.bio = [`Born to ${n.name}, ${this.year}.`];
-        child.age = 0;
-        n.children = n.children ?? [];
-        n.children.push(child.id);
-        this.addLog(`${n.name} welcomes a child, ${child.name}, born ${this.year}.`, 'info');
-      }
-    }
-
-    // --- minister loyalty decay and defection ---
-    if (this.nationProclaimed) {
-      for (const m of this.ministers) {
-        if (m.notableId === null) continue;
-        const notable = this.notables.find((n) => n.id === m.notableId && n.alive);
-        if (!notable) continue;
-
-        // Loyalty decays 0.5/month for all ministers
-        notable.loyalty = Math.max(0, (notable.loyalty ?? 80) - 0.5);
-        notable.monthsIgnored = (notable.monthsIgnored ?? 0) + 1;
-
-        // Defection: loyalty < 20 and 5% annual = ~0.4%/month chance
-        if ((notable.loyalty ?? 80) < 20 && this.rng.chance(0.05 / 12)) {
-          const mIdx = this.ministers.indexOf(m);
-          this.addLog(`${notable.name}, ${m.title}, has defected — disillusioned with the government.`, 'bad');
-          this.legitimacy = Math.max(0, this.legitimacy - 5);
-          // Boost rival faction power if one exists
-          const factionId = notable.factionAlignment ?? 'workers';
-          const rivalFaction = this.factions?.find((f) => f.id === factionId);
-          if (rivalFaction) rivalFaction.support = Math.min(100, (rivalFaction.support ?? 0) + 8);
-          m.notableId = null;
-          this.selectSuccessor(mIdx);
-        }
-      }
-
-      // --- scandal: 2% annual per minister in role 5+ years (~0.17%/month) ---
-      for (const m of this.ministers) {
-        if (m.notableId === null) continue;
-        const notable = this.notables.find((n) => n.id === m.notableId && n.alive);
-        if (!notable) continue;
-        const yearsInRole = this.year - (notable.yearEnteredRole ?? this.year);
-        if (yearsInRole >= 5 && this.rng.chance(0.02 / 12)) {
-          this.legitimacy = Math.max(0, this.legitimacy - 3);
-          // Reduce satisfaction in notable's home settlement
-          const t = this.settlement(notable.settlementId);
-          if (t) t.satisfaction = Math.max(0, (t.satisfaction ?? 50) - 5);
-          this.addLog(`SCANDAL: ${notable.name}, ${m.title}, embroiled in scandal. Public trust shaken.`, 'bad');
-        }
-      }
-    }
-  }
-
   /** New Notables rise from the cohorts when a role falls vacant (GDD §2.4). */
-  private mintNotable(
+  /** Public for systems/notables.ts (heir birth / vacancy fill). */
+  mintNotable(
     role: NotableRole,
     settlementId: number,
     overrides?: {

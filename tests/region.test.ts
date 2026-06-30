@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { RegionSim, REGION_MINUTES_PER_TICK, REGION_LAWS, GOV_TYPES, POLICY_CARDS, POLICY_SWAP_COST, REGION_BUILDINGS, REGION_EVENT_DEFS, TECH_TREE } from '../src/sim/region';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
+import { tickNotableLifecycle } from '../src/sim/systems/notables';
 import { REGION_N } from '../src/sim/worldgen';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
@@ -54,8 +55,7 @@ describe('RegionSim (aggregate model)', () => {
     // Drive the RNG to a state where the check fires by calling ageNotables many times.
     mayor.age = 90;
     // Call the private tickNotableLifecycle() 200 times directly: P(survive) = 0.99^200 < 14%
-    const priv = r as unknown as { tickNotableLifecycle(): void };
-    for (let i = 0; i < 200; i++) priv.tickNotableLifecycle();
+    for (let i = 0; i < 200; i++) tickNotableLifecycle(r);
     const mayors = r.notables.filter((n) => n.role === 'Mayor');
     expect(mayors.length).toBeGreaterThan(1); // a successor was minted
     expect(mayors.some((n) => n.alive)).toBe(true);
