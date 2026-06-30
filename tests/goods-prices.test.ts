@@ -6,7 +6,7 @@ import {
   LOCAL_GOODS_OUTPUT_DRAG,
   type Settlement,
 } from '../src/sim/region';
-import { tickIntermediateGoods, localGoodDemand, localGoodPrice } from '../src/sim/systems/goods';
+import { tickIntermediateGoods, localGoodDemand, localGoodPrice, worldGoodDemand } from '../src/sim/systems/goods';
 
 /**
  * PR-3 slice 3 — per-good LOCAL prices + the local-goods macro coupling (the first
@@ -133,19 +133,23 @@ describe('localGoodPrice', () => {
     expect(localGoodPrice(r, t, 'textiles')).toBeCloseTo(prev, 6);
   });
 
-  it('an un-demanded good is priced at base regardless of stock', () => {
+  it('an un-demanded good is priced at base regardless of LOCAL stock (world self-sufficient)', () => {
     // The pure-agri town demands no industry good, so steel is base-priced for it
-    // whether it holds a lot or none — no false scarcity where there is no appetite.
+    // whether it holds a lot or none — no false LOCAL scarcity where there is no
+    // appetite. Keep the WORLD self-sufficient in steel (stock the industry town past
+    // its world demand) so the world-anchor adds nothing and this isolates the local
+    // invariant; the anchor's effect when the world IS short lives in world-anchor.test.ts.
     const r = townsSim([
       { ind: 100, agri: 0 },
       { ind: 0, agri: 100 },
     ]);
-    const agri = r.settlements[1];
+    const [ind, agri] = r.settlements;
+    (ind.goodStocks ??= {})['steel'] = worldGoodDemand(r, 'steel') * 5 + 1000;
     (agri.goodStocks ??= {})['steel'] = 0;
     const atZero = localGoodPrice(r, agri, 'steel');
     agri.goodStocks['steel'] = 999;
     const atPlenty = localGoodPrice(r, agri, 'steel');
-    expect(atZero).toBe(atPlenty); // demand 0 → scarcity 0 → flat base price
+    expect(atZero).toBe(atPlenty); // demand 0 → local scarcity 0 → flat base price
   });
 });
 

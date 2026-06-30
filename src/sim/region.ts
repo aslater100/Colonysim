@@ -20,7 +20,7 @@ import { resolveSupplyChainGraded } from './supply';
 import { tickPollution } from './systems/pollution';
 import { tickServiceCoverage } from './systems/services';
 import { tickPriceArbitrage } from './systems/arbitrage';
-import { tickIntermediateGoods, worldGoodPrice, worldMarketTightness } from './systems/goods';
+import { tickIntermediateGoods, worldGoodPrice, worldGoodScarcity, worldMarketTightness } from './systems/goods';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -7279,6 +7279,14 @@ export class RegionSim {
    *  self-sufficient (balanced play), dearer as the world runs collectively short. */
   worldGoodPrice(goodId: string): number {
     return worldGoodPrice(this, goodId);
+  }
+
+  /** WORLD MARKET scarcity ∈ [0,1] for a good — how far total world supply falls
+   *  short of total world demand across EVERY faction (`systems/goods.ts`). 0 when
+   *  the world holds at least its collective demand. Drives the world clearing price
+   *  and the `localGoodPrice` world-anchor; pure read-only telemetry here. */
+  worldGoodScarcity(goodId: string): number {
+    return worldGoodScarcity(this, goodId);
   }
 
   /** WORLD MARKET tightness ∈ [0,1] — the demand-weighted mean world scarcity
