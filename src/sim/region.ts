@@ -2029,6 +2029,28 @@ export const OCCUPATION_SCORE_DISCOUNT = 6;
 /** Blockade upkeep: gunboats and requisitioned merchantmen, £/pop/month. */
 export const BLOCKADE_UPKEEP_PER_POP = 0.02;
 
+// ---- The Armaments Chain: military strength is forged from industry (GDD §7.2) ----
+// A nation fields, equips, and sustains a military only as far as its steel and
+// chemicals let it — the industrial base a war is fought with. `armamentsCapacity()`
+// reads that base as the Liebig minimum of the already-resolved steel/chemicals
+// supply levels (a pure read — no new good, no new state), so an embargo, a raw
+// war, or deindustrialisation now bites the military, not just civilian goods. The
+// couplings below are all reached only through the player-war paths (warPower,
+// recruitment, the wartime upkeep bill), which the autoplay sweep — never a
+// belligerent — never walks, so the whole chain is byte-identical to every sweep.
+
+/** How far a fully arms-starved force's combat power falls: at a total arms-base
+ *  collapse a nation still fights at this fraction (rifles and courage), at a full
+ *  base at ×1. Floor, never zero — an embargo weakens a defence, it can't erase it. */
+export const ARMAMENTS_WARPOWER_FLOOR = 0.5;
+
+/** How dear the war effort grows as the arms base is strained: recruitment and
+ *  wartime upkeep are multiplied by `1 + (1 − capacity) × PREMIUM`, so a nation
+ *  cut off from steel/chemicals pays up to (1+PREMIUM)× to raise and keep an army —
+ *  a deindustrialised belligerent can field forces, but struggles to afford them.
+ *  Exactly ×1 at a full arms base, so healthy war economies are unchanged. */
+export const ARMAMENTS_STRAIN_PREMIUM = 1.0;
+
 /** Unit type recruitment costs and supply needs (GDD §7.1 military depth). */
 export const UNIT_TYPES: Record<ArmyUnitType, {
   recruitCost: number;   // £ per unit
@@ -6228,7 +6250,7 @@ export class RegionSim {
       this.policyServiceUpkeep() + // Phase 5: generous city services cost the treasury
       this.policyUpkeep() + // active policy running costs
       (this.passedLaws.has('welfare_benefits') ? this.gdpLastMonth * 0.02 : 0) + // welfare relief payments
-      (warMob ? pop * warMob.upkeepPerPop : 0) + // …and the drain runs concurrently (GDD §7.2)
+      (warMob ? pop * warMob.upkeepPerPop * (1 + (1 - this.armamentsCapacity()) * ARMAMENTS_STRAIN_PREMIUM) : 0) + // …and the drain runs concurrently, dearer as the arms base is strained (GDD §7.2)
       (this.playerWar?.blockade ? pop * BLOCKADE_UPKEEP_PER_POP : 0) + // coal and crews for the gunboats
       (this.publicMediaFunded ? gdp * 0.008 : 0); // Phase 12: public media upkeep (0.8% GDP/month)
     // Income Tax (civic research): a progressive levy adds 3% of GDP on top
@@ -10523,7 +10545,12 @@ export class RegionSim {
     }
 
     const unitDef = UNIT_TYPES[type];
-    const totalCost = count * unitDef.recruitCost;
+    // The arms base prices recruitment (GDD §7.2): equipping a new unit is cheap
+    // when steel and chemicals flow, dear when a strained industrial base makes the
+    // factories bid against each other. ×1 at a full base (healthy war economies
+    // unchanged), up to ×(1+PREMIUM) as the base collapses.
+    const armsMult = 1 + (1 - this.armamentsCapacity()) * ARMAMENTS_STRAIN_PREMIUM;
+    const totalCost = Math.round(count * unitDef.recruitCost * armsMult);
 
     if (this.treasury < totalCost) {
       this.addLog(`Insufficient funds to recruit ${count} ${type}(s): costs £${totalCost}, have £${Math.round(this.treasury)}.`, 'info');
@@ -10554,6 +10581,22 @@ export class RegionSim {
     return this.playerWar?.units.reduce((sum, u) => sum + u.count, 0) ?? 0;
   }
 
+  /** The industrial arms base ∈ [0,1] (GDD §7.2): a nation forges weapons from
+   *  steel and chemicals, so its capacity to equip and sustain a military is the
+   *  Liebig minimum of those two supply-chain levels — 1 when both flow freely,
+   *  falling as an embargo, a raw-material war, or deindustrialisation starves
+   *  either. A pure read of the already-resolved `goodLevels` (no new good, no new
+   *  serialized state), so it is free in peacetime and only bears on the war paths
+   *  below. Returns 1 before the goods chain has resolved steel/chemicals (pre-1920
+   *  founding, or a fixture that never ran the goods tick) so it never invents a
+   *  penalty out of an un-simulated economy. */
+  armamentsCapacity(): number {
+    const steel = this.goodLevels.get('steel');
+    const chem = this.goodLevels.get('chemicals');
+    if (steel === undefined || chem === undefined) return 1;
+    return Math.max(0, Math.min(1, Math.min(steel, chem)));
+  }
+
   /** Combat power (GDD §7.3): unit-based power from armies with supply penalties. */
   warPower(): number {
     const w = this.playerWar;
@@ -10579,6 +10622,15 @@ export class RegionSim {
       (this.govType === 'junta' ? 1.15 : 1) *
       (this.militaryDoctrine === 'expansionist' ? 1.15 : this.militaryDoctrine === 'defensive' ? 0.9 : 1);
     const mob = w ? MOBILIZATION_DEFS[w.mobilization].power : 1;
+    // The arms base equips the force (GDD §7.2): a nation that forges its own steel
+    // and chemicals into weapons fields well-supplied troops; an embargoed or
+    // deindustrialised one sends them under-equipped. Only our own power is scaled
+    // (allies bring their own arms), and only while actually at war — so the
+    // population-fallback power outside a war is untouched. Floored so the coupling
+    // bites without ever zeroing a defence.
+    const equip = w
+      ? ARMAMENTS_WARPOWER_FLOOR + (1 - ARMAMENTS_WARPOWER_FLOOR) * this.armamentsCapacity()
+      : 1;
     // Defensive pacts put allied arms on your front (GDD §5.4); a called
     // co-belligerent commits its army, not just its sympathy (GDD §7.3)
     const allies = this.rivals.reduce((s, rv) => {
@@ -10587,7 +10639,7 @@ export class RegionSim {
       if (rv.treaties.includes('defensive_pact')) return s + Math.pow(rv.pop, 0.6) * 0.25;
       return s;
     }, 0);
-    return basePower * quality * mob + allies;
+    return basePower * quality * mob * equip + allies;
   }
 
   /** The other side of the front: their mass, discounted by their appetite —
