@@ -29,8 +29,14 @@ export function updateRivalAI(r: RegionSim): void {
         // funded from the national treasury and reserve-gated like a rival. This
         // is what makes the headless balance signal reflect a player who actually
         // builds, instead of one bare town carrying the whole economy on raw yields.
-        if (r.autoDevelopPlayer && r.day - faction.lastUpdateDay >= faction.updateFrequency) {
-          r.maybeDevelopFactionTown(faction, r.aiKnobs(), r.factionTownOutput(faction));
+        if ((r.autoDevelopPlayer || r.autoExpandPlayer) && r.day - faction.lastUpdateDay >= faction.updateFrequency) {
+          const knobs = r.aiKnobs();
+          // Auto-EXPAND first (found a new town) so a fresh town is available to
+          // develop this same update; then develop an existing town. Both are
+          // flag-gated and purse-seamed to the national treasury; both are OFF for
+          // live human play, so no player aiRng draw fires there (byte-identical).
+          if (r.autoExpandPlayer && r.playerMayExpand(faction)) r.maybeExpandFaction(faction, knobs, r.factionPopulation(faction));
+          if (r.autoDevelopPlayer) r.maybeDevelopFactionTown(faction, knobs, r.factionTownOutput(faction));
           faction.lastUpdateDay = r.day;
         }
         continue;

@@ -723,6 +723,16 @@ const RIVAL_RESERVE_MONTHS = 1.5; // months of output kept untouched (famine rel
 const RIVAL_DEV_RESERVE_MONTHS = 0.5;
 const RIVAL_SURPLUS_SKIM = 0.25; // monthly fraction of the above-reserve surplus the state spends down
 const RIVAL_ADMIN_PER_TOWN = 5; // gold/settlement/month — mirrors the player's `settlements.length * 5`
+// Territory ceiling for the autoplay PLAYER (`autoExpandPlayer`). Deliberately far
+// below the rival `settlementCap` (12 on normal): the player pays the full
+// monthlyEconomy public-sector bill on every town, and its spatial DEVELOPMENT is
+// spread one-town-per-update, so a sprawling 12-town player leaves every town
+// under-built (low output → low tax → a near-zero treasury). A modest cap grows the
+// player into a genuine MULTI-town nation (enough for cross-town specialisation,
+// arbitrage flows and the goods coupling) while keeping each town well-developed and
+// the treasury within the "a few months of GDP" balance target. Player-only; live
+// human play is unaffected (flag OFF, the human founds towns via the UI). */
+const PLAYER_TOWN_CAP = 5;
 // Spatial-4X — personality-driven sector lean for a rival's spatial buildout. Before
 // this, EVERY rival picked buildings by pure terrain fit, so a Merchant Republic and
 // a Military Junta on the same land built the SAME town — the AI played spatially but
@@ -3260,6 +3270,18 @@ export class RegionSim {
    *  the whole spatial economy is measured only via rival competition). Not
    *  serialized — it is a run-mode toggle, not game state. */
   autoDevelopPlayer = false;
+  /** Autoplay-only companion to `autoDevelopPlayer`: let the PLAYER faction FOUND
+   *  new settlements on the same staggered cadence rivals expand on — reusing
+   *  `findBestExpansionSite` + `foundSettlement` through the `factionDevPurse`/
+   *  `spendFactionDev` seam (so the founding cost is paid from the national treasury,
+   *  what a human spends via the UI). Without it a passive autoplay player carries
+   *  its whole economy on ONE town, so cross-town specialisation, arbitrage flows and
+   *  the goods→economy coupling are all under-exercised. Gated SEPARATELY from
+   *  `autoDevelopPlayer` so an existing develop-only single-town baseline keeps its
+   *  behaviour. Default OFF → live human play byte-identical (the human founds towns
+   *  via the UI, and no player `aiRng` expansion draw fires); the headless sweep turns
+   *  it on. Not serialized — a run-mode toggle, not game state. */
+  autoExpandPlayer = false;
   /** Global-world leg 1 — the CONSUMER-DEMAND model (the structural fix that makes
    *  the world market able to TIGHTEN). The goods demand functions count only
    *  intermediate-INPUT demand (normalized to sector shares, O(1)/good) and have NO
@@ -12152,28 +12174,11 @@ export class RegionSim {
     }
 
     // Settlement expansion: Monte Carlo approach (5 random sites, pick best).
-    // A faction with no foothold always tries to plant its first settlement
-    // (bootstrap — otherwise rivals would never appear on the map); established
-    // factions expand only occasionally so the region doesn't fill instantly.
-    // Difficulty sets both the per-update chance and the ceiling on territory.
-    const canAfford = faction.treasury >= 50;
-    // Bootstrap: faction with no settlements always tries to plant its first one.
-    // Expansion: only possible when the faction has enough population to spare 8
-    // settlers for a new outpost (founding pulls people from the largest town).
-    const wantsToExpand = faction.settlementIds.length === 0
-      ? canAfford
-      : (factionPop >= 16 && this.aiRng.chance(knobs.expandChance) && faction.settlementIds.length < knobs.settlementCap && canAfford);
-    if (wantsToExpand) {
-      const site = this.findBestExpansionSite(faction, faction.settlementIds.length === 0 ? 8 : 5);
-      if (site && site.score > 0) {
-        const newSettlement = this.foundSettlement(faction, site.x, site.y);
-        if (newSettlement) {
-          if (faction.capital < 0) faction.capital = newSettlement.id;
-          this.addLog(`${faction.name} founds settlement ${newSettlement.name} at (${site.x}, ${site.y}).`, 'info');
-          faction.treasury -= 50; // founding cost
-        }
-      }
-    }
+    // Lifted to the shared `maybeExpandFaction` seam so the autoplay PLAYER faction
+    // can reuse the exact same logic (purse-seamed) — the rival path is byte-identical
+    // (`factionDevPurse`/`spendFactionDev` read/write `faction.treasury` for a rival in
+    // the same order, and the `aiRng.chance` draw sits in the same short-circuit slot).
+    this.maybeExpandFaction(faction, knobs, factionPop);
 
     // Military scaling: garrison = pop * 0.01 * tech_mult
     faction.militaryStrength = Math.round(factionPop * 0.01 * (1 + faction.techProgress * 0.05));
@@ -12298,6 +12303,52 @@ export class RegionSim {
       const fac = this.faction(factionId);
       if (fac) fac.treasury += amount;
     }
+  }
+
+  /** Whether the autoplay player is still below its (modest) town ceiling and so may
+   *  found another settlement this update. Player-only cap — see `PLAYER_TOWN_CAP` —
+   *  kept well under the rival `settlementCap` so the nation grows into a well-developed
+   *  multi-town economy rather than a sprawling, under-built, treasury-thin one. */
+  public playerMayExpand(faction: RegionalFaction): boolean {
+    return faction.settlementIds.length < PLAYER_TOWN_CAP;
+  }
+
+  /** Total population across a faction's settlements (the sum `updateFactionAI`
+   *  computes inline for tech/military/expansion). Public so the autoplay player
+   *  branch (systems/rival-ai.ts) can gate `maybeExpandFaction` on the same figure. */
+  public factionPopulation(faction: RegionalFaction): number {
+    let pop = 0;
+    for (const id of faction.settlementIds) {
+      const s = this.settlement(id);
+      if (s) pop += this.popOf(s);
+    }
+    return pop;
+  }
+
+  /** Spatial-4X — a faction may FOUND a new settlement this update (Monte-Carlo site
+   *  search, pick best). A faction with no foothold always tries to plant its first
+   *  outpost (bootstrap — otherwise it would never appear on the map); an established
+   *  faction expands only occasionally (aiRng-gated by difficulty) and only once it
+   *  has population to spare and stays under its territory cap, so the region fills
+   *  gradually. Purse-seamed like `maybeDevelopFactionTown`: the founding cost is paid
+   *  from the faction's own treasury for a rival (byte-identical to the old inline
+   *  block) and the NATIONAL treasury for the player (what a human spends via the UI),
+   *  so the autoplay player (when `autoExpandPlayer`) grows into a multi-town nation on
+   *  the same cadence. Returns true if a settlement was founded. */
+  maybeExpandFaction(faction: RegionalFaction, knobs: typeof AI_DIFFICULTY[AiDifficulty], factionPop: number): boolean {
+    const canAfford = this.factionDevPurse(faction) >= 50;
+    const wantsToExpand = faction.settlementIds.length === 0
+      ? canAfford
+      : (factionPop >= 16 && this.aiRng.chance(knobs.expandChance) && faction.settlementIds.length < knobs.settlementCap && canAfford);
+    if (!wantsToExpand) return false;
+    const site = this.findBestExpansionSite(faction, faction.settlementIds.length === 0 ? 8 : 5);
+    if (!site || site.score <= 0) return false;
+    const newSettlement = this.foundSettlement(faction, site.x, site.y);
+    if (!newSettlement) return false;
+    if (faction.capital < 0) faction.capital = newSettlement.id;
+    this.addLog(`${faction.name} founds settlement ${newSettlement.name} at (${site.x}, ${site.y}).`, 'info');
+    this.spendFactionDev(faction, 50); // founding cost
+    return true;
   }
 
   /** Spatial-4X — a faction develops one of its towns this update: it raises a

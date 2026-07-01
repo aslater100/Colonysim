@@ -19,19 +19,24 @@ const TICK_CAP = 20_000_000; // safety stop in case the calendar stalls
 // holds one bare town and the whole spatial economy is measured only via rivals.
 // Set SIM_PLAYER_MANUAL=1 to restore the old passive-player baseline for comparison.
 const autoDevelopPlayer = process.env.SIM_PLAYER_MANUAL !== '1';
+// Let the autoplay player FOUND new towns too (not just develop its one town), so its
+// spatial + economic path is exercised as a MULTI-town nation. Same SIM_PLAYER_MANUAL
+// switch restores the passive single-town baseline.
+const autoExpandPlayer = process.env.SIM_PLAYER_MANUAL !== '1';
 // Consumer-demand model (global-world leg 1) — OPT-IN (SIM_CONSUMER_DEMAND=1) so the
 // default sweep stays comparable to the legacy stock baseline. When on, the world market
 // reads the flow signal and `wMkt%` shows live tightness instead of the structural 0.
 const consumerDemand = process.env.SIM_CONSUMER_DEMAND === '1';
 
 console.log(`headless sim: ${years} game-year(s) × ${runs} run(s)  [player spatial play: ${autoDevelopPlayer ? 'AUTO' : 'manual'}; consumer-demand: ${consumerDemand ? 'ON' : 'off'}]\n`);
-console.log('seed |  year | towns |    treasury |        GDP | treas/GDP(mo) | infl% |  pop   | sat | pBld | wMkt% |  gpP% | ticks | outcome');
-console.log('-----+-------+-------+-------------+------------+---------------+-------+--------+-----+------+-------+-------+-------+--------');
+console.log('seed |  year | towns | pTwn |    treasury |        GDP | treas/GDP(mo) | infl% |  pop   | sat | pBld | wMkt% |  gpP% | ticks | outcome');
+console.log('-----+-------+-------+------+-------------+------------+---------------+-------+--------+-----+------+-------+-------+-------+--------');
 
 for (let run = 0; run < runs; run++) {
   const seed = 1000 + run * 7;
   const r = RegionSim.create(seed);
   r.autoDevelopPlayer = autoDevelopPlayer;
+  r.autoExpandPlayer = autoExpandPlayer;
   r.consumerDemand = consumerDemand;
   const target = r.year + years;
   let ticks = 0;
@@ -43,14 +48,18 @@ for (let run = 0; run < runs; run++) {
   const outcome = r.winCondition ? `WIN:${r.winCondition.path}` : (r.eraBranch ?? (r.nationProclaimed ? 'nation' : 'colony'));
   // Player spatial buildout (placed buildings + zoned districts) — proves the
   // player's own spatial path is being exercised when autoDevelopPlayer is on.
-  const pBld = r.settlements
-    .filter((t) => t.factionId === r.playerFactionId)
+  const playerTowns = r.settlements.filter((t) => t.factionId === r.playerFactionId);
+  const pBld = playerTowns
     .reduce((s, t) => s + t.placedBuildings.length + t.placedDistricts.length, 0);
+  // Player town count — proves auto-EXPAND grows the player into a multi-town nation
+  // (was a constant 1 before autoExpandPlayer).
+  const pTwn = playerTowns.length;
 
   console.log(
     `${String(seed).padStart(4)} | ` +
     `${String(r.year).padStart(5)} | ` +
     `${String(r.settlements.length).padStart(5)} | ` +
+    `${String(pTwn).padStart(4)} | ` +
     `${r.treasury.toFixed(0).padStart(11)} | ` +
     `${gdp.toFixed(0).padStart(10)} | ` +
     `${treasOverGdpMonths.toFixed(1).padStart(13)} | ` +
