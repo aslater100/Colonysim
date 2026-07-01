@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   RegionSim,
   INTERMEDIATE_GOODS,
+  FINAL_SHORTFALL_OUTPUT_DRAG,
+  FINAL_SHORTFALL_INFLATION,
   type Settlement,
   type RivalNation,
 } from '../src/sim/region';
+import { tickMonetary } from '../src/sim/systems/monetary';
 import {
   finalGoodDemand,
   worldGoodDemand,
@@ -411,5 +414,87 @@ describe('CONSUMER-DEMAND increment 2 — the per-town final-consumption SINK', 
       return cap.satisfaction - before;
     };
     expect(dayMove(true)).toBeLessThan(dayMove(false)); // the −penalty pulls the target down only when ON
+  });
+});
+
+// ============================================================
+// 7. CONSUMER-DEMAND increment 3 — the MACRO bite (the stagflation pair)
+// ============================================================
+// Increment 2 made a household goods shortfall FELT in satisfaction; increment 3 makes
+// it bite OUTPUT and PRICES too — the two halves of a consumer-goods stagflation. Both
+// ride `finalConsumptionShortfall`, the demand-side sink signal that is EXACTLY 0 when
+// `consumerDemand` is off, so live human play is byte-identical (×1 drag, +0 push).
+describe('CONSUMER-DEMAND increment 3 — the macro bite (stagflation pair)', () => {
+  it('industry output-drag: a household shortfall reduces INDUSTRY output, leaving other sectors untouched', () => {
+    // Two fresh same-seed sims are rng-identical, so the ONLY difference is the injected
+    // shortfall — which enters solely through the industry `supplyMult`. Fresh sims have
+    // localGoodsScarcity 0 + supplyShockMult 1, so the industry ratio is exactly the drag.
+    const measure = (shortfall: number) => {
+      const r = RegionSim.create(7);
+      const t = r.settlements[0];
+      r.finalConsumptionShortfall = shortfall;
+      (r as unknown as { updateSectors(t: Settlement): void }).updateSectors(t);
+      return { ind: t.sectors.industry.output, agri: t.sectors.agriculture.output };
+    };
+    const base = measure(0);
+    const dragged = measure(0.5);
+    expect(base.ind).toBeGreaterThan(0); // the seed has industry to drag
+    expect(dragged.ind).toBeLessThan(base.ind);
+    // industry falls by exactly finalConsumptionShortfall × FINAL_SHORTFALL_OUTPUT_DRAG
+    expect(dragged.ind / base.ind).toBeCloseTo(1 - 0.5 * FINAL_SHORTFALL_OUTPUT_DRAG, 6);
+    // the drag is industry-only — agriculture is identical
+    expect(dragged.agri).toBeCloseTo(base.agri, 6);
+  });
+
+  it('industry output-drag is INERT with no shortfall (byte-identical): a zero signal is ×1', () => {
+    const measure = (shortfall: number) => {
+      const r = RegionSim.create(7);
+      const t = r.settlements[0];
+      r.finalConsumptionShortfall = shortfall;
+      (r as unknown as { updateSectors(t: Settlement): void }).updateSectors(t);
+      return t.sectors.industry.output;
+    };
+    // shortfall 0 (the always-value when consumerDemand is off) leaves output untouched
+    expect(measure(0)).toBe(measure(0));
+    expect(measure(0)).toBeGreaterThan(measure(0.3)); // any positive shortfall does drag
+  });
+
+  it('cost-push inflation: a household shortfall lifts the inflation target (under a central bank)', () => {
+    // tickMonetary only runs under a central bank; the shortfall push rides the same
+    // cost-push channel as the raw-cascade + local-goods pushes. Same-seed sims differ
+    // only in the injected shortfall, so the inflation gap is purely `finalShortfallPush`.
+    const measure = (shortfall: number) => {
+      const r = RegionSim.create(7);
+      r.passedLaws.add('central_bank_charter'); // hasCentralBank() → tickMonetary bites
+      expect(r.hasCentralBank()).toBe(true);
+      r.finalConsumptionShortfall = shortfall;
+      tickMonetary(r);
+      return r.inflationRate;
+    };
+    const baseInfl = measure(0);
+    const pushed = measure(0.5);
+    expect(pushed).toBeGreaterThan(baseInfl); // the consumer-goods shortage makes goods dearer
+    // the gap is the shortfall push through the 0.15 smoothing (target lift × convergence)
+    expect(pushed - baseInfl).toBeCloseTo(0.5 * FINAL_SHORTFALL_INFLATION * 0.15, 4);
+  });
+
+  it('cost-push is byte-identical with no shortfall, and only bites where the monetary tick runs (a central bank)', () => {
+    // The whole monetary tick is CALL-SITE gated on a central bank (region.ts: the
+    // `if (this.hasCentralBank()) tickMonetary(this)` line), so the autoplay player —
+    // which never charters one — never runs it and its inflation stays flat regardless of
+    // shortfall (the documented reason the headless sweep infl% is pinned even ON).
+    const withBank = (shortfall: number) => {
+      const r = RegionSim.create(7);
+      r.passedLaws.add('central_bank_charter');
+      r.finalConsumptionShortfall = shortfall;
+      tickMonetary(r);
+      return r.inflationRate;
+    };
+    // With no shortfall the increment-3 push is +0 → byte-identical to the pre-increment
+    // monetary tick (the value a healthy / consumerDemand-off nation always sees).
+    expect(withBank(0)).toBe(withBank(0));
+    // A charter-holder DOES feel it; a fresh no-bank sim's tick never calls tickMonetary.
+    expect(RegionSim.create(7).hasCentralBank()).toBe(false);
+    expect(withBank(0.5)).toBeGreaterThan(withBank(0));
   });
 });

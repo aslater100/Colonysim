@@ -18,6 +18,7 @@ import {
   NEUTRAL_RATE,
   SUPPLY_SHOCK_INFLATION,
   LOCAL_GOODS_INFLATION,
+  FINAL_SHORTFALL_INFLATION,
   LEVERAGE_FRAGILITY,
   LEVERAGE_FRAGILE,
   FRAGILITY_GAIN,
@@ -50,7 +51,13 @@ export function tickMonetary(r: RegionSim): void {
   // magnitude — so this term is +0 there (byte-identical, no double-count with
   // `supplyPush`); it lifts the target only when local distribution actually fails.
   const localGoodsPush = r.localGoodsScarcity * LOCAL_GOODS_INFLATION;
-  const inflTarget = 0.02 + leverageInflation + printInflation + supplyPush + localGoodsPush;
+  // Increment 3 — the consumer-goods cost-push: a sustained household final-goods
+  // shortage (`finalConsumptionShortfall`, the demand-side sink) makes finished goods
+  // dearer, the price half of the same stagflation coupling the output drag rides.
+  // Exactly 0 when `consumerDemand` is off → byte-identical (no double-count with the
+  // supply/local pushes, which read raw-cascade and input-stranding, not final demand).
+  const finalShortfallPush = r.finalConsumptionShortfall * FINAL_SHORTFALL_INFLATION;
+  const inflTarget = 0.02 + leverageInflation + printInflation + supplyPush + localGoodsPush + finalShortfallPush;
   r.inflationRate += (inflTarget - r.inflationRate) * 0.15;
   r.inflationRate = Math.max(0, Math.min(0.50, r.inflationRate));
 

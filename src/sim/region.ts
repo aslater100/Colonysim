@@ -383,6 +383,30 @@ export const LOCAL_GOODS_OUTPUT_DRAG = 0.10;
  *  never snaps. Gated on `consumerDemand` → exactly 0 off → byte-identical live play. */
 export const GOODS_SATISFACTION_PENALTY = 12;
 
+/** CONSUMER-DEMAND increment 3 — the MACRO bite of a household goods shortage: the
+ *  stagflation pair. Increment 2 made an unmet-goods shortfall FELT in satisfaction;
+ *  this makes it bite OUTPUT and PRICES too. `finalConsumptionShortfall` ∈ [0,1] (the
+ *  demand-weighted world share of household final-good appetite that went unmet — a
+ *  consumer-goods supply crisis, not the input-stranding `localGoodsScarcity`) drags
+ *  industry output by `finalConsumptionShortfall × FINAL_SHORTFALL_OUTPUT_DRAG`, the
+ *  productivity hit of a workforce that can't source necessities (welfare is the
+ *  separate satisfaction channel). Additive with the local-goods drag and bounded well
+ *  below 1 (worst-case 0.10 + 0.20 = 0.30 → industry ×0.70, never zeroed), so like its
+ *  siblings it can't starve the raw proxy and spiral. `finalConsumptionShortfall` is a
+ *  TRANSIENT signal that is EXACTLY 0 whenever `consumerDemand` is off (zeroed every
+ *  `tickIntermediateGoods`), so live human play is ×1 → byte-identical. */
+export const FINAL_SHORTFALL_OUTPUT_DRAG = 0.20;
+
+/** CONSUMER-DEMAND increment 3 — the PRICE half of the stagflation pair (output half is
+ *  `FINAL_SHORTFALL_OUTPUT_DRAG`). A sustained consumer-goods shortage makes those goods
+ *  dearer: it lifts the monthly inflation target by `finalConsumptionShortfall ×
+ *  FINAL_SHORTFALL_INFLATION`, riding the SAME cost-push channel as the raw-cascade and
+ *  local-goods pushes. Central-bank-gated (it lives in `tickMonetary`, which only runs
+ *  under a central bank) and 0 when `consumerDemand` is off → byte-identical live play;
+ *  it bites for a human nation (or a future statehood-capable autoplayer) whose towns
+ *  run short of finished goods. Bounded by the 0.50 inflation ceiling + 0.15 smoothing. */
+export const FINAL_SHORTFALL_INFLATION = 0.15;
+
 /** How long (sim days) the 1970s oil-shock anchor embargoes the `oil` raw,
  *  cutting `fuel` and the fuel-burning finals downstream. ~6 months — the real
  *  1973 embargo's span — long enough to register across several monthly supply
@@ -6692,8 +6716,13 @@ export class RegionSim {
       // `localGoodsScarcity` is 0 in single-town / self-sufficient play (and under a
       // raw shock — it's a pure gate ratio), so this is ×1 there (byte-identical);
       // bounded so it never zeroes industry (no raw-proxy spiral).
+      // Increment 3 — a household consumer-goods shortage (`finalConsumptionShortfall`,
+      // the demand-side sink) also drags industry (stagflation's output half; 0 and
+      // byte-identical whenever `consumerDemand` is off). Additive, bounded (worst-case
+      // 0.30 combined drag → industry never zeroed → no raw-proxy spiral).
       const supplyMult = id === 'industry'
-        ? this.supplyShockMult * (1 - this.localGoodsScarcity * LOCAL_GOODS_OUTPUT_DRAG)
+        ? this.supplyShockMult * (1 - this.localGoodsScarcity * LOCAL_GOODS_OUTPUT_DRAG
+            - this.finalConsumptionShortfall * FINAL_SHORTFALL_OUTPUT_DRAG)
         : 1;
       // A hotter century erodes the farm economy past +1.5°C and industry past +3°C.
       const climateMult = id === 'agriculture' ? this.agriClimateMult()
