@@ -374,6 +374,15 @@ export const LOCAL_GOODS_INFLATION = 0.08;
  *  single-town/self-sufficient play (scarcity 0) → ×1 → byte-identical there. */
 export const LOCAL_GOODS_OUTPUT_DRAG = 0.10;
 
+/** CONSUMER-DEMAND increment 2 — how many satisfaction points a town loses when its
+ *  households can source NONE of their final-good appetite (`goodsShortfall` == 1), the
+ *  channel that makes the on-map economy FELT: a nation whose towns can't be supplied
+ *  with goods (a distribution failure, a specialised town cut off from what it doesn't
+ *  make) grows discontented. Modest and per-town (a town the shipments reach stays
+ *  content), applied inside the existing satisfaction `target` EMA (0.08/day) so it
+ *  never snaps. Gated on `consumerDemand` → exactly 0 off → byte-identical live play. */
+export const GOODS_SATISFACTION_PENALTY = 12;
+
 /** How long (sim days) the 1970s oil-shock anchor embargoes the `oil` raw,
  *  cutting `fuel` and the fuel-burning finals downstream. ~6 months — the real
  *  1973 embargo's span — long enough to register across several monthly supply
@@ -5487,6 +5496,14 @@ export class RegionSim {
         : 0;
       // Land Reform (nation law) boosts food production 5%
       if (this.passedLaws.has('land_reform')) t.food += workers * 1.15 * seasonMult * t.landQuality * weatherMult * granger * strike * 0.05;
+      // CONSUMER-DEMAND increment 2 — the on-map economy FELT: when this town's people
+      // can't source the manufactured goods they want (a distribution failure, or a
+      // specialised town cut off from what it doesn't make), discontent rises in
+      // proportion to the unmet share (`goodsShortfall`). Per-town (a well-supplied town
+      // is unaffected) and gated on `consumerDemand` → exactly 0 off → byte-identical.
+      const goodsTerm = this.consumerDemand
+        ? -(this.goodsShortfall.get(t.id) ?? 0) * GOODS_SATISFACTION_PENALTY
+        : 0;
       const target =
         50 +
         Math.min(20, foodDays * 1.5) -
@@ -5498,6 +5515,7 @@ export class RegionSim {
         (this.has('civil_rights') ? 3 : 0) +
         (this.has('participatory_democracy') ? 3 : 0) +
         this.buildingSatisfaction(t) + // Phase 2: waterworks and wards make town life kinder
+        goodsTerm +
         stateTerms;
       t.satisfaction += (Math.max(0, Math.min(100, target)) - t.satisfaction) * 0.08;
       // Grievance: heavy taxes build pressure daily; services and contentment vent it.

@@ -384,4 +384,32 @@ describe('CONSUMER-DEMAND increment 2 — the per-town final-consumption SINK', 
     expect(producer).toBeLessThan(consumer); // the shelf-rich town feeds its people; the bare one cannot
     expect(consumer).toBeGreaterThan(0.5);   // the bare consumer meets almost none of its appetite
   });
+
+  it('the FELT coupling: an unmet-goods town loses satisfaction when ON; the term is inert when OFF (byte-identical)', () => {
+    // Warm the same seed to a stable capital, inject a total goods shortfall, tick once
+    // (dailyUpdate reads the injected shortfall before the goods tick overwrites it) and
+    // compare the day's satisfaction move ON vs OFF. Both sims are rng-identical through
+    // this tick (the sink + the penalty consume no rng), so the only difference is the
+    // `goodsTerm` — which is present ON, gated to 0 OFF.
+    const dayMove = (cd: boolean): number => {
+      const r = RegionSim.create(1000);
+      const warm = r.year + 5;
+      while (r.year < warm && !r.gameOver) r.tick();
+      const cap = r.settlements.find((t) => t.factionId === r.playerFactionId)!;
+      r.consumerDemand = cd;
+      const before = cap.satisfaction;
+      // Tick across ONE day roll (so `dailyUpdate` runs once), re-injecting the total
+      // shortfall each sub-tick so the daily satisfaction update reads it (the sim's
+      // sub-day calendar means a single tick may not advance a whole day).
+      const startDay = r.day;
+      let guard = 0;
+      while (r.day === startDay && guard < 10000) {
+        r.goodsShortfall.set(cap.id, 1); // households can source NONE of their goods
+        r.tick();
+        guard++;
+      }
+      return cap.satisfaction - before;
+    };
+    expect(dayMove(true)).toBeLessThan(dayMove(false)); // the −penalty pulls the target down only when ON
+  });
 });
