@@ -17,13 +17,18 @@
  * `nextRivalBlocId` counter) were made public for this seam.
  */
 import type { RegionSim } from '../region';
-import type { ForeignWar, RivalNation } from '../region';
+import type { ForeignWar, RivalNation, CasusBelli } from '../region';
 import {
   blocAffinity,
   RIVAL_EMERGENCE_YEAR,
   MAX_RIVALS,
   ARCHETYPE_GREEN_PROPENSITY,
   ARCHETYPE_WAR_FREQ_MULT,
+  rivalClimateUrgency,
+  URGENCY_AGGRESSION_LIFT,
+  URGENCY_RELATIONS_DRAG,
+  CLIMATE_BLOC_RELATIONS_THRESHOLD,
+  CLIMATE_BLOC_GREEN_THRESHOLD,
 } from '../region';
 import { formatCurrency } from '../defs';
 import { tickPlayerWar } from './military';
@@ -50,6 +55,11 @@ export function updateDiplomacy(r: RegionSim): void {
       // distance (GDD §5.4), and whatever ink is already on the page.
       let base = rv.weights.commerce * 1.2 - rv.weights.expansion * 1.5 - rv.weights.grudge * 0.8;
       if (myBloc) base += blocAffinity(myBloc, r.regimeOf(rv).bloc);
+      // Existential climate response: a fossil-locked rival's patience with the
+      // world curdles as warming worsens — the baseline itself sours, not just
+      // the eventual war roll (a green-leaning rival gets none of this drag; it
+      // is busy with the climate bloc below instead).
+      if (r.rivalClimateResponse) base -= rivalClimateUrgency(r, rv) * URGENCY_RELATIONS_DRAG;
       if (rv.treaties.includes('non_aggression')) base += 8;
       if (rv.treaties.includes('trade_agreement')) base += 12;
       if (rv.treaties.includes('defensive_pact')) base += 16;
@@ -96,14 +106,26 @@ export function updateDiplomacy(r: RegionSim): void {
           r.addLog(`${rv.name}'s customs men shake down caravans at the frontier — ` + formatCurrency(toll) + ` in seized goods and bribes.`, 'bad');
         }
       }
-      // Beyond mischief (GDD §7.1): an emboldened hostile power declares war outright
+      // Beyond mischief (GDD §7.1): an emboldened hostile power declares war outright.
+      // Existential climate response: as warming urgency rises, an archetype NOT
+      // already leading the green transition turns to land/resources — the SAME
+      // per-rival urgency signal that (below) also decides whether it joins a
+      // climate coalition instead. The multiplier is exactly 1 when the flag is
+      // off, so the roll — and RNG consumption — is byte-identical to before.
+      const urgencyMult = r.rivalClimateResponse
+        ? 1 + rivalClimateUrgency(r, rv) * URGENCY_AGGRESSION_LIFT
+        : 1;
       if (
         !r.playerWar && r.nationProclaimed && rv.relations < -60 &&
         !rv.treaties.includes('non_aggression') &&
-        r.rng.chance((0.01 + rv.weights.risk * 0.003 + rv.weights.expansion * 0.002) * ARCHETYPE_WAR_FREQ_MULT[rv.archetype])
+        r.rng.chance((0.01 + rv.weights.risk * 0.003 + rv.weights.expansion * 0.002) * ARCHETYPE_WAR_FREQ_MULT[rv.archetype] * urgencyMult)
       ) {
-        // a settled frontier leaves them no honest grievance — they stage one
-        r.startPlayerWar(rv, rv.borderSettled ? 'fabricated' : 'border_dispute', true);
+        // A real grievance is cited when there is one; a settled frontier with
+        // no resource grievance leaves them nothing honest, so they stage one.
+        const cb: CasusBelli = r.rivalResourceGrievance(rv)
+          ? 'resource_dispute'
+          : rv.borderSettled ? 'fabricated' : 'border_dispute';
+        r.startPlayerWar(rv, cb, true);
         continue;
       }
       // Regime change abroad is world news the player reads about (GDD §6.3)
@@ -113,6 +135,7 @@ export function updateDiplomacy(r: RegionSim): void {
     tickPlayerWar(r);
     tickRivalEspionage(r);       // Phase 6: rivals spy on the player
     tickRivalTradeBlocActivity(r); // Phase 6: rivals form their own blocs
+    tickRivalClimateBlocActivity(r); // Existential climate response: rivals form coalitions against the Drowned branch
     tickRivalProvinceGovernance(r); // Phase 5: rivals invest in provinces
     tickSanctions(r);            // Phase 6: expire elapsed sanctions
   }
@@ -131,6 +154,12 @@ export function tickForeignRelations(r: RegionSim): void {
           (a.weights.commerce + b.weights.commerce) * 1.2 -
           (a.weights.expansion + b.weights.expansion) * 1.5 +
           blocAffinity(r.regimeOf(a).bloc, r.regimeOf(b).bloc);
+        // Existential climate response: whichever of the pair is more cornered
+        // by warming urgency sours the relationship faster (mirrors the
+        // rival→player drift above).
+        if (r.rivalClimateResponse) {
+          base -= Math.max(rivalClimateUrgency(r, a), rivalClimateUrgency(r, b)) * URGENCY_RELATIONS_DRAG;
+        }
         if (allied) base += 25;
         let rel = (r.rivalPairs[key] ?? 0) + (base - (r.rivalPairs[key] ?? 0)) * 0.03;
         if (atWar) rel = Math.min(rel, -50);
@@ -148,7 +177,15 @@ export function tickForeignRelations(r: RegionSim): void {
           r.rivalPairs[key] = r.clampRel(rel - 4);
           r.addLog(`${a.name} and ${b.name} trade ultimatums over a border survey. The chanceries buzz.`, 'info');
         }
-        if (!allied && rel < -50 && r.rng.chance(0.03 + (a.weights.risk + b.weights.risk) * 0.003)) {
+        // Existential climate response: whichever of the pair is more cornered
+        // by warming urgency pushes hardest for conflict — the same signal/
+        // multiplier as the player-war roll above, applied to rival↔rival wars
+        // too (this path needs no `nationProclaimed`, so it is what makes "wars
+        // show up more often" measurable even before the player is a nation).
+        const foreignUrgencyMult = r.rivalClimateResponse
+          ? 1 + Math.max(rivalClimateUrgency(r, a), rivalClimateUrgency(r, b)) * URGENCY_AGGRESSION_LIFT
+          : 1;
+        if (!allied && rel < -50 && r.rng.chance((0.03 + (a.weights.risk + b.weights.risk) * 0.003) * foreignUrgencyMult)) {
           r.startForeignWar(a.id, b.id);
         }
       }
@@ -270,6 +307,48 @@ export function tickRivalTradeBlocActivity(r: RegionSim): void {
             tariff: Math.min(0.4, tariff),
           });
           r.addLog(`${a.name} and ${b.name} found a trade union — the world organises into blocs.`, 'info');
+        }
+      }
+    }
+  }
+  /** Monthly: existential climate response — high-green-propensity rivals with
+   *  decent relations autonomously found/join a climate coalition. Exactly the
+   *  `tickRivalTradeBlocActivity` shape (gate → join-or-found), gated on green
+   *  propensity instead of commerce and an easier relations bar (a shared
+   *  existential threat unites faster than shared trade). Entirely inert — no
+   *  RNG draw, `rivalClimateBlocs` never touched — unless `rivalClimateResponse`
+   *  is on, so OFF is byte-identical to every session before this one. */
+export function tickRivalClimateBlocActivity(r: RegionSim): void {
+    if (!r.rivalClimateResponse) return;
+    r.rivalClimateBlocs = r.rivalClimateBlocs.filter(
+      (b) => b.memberRivalIds.filter((id) => r.rival(id)).length >= 2,
+    );
+    for (let i = 0; i < r.rivals.length; i++) {
+      const a = r.rivals[i];
+      if ((ARCHETYPE_GREEN_PROPENSITY[a.archetype] ?? 0.3) < CLIMATE_BLOC_GREEN_THRESHOLD) continue;
+      for (let j = i + 1; j < r.rivals.length; j++) {
+        const b = r.rivals[j];
+        if ((ARCHETYPE_GREEN_PROPENSITY[b.archetype] ?? 0.3) < CLIMATE_BLOC_GREEN_THRESHOLD) continue;
+        if (r.pairRelations(a.id, b.id) < CLIMATE_BLOC_RELATIONS_THRESHOLD) continue;
+        const together = r.rivalClimateBlocs.some(
+          (bl) => bl.memberRivalIds.includes(a.id) && bl.memberRivalIds.includes(b.id),
+        );
+        if (together || !r.rng.chance(0.025)) continue;
+        const aBloc = r.rivalClimateBlocs.find((bl) => bl.memberRivalIds.includes(a.id));
+        const bBloc = r.rivalClimateBlocs.find((bl) => bl.memberRivalIds.includes(b.id));
+        if (aBloc && !aBloc.memberRivalIds.includes(b.id)) {
+          aBloc.memberRivalIds.push(b.id);
+          r.addLog(`${b.name} joins ${a.name}'s climate coalition — the transition accelerates.`, 'good');
+        } else if (bBloc && !bBloc.memberRivalIds.includes(a.id)) {
+          bBloc.memberRivalIds.push(a.id);
+          r.addLog(`${a.name} accedes to ${b.name}'s climate coalition — the bloc grows.`, 'good');
+        } else if (!aBloc && !bBloc) {
+          r.rivalClimateBlocs.push({
+            id: r.nextRivalClimateBlocId++,
+            memberRivalIds: [a.id, b.id],
+            foundedYear: r.year,
+          });
+          r.addLog(`${a.name} and ${b.name} found a climate coalition — two powers race to outrun the tide.`, 'good');
         }
       }
     }

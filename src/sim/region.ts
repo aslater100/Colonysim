@@ -1896,6 +1896,17 @@ export interface RivalTradeBloc {
   tariff: number;
 }
 
+/** A climate coalition formed autonomously among high-green-propensity rivals
+ *  (existential climate response, flag `rivalClimateResponse`): membership
+ *  lifts each member's effective contribution to `archetypeGreenShare()`, so
+ *  two rivals racing to avoid the Drowned branch together visibly bend the
+ *  world's curve faster than either would alone. Mirrors `RivalTradeBloc`. */
+export interface RivalClimateBloc {
+  id: number;
+  memberRivalIds: number[];
+  foundedYear: number;
+}
+
 /** An economic sanction between nations: suppresses bilateral trade. */
 export interface Sanction {
   /** Who imposed it (0 = player, else rivalId). */
@@ -1930,7 +1941,7 @@ export interface ProvincialArmy {
 // ---- War (GDD §7): casus belli → mobilization → war score → negotiated peace ----
 
 /** Why we fight (GDD §7.1): CB quality sets home-front war support at declaration. */
-export type CasusBelli = 'sponsored_raids' | 'border_dispute' | 'fabricated' | 'revanchism';
+export type CasusBelli = 'sponsored_raids' | 'border_dispute' | 'fabricated' | 'revanchism' | 'resource_dispute';
 
 export const CASUS_BELLI_DEFS: Record<CasusBelli, { name: string; support: number; desc: string }> = {
   sponsored_raids: {
@@ -1948,6 +1959,10 @@ export const CASUS_BELLI_DEFS: Record<CasusBelli, { name: string; support: numbe
   revanchism: {
     name: 'Revanchism', support: 85,
     desc: 'They dictated humiliating terms last time. The home front has not forgotten — this war needs no pretext.',
+  },
+  resource_dispute: {
+    name: 'Resource Dispute', support: 70,
+    desc: "Their granaries and mines sit fat while the world runs short — the treasury calls it plunder waiting to happen.",
   },
 };
 
@@ -2842,6 +2857,58 @@ export const WORLD_GREEN_BASE = 0.55;        // baseline transition rate before 
 export const PLAYER_GREEN_DIFFUSION = 0.6;   // how much of the world's transition spills into a passive player's own emissions (GDD §5.6 proven-tech diffusion)
 export const DROWNED_GREEN_RELIEF = 1.5;     // °C of projection credit per unit worldGreenShare at the era verdict (a transitioning world's flat projection overstates 2100 warming)
 
+// ---- Existential climate response (flag `rivalClimateResponse`, default OFF
+// → byte-identical): the world stops sitting still for the Drowned branch. As
+// warming urgency rises, an archetype NOT already leading the green transition
+// (low ARCHETYPE_GREEN_PROPENSITY) turns to the other lever it has — land and
+// resources — while a green-leaning archetype spends its urgency on a climate
+// coalition instead. Both read the SAME per-rival urgency signal below. ----
+/** At full warming urgency, a fully fossil-locked archetype's war-declaration
+ *  chance (systems/diplomacy.ts) multiplies by up to `1+this`; a fully green
+ *  archetype (propensity 1.0) gets none of the lift. */
+export const URGENCY_AGGRESSION_LIFT = 1.5;
+/** At full warming urgency, a fully fossil-locked archetype's relations-drift
+ *  BASELINE (both rival→player and rival↔rival, systems/diplomacy.ts) drops by
+ *  up to this many points — measured (a probe run) to matter: the relations
+ *  drift model settles a typical Hegemon around only -12 to -37 on its own,
+ *  nowhere near the -40/-60 hostility thresholds that gate mischief and war,
+ *  so a multiplier on the war ROLL alone never fires — the relationship has
+ *  to actually curdle first. A fully green archetype gets none of this drag. */
+export const URGENCY_RELATIONS_DRAG = 45;
+/** The world-scarcity bar (`worldGoodScarcity`) a good must clear before a
+ *  large rival's presumed hoard of it reads as a genuine war-worthy grievance
+ *  — see `rivalResourceGrievance`. */
+export const RESOURCE_DISPUTE_SCARCITY_THRESHOLD = 0.35;
+/** Population floor (mirrors the `RIVAL_WORLD_POP_NORM` economic-weight scale
+ *  in systems/goods.ts) below which a rival is too small to plausibly be
+ *  denying the world anything. */
+export const RESOURCE_DISPUTE_POP_THRESHOLD = 15_000;
+/** Pairwise relations needed to found/join a climate bloc — deliberately much
+ *  easier than the `rivalTradeBlocs` bar (40): a shared existential threat
+ *  unites even powers that are merely NOT hostile, not just warm ones (a
+ *  probe run found two green-eligible archetypes can sit at a merely-neutral
+ *  ~-6 equilibrium on personality/bloc-distance terms alone — no warmer). */
+export const CLIMATE_BLOC_RELATIONS_THRESHOLD = -15;
+/** Minimum ARCHETYPE_GREEN_PROPENSITY to found/join a climate bloc — mirrors
+ *  the existing bilateral Climate Accord invite gate (systems/diplomacy.ts) so
+ *  bloc-forming rivals are the same ones already inclined to invite the player. */
+export const CLIMATE_BLOC_GREEN_THRESHOLD = 0.6;
+/** Each climate-bloc member's contribution to `archetypeGreenShare()` is
+ *  boosted by this fraction — a coalition measurably bends the world's curve
+ *  faster than its members would alone. */
+export const CLIMATE_BLOC_GREEN_BOOST = 0.25;
+
+/** How existentially pressured a rival feels about the Drowned branch — rises
+ *  with global warming, falls for archetypes already leading the green
+ *  transition. Pure arithmetic over already-live fields (warmingC, archetype)
+ *  — no RNG, no new serialized field, exactly the `worldGreenShare` pattern
+ *  applied per-rival instead of world-averaged. */
+export function rivalClimateUrgency(r: RegionSim, rv: RivalNation): number {
+  const warmingUrgency = Math.max(0, Math.min(1, r.warmingC / WORLD_GREEN_URGENCY_C));
+  const greenSlack = 1 - (ARCHETYPE_GREEN_PROPENSITY[rv.archetype] ?? 0.5);
+  return warmingUrgency * greenSlack;
+}
+
 /** Maximum annual snapshots retained in statsHistory (one per year, 200y of coverage). */
 export const STATS_HISTORY_MAX = 200;
 
@@ -3375,6 +3442,21 @@ export class RegionSim {
    *  scarcity its legacy stock-based 0); the headless sweep turns it on (SIM_CONSUMER_DEMAND).
    *  Not serialized — a run-mode toggle, not game state. */
   consumerDemand = false;
+  /** Existential climate response: rivals stop sitting still for the Drowned
+   *  branch. Gates THREE effects, all previously entirely absent for rivals:
+   *  (1) an urgency term on the rival war-declaration roll (fossil-locked
+   *  archetypes turn to land/resources as warming worsens); (2) a real
+   *  `resource_dispute` casus belli read off `worldGoodScarcity` instead of a
+   *  flat threshold; (3) an autonomous rival↔rival climate coalition
+   *  (`rivalClimateBlocs`, mirrors `rivalTradeBlocs`) that measurably bends
+   *  `archetypeGreenShare()` — so a green-leaning rival's self-preservation is
+   *  diplomatic/economic while a fossil-locked one's is military. Every new RNG
+   *  draw and every changed probability is guarded behind this flag, so OFF
+   *  is byte-identical (no draw fires, no probability changes) to every
+   *  session before this one. Not serialized — a run-mode toggle, not game
+   *  state (`rivalClimateBlocs` itself IS serialized — see below — since it's
+   *  real accumulating state once the flag is on, not a derived cache). */
+  rivalClimateResponse = false;
   /** Transient per-good supply LEVEL (∈[0,1], Liebig min of input availability) cached
    *  by `tickIntermediateGoods` each month from the cascade solve, so the (consumer-demand)
    *  flow scarcity can read this-tick production capacity without re-resolving the chain
@@ -3396,6 +3478,12 @@ export class RegionSim {
    *  every call. Rebuilt each tick → NOT serialized; 0 outside a tick (direct callers fall
    *  back to a live sum). Only read when `consumerDemand` is on → no live-play cost. */
   worldPopCache = 0;
+  /** Lifetime count of wars declared this run — both player↔rival
+   *  (`startPlayerWar`) and rival↔rival (`startForeignWar`) — a direct
+   *  telemetry counter for "how often does the world go to war." NOT
+   *  serialized (a run-scoped counter, like a save/load-spanning odometer
+   *  would be for any other tally the game doesn't otherwise need to persist). */
+  warsDeclaredCount = 0;
   /** Difficulty chosen at town design — tunes the regional AI competitors. */
   aiDifficulty: AiDifficulty = 'normal';
   /** Currency exchange rates: { from:factionId:to:factionId => rate } */
@@ -3426,6 +3514,11 @@ export class RegionSim {
   /** Trade blocs formed among rival nations independently of the player. */
   rivalTradeBlocs: RivalTradeBloc[] = [];
   nextRivalBlocId = 1;
+  /** Autonomous rival climate coalitions (`rivalClimateResponse` flag; empty
+   *  and never populated when off, so this field round-trips as `[]` for
+   *  every save until a session turns the flag on). Mirrors `rivalTradeBlocs`. */
+  rivalClimateBlocs: RivalClimateBloc[] = [];
+  nextRivalClimateBlocId = 1;
   /** Active economic sanctions (player ↔ rivals). */
   sanctions: Sanction[] = [];
   // ---- Phase 9: Government Type System ----
@@ -4407,7 +4500,16 @@ export class RegionSim {
   private archetypeGreenShare(): number {
     if (this.rivals.length === 0) return 0.4;
     let sum = 0;
-    for (const rv of this.rivals) sum += ARCHETYPE_GREEN_PROPENSITY[rv.archetype] ?? 0.3;
+    for (const rv of this.rivals) {
+      let propensity = ARCHETYPE_GREEN_PROPENSITY[rv.archetype] ?? 0.3;
+      // Existential climate response: a rival inside a climate coalition bends
+      // its own curve faster than it would alone. `rivalClimateBlocs` is empty
+      // unless `rivalClimateResponse` has run, so this is byte-identical off.
+      if (this.rivalClimateBlocs.some((b) => b.memberRivalIds.includes(rv.id))) {
+        propensity = Math.min(1, propensity * (1 + CLIMATE_BLOC_GREEN_BOOST));
+      }
+      sum += propensity;
+    }
     return sum / this.rivals.length;
   }
 
@@ -10300,6 +10402,7 @@ export class RegionSim {
     const a = this.rival(aId);
     const b = this.rival(bId);
     if (!a || !b || a === b || this.warBetween(aId, bId)) return false;
+    this.warsDeclaredCount++;
     const endsDay = this.day + 240 + this.rng.int(480);
     this.foreignWars.push({ a: aId, b: bId, startedDay: this.day, endsDay });
     this.rivalPairs[this.pairKey(aId, bId)] = Math.min(this.pairRelations(aId, bId), -60);
@@ -10323,12 +10426,28 @@ export class RegionSim {
 
   // ---- The nation at war (GDD §7) ----
 
+  /** Existential climate response: is this rival a genuine resource-denial
+   *  grievance, not a flat threshold? A RivalNation owns no hexes (it's an
+   *  off-map abstraction — see `compass`), so this reads signals that are real
+   *  for it: population scale (a plausible economic weight, mirroring the
+   *  `RIVAL_WORLD_POP_NORM` scale already used to tilt world demand) and the
+   *  already-live `worldGoodScarcity` — real teeth instead of the dormant
+   *  Phase-16 `generateCasusBelli` scaffold's flat per-settlement yield check
+   *  (which silently never fires for a RivalNation in live play, since
+   *  `settlement.factionId` and `RivalNation.id` are different id-spaces). */
+  rivalResourceGrievance(rv: RivalNation): boolean {
+    if (!this.rivalClimateResponse) return false;
+    if (rv.pop < RESOURCE_DISPUTE_POP_THRESHOLD) return false;
+    return INTERMEDIATE_GOODS.some((g) => worldGoodScarcity(this, g.id) > RESOURCE_DISPUTE_SCARCITY_THRESHOLD);
+  }
+
   /** Casus belli on the table against a rival (GDD §7.1): fabrication is
    *  always available; honest grievances must be earned by their hostility. */
   availableCasusBelli(rv: RivalNation): CasusBelli[] {
     const list: CasusBelli[] = [];
     if (rv.relations < -40 && !rv.treaties.includes('non_aggression')) list.push('sponsored_raids');
     if (rv.relations < -20 && !rv.borderSettled) list.push('border_dispute'); // a signed survey leaves nothing to dispute
+    if (this.rivalResourceGrievance(rv)) list.push('resource_dispute');
     list.push('fabricated');
     // Revanchism: available if we lost a war against this rival — warScars records it.
     if (this.warScars.some((s) => s.rivalId === rv.id && s.outcome === 'defeat')) {
@@ -10356,6 +10475,7 @@ export class RegionSim {
   }
 
   startPlayerWar(rv: RivalNation, cb: CasusBelli, defensive: boolean): void {
+    this.warsDeclaredCount++;
     this.playerWar = {
       rivalId: rv.id, cb, defensive, startedDay: this.day,
       support: defensive ? 85 : CASUS_BELLI_DEFS[cb].support, // a defensive war starts at 85 (§7.1)
@@ -11501,6 +11621,8 @@ export class RegionSim {
       provincePolicies: this.provincePolicies,
       rivalTradeBlocs: this.rivalTradeBlocs,
       nextRivalBlocId: this.nextRivalBlocId,
+      rivalClimateBlocs: this.rivalClimateBlocs,
+      nextRivalClimateBlocId: this.nextRivalClimateBlocId,
       sanctions: this.sanctions,
       provincialArmies: this.provincialArmies,
       nextArmyId: this.nextArmyId,
@@ -11826,6 +11948,8 @@ export class RegionSim {
     r.provincePolicies = d.provincePolicies ?? {};
     r.rivalTradeBlocs = (d.rivalTradeBlocs ?? []).map((b: RivalTradeBloc) => ({ ...b }));
     r.nextRivalBlocId = d.nextRivalBlocId ?? (r.rivalTradeBlocs.reduce((m: number, b: RivalTradeBloc) => Math.max(m, b.id), 0) + 1);
+    r.rivalClimateBlocs = (d.rivalClimateBlocs ?? []).map((b: RivalClimateBloc) => ({ ...b }));
+    r.nextRivalClimateBlocId = d.nextRivalClimateBlocId ?? (r.rivalClimateBlocs.reduce((m: number, b: RivalClimateBloc) => Math.max(m, b.id), 0) + 1);
     r.sanctions = d.sanctions ?? [];
     r.provincialArmies = d.provincialArmies ?? [];
     r.nextArmyId = d.nextArmyId ?? 1;

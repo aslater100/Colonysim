@@ -32,10 +32,15 @@ const consumerDemand = process.env.SIM_CONSUMER_DEMAND === '1';
 // income-tax revenue currently outruns the autoplayer's development spend (unbounded
 // treasury); turn it on to study the monetary layer / measurable cost-push inflation.
 const autoplayStatehood = process.env.SIM_AUTOPLAY_STATEHOOD === '1';
+// Existential climate response — OPT-IN (SIM_RIVAL_CLIMATE_RESPONSE=1). Rivals
+// scramble to avoid the Drowned branch: fossil-locked archetypes get more
+// belligerent as warming worsens (real resource_dispute casus belli), while
+// green-leaning archetypes form autonomous climate coalitions instead.
+const rivalClimateResponse = process.env.SIM_RIVAL_CLIMATE_RESPONSE === '1';
 
-console.log(`headless sim: ${years} game-year(s) × ${runs} run(s)  [player spatial play: ${autoDevelopPlayer ? 'AUTO' : 'manual'}; consumer-demand: ${consumerDemand ? 'ON' : 'off'}; autoplay-statehood: ${autoplayStatehood ? 'ON' : 'off'}]\n`);
-console.log('seed |  year | towns | pTwn |    treasury |        GDP | treas/GDP(mo) | infl% |  pop   | sat | pBld | flows | lScar% | fShort% | wMkt% |  gpP% | ticks | outcome');
-console.log('-----+-------+-------+------+-------------+------------+---------------+-------+--------+-----+------+-------+--------+---------+-------+-------+-------+--------');
+console.log(`headless sim: ${years} game-year(s) × ${runs} run(s)  [player spatial play: ${autoDevelopPlayer ? 'AUTO' : 'manual'}; consumer-demand: ${consumerDemand ? 'ON' : 'off'}; autoplay-statehood: ${autoplayStatehood ? 'ON' : 'off'}; rival-climate-response: ${rivalClimateResponse ? 'ON' : 'off'}]\n`);
+console.log('seed |  year | towns | pTwn |    treasury |        GDP | treas/GDP(mo) | infl% |  pop   | sat | pBld | flows | lScar% | fShort% | wMkt% |  gpP% | wars | ticks | outcome');
+console.log('-----+-------+-------+------+-------------+------------+---------------+-------+--------+-----+------+-------+--------+---------+-------+-------+------+-------+--------');
 
 for (let run = 0; run < runs; run++) {
   const seed = 1000 + run * 7;
@@ -44,6 +49,7 @@ for (let run = 0; run < runs; run++) {
   r.autoExpandPlayer = autoExpandPlayer;
   r.consumerDemand = consumerDemand;
   r.autoplayStatehood = autoplayStatehood;
+  r.rivalClimateResponse = rivalClimateResponse;
   const target = r.year + years;
   let ticks = 0;
   while (r.year < target && !r.gameOver && ticks < TICK_CAP) { r.tick(); ticks++; }
@@ -81,6 +87,7 @@ for (let run = 0; run < runs; run++) {
     `${(r.finalConsumptionShortfall * 100).toFixed(1).padStart(7)} | ` +
     `${(r.worldMarketTightness() * 100).toFixed(1).padStart(5)} | ` +
     `${(r.worldPowerPressure() * 100).toFixed(1).padStart(5)} | ` +
+    `${String(r.warsDeclaredCount).padStart(4)} | ` +
     `${String(ticks).padStart(5)} | ` +
     `${outcome}`,
   );
