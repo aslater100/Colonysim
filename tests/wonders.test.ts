@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RegionSim, REGION_BUILDINGS } from '../src/sim/region';
+import { updateConstruction } from '../src/sim/systems/construction';
 import { RegionMap } from '../src/sim/worldgen';
 import { Weather } from '../src/sim/weather';
 import { Rng } from '../src/sim/rng';
@@ -28,7 +29,6 @@ function advanceMonth(r: RegionSim): void {
 // White-box access to the private wonder effect + the construction resolver.
 type Priv = {
   wonderBonus: (t: { factionId: number }, sector: string) => number;
-  updateConstruction: () => void;
 };
 const priv = (r: RegionSim) => r as unknown as Priv;
 
@@ -38,7 +38,7 @@ function buildAndComplete(r: RegionSim, wonderId: string): boolean {
   const t = r.settlements[0];
   if (!r.buildCity(t.id, wonderId)) return false;
   if (t.construction) t.construction.doneDay = 0; // 0 ≤ day → completes on resolve
-  priv(r).updateConstruction();
+  updateConstruction(r);
   return r.wonderOwner[wonderId] !== undefined;
 }
 

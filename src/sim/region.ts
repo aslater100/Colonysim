@@ -50,6 +50,7 @@ import { checkWinConditions, checkProclamationGate } from './systems/victory';
 import { tickUtilities } from './systems/utilities';
 import { tickRegionalEvents } from './systems/events';
 import { checkElection } from './systems/elections';
+import { updateConstruction } from './systems/construction';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -665,7 +666,7 @@ export const REGION_EVENT_DEFS: RegionalEventDef[] = [
 ];
 
 // Fast lookups for building and event definitions.
-const REGION_BUILDINGS_MAP = new Map(REGION_BUILDINGS.map((b) => [b.id, b]));
+export const REGION_BUILDINGS_MAP = new Map(REGION_BUILDINGS.map((b) => [b.id, b]));
 const DISTRICT_DEFS_MAP = new Map(DISTRICT_DEFS.map((d) => [d.id, d]));
 // Spatial-4X Phase D slice 1b — per-update chance a rich, era-ready rival faction
 // bids for an unclaimed Wonder (scaled by the difficulty techMult). aiRng-gated.
@@ -5601,7 +5602,7 @@ export class RegionSim {
     }
     this.updateExpeditions();
     updateCharter(this);
-    this.updateConstruction(); // Phase 2: scaffolding comes down, doors open
+    updateConstruction(this); // Phase 2: scaffolding comes down, doors open (systems/construction.ts)
     updateExploration(this); // Phase 0: Update fog of war based on scouts and settlements (systems/exploration.ts)
     if (this.totalPop() <= 0) {
       this.gameOver = true;
@@ -7292,7 +7293,7 @@ export class RegionSim {
   /** Deterministically pick a worked-ring cell for an auto-sited building (AI /
    *  legacy / migration). Returns the nearest free legal cell, or -1 if the ring
    *  is full. No RNG — keeps the sim byte-deterministic. */
-  private autoPlaceCell(t: Settlement): number {
+  autoPlaceCell(t: Settlement): number {
     const cells = this.buildablePlacementCells(t.id);
     if (cells.length === 0) return -1;
     const c = this.map.coordToCell(t.x, t.y);
@@ -8272,30 +8273,6 @@ export class RegionSim {
   // ---- Phase 6: Trade Route Cargo ----
 
   /** Finish any construction whose day has come. */
-  private updateConstruction(): void {
-    for (const t of this.settlements) {
-      if (t.construction && this.day >= t.construction.doneDay) {
-        const def = REGION_BUILDINGS_MAP.get(t.construction!.id);
-        t.buildings.push(t.construction.id);
-        // Record where it sits (chosen cell, or auto-sited in the worked ring).
-        const cell = t.construction.cell !== undefined && this.canPlaceBuildingAt(t.id, t.construction.cell)
-          ? t.construction.cell
-          : this.autoPlaceCell(t);
-        if (cell >= 0) t.placedBuildings.push({ id: t.construction.id, cell });
-        t.construction = null;
-        if (def) {
-          // Phase D: a completed Wonder is claimed by its faction empire-wide
-          // (keyed on completion, so ownership holds even if the cell relocated).
-          if (def.unique) {
-            this.wonderOwner[def.id] = t.factionId;
-            if (t.factionId === this.playerFactionId) this.prestige += def.prestige ?? 0;
-          }
-          this.addLog(`The ${def.name} opens at ${t.name}.`, 'good');
-          this.townEvent(t, `The ${def.name} opens its doors.`, 'good');
-        }
-      }
-    }
-  }
 
   private migrate(): void {
     if (this.settlements.length < 2) return;
