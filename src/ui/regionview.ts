@@ -3,9 +3,11 @@
  * operating altitude after the flip (GDD §2.5). Painterly backdrop, town
  * markers, routes, expedition wagons; DOM panel for the selected settlement.
  */
+import './panels.css';
 import type { Settlement, Scout, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, DepressionMeasure, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType, TechNode, Province, DynastyNode, SectorBonusBreakdown } from '../sim/region';
 import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, DISTRICT_DEFS, INTERMEDIATE_GOODS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES, ESPIONAGE_OPS, BLOC_RELATIONS_FLOOR, DEPRESSION_MEASURES, SUPPLY_SHOCK_INFLATION, SUPPLY_SHOCK_EXPORT_DRAG, AGRI_CLIMATE_THRESHOLD, INDUSTRY_BROWNOUT_THRESHOLD } from '../sim/region';
 import type { EspionageOp } from '../sim/region';
+import { rivalArmsCapacity } from '../sim/region';
 import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS } from '../sim/defs';
 import type { CurrencySymbol } from '../sim/defs';
 import { ANNOUNCE_LEAD_DAYS } from '../sim/currency';
@@ -43,6 +45,17 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const n = parseInt(h, 16);
   if (!Number.isFinite(n) || h.length !== 6) return { r: 136, g: 136, b: 136 };
   return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+/** Gilded meter bar (style.css .meter): an inlaid channel with a lit fill.
+ *  Tone maps the old semantic bar colors onto the m-good/m-bad/m-info variants;
+ *  'warn' and 'gold' ride the default brass fill. The fill width stays inline —
+ *  it is data, not styling. An explicit `fill` color (categorical data like
+ *  sector or cargo hues) also stays inline for the same reason. */
+function meterBar(pct: number, tone: 'good' | 'warn' | 'bad' | 'info' | 'gold' = 'gold', fill?: string): string {
+  const cls = tone === 'good' ? ' m-good' : tone === 'bad' ? ' m-bad' : tone === 'info' ? ' m-info' : '';
+  const w = Math.max(0, Math.min(100, Math.round(pct)));
+  return `<div class="meter${cls}"><i style="width:${w}%${fill ? `;background:${fill}` : ''}"></i></div>`;
 }
 
 /** Build an HTML dynasty section for the Century Report.
@@ -129,7 +142,7 @@ export class RegionView {
   private centralBankPanel: HTMLElement;
   centralBankOpen = false;
   private lastCentralBankBuildFrame = -999;
-  private economyTab: 'overview' | 'settlements' | 'supply' = 'overview';
+  private economyTab: 'overview' | 'settlements' | 'supply' | 'wonders' = 'overview';
   private ceremony: HTMLElement;
   private convention: HTMLElement;
   private policyModal: HTMLElement;
@@ -1691,8 +1704,10 @@ export class RegionView {
     const buildings = prov.keyBuildings.length > 0
       ? prov.keyBuildings.slice(0, 6).join(', ')
       : 'none';
-    const satBar = `<div style="background:rgba(255,255,255,0.1);height:6px;border-radius:3px;overflow:hidden;margin:2px 0">` +
-      `<div style="width:${Math.max(0, Math.min(100, prov.satisfaction))}%;height:100%;background:${prov.satisfaction >= 70 ? '#7ab4d4' : prov.satisfaction >= 40 ? '#c2a14d' : '#c26a6a'}"></div></div>`;
+    const satBar = `<div class="meter-line">${meterBar(
+      prov.satisfaction,
+      prov.satisfaction >= 70 ? 'info' : prov.satisfaction >= 40 ? 'warn' : 'bad',
+    )}</div>`;
 
     // Province policy controls (player provinces only)
     const pol = isPlayer ? this.region.getProvincePolicy(prov.id) : null;
@@ -1701,18 +1716,18 @@ export class RegionView {
     const AUTO_LABELS = ['Administered', 'Semi-auto', 'Self-govern'];
     const policyHtml = pol && this.region.stateProclaimed ? `
       <p class="insp-skills">PROVINCE POLICY</p>
-      <p style="font-size:0.82em">Tax:
-        <select id="pp-tax" style="background:#1a2030;color:#c0c8d8;border:1px solid #3a4254;border-radius:3px;padding:1px 4px">
+      <p class="t-sm">Tax:
+        <select id="pp-tax">
           ${[0.5, 1.0, 1.5, 2.0].map((v, i) => `<option value="${v}"${Math.abs(pol.taxMultiplier - v) < 0.01 ? ' selected' : ''}>${TAX_LABELS[i]}</option>`).join('')}
         </select>
       </p>
-      <p style="font-size:0.82em">Investment:
-        <select id="pp-inv" style="background:#1a2030;color:#c0c8d8;border:1px solid #3a4254;border-radius:3px;padding:1px 4px">
+      <p class="t-sm">Investment:
+        <select id="pp-inv">
           ${[0, 1, 2].map((v) => `<option value="${v}"${pol.investmentLevel === v ? ' selected' : ''}>${INV_LABELS[v]}</option>`).join('')}
         </select>
       </p>
-      <p style="font-size:0.82em">Autonomy:
-        <select id="pp-auto" style="background:#1a2030;color:#c0c8d8;border:1px solid #3a4254;border-radius:3px;padding:1px 4px">
+      <p class="t-sm">Autonomy:
+        <select id="pp-auto">
           ${[0, 1, 2].map((v) => `<option value="${v}"${pol.autonomyLevel === v ? ' selected' : ''}>${AUTO_LABELS[v]}</option>`).join('')}
         </select>
       </p>` : '';
@@ -1724,21 +1739,21 @@ export class RegionView {
         armies.map((a) => {
           const total = a.units.reduce((s, u) => s + u.count, 0);
           const morale = Math.round(a.units.reduce((s, u) => s + u.morale * u.count, 0) / Math.max(1, total));
-          return `<p style="font-size:0.82em">${total} units · morale ${morale}%
-            <button class="mini" data-army="${a.id}" id="cancel-army-${a.id}" style="margin-left:4px">✕</button></p>`;
+          return `<p class="t-sm">${total} units · morale ${morale}%
+            <button class="mini ml-4" data-army="${a.id}" id="cancel-army-${a.id}">✕</button></p>`;
         }).join('')
       : '';
 
     this.setInnerHtml(
       this.provincePanel,
-      `<p class="insp-name" style="color:${color}">${prov.name}</p>` +
+      `<h3 class="panel-title" style="color:${color}">${prov.name}</h3>` +
       `<p class="insp-skills">${isPlayer ? 'YOUR PROVINCE' : factionName.toUpperCase()}</p>` +
       `<p>Population: <b>${prov.totalPop.toLocaleString()}</b></p>` +
       `<p>GDP/mo: <b>${formatCurrency(prov.gdpContribution)}</b></p>` +
       `<p>Satisfaction: <b>${prov.satisfaction}%</b>${satBar}</p>` +
       `<p>Garrison: <b>${prov.militaryStrength}</b></p>` +
       `<p class="insp-skills">BUILDINGS</p>` +
-      `<p style="font-size:0.85em;color:#a8b4c4">${buildings}</p>` +
+      `<p class="t-sm c-muted">${buildings}</p>` +
       policyHtml +
       armyHtml +
       `<p><button class="mini" id="prov-panel-close">✕ close</button></p>`,
@@ -2563,7 +2578,7 @@ export class RegionView {
     this.convention.innerHTML =
       `<div class="ceremony-box">` +
       `<h2>★ THE CONSTITUTIONAL CONVENTION ★</h2>` +
-      `<p style="font-size:11px;color:#9ab0c4;letter-spacing:2px;text-transform:uppercase">` +
+      `<p class="conv-sub">` +
       `${Math.round(r.totalPop()).toLocaleString()} citizens · ${r.settlements.length} towns · ${r.researched.size} discoveries</p>` +
       `<p>${flavourLine}</p>` +
       `<p><b>Nation name:</b></p>` +
@@ -2573,7 +2588,7 @@ export class RegionView {
       `<p><b>Appoint ministers:</b></p>` +
       ministerRows +
       `<button id="convention-proclaim-btn">Proclaim the Nation</button>` +
-      `<button id="convention-cancel-btn" class="mini" style="margin-left:8px">Cancel</button>` +
+      `<button id="convention-cancel-btn" class="mini ml-8">Cancel</button>` +
       `</div>`;
     this.convention.querySelector<HTMLButtonElement>('#convention-proclaim-btn')!.onclick = () => {
       const name = (this.convention.querySelector<HTMLInputElement>('#nation-name')!.value || suggestedName).trim();
@@ -2870,7 +2885,7 @@ export class RegionView {
       : r.eraBranch === 'dystopia' ? 'THE NEON ENDURES'
       : r.eraBranch === 'drowned' ? 'THE WATERS RISE' : 'THE YEARS ROLL ON';
     const beatHtml = beats
-      .map((b) => `<p style="text-align:left;border-left:3px solid ${b.kind === 'good' ? '#4e9' : b.kind === 'bad' ? '#e55' : '#88a'};padding-left:10px">${b.text}</p>`)
+      .map((b) => `<p class="ep-beat${b.kind === 'good' ? ' ep-beat-good' : b.kind === 'bad' ? ' ep-beat-bad' : ''}">${b.text}</p>`)
       .join('');
     this.epilogueModal.innerHTML =
       `<div class="ceremony-box">` +
@@ -2944,7 +2959,7 @@ export class RegionView {
     const treasuryBody =
       `<p>treasury ` + formatCurrency(Math.floor(r.treasury)) + ` · coin ${r.currencySymbol}</p>` +
       (r.currencyTransition && r.day < r.currencyTransition.endDay
-        ? `<p style="color:#e0a040" title="The currency switch is still settling: output runs at ${Math.round(r.currencyEfficiency() * 100)}% and prices swing until markets stabilize.">` +
+        ? `<p class="c-warn" title="The currency switch is still settling: output runs at ${Math.round(r.currencyEfficiency() * 100)}% and prices swing until markets stabilize.">` +
           `⚠ currency transition — output ${Math.round(r.currencyEfficiency() * 100)}%, ` +
           `${Math.max(1, Math.round((r.currencyTransition.endDay - r.day) / 30))}mo to stabilize</p>`
         : '') +
@@ -2956,15 +2971,15 @@ export class RegionView {
         const forecast = r.advisorForecast('Finance', projected12mo);
         const finMin = r.ministerFor('treasury');
         const advisorName = finMin ? finMin.name : 'your advisors';
-        const forecastCol = forecast >= 0 ? '#4e9' : '#e55';
+        const forecastCls = forecast >= 0 ? 'c-good' : 'c-bad';
         return `<p class="insp-skills" title="Treasury projection 12 months out, based on current tax and spending. Accuracy depends on your Finance minister's skill.">` +
           `${advisorName} forecasts treasury at ` +
-          `<span style="color:${forecastCol}">${formatCurrency(Math.round(forecast))}</span> in 12 months</p>`;
+          `<span class="${forecastCls}">${formatCurrency(Math.round(forecast))}</span> in 12 months</p>`;
       })() +
       `<p title="The global ledger (GDD §8.2): every chimney on earth, projected to 2100. The verdict is read in 2040.">` +
       `CO₂ ${Math.round(r.co2ppm)} ppm · +${r.warmingC.toFixed(1)}°C` +
       `${r.eraBranch ? ` · <b>${r.eraBranch.toUpperCase()}</b>` : ` (→ +${r.projectedWarming().toFixed(1)}°C by 2100)`}` +
-      (r.geoDeployed ? ` · <span style="color:#4cf" title="Stratospheric aerosols active — warming suppressed for two years">aerosols active</span>` : '') +
+      (r.geoDeployed ? ` · <span class="c-info" title="Stratospheric aerosols active — warming suppressed for two years">aerosols active</span>` : '') +
       `</p>` +
       (r.agriClimateMult() < 1
         ? `<p class="insp-skills" title="Heat stress, shifting seasons, and water stress on cash crops erode the farm economy past +${AGRI_CLIMATE_THRESHOLD}°C (GDD §8.2). Cut emissions to ease it.">🌾 farm output −${Math.round((1 - r.agriClimateMult()) * 100)}% to climate</p>`
@@ -2978,15 +2993,15 @@ export class RegionView {
       `<p>trade ` + formatCurrency(Math.floor(r.tradeValueLastMonth)) + `/mo turnover</p>` +
       `<p>tax <span id="tax-val">${Math.round(r.taxRate * 100)}%</span></p>` +
       `<input id="tax-slider" type="range" min="0" max="30" value="${Math.round(r.taxRate * 100)}">` +
-      `<p>services: <b>${lvl(r.servicesLevel)}</b> <button class="mini" id="svc-up">+</button><button class="mini" id="svc-dn">−</button></p>` +
-      `<p>militia: <b>${lvl(r.militiaLevel)}</b> <button class="mini" id="mil-up">+</button><button class="mini" id="mil-dn">−</button></p>` +
+      `<p>services: <span class="stepper"><button id="svc-dn" class="stepper-btn">−</button><span class="stepper-val">${lvl(r.servicesLevel)}</span><button id="svc-up" class="stepper-btn">+</button></span></p>` +
+      `<p>militia: <span class="stepper"><button id="mil-dn" class="stepper-btn">−</button><span class="stepper-val">${lvl(r.militiaLevel)}</span><button id="mil-up" class="stepper-btn">+</button></span></p>` +
       `<p class="insp-skills">high taxes breed strikes; services cost coin but save lives</p>`;
     // Credit sub-tab: the lengthy monetary / lenders / freight machinery.
     // Only built post-statehood — these read nation-tier state the pre-State
     // region doesn't have, and the sub-tab isn't shown until then anyway.
     const creditBody = preState ? '' :
       (r.hasCentralBank()
-        ? `<p class="insp-skills">CENTRAL BANK</p><p style="font-size:10px;color:#9be3b6">Monetary policy, bonds, FX and the discount window live in the dedicated <b>Central Bank</b> window — open it with <b>B</b> or the B:bank button above.</p>`
+        ? `<p class="insp-skills">CENTRAL BANK</p><p class="t-10 c-good">Monetary policy, bonds, FX and the discount window live in the dedicated <b>Central Bank</b> window — open it with <b>B</b> or the B:bank button above.</p>`
         : '') +
       this.lendersHtml() +
       `<p class="insp-skills">${r.maglevUnlocked()
@@ -3008,12 +3023,12 @@ export class RegionView {
 
     const politicsBody = preState ? '' :
       (!r.nationProclaimed && r.stateProclaimed && !r.proclamationReady
-        ? `<p style="color:#bfae86;font-size:10px">territory ${(r.playerTerritoryControl() * 100).toFixed(0)}% / 50% needed for nation gate</p>`
+        ? `<p class="t-10 c-muted">territory ${(r.playerTerritoryControl() * 100).toFixed(0)}% / 50% needed for nation gate</p>`
         : '') +
       (r.proclamationReady && !r.nationProclaimed && !r.canCallConvention()
-        ? `<p style="color:#8fc26a;font-size:10px">★ REGIONAL HEGEMON — nation gate unlocked (meet Convention requirements to proceed)</p>`
+        ? `<p class="t-10 c-good">★ REGIONAL HEGEMON — nation gate unlocked (meet Convention requirements to proceed)</p>`
         : '') +
-      (r.canCallConvention() ? `<p><button id="convention-btn" style="font-size:10px;background:#8b5cf6;color:#fff;border:none;padding:4px 8px;cursor:pointer">★ CONVENE CONSTITUTIONAL CONVENTION</button></p>` : '') +
+      (r.canCallConvention() ? `<p><button id="convention-btn" class="btn-gold t-10">★ CONVENE CONSTITUTIONAL CONVENTION</button></p>` : '') +
       this.politicsHtml() +
       this.factionIntelHtml();
 
@@ -3024,7 +3039,7 @@ export class RegionView {
         : (r.stateName || 'REGION').toUpperCase();
     this.setInnerHtml(
       this.statePanel,
-      `<div class="pal-title">${panelTitle}</div>` +
+      `<h3 class="panel-title">${panelTitle}</h3>` +
       `<p class="insp-skills">${r.nationProclaimed && r.govType
         ? GOV_TYPES.find((g) => g.id === r.govType)!.name
         : r.govLean ? GOV_LEANS[r.govLean].name : ''}</p>` +
@@ -3036,7 +3051,7 @@ export class RegionView {
       `<button class="mini" id="settlements-toggle" title="Settlement list (S)">${this.settlementListOpen ? '▲' : '▼'} S:towns</button> ` +
       `<button class="mini" id="economy-toggle" title="Economy panel (E)">${this.economyOpen ? '▲' : '▼'} E:econ</button>` +
       (r.hasCentralBank()
-        ? ` <button class="mini" id="centralbank-toggle" title="Central Bank — monetary policy, bonds, FX (B)" style="background:#2d4a3a;color:#9be3b6">${this.centralBankOpen ? '▲' : '▼'} B:bank</button>`
+        ? ` <button class="mini cb-badge" id="centralbank-toggle" title="Central Bank — monetary policy, bonds, FX (B)">${this.centralBankOpen ? '▲' : '▼'} B:bank</button>`
         : '') +
       `</p>` +
       tabStrip +
@@ -3274,14 +3289,14 @@ export class RegionView {
     // Province view toggle (always available when state is proclaimed)
     const provinceToggleHtml = r.stateProclaimed
       ? `<p class="insp-skills">MAP OVERLAYS</p>` +
-        `<p><button id="province-view-toggle" class="mini" style="${this.provinceViewActive ? 'background:#7ab4d4;color:#000' : ''}" ` +
+        `<p><button id="province-view-toggle" class="mini${this.provinceViewActive ? ' toggle-on' : ''}" ` +
         `title="Toggle Province View (P): shows province names, population and GDP on the map">` +
         `${this.provinceViewActive ? '✓ PROVINCE VIEW ON' : 'Province View (P)'}</button></p>`
       : '';
     // Territorial expansion section
     const claimLandHtml = r.stateProclaimed
       ? `<p class="insp-skills">TERRITORIAL EXPANSION</p>` +
-        `<p><button id="claim-land-toggle" class="mini" style="${this.claimLandMode ? 'background:#8fc26a;color:#000' : ''}" ` +
+        `<p><button id="claim-land-toggle" class="mini${this.claimLandMode ? ' toggle-on' : ''}" ` +
         `title="Click to activate land claim mode, then click on unclaimed hexes adjacent to your territory (£25/cell)">` +
         `${this.claimLandMode ? '✓ CLAIM LAND MODE' : 'Claim Unclaimed Land'}</button></p>`
       : '';
@@ -3293,7 +3308,7 @@ export class RegionView {
     };
     const rows = r.rivals.map((rv) => {
       const rel = Math.round(rv.relations);
-      const col = rel >= 25 ? '#4e9' : rel >= -25 ? '#ca4' : '#e55';
+      const relTone = rel >= 25 ? 'good' : rel >= -25 ? 'warn' : 'bad';
       const pct = Math.round((rel + 100) / 2);
       const gov = r.regimeOf(rv).name;
       const recentHistory = rv.history.slice(-4).join(' ');
@@ -3304,7 +3319,7 @@ export class RegionView {
                   const comp = r.accordCompliance[rv.id] ?? 1;
                   const pct = Math.round(comp * 100);
                   const defecting = comp < ACCORD_DEFECT_THRESHOLD;
-                  return ` <span class="insp-skills" style="color:${defecting ? '#e55' : '#4e9'}">${pct}% compliant${defecting ? ' ⚠' : ''}</span>` +
+                  return ` <span class="insp-skills ${defecting ? 'c-bad' : 'c-good'}">${pct}% compliant${defecting ? ' ⚠' : ''}</span>` +
                     (defecting ? ` <button class="mini dip-sanction-btn" data-rival="${rv.id}" title="Sanction the defector: accord torn, −20 relations">sanction</button>` : '');
                 })()
               : '';
@@ -3364,7 +3379,7 @@ export class RegionView {
       const espionage = r.stateProclaimed
         ? `<p class="insp-skills" title="Your intelligence penetration of ${rv.name}. Higher intel raises success and lowers exposure.">` +
           `🕵 intel ${intelPct}% ` +
-          `<span class="bar" style="display:inline-block;width:60px;vertical-align:middle"><span class="bar-fill" style="width:${intelPct}%;background:#9a7fd4"></span></span></p>` +
+          `<span class="meter m-info meter-inline"><i style="width:${intelPct}%"></i></span></p>` +
           `<p>${espBtns}</p>`
         : '';
       // Show richer personality information
@@ -3373,7 +3388,7 @@ export class RegionView {
         ? `${profile.traits.join(', ')} — ${profile.approximateStrength} (${profile.comparison})`
         : '';
       const flagHtml = rv.flagData
-        ? `<span style="display:inline-block;width:16px;height:12px;background:linear-gradient(90deg, ${rv.flagData.primary} 50%, ${rv.flagData.secondary} 50%);border:1px solid #888;margin-right:6px;vertical-align:middle;border-radius:2px" title="${rv.flagData.symbol}"></span>`
+        ? `<span class="flag-chip" style="background:linear-gradient(90deg, ${rv.flagData.primary} 50%, ${rv.flagData.secondary} 50%)" title="${rv.flagData.symbol}"></span>`
         : '';
       const emblemHtml = rv.flagData ? `${rv.flagData.emblem}&nbsp;` : '';
       const archetypeData = RIVAL_ARCHETYPES[rv.archetype];
@@ -3390,13 +3405,21 @@ export class RegionView {
         ? `<p class="insp-skills" title="Your war minister's estimate of ${rv.name}'s military strength — accuracy depends on their skill.">` +
           `${defAdvisorName} estimates ${rv.name} strength: <b>${estStrength}</b></p>`
         : '';
+      // Session 15 — rival arms intel (GDD §7.2): the espionage prize. Only
+      // legible once penetration reaches 0.5, and only rendered at all when the
+      // rival arms-base system is live (`rivalClimateResponse`); with the flag
+      // off the value is a constant 1 and the line would be noise.
+      const armsIntel = r.rivalClimateResponse && intel >= 0.5
+        ? `<p class="insp-skills" title="Their industrial arms base — how well ${rv.name} can equip and sustain a war effort. Read via your intelligence penetration.">` +
+          `⚒ Arms base: <b>${Math.round(rivalArmsCapacity(r, rv) * 100)}%</b></p>`
+        : '';
       return `<div class="bar-row" title="${archetypeTooltip}\n\nAgenda: ${agendaShown}\n\n${personalityInfo}">` +
-        `${flagHtml}<span style="width:70px;display:inline-block">${emblemHtml}<b>${rv.name}</b></span>` +
-        `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${pct}%;background:${col}"></div></div>` +
+        `${flagHtml}<span class="row-label">${emblemHtml}<b>${rv.name}</b></span>` +
+        meterBar(pct, relTone as 'good' | 'warn' | 'bad') +
         `<span>${rel}</span></div>` +
         `<p class="insp-skills" title="${recentHistory}">${gov}${rv.borderSettled ? ' · border settled' : ''} · ${personalityInfo}${personalityInfo ? ' · ' : ''}${treaties}</p>` +
         offerRow + counterRow +
-        verbs + espionage + rivalIntel;
+        verbs + espionage + rivalIntel + armsIntel;
     }).join('');
     // World affairs: what the powers are doing to each other (GDD §6.4)
     const name = (id: number) => r.rival(id)?.name ?? '?';
@@ -3437,7 +3460,7 @@ export class RegionView {
       `<p>members: <b>${members}</b> · est. ${bloc.foundedYear}</p>` +
       `<p>bloc trade bonus <b>${formatCurrency(Math.floor(r.blocTradeBonus()))}/mo</b></p>` +
       `<p>shared tariff ${tariffPct}% ` +
-      `<input type="range" id="bloc-tariff" min="0" max="50" value="${tariffPct}" style="width:90px;vertical-align:middle"></p>` +
+      `<input type="range" id="bloc-tariff" class="slider-sm" min="0" max="50" value="${tariffPct}"></p>` +
       (inviteBtns ? `<p>${inviteBtns}</p>` : '') +
       `<p><button class="mini" id="bloc-leave-btn" title="Dissolve the union">Dissolve Bloc</button></p>`;
   }
@@ -3455,14 +3478,14 @@ export class RegionView {
       ? onPlayer.map((s) => {
           const rv = r.rival(s.imposerId);
           const pct = Math.round(s.tradeReduction * 100);
-          return `<p style="font-size:0.82em;color:#e05050">⚠ ${rv?.name ?? '?'} sanctions: −${pct}% trade</p>`;
+          return `<p class="t-sm c-bad">⚠ ${rv?.name ?? '?'} sanctions: −${pct}% trade</p>`;
         }).join('')
       : '';
     const imposed = byPlayer.length > 0
       ? byPlayer.map((s) => {
           const rv = r.rival(s.targetId);
           const pct = Math.round(s.tradeReduction * 100);
-          return `<p style="font-size:0.82em;color:#c2a14d">↯ ${rv?.name ?? '?'} sanctioned (−${pct}%) ` +
+          return `<p class="t-sm c-warn">↯ ${rv?.name ?? '?'} sanctioned (−${pct}%) ` +
             `<button class="mini sanction-lift-btn" data-rival="${s.targetId}">lift</button></p>`;
         }).join('')
       : '';
@@ -3489,7 +3512,7 @@ export class RegionView {
     const rows = blocs.map((b) => {
       const members = b.memberRivalIds.map((id) => r.rival(id)?.name).filter(Boolean).join(' · ');
       const tariffPct = Math.round(b.tariff * 100);
-      return `<p style="font-size:0.82em;color:#a8b4c4">${members} (${tariffPct}% external tariff, est. ${b.foundedYear})</p>`;
+      return `<p class="t-sm c-muted">${members} (${tariffPct}% external tariff, est. ${b.foundedYear})</p>`;
     }).join('');
     return `<p class="insp-skills">RIVAL TRADE BLOCS${friction > 0 ? ` — trade friction −${Math.round(friction * 100)}%` : ''}</p>` + rows;
   }
@@ -3501,9 +3524,9 @@ export class RegionView {
     const rv = w ? r.rival(w.rivalId) : undefined;
     if (!w || !rv) return '';
     const scorePct = Math.round((w.score + 100) / 2);
-    const scoreCol = w.score >= 15 ? '#4e9' : w.score >= -15 ? '#ca4' : '#e55';
+    const scoreTone: 'good' | 'warn' | 'bad' = w.score >= 15 ? 'good' : w.score >= -15 ? 'warn' : 'bad';
     const floor = WAR_SUPPORT_FLOOR[r.govType ?? 'democracy'];
-    const supCol = w.support >= floor + 15 ? '#4e9' : w.support >= floor ? '#ca4' : '#e55';
+    const supTone: 'good' | 'warn' | 'bad' = w.support >= floor + 15 ? 'good' : w.support >= floor ? 'warn' : 'bad';
     const mobBtns = (Object.keys(MOBILIZATION_DEFS) as Mobilization[])
       .map((m) =>
         `<button class="mini war-mob-btn" data-mob="${m}" ${m === w.mobilization ? 'disabled' : ''} ` +
@@ -3533,8 +3556,8 @@ export class RegionView {
       ? `<p class="insp-skills">occupied marches ${w.occupied}/${MAX_OCCUPIED_MARCHES} · ` +
         `yield ` + formatCurrency(w.occupied * (OCCUPATION_DEFS[w.occupationPolicy].yield - OCCUPATION_DEFS[w.occupationPolicy].garrison)) + `/mo net</p>` +
         `<div class="bar-row" title="Resistance in the occupied marches: past 50, partisans bleed the garrisons">` +
-        `<span style="width:70px;display:inline-block">resistance</span>` +
-        `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${Math.round(w.resistance)}%;background:${w.resistance > 50 ? '#e55' : '#ca4'}"></div></div>` +
+        `<span class="row-label">resistance</span>` +
+        meterBar(w.resistance, w.resistance > 50 ? 'bad' : 'warn') +
         `<span>${Math.round(w.resistance)}</span></div>` +
         `<p>${(Object.keys(OCCUPATION_DEFS) as OccupationPolicy[])
           .map((p) =>
@@ -3552,8 +3575,7 @@ export class RegionView {
       .map((t) => {
         const picked = this.peacePicks.has(t);
         const blocked = t === 'border_province' && w.occupied === 0;
-        return `<button class="mini war-term-btn" data-term="${t}" ${blocked ? 'disabled' : ''} ` +
-          `style="${picked ? 'background:#4e9;color:#10141c' : ''}" ` +
+        return `<button class="mini war-term-btn${picked ? ' toggle-on' : ''}" data-term="${t}" ${blocked ? 'disabled' : ''} ` +
           `title="${PEACE_TERMS[t].desc}${blocked ? ' (you must hold a march to claim it)' : ''} (worth ${PEACE_TERMS[t].score})">` +
           `${picked ? '☑ ' : ''}${PEACE_TERMS[t].name}</button>`;
       })
@@ -3564,14 +3586,15 @@ export class RegionView {
       ? `<button class="mini war-offer-btn" ${w.score >= (ask ?? 0) ? '' : 'disabled'} ` +
         `title="Put the basket on the table — each occupied march discounts their ask">offer terms (ask ${ask})</button>`
       : `<span class="insp-skills">tick terms to compose the instrument</span>`;
-    return `<p class="insp-skills">⚔ WAR — vs ${rv.name} (${CASUS_BELLI_DEFS[w.cb].name.toLowerCase()}${w.defensive ? ', defensive' : ''})</p>` +
+    return this.arsenalHtml() +
+      `<p class="insp-skills">⚔ WAR — vs ${rv.name} (${CASUS_BELLI_DEFS[w.cb].name.toLowerCase()}${w.defensive ? ', defensive' : ''})</p>` +
       `<div class="bar-row" title="War score −100..+100: the front line, in one number">` +
-      `<span style="width:70px;display:inline-block">war score</span>` +
-      `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${scorePct}%;background:${scoreCol}"></div></div>` +
+      `<span class="row-label">war score</span>` +
+      meterBar(scorePct, scoreTone) +
       `<span>${Math.round(w.score)}</span></div>` +
       `<div class="bar-row" title="Home-front consent. Below ${floor} (your regime's floor) the war eats the government">` +
-      `<span style="width:70px;display:inline-block">support</span>` +
-      `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${Math.round(w.support)}%;background:${supCol}"></div></div>` +
+      `<span class="row-label">support</span>` +
+      meterBar(w.support, supTone) +
       `<span>${Math.round(w.support)}</span></div>` +
       `<p class="insp-skills">casualties ${Math.round(w.casualties)} · combat power ${Math.round(r.warPower())} vs ${Math.round(r.rivalWarPower(rv))}</p>` +
       this.militaryUnitsHtml(w) +
@@ -3583,13 +3606,37 @@ export class RegionView {
       `<p>${offerBtn} <button class="mini war-capitulate-btn" title="End the war on their terms — reparations and a stripped treasury">capitulate</button></p>`;
   }
 
+  /** Session 15 — the ARSENAL readout (GDD §7.2): the industrial arms base as a
+   *  meter, plus the national steel & chemicals stocks it is forged from. The
+   *  compact form (Economy → Supply) is the single meter row only. Pure read of
+   *  armamentsCapacity()/goodStock() — no sim mutation. */
+  private arsenalHtml(compact = false): string {
+    const r = this.region;
+    const cap = r.armamentsCapacity();
+    const pct = Math.round(cap * 100);
+    const tone: 'good' | 'info' | 'bad' = cap >= 0.75 ? 'good' : cap >= 0.4 ? 'info' : 'bad';
+    const meterRow =
+      `<div class="bar-row" title="Industrial arms base — the Liebig minimum of your steel and chemicals supply. 100% = arsenals fully fed.">` +
+      `<span class="row-label-80">Arms base ${pct}%</span>` +
+      meterBar(pct, tone) +
+      `</div>`;
+    if (compact) return `<p class="insp-skills">ARSENAL</p>` + meterRow;
+    const strained = cap < 1
+      ? `<p class="insp-skills c-warn">Strained arsenals raise recruit &amp; upkeep costs and blunt warPower</p>`
+      : '';
+    return `<p class="insp-skills">ARSENAL</p>` +
+      meterRow +
+      `<p class="insp-skills">steel stock <b>${Math.round(r.goodStock('steel'))}</b> · chemicals stock <b>${Math.round(r.goodStock('chemicals'))}</b></p>` +
+      strained;
+  }
+
   /** Military units display and recruitment (GDD §7.1). */
   private militaryUnitsHtml(w: any): string {
     const unitLines = w.units.length > 0
       ? `<p class="insp-skills">UNITS: ${w.units.map((u: any) => `${u.count} ${u.type} (morale ${Math.round(u.morale)})`).join(' · ')}</p>`
       : `<p class="insp-skills">no units recruited yet</p>`;
-    const supplyStatus = w.supplyReserve > 2 ? `<span style="color:#4e9">✓</span>` : w.supplyReserve > 1 ? `<span style="color:#ca4">⚠</span>` : `<span style="color:#e55">✗</span>`;
-    const supplyLine = `<span style="display:inline-block;width:140px">supply ${supplyStatus} ${Math.round(w.supplyReserve * 10) / 10}mo</span>`;
+    const supplyStatus = w.supplyReserve > 2 ? `<span class="c-good">✓</span>` : w.supplyReserve > 1 ? `<span class="c-warn">⚠</span>` : `<span class="c-bad">✗</span>`;
+    const supplyLine = `<span class="row-label-140">supply ${supplyStatus} ${Math.round(w.supplyReserve * 10) / 10}mo</span>`;
     const recruitBtn = `<button class="mini war-recruit-btn" id="war-recruit-btn">recruit</button>`;
     return unitLines + `<p>${supplyLine} ${recruitBtn}</p>`;
   }
@@ -3603,7 +3650,7 @@ export class RegionView {
     const rows = types.map((t) => {
       const def = UNIT_TYPES[t];
       return `<p><b>${t}</b> — £${def.recruitCost}/unit · power ${def.powerPerUnit} · ${def.trainingDays}d training · ${def.supplyCost}/day supply
-        <input type="number" min="1" max="100" value="5" id="recruit-${t}-count" style="width:50px">
+        <input type="number" min="1" max="100" value="5" id="recruit-${t}-count" class="num-input-sm">
         <button class="mini" id="recruit-${t}-btn">recruit</button></p>`;
     }).join('');
     this.recruitmentModal.innerHTML = `<div class="ceremony-content"><h2>Recruit Army Units</h2><p>Treasury: <b>${formatCurrency(r.treasury)}</b></p>${rows}<button id="recruit-close-btn">Done</button></div>`;
@@ -3635,10 +3682,10 @@ export class RegionView {
       ? r.factions.map((f) => {
           const suppPct = Math.round(f.support);
           const pwrPct = Math.round(f.power);
-          const col = f.support >= 60 ? '#4e9' : f.support >= 40 ? '#ca4' : '#e55';
+          const tone: 'good' | 'warn' | 'bad' = f.support >= 60 ? 'good' : f.support >= 40 ? 'warn' : 'bad';
           return `<div class="bar-row" title="${f.name}: power ${pwrPct}%, support ${suppPct}% — ${f.demand}">` +
-            `<span style="width:70px;display:inline-block">${f.name}</span>` +
-            `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${suppPct}%;background:${col}"></div></div>` +
+            `<span class="row-label">${f.name}</span>` +
+            meterBar(suppPct, tone) +
             `<span>${suppPct}%</span></div>`;
         }).join('')
       : `<p class="insp-skills">factions form next month</p>`;
@@ -3667,7 +3714,7 @@ export class RegionView {
 
     // Phase 13: Protest action buttons (only at rung 3)
     const protestActions = r.unrestLevel === 3
-      ? `<div style="margin:4px 0"><button class="mini unrest-crackdown-btn">Crackdown</button> ` +
+      ? `<div class="my-4"><button class="mini unrest-crackdown-btn">Crackdown</button> ` +
         `<button class="mini unrest-concede-btn">Concede (2% GDP)</button></div>`
       : '';
 
@@ -3695,17 +3742,17 @@ export class RegionView {
       algorithmic: 'Algorithmic',
     };
 
-    const bar = (val: number, max: number, col: string) => {
+    const bar = (val: number, max: number, cls: string) => {
       const pct = Math.round((val / max) * 100);
       const filled = Math.round(pct / 10);
       const empty = 10 - filled;
-      return `<span style="color:${col}">${'█'.repeat(filled)}${'░'.repeat(empty)}</span> ${Math.round(val)}`;
+      return `<span class="${cls}">${'█'.repeat(filled)}${'░'.repeat(empty)}</span> ${Math.round(val)}`;
     };
 
     const pfPct = Math.round(r.pressFreedom);
-    const pfCol = r.pressFreedom >= 65 ? '#4e9' : r.pressFreedom <= 35 ? '#e55' : '#ca4';
+    const pfCol = r.pressFreedom >= 65 ? 'c-good' : r.pressFreedom <= 35 ? 'c-bad' : 'c-warn';
     const cgPct = Math.round(r.credibilityGap);
-    const cgCol = cgPct >= 60 ? '#e55' : cgPct >= 30 ? '#ca4' : '#4e9';
+    const cgCol = cgPct >= 60 ? 'c-bad' : cgPct >= 30 ? 'c-warn' : 'c-good';
     const polPct = (r.polarization * 100).toFixed(0);
 
     const canCensor = r.stateProclaimed && r.politicalCapital >= 15;
@@ -3715,14 +3762,14 @@ export class RegionView {
     const canMediaLiteracy = !r.mediaLiteracyInvested && r.treasury >= r.gdpLastMonth * 0.05;
 
     const misEraLine = r.misinformationEra
-      ? `<p style="color:#e07a30;font-size:10px">Algorithmic misinformation era active</p>`
+      ? `<p class="t-10 c-warn">Algorithmic misinformation era active</p>`
       : '';
     const criticalGap = r.credibilityGap > 60
-      ? `<p style="color:#e55;font-size:10px">&#9888; Credibility gap critical — legitimacy collapse risk</p>`
+      ? `<p class="t-10 c-bad">&#9888; Credibility gap critical — legitimacy collapse risk</p>`
       : '';
 
     const countersHtml = r.misinformationEra ? (
-      `<p class="insp-skills" style="font-size:10px">COUNTER-MEASURES</p>` +
+      `<p class="insp-skills t-10">COUNTER-MEASURES</p>` +
       `<p>` +
       `<button class="mini" id="media-platform-reg" ${canPlatformReg ? '' : 'disabled'} title="Reduces polarization growth 0.005/month. Requires Digital Economy tech (20 PC).">` +
         `Platform Regulation${r.platformRegulationEnacted ? ' ✓' : ' [20 PC]'}` +
@@ -3739,22 +3786,22 @@ export class RegionView {
     ) : '';
 
     return `<p class="insp-skills">MEDIA &amp; PRESS</p>` +
-      `<p style="font-size:10px">Media Reach: <b>${reachLabel[r.mediaReach] ?? r.mediaReach}</b> · Era: ${r.year}</p>` +
+      `<p class="t-10">Media Reach: <b>${reachLabel[r.mediaReach] ?? r.mediaReach}</b> · Era: ${r.year}</p>` +
       misEraLine +
       `<div class="bar-row" title="Press Freedom: above 65 = free press, below 35 = controlled">` +
-        `<span style="width:80px;display:inline-block;font-size:10px">Press Freedom</span>` +
-        `<span style="font-size:10px">${bar(pfPct, 100, pfCol)}</span>` +
+        `<span class="row-label-80 t-10">Press Freedom</span>` +
+        `<span class="t-10">${bar(pfPct, 100, pfCol)}</span>` +
       `</div>` +
       `<p>` +
         `<button class="mini" id="media-censor" ${canCensor ? '' : 'disabled'} title="−20 press freedom (15 PC). Merchants −10, Landowners +10.">Censor −20</button> ` +
         `<button class="mini" id="media-liberalise" ${canLiberalise ? '' : 'disabled'} title="+20 press freedom (15 PC). Merchants +5.">Liberalise +20</button>` +
       `</p>` +
       `<div class="bar-row" title="Credibility Gap: high values risk a legitimacy collapse when a crisis hits">` +
-        `<span style="width:80px;display:inline-block;font-size:10px">Cred. Gap</span>` +
-        `<span style="font-size:10px">${bar(cgPct, 100, cgCol)}</span>` +
+        `<span class="row-label-80 t-10">Cred. Gap</span>` +
+        `<span class="t-10">${bar(cgPct, 100, cgCol)}</span>` +
       `</div>` +
       criticalGap +
-      `<p style="font-size:10px">Polarization: <b>${polPct}%</b>${r.misinformationEra ? ` · Opinion vel: ×${r.opinionVelocity().toFixed(1)}` : ''}</p>` +
+      `<p class="t-10">Polarization: <b>${polPct}%</b>${r.misinformationEra ? ` · Opinion vel: ×${r.opinionVelocity().toFixed(1)}` : ''}</p>` +
       countersHtml;
   }
 
@@ -3762,9 +3809,7 @@ export class RegionView {
   private nationHtml(): string {
     const r = this.region;
     const legPct = Math.round(r.legitimacy);
-    const legCol = legPct >= 60 ? '#4e9' : legPct >= 35 ? '#ca4' : '#e55';
-    const legBar =
-      `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${legPct}%;background:${legCol}"></div></div>`;
+    const legBar = meterBar(legPct, legPct >= 60 ? 'good' : legPct >= 35 ? 'warn' : 'bad');
     const ministerLines = MINISTER_ROLES.map((mr) => {
       const n = r.ministerFor(mr.id);
       return `<span class="insp-skills">${mr.title}: <b>${n ? n.name : '—'}</b></span>`;
@@ -3785,7 +3830,7 @@ export class RegionView {
     return `<p class="insp-skills">NATION</p>` +
       this.depressionResponseHtml() +
       `<div class="bar-row" title="Legitimacy — the regime's right to rule (GDD §5.3)">` +
-      `<span style="width:80px;display:inline-block">legitimacy</span>` +
+      `<span class="row-label-80">legitimacy</span>` +
       legBar + `<span>${legPct}</span></div>` +
       `<p class="insp-skills">CABINET</p>` +
       `<p>${ministerLines}</p>` +
@@ -3800,10 +3845,10 @@ export class RegionView {
     if (!r.nationProclaimed || r.advisorBriefs.length === 0) return '';
     const rows = r.advisorBriefs.map((brief) => {
       const date = `${Math.floor(brief.day / 365) + 1900}`;
-      return `<p class="insp-skills" style="margin:2px 0"><b>[${brief.portfolio}]</b> ${brief.message} <span style="opacity:0.6">(${date})</span></p>`;
+      return `<p class="insp-skills my-2"><b>[${brief.portfolio}]</b> ${brief.message} <span class="c-dim">(${date})</span></p>`;
     }).join('');
     return `<p class="insp-skills">ADVISOR BRIEFS</p>` +
-      `<div style="background:#1a1a2e;border:1px solid #444;padding:4px 6px;max-height:120px;overflow-y:auto;font-size:10px">` +
+      `<div class="brief-box">` +
       rows +
       `</div>` +
       `<p><button class="mini" id="dismiss-briefs-btn">Dismiss all</button></p>`;
@@ -3817,7 +3862,7 @@ export class RegionView {
     if (r.depressionDepth <= 0.01 && r.crashRecoveryChoice !== 'pending') return '';
     const depthPct = Math.round(r.depressionDepth * 100);
     // Depth meter colour: deep red while severe, warming to amber as it lifts.
-    const depthCol = depthPct > 60 ? '#e0563b' : depthPct > 30 ? '#e0913b' : '#d4b54a';
+    const depthCls = depthPct > 60 ? 'dm-deep' : depthPct > 30 ? 'dm-mid' : 'dm-lift';
     const pathLabel = r.crashRecoveryChoice === 'stimulus' ? 'Stimulus'
       : r.crashRecoveryChoice === 'austerity' ? 'Austerity'
       : r.crashRecoveryChoice === 'pending' ? 'choosing…'
@@ -3863,7 +3908,7 @@ export class RegionView {
     return `<div class="crisis-banner">` +
       `<p class="cb-title">⚠ GREAT DEPRESSION</p>` +
       `<div class="depth-meter" title="Depression depth — drives export collapse and caps confidence recovery. It decays ~5%/month; emergency measures cut it faster.">` +
-      `<div class="depth-meter-fill" style="width:${Math.max(4, depthPct)}%;background:${depthCol}"></div>` +
+      `<div class="depth-meter-fill ${depthCls}" style="width:${Math.max(4, depthPct)}%"></div>` +
       `<span class="depth-meter-label">depth ${depthPct}%</span></div>` +
       `<p class="cb-status">recovery path: <b>${pathLabel}</b></p>` +
       crossroads +
@@ -4031,8 +4076,8 @@ export class RegionView {
       `<p class="insp-skills">${RIVAL_ARCHETYPES[rv.archetype].name} · relations ${Math.round(rv.relations)} · ` +
       `every item is priced from their situation and personality (GDD §6.3)</p>` +
       treatyRows + borderRow +
-      `<p><label>${getCurrencySymbol()} to them <input type="number" id="deal-gold-them" min="0" step="5" value="${this.dealGoldToThem}" style="width:70px"></label> ` +
-      `<label>${getCurrencySymbol()} asked of them <input type="number" id="deal-gold-you" min="0" step="5" value="${this.dealGoldToYou}" style="width:70px"></label> ` +
+      `<p><label>${getCurrencySymbol()} to them <input type="number" id="deal-gold-them" class="num-input" min="0" step="5" value="${this.dealGoldToThem}"></label> ` +
+      `<label>${getCurrencySymbol()} asked of them <input type="number" id="deal-gold-you" class="num-input" min="0" step="5" value="${this.dealGoldToYou}"></label> ` +
       `<span class="insp-skills">(treasury ` + formatCurrency(Math.floor(r.treasury)) + `)</span></p>` +
       `<p id="deal-verdict" class="insp-skills">${this.dealVerdictLine()}</p>` +
       `<div class="deal-forecast">${this.relationsForecast()}</div>` +
@@ -4083,9 +4128,8 @@ export class RegionView {
       const stats = r.getFactionStats(faction.id);
       if (!stats) return '';
 
-      const goalColor = faction.currentGoal ? '#c2a14d' : '#888';
       const goalText = faction.currentGoal
-        ? `<span style="color:${goalColor}" title="${faction.currentGoal.description ?? ''}">${faction.currentGoal.objective}</span>` +
+        ? `<span class="c-gold" title="${faction.currentGoal.description ?? ''}">${faction.currentGoal.objective}</span>` +
           (stats.goalProgress > 0 ? ` <span class="insp-skills">(${stats.goalProgress}%)</span>` : '')
         : `<span class="insp-skills">no active goal</span>`;
 
@@ -4097,19 +4141,19 @@ export class RegionView {
         .join(', ');
 
       const relRow = (allyNames || rivalNames)
-        ? `<p class="insp-skills" style="margin-left:8px">` +
-          (allyNames ? `<span style="color:#4e9">allies: ${allyNames}</span>` : '') +
+        ? `<p class="insp-skills ml-8">` +
+          (allyNames ? `<span class="c-good">allies: ${allyNames}</span>` : '') +
           (allyNames && rivalNames ? ' · ' : '') +
-          (rivalNames ? `<span style="color:#e55">rivals: ${rivalNames}</span>` : '') +
+          (rivalNames ? `<span class="c-bad">rivals: ${rivalNames}</span>` : '') +
           `</p>`
         : '';
 
       const regimeName = RIVAL_REGIMES.find((g) => g.id === faction.regime)?.name ?? 'Unknown';
-      return `<p style="margin:2px 0">` +
+      return `<p class="my-2">` +
         `<b style="color:${faction.color ?? '#aaa'}">${faction.name}</b>` +
         ` <span class="insp-skills">${regimeName} · pop ${stats.population} · ${formatCurrency(Math.round(stats.treasury))}</span>` +
         `</p>` +
-        `<p style="margin:2px 0 2px 8px">${goalText}</p>` +
+        `<p class="my-2 ml-8">${goalText}</p>` +
         relRow;
     }).join('');
 
@@ -4151,18 +4195,17 @@ export class RegionView {
     const annualGDP = Math.max(1, r.gdpLastMonth * 12);
     const debtPct = Math.round(r.nationalDebt / annualGDP * 100);
     const leverPct = (r.privateLeverage * r.policyRate * 100).toFixed(0); // debt service %
-    const confCol = r.confidence >= 60 ? '#4e9' : r.confidence >= 30 ? '#ca4' : '#e55';
-    const ratingCol = ['AAA', 'AA', 'A'].includes(r.creditRating) ? '#4e9' : ['BBB', 'BB'].includes(r.creditRating) ? '#ca4' : '#e55';
+    const confTone: 'good' | 'warn' | 'bad' = r.confidence >= 60 ? 'good' : r.confidence >= 30 ? 'warn' : 'bad';
+    const ratingCls = ['AAA', 'AA', 'A'].includes(r.creditRating) ? 'c-good' : ['BBB', 'BB'].includes(r.creditRating) ? 'c-warn' : 'c-bad';
     const regime = (id: MonetaryRegime, label: string) =>
-      `<button class="mini cb-regime-btn" data-regime="${id}" ` +
-      `${r.monetaryRegime === id ? 'style="background:#4e9;color:#000"' : ''} ` +
+      `<button class="mini cb-regime-btn${r.monetaryRegime === id ? ' toggle-on' : ''}" data-regime="${id}" ` +
       `title="${id === 'float' ? 'Market-driven rate: adjusts with trade balance and confidence' : id === 'peg' ? 'Fix the rate — drains reserves if trade is unfavorable; can break spectacularly' : 'Print money: boosts treasury but drives inflation'}">` +
       `${label}</button>`;
     const canBond = (amt: number) => r.creditRating !== 'D' && r.nationalDebt + amt <= annualGDP * 2.0;
     return `<p class="insp-skills">CENTRAL BANK</p>` +
       `<div class="bar-row" title="Market confidence (0–100). Below 30 → deleveraging: credit contracts and GDP falls.">` +
-      `<span style="width:80px;display:inline-block">confidence</span>` +
-      `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${r.confidence}%;background:${confCol}"></div></div>` +
+      `<span class="row-label-80">confidence</span>` +
+      meterBar(r.confidence, confTone) +
       `<span>${Math.round(r.confidence)}</span></div>` +
       `<p class="insp-skills" title="Leverage: private debt service as % of GDP. Above 18% the cycle is fragile.">` +
       `leverage ${leverPct}% debt svc · inflation ${(r.inflationRate * 100).toFixed(1)}% · FX ${r.exchangeRate.toFixed(2)}</p>` +
@@ -4173,7 +4216,7 @@ export class RegionView {
       `<p class="insp-skills">regime: ${regime('float', 'float')} ${regime('peg', 'peg')} ${regime('print', 'print')}</p>` +
       `<p class="insp-skills" title="Sovereign bonds: borrow against future tax receipts at the bond rate">` +
       `debt ` + formatCurrency(Math.floor(r.nationalDebt)) + ` (${debtPct}% GDP) · ` +
-      `<span style="color:${ratingCol}">${r.creditRating}</span> · ` +
+      `<span class="${ratingCls}">${r.creditRating}</span> · ` +
       `${(r.bondRate * 100).toFixed(1)}% coupon</p>` +
       (r.nationProclaimed
         ? `<p>` +
@@ -4199,9 +4242,9 @@ export class RegionView {
     const projectedTreasury = r.treasury + annualRevenue - annualSpending;
     const advisorEst = r.advisorForecast('Finance', projectedTreasury);
     const sym = r.currencySymbol;
-    const col = advisorEst > r.treasury ? '#4e9' : '#e55';
+    const cls = advisorEst > r.treasury ? 'c-good' : 'c-bad';
     return `<p class="insp-skills" title="Finance advisor estimate for next year's treasury (skill-based noise — higher-skill ministers give more accurate forecasts).">` +
-      `Finance advisor: <span style="color:${col}">${sym}${Math.round(advisorEst).toLocaleString()}</span> est. next year</p>`;
+      `Finance advisor: <span class="${cls}">${sym}${Math.round(advisorEst).toLocaleString()}</span> est. next year</p>`;
   }
 
   /** Currency standard controls: announce ahead to soften the eventual switch,
@@ -4228,11 +4271,11 @@ export class RegionView {
     const r = this.region;
     if (!r.hasCentralBank()) return '';
     const maxDraw = Math.max(0, r.treasury * 0.5 - r.centralBankLoan);
-    const cbCol = r.centralBankLoan > r.treasury * 0.3 ? '#e55' : '#4e9';
+    const cbCls = r.centralBankLoan > r.treasury * 0.3 ? 'c-bad' : 'c-good';
     return `<p class="insp-skills" title="The discount window lets you borrow short-term from your own central bank at the policy rate. Interest compounds monthly. Outstanding balance is capped at 50% of current treasury.">` +
       `DISCOUNT WINDOW</p>` +
       (r.centralBankLoan > 0
-        ? `<p class="insp-skills">outstanding: <span style="color:${cbCol}">` + formatCurrency(Math.round(r.centralBankLoan)) + `</span> @ ${(r.policyRate * 100).toFixed(1)}%</p>` +
+        ? `<p class="insp-skills">outstanding: <span class="${cbCls}">` + formatCurrency(Math.round(r.centralBankLoan)) + `</span> @ ${(r.policyRate * 100).toFixed(1)}%</p>` +
           `<p><button class="mini cb-dw-repay" data-amount="${Math.ceil(r.centralBankLoan * 0.5)}">repay ½</button> ` +
           `<button class="mini cb-dw-repay" data-amount="${Math.ceil(r.centralBankLoan)}">repay all</button></p>`
         : `<p class="insp-skills">no outstanding balance</p>`) +
@@ -4240,7 +4283,7 @@ export class RegionView {
         ? `<p><button class="mini cb-dw-draw" data-amount="${Math.floor(maxDraw * 0.25)}">draw ${formatCurrency(Math.floor(maxDraw * 0.25))}</button> ` +
           `<button class="mini cb-dw-draw" data-amount="${Math.floor(maxDraw * 0.5)}">draw ${formatCurrency(Math.floor(maxDraw * 0.5))}</button> ` +
           `<button class="mini cb-dw-draw" data-amount="${Math.floor(maxDraw)}">draw ${formatCurrency(Math.floor(maxDraw))}</button></p>`
-        : `<p class="insp-skills" style="color:#ca4">ceiling reached (50% of treasury)</p>`);
+        : `<p class="insp-skills c-warn">ceiling reached (50% of treasury)</p>`);
   }
 
   private lendersHtml(): string {
@@ -4257,15 +4300,15 @@ export class RegionView {
     // Show available lenders
     if (r.lenders.length > 0) {
       const rateNote = r.hasCentralBank()
-        ? ` <span style="color:#888;font-size:9px">(policy ${(r.policyRate * 100).toFixed(0)}% + spread)</span>`
+        ? ` <span class="t-note">(policy ${(r.policyRate * 100).toFixed(0)}% + spread)</span>`
         : '';
-      html += `<div style="font-size:11px;margin:4px 0">Available lenders:${rateNote}</div>`;
+      html += `<div class="t-11 my-4">Available lenders:${rateNote}</div>`;
       for (const lender of r.lenders) {
         const canBorrow = r.treasury > 0 && lender.liquidCash > 0;
         const avail = lender.liquidCash > 0
           ? `avail ` + formatCurrency(Math.floor(lender.liquidCash))
-          : `<span style="color:#e55">no liquidity</span>`;
-        html += `<p style="margin:2px 0;font-size:10px">` +
+          : `<span class="c-bad">no liquidity</span>`;
+        html += `<p class="t-10 my-2">` +
           `${lender.name} — max ` + formatCurrency(lender.maxLoan) + ` @ ${(lender.interestRate * 100).toFixed(1)}% · ${avail} ` +
           (canBorrow ? `<button class="mini lender-btn" data-lender="${lender.id}">borrow</button>` : '') +
           `</p>`;
@@ -4275,12 +4318,12 @@ export class RegionView {
     // Show active loans
     const activeLoans = r.getActiveLoans();
     if (activeLoans.length > 0) {
-      html += `<div style="font-size:11px;margin:8px 0 4px 0">Active loans:</div>`;
+      html += `<div class="t-11 mt-6">Active loans:</div>`;
       for (const loan of activeLoans) {
         const lender = r.lenders.find((l) => l.id === loan.lenderId);
         const owing = Math.round(loan.borrowed);
         const canRepay = r.treasury >= owing * 0.1; // can repay at least 10%
-        html += `<p style="margin:2px 0;font-size:10px">` +
+        html += `<p class="t-10 my-2">` +
           `${lender?.name ?? 'lender'} — ` + formatCurrency(owing) + ` owing ` +
           (canRepay ? `<button class="mini loan-repay-btn" data-loan="${loan.id}" data-lender="${loan.lenderId}">repay</button>` : '') +
           `</p>`;
@@ -4313,7 +4356,7 @@ export class RegionView {
 
     // Overall happiness: pop-weighted satisfaction across the player's settlements.
     const happy = Math.round(r.avgSatisfaction());
-    const happyCol = happy >= 60 ? '#6ad48a' : happy >= 40 ? '#d4b85a' : '#d46a6a';
+    const happyCls = happy >= 60 ? 'c-good' : happy >= 40 ? 'c-warn' : 'c-bad';
 
     const treasury = formatCurrency(r.treasury);
     const w = window as any;
@@ -4328,8 +4371,8 @@ export class RegionView {
       <div class="tb-item tb-treasury">${treasury}</div>
       <div class="tb-item tb-resources">🌾 ${Math.floor(totalFood)} | 🪵 ${Math.floor(totalWood)}</div>
       <div class="tb-item tb-population" title="Total population of your settlements${selected ? ' (selected settlement in parentheses)' : ''}">👥 ${popLabel}</div>
-      <div class="tb-item tb-happiness" title="Overall happiness — population-weighted satisfaction across your settlements"><span style="color:${happyCol}">☺ ${happy}%</span></div>
-      <div class="tb-item tb-speed" style="margin-left: auto;">${paused} ${speedLabel}</div>
+      <div class="tb-item tb-happiness" title="Overall happiness — population-weighted satisfaction across your settlements"><span class="${happyCls}">☺ ${happy}%</span></div>
+      <div class="tb-item tb-speed push-right">${paused} ${speedLabel}</div>
     `;
   }
 
@@ -4505,10 +4548,10 @@ export class RegionView {
 
     this.setInnerHtml(
       this.rivalPanel,
-      `<h3><span style="color:${faction.color}">■</span> ${faction.name}</h3>` +
+      `<h3 class="panel-title"><span style="color:${faction.color}">■</span> ${faction.name}</h3>` +
       `<p class="insp-skills">${regimeName} · ${faction.regime}</p>` +
-      (isVassal ? `<p style="color:#8fc26a">★ Vassal of your state</p>` : '') +
-      (atWar ? `<p style="color:#e05050">⚔ AT WAR</p>` : '') +
+      (isVassal ? `<p class="c-good">★ Vassal of your state</p>` : '') +
+      (atWar ? `<p class="c-bad">⚔ AT WAR</p>` : '') +
       `<p>settlements <b>${stats.settlements}</b> · pop <b>${stats.population}</b></p>` +
       `<p>treasury <b>${formatCurrency(stats.treasury)}</b> · military <b>${stats.militaryStrength}</b></p>` +
       `<p>territory <b>${territory}%</b> of region</p>` +
@@ -4526,7 +4569,7 @@ export class RegionView {
           : `<button id="rival-war-btn" class="mini danger">⚔ Declare War</button><br>`)
         : '') +
       assaultHtml +
-      `<button id="rival-close-btn" class="mini" style="margin-top:6px">Close</button>`,
+      `<button id="rival-close-btn" class="mini mt-6">Close</button>`,
     );
 
     this.rivalPanel.querySelector<HTMLButtonElement>('#rival-close-btn')!.onclick = () => {
@@ -4734,19 +4777,17 @@ export class RegionView {
       // Read-only (sectorBonusBreakdown is pure), shown only when there is a bonus.
       const bd = r.sectorBonusBreakdown(t.id, id);
       const spatialBadge = bd && bd.total > 0.0005
-        ? ` <span class="insp-state" style="min-width:42px;text-align:right" ` +
+        ? ` <span class="insp-state col-42r" ` +
           `title="${this.escapeAttr(this.spatialBonusTooltip(bd))}">+${Math.round(bd.total * 100)}%</span>`
         : '';
       return (
         `<div class="bar-row">` +
-        `<span style="color:${color};min-width:70px">${SECTOR_NAMES[id]}</span>` +
-        `<div class="bar" style="flex:1">` +
-        `<div class="bar-fill" style="width:${pct}%;background:${color}"></div>` +
-        `</div>` +
-        `<span style="min-width:28px;text-align:right">${pct}%</span>` +
-        `<span class="${arrowClass}" style="min-width:12px;text-align:center">${arrow}</span>` +
-        `<span class="insp-skills" style="min-width:52px;text-align:right">${s.output.toFixed(1)}/m</span>` +
-        `<span class="insp-skills" style="min-width:52px;text-align:right">` + formatCurrency(s.wage / 30, 2) + `/d</span>` +
+        `<span class="col-70" style="color:${color}">${SECTOR_NAMES[id]}</span>` +
+        meterBar(pct, 'gold', color) +
+        `<span class="col-28r">${pct}%</span>` +
+        `<span class="${arrowClass} col-12c">${arrow}</span>` +
+        `<span class="insp-skills col-52r">${s.output.toFixed(1)}/m</span>` +
+        `<span class="insp-skills col-52r">` + formatCurrency(s.wage / 30, 2) + `/d</span>` +
         spatialBadge +
         evtBadge +
         `</div>`
@@ -4929,7 +4970,7 @@ export class RegionView {
             ? ` <button class="mini rn-cargo-btn" data-a="${rt.a}" data-b="${rt.b}" data-sector="auto" title="Hand the route back to automatic cargo selection">auto</button>`
             : ` <b>auto</b>`;
         }
-        return `<div style="margin:4px 0">${a.name} ↔ ${b.name} — <span class="${condClass}">${rt.kind} ${Math.round(rt.condition)}%</span> ` +
+        return `<div class="my-4">${a.name} ↔ ${b.name} — <span class="${condClass}">${rt.kind} ${Math.round(rt.condition)}%</span> ` +
           `<span class="insp-skills">· cap ${cap}/mo · ${rt.freight > 0 ? `freight ${Math.round(rt.freight)}` : 'idle'} · ~${days}d</span>${cargoBadge}` +
           (acts ? `<br>${acts}` : '') +
           (pins ? `<br><span class="insp-skills">cargo:</span> ${pins}` : '') +
@@ -4950,7 +4991,7 @@ export class RegionView {
         `</div>`
       : '';
     return (
-      `<div class="pal-title">ROUTE NETWORK <button class="mini rn-close" title="close (R)">✕</button></div>` +
+      `<h3 class="panel-title">ROUTE NETWORK <button class="mini rn-close" title="close (R)">✕</button></h3>` +
       `<p class="insp-skills">${r.routes.length} links · ${built.length} built · upkeep ` + formatCurrency(upkeep, 1) + `/mo at full</p>` +
       budgetHtml +
       `<div class="thoughts">${rows || '<p class="insp-skills">no routes yet</p>'}</div>`
@@ -4991,7 +5032,7 @@ export class RegionView {
     const towns = r.settlements
       .filter((t) => t.factionId === r.playerFactionId)
       .sort((a, b) => r.popOf(b) - r.popOf(a));
-    const sColor = (s: string) => s === 'surplus' ? '#4e9' : s === 'deficit' ? '#e55' : '#998c6e';
+    const sCls = (s: string) => s === 'surplus' ? 'c-good' : s === 'deficit' ? 'c-bad' : 'c-muted';
     const alerts = towns.filter((t) => t.food < r.popOf(t) * 5 || t.grievance > 60 || r.day < t.strikeUntil);
     const alertHtml = alerts.length
       ? `<p class="insp-cond">⚠ ${alerts.length} town${alerts.length > 1 ? 's' : ''} need attention</p>`
@@ -4999,25 +5040,25 @@ export class RegionView {
     const rows = towns.map((t) => {
       const pop = Math.round(r.popOf(t));
       const status = r.getSettlementResourceStatus(t);
-      const satColor = t.satisfaction >= 60 ? '#4e9' : t.satisfaction >= 40 ? '#ca4' : '#e55';
+      const satCls = t.satisfaction >= 60 ? 'c-good' : t.satisfaction >= 40 ? 'c-warn' : 'c-bad';
       const griCol = t.grievance > 60 ? 'insp-cond' : 'insp-skills';
       const strike = r.day < t.strikeUntil ? ' <span class="insp-cond">STRIKE</span>' : '';
       const hungry = t.food < r.popOf(t) * 5;
       return (
-        `<div style="margin:4px 0;padding:4px 0;border-bottom:1px solid #3a2e20">` +
+        `<div class="list-row">` +
         `<div><b>${t.name}</b> <button class="mini sl-select-btn" data-sid="${t.id}" title="Pan to this settlement">→</button>` +
         (hungry ? ` <button class="mini sl-aid-btn" data-sid="${t.id}" title="Send emergency grain convoy (£10)">🌾 aid</button>` : '') +
         `</div>` +
-        `<div class="insp-skills">pop ${pop} · <span style="color:${satColor}">sat ${Math.round(t.satisfaction)}</span> · <span class="${griCol}">grv ${Math.round(t.grievance)}</span>${strike}</div>` +
+        `<div class="insp-skills">pop ${pop} · <span class="${satCls}">sat ${Math.round(t.satisfaction)}</span> · <span class="${griCol}">grv ${Math.round(t.grievance)}</span>${strike}</div>` +
         `<div class="insp-skills">` +
-        `<span style="color:${sColor(status.food)}" title="food">food ${status.food[0]}</span> ` +
-        `<span style="color:${sColor(status.wood)}" title="timber">wood ${status.wood[0]}</span> ` +
-        `<span style="color:${sColor(status.goods)}" title="goods">goods ${status.goods[0]}</span>` +
+        `<span class="${sCls(status.food)}" title="food">food ${status.food[0]}</span> ` +
+        `<span class="${sCls(status.wood)}" title="timber">wood ${status.wood[0]}</span> ` +
+        `<span class="${sCls(status.goods)}" title="goods">goods ${status.goods[0]}</span>` +
         `</div></div>`
       );
     }).join('');
     return (
-      `<div class="pal-title">SETTLEMENTS [S] <button class="mini sl-close" title="close (S)">✕</button></div>` +
+      `<h3 class="panel-title">SETTLEMENTS [S] <button class="mini sl-close" title="close (S)">✕</button></h3>` +
       alertHtml +
       `<div class="thoughts">${rows || '<p class="insp-skills">no towns yet</p>'}</div>`
     );
@@ -5036,7 +5077,7 @@ export class RegionView {
     this.lastEconomyBuildFrame = this.frame;
     this.setInnerHtml(this.economyPanel, this.economyPanelHtml());
     const refresh = () => { this.lastEconomyBuildFrame = -999; };
-    this.wireTabs(this.economyPanel, (t) => { this.economyTab = t as 'overview' | 'settlements' | 'supply'; });
+    this.wireTabs(this.economyPanel, (t) => { this.economyTab = t as 'overview' | 'settlements' | 'supply' | 'wonders'; });
     for (const b of this.economyPanel.querySelectorAll<HTMLButtonElement>('.ep-close')) {
       b.onclick = () => { this.economyOpen = false; };
     }
@@ -5132,11 +5173,11 @@ export class RegionView {
     const r = this.region;
     const established = r.has('central_banking') ? 'Central Banking civic' : 'Central Bank Charter';
     const bondNote = !r.nationProclaimed
-      ? `<p class="insp-skills" style="color:#c9b27a">Sovereign bond issuance unlocks once you proclaim nationhood.</p>`
+      ? `<p class="insp-skills c-gold">Sovereign bond issuance unlocks once you proclaim nationhood.</p>`
       : '';
     return (
-      `<div class="pal-title">🏛 CENTRAL BANK [B] <button class="mini cb-close" title="close (B)">✕</button></div>` +
-      `<p style="font-size:10px;color:#9ab0c4;margin:2px 0 8px">Established via the ${established}. Set the policy rate to steer the credit cycle, manage the currency standard, and lean against boom and bust.</p>` +
+      `<h3 class="panel-title">🏛 CENTRAL BANK [B] <button class="mini cb-close" title="close (B)">✕</button></h3>` +
+      `<p class="t-note my-2">Established via the ${established}. Set the policy rate to steer the credit cycle, manage the currency standard, and lean against boom and bust.</p>` +
       this.monetaryHtml() +
       bondNote
     );
@@ -5151,19 +5192,19 @@ export class RegionView {
     let wantSvc = false, wantTax = false;
     const factionHtml = r.factions.length > 0
       ? r.factions.map((f) => {
-          const col = f.support >= 60 ? '#4e9' : f.support >= 40 ? '#ca4' : '#e55';
+          const tone: 'good' | 'warn' | 'bad' = f.support >= 60 ? 'good' : f.support >= 40 ? 'warn' : 'bad';
           if (f.support < 40) {
             if (f.id === 'workers') { wantSvc = true; wantTax = true; }
             if (f.id === 'landowners') wantTax = true;
           }
           return (
             `<div class="bar-row" title="${f.name}: ${f.demand}">` +
-            `<span style="width:76px;display:inline-block">${f.name}</span>` +
-            `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${Math.round(f.support)}%;background:${col}"></div></div>` +
-            `<span class="insp-skills" style="min-width:32px;text-align:right">${Math.round(f.support)}%</span>` +
+            `<span class="row-label-76">${f.name}</span>` +
+            meterBar(f.support, tone) +
+            `<span class="insp-skills col-32r">${Math.round(f.support)}%</span>` +
             (f.support < 40 ? `<span class="insp-cond"> ⚠</span>` : '') +
             `</div>` +
-            (f.support < 40 ? `<p class="insp-skills" style="margin:1px 0 4px 76px">↳ ${f.demand}</p>` : '')
+            (f.support < 40 ? `<p class="insp-skills indent-76">↳ ${f.demand}</p>` : '')
           );
         }).join('')
       : '';
@@ -5178,12 +5219,15 @@ export class RegionView {
       const rev = totalOutput * taxRate;
       const hungry = t.food < r.popOf(t) * 5;
       return (
-        `<div style="margin:3px 0">` +
+        `<div class="my-2">` +
         `<b>${t.name}</b> <span class="insp-skills">pop ${Math.round(r.popOf(t))}</span>` +
         (hungry ? ` <span class="insp-cond">⚠ hungry</span>` : '') +
         `<br><span class="insp-skills">GDP ` + formatCurrency(totalOutput, 1) + `/mo · tax ` + formatCurrency(rev, 1) + `/mo</span>` +
-        ` <button class="mini ep-tax-up" data-sid="${t.id}" ${t.policies.taxBand >= 3 ? 'disabled' : ''} title="Raise local tax band">+tax</button>` +
-        ` <button class="mini ep-tax-dn" data-sid="${t.id}" ${t.policies.taxBand <= 0 ? 'disabled' : ''} title="Lower local tax band">−tax</button>` +
+        ` <span class="stepper">` +
+        `<button class="stepper-btn ep-tax-dn" data-sid="${t.id}" ${t.policies.taxBand <= 0 ? 'disabled' : ''} title="Lower local tax band">−</button>` +
+        `<span class="stepper-val">${TAX_BAND_LABELS[Math.min(3, Math.max(0, t.policies.taxBand))]}</span>` +
+        `<button class="stepper-btn ep-tax-up" data-sid="${t.id}" ${t.policies.taxBand >= 3 ? 'disabled' : ''} title="Raise local tax band">+</button>` +
+        `</span>` +
         `</div>`
       );
     }).join('');
@@ -5199,16 +5243,67 @@ export class RegionView {
       (factionHtml ? `<p class="insp-skills">FACTION MOOD</p>${factionHtml}` : '') +
       actionsHtml;
     return (
-      `<div class="pal-title">ECONOMY [E] <button class="mini ep-close" title="close (E)">✕</button></div>` +
+      `<h3 class="panel-title">ECONOMY [E] <button class="mini ep-close" title="close (E)">✕</button></h3>` +
       `<div class="pal-tabs">` +
       `<button class="pal-tab${etab === 'overview' ? ' active' : ''}" data-ptab="overview">Overview</button>` +
       `<button class="pal-tab${etab === 'settlements' ? ' active' : ''}" data-ptab="settlements">Settlements</button>` +
       `<button class="pal-tab${etab === 'supply' ? ' active' : ''}" data-ptab="supply">Supply</button>` +
+      `<button class="pal-tab${etab === 'wonders' ? ' active' : ''}" data-ptab="wonders">Wonders</button>` +
       `</div>` +
       `<div class="pal-section${etab === 'overview' ? '' : ' hidden'}" data-psection="overview">${overviewBody}</div>` +
       `<div class="pal-section${etab === 'settlements' ? '' : ' hidden'}" data-psection="settlements">` +
         `<div class="thoughts">${settRows || '<p class="insp-skills">no towns yet</p>'}</div></div>` +
-      `<div class="pal-section${etab === 'supply' ? '' : ' hidden'}" data-psection="supply">${this.supplyPanelHtml()}</div>`
+      `<div class="pal-section${etab === 'supply' ? '' : ' hidden'}" data-psection="supply">${this.supplyPanelHtml()}</div>` +
+      `<div class="pal-section${etab === 'wonders' ? '' : ' hidden'}" data-psection="wonders">${this.wondersPanelHtml()}</div>`
+    );
+  }
+
+  /** The space wonders — the race that closes the century (GDD Phase D). */
+  private static readonly SPACE_WONDERS = ['space_program', 'satellite_network', 'orbital_station'];
+
+  /** Session 14 — the Wonder Race (Economy → Wonders tab): every unique Wonder
+   *  with its prestige, its owner (or in-progress builder), and its availability
+   *  window, the space wonders grouped under THE SPACE RACE. Pure read of
+   *  `wonderOwner` / `prestige` / settlement construction — no mutation. */
+  private wondersPanelHtml(): string {
+    const r = this.region;
+    const wonderRow = (def: typeof REGION_BUILDINGS[number]): string => {
+      const ownerId = r.wonderOwner[def.id];
+      // First-to-break-ground: a Wonder under construction is already spoken for.
+      const builder = ownerId === undefined
+        ? r.settlements.find((s) => s.construction?.id === def.id)
+        : undefined;
+      const era = def.prereq ? TECH_TREE.find((n) => n.id === def.prereq)?.era : undefined;
+      let status: string;
+      if (ownerId !== undefined) {
+        status = ownerId === r.playerFactionId
+          ? `<span class="c-good"><b>You</b></span>`
+          : `<span class="c-bad">${r.faction(ownerId)?.name ?? 'a rival'}</span>`;
+      } else if (builder) {
+        const who = builder.factionId === r.playerFactionId
+          ? 'you'
+          : r.faction(builder.factionId)?.name ?? 'a rival';
+        status = `<span class="c-warn">⚒ rising at ${builder.name} (${who})</span>`;
+      } else if (era !== undefined && era > r.year) {
+        status = `<span class="c-muted">unlocks ~${era}</span>`;
+      } else {
+        status = `<span class="badge-unclaimed">unclaimed</span>`;
+      }
+      return `<div class="wonder-row" title="${this.escapeAttr(def.desc ?? def.name)}">` +
+        `<span class="wonder-name">${def.name}</span>` +
+        `<span class="wonder-prestige" title="Prestige on completion">★${def.prestige ?? 0}</span>` +
+        status +
+        `</div>`;
+    };
+    const uniques = REGION_BUILDINGS.filter((b) => b.unique === true);
+    const space = uniques.filter((b) => RegionView.SPACE_WONDERS.includes(b.id));
+    const classic = uniques.filter((b) => !RegionView.SPACE_WONDERS.includes(b.id));
+    return (
+      `<p title="Accrued Wonder prestige — read at the Century Report">prestige <b class="c-gold">★ ${Math.round(r.prestige)}</b></p>` +
+      (space.length ? `<p class="space-race-head">🚀 THE SPACE RACE</p>` + space.map(wonderRow).join('') : '') +
+      (classic.length
+        ? `<p class="insp-skills mt-6">THE CLASSIC WONDERS</p>` + classic.map(wonderRow).join('')
+        : '')
     );
   }
 
@@ -5250,7 +5345,7 @@ export class RegionView {
     const dragPct = (1 - snap.outputMult) * 100;
     const disruptedCount = snap.disrupted.size;
     const healthy = snap.severity === 0;
-    const barCol = healthy ? '#4e9' : snap.severity < 0.3 ? '#ca4' : '#e55';
+    const healthTone: 'good' | 'warn' | 'bad' = healthy ? 'good' : snap.severity < 0.3 ? 'warn' : 'bad';
     // The shock's other halves (GDD §5.2): cost-push inflation and an export
     // drag. Prices: the target lift in percentage points — only realized once a
     // central bank runs the monetary system, so gate that readout on it. Exports:
@@ -5263,10 +5358,13 @@ export class RegionView {
     // Headline: health bar + the output drag, price push, and export drag it costs.
     let html =
       `<div class="bar-row" title="Active goods fully supplied this month">` +
-      `<span style="width:54px;display:inline-block">health</span>` +
-      `<div class="bar" style="flex:1"><div class="bar-fill" style="width:${healthPct}%;background:${barCol}"></div></div>` +
-      `<span class="insp-skills" style="min-width:34px;text-align:right">${healthPct}%</span>` +
+      `<span class="row-label">health</span>` +
+      meterBar(healthPct, healthTone) +
+      `<span class="insp-skills col-34r">${healthPct}%</span>` +
       `</div>` +
+      // Session 15 — the compact ARSENAL meter rides beside the supply-chain
+      // readout: the same armamentsCapacity() the war room shows in full.
+      this.arsenalHtml(true) +
       `<p class="insp-skills" title="A shortage cuts output, raises prices (stagflation), and chokes exports">` +
       `${snap.supplied.size}/${snap.active.length} goods flowing` +
       (dragPct > 0.05 ? ` · industry −${dragPct.toFixed(1)}%` : ' · no shock') +
@@ -5280,20 +5378,20 @@ export class RegionView {
       const cutPct = Math.round(e.cut * 100);
       const how = e.cut >= 1 ? 'cut off' : `${cutPct}% cut`;
       html +=
-        `<p class="insp-cond" style="margin:4px 0">⚠ ${e.raw.toUpperCase()} EMBARGO` +
+        `<p class="insp-cond my-4">⚠ ${e.raw.toUpperCase()} EMBARGO` +
         ` — ${e.raw} ${how}, cascading downstream · ~${months} mo left</p>`;
     }
 
     // Critical-goods dependency board (GDD §5.4: food, fuel, steel, components).
-    html += `<p class="insp-skills" style="margin-top:6px">CRITICAL GOODS</p>`;
+    html += `<p class="insp-skills mt-6">CRITICAL GOODS</p>`;
     for (const id of RegionView.CRITICAL_GOODS) {
       if (!snap.active.includes(id)) continue; // not yet unlocked this era
       const ok = snap.supplied.has(id);
       const deps = this.goodRawFootprint(id).join(', ');
       html +=
-        `<div style="display:flex;align-items:center;gap:6px;margin:2px 0" title="${nameOf(id)} depends on: ${deps}">` +
-        `<span style="color:${ok ? '#4e9' : '#e55'}">${ok ? '●' : '○'}</span>` +
-        `<span style="width:82px">${nameOf(id)}</span>` +
+        `<div class="dep-row" title="${nameOf(id)} depends on: ${deps}">` +
+        `<span class="${ok ? 'c-good' : 'c-bad'}">${ok ? '●' : '○'}</span>` +
+        `<span class="dep-name">${nameOf(id)}</span>` +
         `<span class="insp-skills">← ${deps}</span>` +
         (ok ? '' : `<span class="insp-cond">· cut</span>`) +
         `</div>`;
@@ -5305,24 +5403,24 @@ export class RegionView {
       const db = snap.disrupted.has(b) ? 0 : 1;
       return da - db;
     });
-    html += `<p class="insp-skills" style="margin-top:6px">ALL GOODS (${snap.active.length})</p>`;
-    html += `<div style="display:flex;flex-wrap:wrap;gap:2px 8px">`;
+    html += `<p class="insp-skills mt-6">ALL GOODS (${snap.active.length})</p>`;
+    html += `<div class="goods-grid">`;
     for (const id of order) {
       const ok = snap.supplied.has(id);
       const level = snap.levels.get(id) ?? (ok ? 1 : 0);
       // A partial cut (graded embargo / strained extraction) runs amber, not red,
       // and shows the level it's holding — distinct from a total cut at a glance.
       const partial = !ok && level > 0.001;
-      const col = ok ? '#4e9' : partial ? '#ca4' : '#e55';
+      const cls = ok ? 'c-good' : partial ? 'c-warn' : 'c-bad';
       const glyph = ok ? '●' : partial ? '◐' : '○';
       const tip = ok ? 'supplied' : partial ? `running at ${Math.round(level * 100)}%` : 'disrupted';
       html +=
-        `<span class="insp-skills" style="color:${col};min-width:84px" title="${tip}">` +
+        `<span class="insp-skills good-chip ${cls}" title="${tip}">` +
         `${glyph} ${nameOf(id)}</span>`;
     }
     html += `</div>`;
     if (disruptedCount > 0 && snap.embargoes.length === 0) {
-      html += `<p class="insp-skills" style="margin-top:4px">Open goods are disrupted — an upstream raw or input is short.</p>`;
+      html += `<p class="insp-skills mt-4">Open goods are disrupted — an upstream raw or input is short.</p>`;
     }
     return html;
   }
@@ -5470,15 +5568,15 @@ export class RegionView {
     const targetYear = 2045;
     const yearsAhead = Math.max(0, targetYear - r.year);
     const projSkilled = r.projectedSkilledWorkforce(yearsAhead);
-    const projSkilledNote = `<p class="insp-note" style="color:#8bc4e0;font-size:0.82em;margin:2px 0 6px 0">` +
+    const projSkilledNote = `<p class="insp-note t-sm c-info my-2">` +
       `Projected skilled workforce in ${targetYear}: <b>${Math.round(projSkilled * 100)}%</b></p>`;
 
     this.setInnerHtml(
       this.researchPanel,
-      `<div class="pal-title">RESEARCH</div>` +
+      `<h3 class="panel-title">RESEARCH</h3>` +
       `<p class="insp-skills">${rate} RP/day${active ? ` → <b>${active.name}</b>` : ' (idle)'}` +
       (active ? ` <button class="mini res-cancel-btn">cancel</button>` : '') + `</p>` +
-      (active ? `<div class="res-bar"><div class="res-bar-fill" style="width:${progressPct}%"></div></div>` : '') +
+      (active ? `<div class="meter m-info meter-line"><i style="width:${progressPct}%"></i></div>` : '') +
       projSkilledNote +
       `<div class="pal-tabs">` +
       `<button class="pal-tab${rtab === 'tech' ? ' active' : ''}" data-ptab="tech">Technology</button>` +
@@ -5507,7 +5605,7 @@ export class RegionView {
     const r = this.region;
     const pop = Math.round(r.popOf(t));
     const bands = t.cohorts.bands
-      .map((v, i) => `<div class="bar-row"><span>${AGE_BANDS[i]}</span><div class="bar"><div class="bar-fill" style="width:${Math.min(100, (v / Math.max(1, r.popOf(t))) * 100 * 2.5)}%"></div></div><span>${Math.round(v)}</span></div>`)
+      .map((v, i) => `<div class="bar-row"><span>${AGE_BANDS[i]}</span>${meterBar(Math.min(100, (v / Math.max(1, r.popOf(t))) * 100 * 2.5))}<span>${Math.round(v)}</span></div>`)
       .join('');
     const notables = r.notablesAt(t.id)
       .map((n) => `<li><b>${n.name}</b>, ${Math.floor(n.age)} — <abbr title="${ROLE_BONUS_DESC[n.role]}">${n.role}</abbr><br><span class="insp-skills">${n.bio[n.bio.length - 1]}</span></li>`)
@@ -5525,7 +5623,7 @@ export class RegionView {
     // Identity header stays visible; the dense sub-panels split into tabs so no
     // single view needs scrolling.
     const header =
-      `<h3>${t.name} <button id="rename-btn" class="mini" title="Rename this town">✎</button></h3>` +
+      `<h3 class="panel-title">${t.name} <button id="rename-btn" class="mini" title="Rename this town">✎</button></h3>` +
       `<p class="insp-lvl">${tier} · day ${r.day - t.foundedDay} old</p>` +
       `<p class="insp-state">pop ${Math.round(r.popOf(t))} · housing ${Math.floor(t.housing)} · satisfaction ${Math.round(t.satisfaction)}</p>` +
       (r.stateProclaimed

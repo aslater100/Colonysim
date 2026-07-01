@@ -1,0 +1,191 @@
+/* ============================================================
+   GILDED CENTURY — panel-local rules for the region view.
+   Utility + layout classes that pair with the design-system
+   tokens and controls in style.css. Every color reads a :root
+   token; no hardcoded family hexes.
+   ============================================================ */
+
+/* ---- Semantic text tones (replace inline color:#4e9/#ca4/#e55/…) ---- */
+.c-good { color: var(--good); }
+.c-warn { color: var(--warn); }
+.c-bad { color: var(--bad); }
+.c-info { color: var(--info); }
+.c-gold { color: var(--gold-400); }
+.c-muted { color: var(--muted); }
+.c-dim { opacity: 0.6; }
+
+/* ---- Type-scale helpers ---- */
+.t-sm { font-size: 0.82em; }
+.t-10 { font-size: 10px; }
+.t-11 { font-size: 11px; }
+.t-note { font-size: 10px; color: var(--muted); }
+.t-left { text-align: left; }
+.t-right { text-align: right; }
+
+/* ---- Spacing nudges ---- */
+.ml-4 { margin-left: 4px; }
+.ml-8 { margin-left: 8px; }
+.mt-6 { margin-top: 6px; }
+.mt-4 { margin-top: 4px; }
+.my-2 { margin: 2px 0; }
+.my-4 { margin: 4px 0; }
+.push-right { margin-left: auto; }
+
+/* ---- Bar rows: fixed-width leader labels + a flexing meter ---- */
+.bar-row .meter { flex: 1; }
+.row-label,
+.bar-row span.row-label { display: inline-block; width: 70px; }
+.row-label-80,
+.bar-row span.row-label-80 { display: inline-block; width: 80px; }
+.row-label-140,
+.bar-row span.row-label-140 { display: inline-block; width: 140px; }
+/* Inline mini-meter (e.g. the intel bar in a text line) */
+.meter-inline {
+  display: inline-block;
+  width: 60px;
+  vertical-align: middle;
+}
+/* A meter used between text lines (province satisfaction etc.) */
+.meter-line { margin: 2px 0; }
+
+/* Sector-table column widths (sectorsHtml) */
+.col-70 { min-width: 70px; }
+.col-28r { min-width: 28px; text-align: right; }
+.col-12c { min-width: 12px; text-align: center; }
+.col-52r { min-width: 52px; text-align: right; }
+.col-42r { min-width: 42px; text-align: right; }
+.col-34r { min-width: 34px; text-align: right; }
+.col-32r { min-width: 32px; text-align: right; }
+.row-label-76,
+.bar-row span.row-label-76 { display: inline-block; width: 76px; }
+.indent-76 { margin: 1px 0 4px 76px; }
+
+/* ---- Inputs ---- */
+.num-input { width: 70px; }
+.num-input-sm { width: 50px; }
+.slider-sm { width: 90px; vertical-align: middle; }
+
+/* ---- Buttons: latched "on" state for toggles & picked terms ---- */
+.palette button.toggle-on,
+.inspector button.toggle-on,
+.ceremony button.toggle-on {
+  background: var(--gold-face) !important;
+  color: var(--text-dark) !important;
+  border-color: #8a6620 !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+/* The Central Bank quick-toggle wears the vault-green livery */
+.palette button.cb-badge {
+  background: rgba(47, 158, 99, 0.22);
+  color: var(--good);
+  border-color: rgba(110, 231, 160, 0.35);
+}
+
+/* ---- Flag chip in the rival ledger (background stays inline: data) ---- */
+.flag-chip {
+  display: inline-block;
+  width: 16px;
+  height: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  margin-right: 6px;
+  vertical-align: middle;
+  border-radius: 2px;
+}
+
+/* ---- Convention / ceremony flourishes ---- */
+.conv-sub {
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+/* ---- Epilogue beats: a lit rule per verdict ---- */
+.ep-beat {
+  text-align: left;
+  border-left: 3px solid var(--muted-2);
+  padding-left: 10px;
+}
+.ep-beat-good { border-left-color: var(--good); }
+.ep-beat-bad { border-left-color: var(--bad); }
+
+/* ---- Advisor briefs: an inset navy well ---- */
+.brief-box {
+  background: var(--surface-inset);
+  border: 1px solid var(--border-gold-soft);
+  border-radius: var(--radius);
+  padding: 4px 6px;
+  max-height: 120px;
+  overflow-y: auto;
+  font-size: 10px;
+}
+
+/* ---- Depression depth meter: tone by depth ---- */
+.depth-meter-fill.dm-deep { background: var(--bad); }
+.depth-meter-fill.dm-mid { background: var(--warn); }
+.depth-meter-fill.dm-lift { background: var(--gold-400); }
+
+/* ---- Settlement list / economy rows ---- */
+.list-row {
+  margin: 4px 0;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-gold-soft);
+}
+.dep-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0;
+}
+.dep-name { width: 82px; }
+.goods-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+.good-chip { min-width: 84px; }
+
+/* ---- Wonder race (Economy → Wonders tab) ---- */
+.wonder-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 3px 0;
+}
+.wonder-name { flex: 1; }
+.wonder-prestige {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--gold-300);
+  min-width: 44px;
+  text-align: right;
+}
+.badge-unclaimed {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--gold-face);
+  color: var(--text-dark);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+.space-race-head {
+  font-family: var(--serif);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--info);
+  margin: 8px 0 2px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+/* ---- Panel titles: keep the close button on the nameplate's right ---- */
+h3.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+h3.panel-title .mini { margin-left: auto; }
