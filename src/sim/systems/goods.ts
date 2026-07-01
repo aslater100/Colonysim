@@ -557,7 +557,10 @@ export function tickIntermediateGoods(r: RegionSim): void {
   r.advanceSectorOutputNorms();
   // Refresh the world-population cache the per-town final-demand split reads (the sink
   // + the arbitrage price scan) so it is computed once per tick, not per price query.
-  r.worldPopCache = r.settlements.reduce((s, t) => s + r.popOf(t), 0);
+  // Only when the consumer-demand model is active — off, nothing reads it (every
+  // `localFinalGoodDemand` short-circuits before `worldPopulation`), so this is zero
+  // live-play overhead.
+  if (r.consumerDemand) r.worldPopCache = r.settlements.reduce((s, t) => s + r.popOf(t), 0);
   // Drop embargoes whose window has elapsed, so the chain heals on its own and
   // the save ledger stays tidy (a stale entry would still read available, but
   // pruning keeps `rawEmbargoes` to what's actually live).
