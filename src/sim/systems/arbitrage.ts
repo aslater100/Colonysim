@@ -14,7 +14,7 @@
  * shipment pipeline is self-contained, and pulling it out of the 14k-line monolith
  * clears the way for the per-town supply solve (PR-3 slice 2) that builds on it.
  */
-import type { RegionSim, Settlement } from '../region';
+import type { RegionSim, Settlement, Route } from '../region';
 import { INTERMEDIATE_GOODS } from '../region';
 import { localGoodPrice } from './goods';
 import { DAYS_PER_MONTH, formatCurrency } from '../defs';
@@ -25,12 +25,41 @@ import { DAYS_PER_MONTH, formatCurrency } from '../defs';
  *  wage-gap proxy's `volume × tariff × 5`. */
 const ARBITRAGE_PROFIT_SCALE = 5;
 
+/** Undirected route-lookup key: smaller settlement id first, so `(a,b)` and
+ *  `(b,a)` map to the same slot (routes are undirected — see region.routeBetween). */
+function routeKey(a: number, b: number): string {
+  return a < b ? `${a}>${b}` : `${b}>${a}`;
+}
+
+/** Build a per-tick index of `r.routes` keyed by unordered pair, first-wins so
+ *  a lookup is byte-identical to the `.find()` it replaces (both route push sites —
+ *  buildLink/blazeTrail — dedupe via routeBetween, so at most one route per pair;
+ *  first-wins is belt-and-braces against a future duplicate). O(R) to build, then
+ *  O(1) per lookup in the O(N²·G) arbitrage scan instead of O(R). */
+function buildRouteIndex(r: RegionSim): Map<string, Route> {
+  const idx = new Map<string, Route>();
+  for (const rt of r.routes) {
+    const k = routeKey(rt.a, rt.b);
+    if (!idx.has(k)) idx.set(k, rt);
+  }
+  return idx;
+}
+
 /** Compute a congestion tariff for a goods route between two settlements.
- *  tariff = routeDistance × (1 + (1 − routeCondition/100) × 0.5), clamped 0.05–0.3. */
-export function computeCongestionTariff(r: RegionSim, fromId: number, toId: number): number {
-  const route = r.routes.find(
-    (rt) => (rt.a === fromId && rt.b === toId) || (rt.a === toId && rt.b === fromId)
-  );
+ *  tariff = routeDistance × (1 + (1 − routeCondition/100) × 0.5), clamped 0.05–0.3.
+ *  Pass `routeIndex` (from buildRouteIndex) for an O(1) lookup; without it the
+ *  route is found by a linear `.find()` (unchanged legacy path, e.g. tests). */
+export function computeCongestionTariff(
+  r: RegionSim,
+  fromId: number,
+  toId: number,
+  routeIndex?: Map<string, Route>,
+): number {
+  const route = routeIndex
+    ? routeIndex.get(routeKey(fromId, toId))
+    : r.routes.find(
+        (rt) => (rt.a === fromId && rt.b === toId) || (rt.a === toId && rt.b === fromId)
+      );
   if (!route) return 0.3; // no route = maximum friction
 
   const routeDistance = route.path.length;
@@ -48,6 +77,11 @@ export function computeCongestionTariff(r: RegionSim, fromId: number, toId: numb
  *  is credited to the SOURCE faction's treasury (player national treasury or the
  *  rival's own faction treasury) so cross-faction trade enriches the seller. */
 export function tickPriceArbitrage(r: RegionSim): void {
+  // A per-tick route index shared by the stranding check (step 1) and the all-pairs
+  // tariff scan (step 2). Routes don't change within this tick, so one build serves
+  // both — turning the O(R) linear route lookup that each of the O(N²·G) tariff calls
+  // (and each in-transit stranding check) used to do into an O(1) map hit.
+  const routeIndex = buildRouteIndex(r);
   // 1. Advance in-transit shipments. Deliver those that arrive (pay out their
   //    pending income to the SOURCE faction); strand those whose route is severed.
   const stillMoving: typeof r.tradeFlows = [];
@@ -58,11 +92,7 @@ export function tickPriceArbitrage(r: RegionSim): void {
     // A flow needs a live route the whole way; a SEVERED lane loses its cargo.
     // (A merely-congested route still delivers — only a missing one strands, so
     // test for the route's existence, not the clamped-max congestion tariff.)
-    const hasRoute = r.routes.some(
-      (rt) =>
-        (rt.a === flow.fromSettlementId && rt.b === flow.toSettlementId) ||
-        (rt.a === flow.toSettlementId && rt.b === flow.fromSettlementId),
-    );
+    const hasRoute = routeIndex.has(routeKey(flow.fromSettlementId, flow.toSettlementId));
     if (!hasRoute) {
       stranded++;
       continue;
@@ -135,7 +165,7 @@ export function tickPriceArbitrage(r: RegionSim): void {
     for (let j = i + 1; j < allSettlements.length; j++) {
       const a = allSettlements[i];
       const b = allSettlements[j];
-      const tariff = computeCongestionTariff(r, a.id, b.id);
+      const tariff = computeCongestionTariff(r, a.id, b.id, routeIndex);
       if (tariff >= 0.3) continue; // no route
       for (const goodId of goodIds) {
         const priceA = localGoodPrice(r, a, goodId);
