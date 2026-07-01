@@ -53,6 +53,7 @@ import { checkElection } from './systems/elections';
 import { updateConstruction } from './systems/construction';
 import { updateScouts } from './systems/scouts';
 import { updateRivalAI } from './systems/rival-ai';
+import { updateExpeditions } from './systems/expeditions';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -3436,7 +3437,7 @@ export class RegionSim {
   private railAnnounced = false;
   private highwayAnnounced = false;
   private maglevAnnounced = false;
-  private nextId = 1000;
+  nextId = 1000;
   private nextEventDay: number;
   private townNamePool: string[];
 
@@ -3953,7 +3954,7 @@ export class RegionSim {
   }
 
   /** A trail is blazed automatically when a settlement is founded. */
-  private blazeTrail(fromId: number, toId: number): void {
+  blazeTrail(fromId: number, toId: number): void {
     const a = this.settlement(fromId);
     const b = this.settlement(toId);
     if (!a || !b || this.routeBetween(fromId, toId)) return;
@@ -3996,7 +3997,7 @@ export class RegionSim {
    *  nearest one already wired into the faction backbone, so the network grows
    *  from one spine instead of each town sprouting its own roads. Falls back to
    *  the root when nothing is connected yet. */
-  private networkAnchor(town: Settlement): number {
+  networkAnchor(town: Settlement): number {
     const root = this.factionRoot(town.factionId);
     if (root < 0 || root === town.id) return root;
     const onBackbone = this.reachableFrom(root); // single BFS, not per-peer
@@ -5602,7 +5603,7 @@ export class RegionSim {
       const eventGap = this.policyActive('isolationism') ? 7 + this.rng.int(8) : 4 + this.rng.int(5);
       this.nextEventDay = this.day + eventGap;
     }
-    this.updateExpeditions();
+    updateExpeditions(this); // (systems/expeditions.ts)
     updateCharter(this);
     updateConstruction(this); // Phase 2: scaffolding comes down, doors open (systems/construction.ts)
     updateExploration(this); // Phase 0: Update fog of war based on scouts and settlements (systems/exploration.ts)
@@ -8635,68 +8636,7 @@ export class RegionSim {
     return true;
   }
 
-  private updateExpeditions(): void {
-    for (const e of [...this.expeditions]) {
-      const totalDays = Math.max(1, e.arrivesDay - e.departDay);
-      const f = Math.min(1, (this.day - e.departDay) / totalDays);
-      e.x = e.x + (e.targetX - e.x) * Math.min(1, f * 0.5 + 0.1);
-      e.y = e.y + (e.targetY - e.y) * Math.min(1, f * 0.5 + 0.1);
-      if (this.day >= e.arrivesDay) {
-        const town: Settlement = {
-          id: this.nextId++,
-          name: e.name,
-          x: e.targetX,
-          y: e.targetY,
-          foundedDay: this.day,
-          cohorts: { bands: [e.pop * 0.1, e.pop * 0.55, e.pop * 0.35, 0, 0] },
-          food: e.food,
-          wood: e.wood,
-          satisfaction: 60,
-          housing: e.pop + 4,
-          landQuality: e.site.fertility,
-          site: e.site,
-          lastRaidDay: -99,
-          lastFloodDay: -99,
-          strikeUntil: -1,
-          grievance: 0,
-          prices: defaultPrices(),
-          recentEvents: [],
-          // Phase 0: Regional faction system
-          factionId: this.playerFactionId,
-          garrisonStrength: 2, // new towns have smaller garrisons
-          stationedUnits: [],
-          loyaltyToFaction: 100,
-          factionStrengths: new Map(activeFactions(this.year).map(f => [f.id, 50] as [NewFactionId, number])),
-          sectors: defaultSectors(),
-          buildings: [],
-          placedBuildings: [],
-          placedDistricts: [],
-          construction: null,
-          focus: 'balanced',
-          activeEvents: [],
-          policies: { ...DEFAULT_CITY_POLICIES },
-        };
-        this.settlements.push(town);
-        // Reveal the new settlement and surrounding area
-        this.revealTiles(town.x, town.y, 2, 'explored');
-        // Update player faction settlement list
-        const playerFaction = this.faction(this.playerFactionId);
-        if (playerFaction) {
-          playerFaction.settlementIds.push(town.id);
-        }
-        this.expeditions = this.expeditions.filter((o) => o !== e);
-        const flavor = e.site.river ? 'on the riverbank' : e.site.coastal ? 'by the sea' : e.site.fertility > 1 ? 'in good black soil' : 'on thin ground';
-        this.addLog(`${town.name} is founded ${flavor} — the ${this.ordinal(this.settlements.length)} town of the colony.`, 'good');
-        // graft the new town onto the central network: blaze its trail to the
-        // nearest town already on the faction backbone, not whoever sent the expedition
-        this.blazeTrail(this.networkAnchor(town), town.id);
-        // A founder steps up
-        this.mintNotable('Reeve', town.id);
-      }
-    }
-  }
-
-  private ordinal(n: number): string {
+  ordinal(n: number): string {
     return n === 2 ? 'second' : n === 3 ? 'third' : `${n}th`;
   }
 
