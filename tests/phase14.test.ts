@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { RegionSim } from '../src/sim/region';
 import { tickPollution } from '../src/sim/systems/pollution';
 import { tickServiceCoverage } from '../src/sim/systems/services';
+import { tickUtilities } from '../src/sim/systems/utilities';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
 import { REGION_MINUTES_PER_TICK } from '../src/sim/region';
 
@@ -260,8 +261,7 @@ describe('Phase 14: Power Balance', () => {
     t.cohorts.bands[2] = 5000; // huge adult population
     t.lastBrownoutYear = undefined;
     const initialEvents = t.recentEvents.length;
-    const priv = r as unknown as { tickUtilities(): void };
-    priv.tickUtilities();
+    tickUtilities(r);
     // Either a brownout event was logged or satisfaction dropped
     const brownoutEvent = t.recentEvents.find((ev) => ev.text.includes('brownout') || ev.text.includes('Power demand'));
     const demandExceedsCapacity = r.computePowerBalance(t.id).demand > r.computePowerBalance(t.id).capacity;
@@ -279,8 +279,7 @@ describe('Phase 14: Power Balance', () => {
     t.lastBrownoutYear = undefined;
     const pb = r.computePowerBalance(t.id);
     if (pb.demand > pb.capacity) {
-      const priv = r as unknown as { tickUtilities(): void };
-      priv.tickUtilities();
+      tickUtilities(r);
       expect(t.satisfaction).toBeLessThan(80);
     } else {
       // Population not large enough for brownout in this seed, skip
@@ -296,8 +295,7 @@ describe('Phase 14: Water and Waste Coverage', () => {
     const r = makeRegion();
     const t = playerTown(r);
     t.buildings = ['waterworks'];
-    const priv = r as unknown as { tickUtilities(): void };
-    priv.tickUtilities();
+    tickUtilities(r);
     expect(t.waterCoverage).toBe(1.0);
   });
 
@@ -307,8 +305,7 @@ describe('Phase 14: Water and Waste Coverage', () => {
     t.buildings = [];
     // Reduce population to be small
     t.cohorts.bands = [1, 2, 2, 1, 0];
-    const priv = r as unknown as { tickUtilities(): void };
-    priv.tickUtilities();
+    tickUtilities(r);
     expect(t.waterCoverage).toBeLessThan(0.5);
   });
 
@@ -316,8 +313,7 @@ describe('Phase 14: Water and Waste Coverage', () => {
     const r = makeRegion();
     const t = playerTown(r);
     t.buildings = [];
-    const priv = r as unknown as { tickUtilities(): void };
-    priv.tickUtilities();
+    tickUtilities(r);
     expect(t.wasteCoverage).toBeDefined();
     expect(t.wasteCoverage).toBeGreaterThanOrEqual(0);
     expect(t.wasteCoverage).toBeLessThanOrEqual(1);

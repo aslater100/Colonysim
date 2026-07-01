@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { RegionSim, REGION_BUILDINGS, REGION_MINUTES_PER_TICK } from '../src/sim/region';
+import { updateConstruction } from '../src/sim/systems/construction';
 import { RegionMap } from '../src/sim/worldgen';
 import { Weather } from '../src/sim/weather';
 import { Rng } from '../src/sim/rng';
@@ -25,7 +26,6 @@ type Priv = {
   wonderClaimed: (id: string, except?: unknown) => boolean;
   wonderEraYear: (def: unknown) => number;
   wonderBonus: (t: { factionId: number }, sector: string) => number;
-  updateConstruction: () => void;
 };
 const priv = (r: RegionSim) => r as unknown as Priv;
 
@@ -128,7 +128,7 @@ describe('Wonder race — a rival completes a Wonder', () => {
 
     // Fast-forward the project to completion.
     priv(r).rivalWonderHost(rival)!.construction!.doneDay = 0;
-    priv(r).updateConstruction();
+    updateConstruction(r);
 
     expect(r.wonderOwner[project.id]).toBe(rival.id);
     const def = byId(project.id);

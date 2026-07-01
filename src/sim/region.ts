@@ -21,7 +21,7 @@ import { tickPollution } from './systems/pollution';
 import { tickServiceCoverage } from './systems/services';
 import { tickPriceArbitrage } from './systems/arbitrage';
 import { tickIntermediateGoods, worldGoodPrice, worldGoodScarcity, worldMarketTightness, worldPowerPressure } from './systems/goods';
-import { tickAdvisorLoyalty, tickAdvisorEvents, tickLegitimacy, tickRegimeMechanics } from './systems/regime';
+import { tickLegitimacy, tickRegimeMechanics } from './systems/regime';
 import { tickDemographicTransition, tickAppealMigration, tickEducationLag, tickUnrestLadder } from './systems/demographics';
 import { tickClimate, checkStrandedAssets, tickAutomation } from './systems/climate';
 import { updateDiplomacy } from './systems/diplomacy';
@@ -42,6 +42,24 @@ import { tickResearch } from './systems/research';
 import { updateRouteCargo } from './systems/trade';
 import { updateCharter } from './systems/charter';
 import { updateLoans } from './systems/loans';
+import { updateExploration } from './systems/exploration';
+import { tickStatsHistory } from './systems/stats';
+import { updateMarket } from './systems/market';
+import { checkScenarioGoals } from './systems/scenarios';
+import { checkWinConditions, checkProclamationGate } from './systems/victory';
+import { tickUtilities } from './systems/utilities';
+import { tickRegionalEvents } from './systems/events';
+import { checkElection } from './systems/elections';
+import { updateConstruction } from './systems/construction';
+import { updateScouts } from './systems/scouts';
+import { updateRivalAI } from './systems/rival-ai';
+import { updateExpeditions } from './systems/expeditions';
+import { collectVassalTribute, applyProvincePolicyEffects } from './systems/statecraft';
+import { navalTradeIncome } from './systems/naval';
+import { migrate } from './systems/migration';
+import { weatherRoutes } from './systems/route-weather';
+import { updateFactions, updateSettlementFactions } from './systems/factions';
+import { traders, caravans } from './systems/trade-season';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -657,7 +675,7 @@ export const REGION_EVENT_DEFS: RegionalEventDef[] = [
 ];
 
 // Fast lookups for building and event definitions.
-const REGION_BUILDINGS_MAP = new Map(REGION_BUILDINGS.map((b) => [b.id, b]));
+export const REGION_BUILDINGS_MAP = new Map(REGION_BUILDINGS.map((b) => [b.id, b]));
 const DISTRICT_DEFS_MAP = new Map(DISTRICT_DEFS.map((d) => [d.id, d]));
 // Spatial-4X Phase D slice 1b — per-update chance a rich, era-ready rival faction
 // bids for an unclaimed Wonder (scaled by the difficulty techMult). aiRng-gated.
@@ -3425,7 +3443,7 @@ export class RegionSim {
   private railAnnounced = false;
   private highwayAnnounced = false;
   private maglevAnnounced = false;
-  private nextId = 1000;
+  nextId = 1000;
   private nextEventDay: number;
   private townNamePool: string[];
 
@@ -3932,7 +3950,7 @@ export class RegionSim {
   /** Spare capacity on the tightest leg of a path — the bottleneck a caravan
    *  must squeeze through. Loop, not Math.min(...legs.map()): no per-call array
    *  and no spread (which overflows the stack on a very long corridor). */
-  private legCapacity(legs: Route[]): number {
+  legCapacity(legs: Route[]): number {
     let min = Infinity;
     for (const r of legs) {
       const spare = this.effectiveCapacity(r) - r.freight;
@@ -3942,7 +3960,7 @@ export class RegionSim {
   }
 
   /** A trail is blazed automatically when a settlement is founded. */
-  private blazeTrail(fromId: number, toId: number): void {
+  blazeTrail(fromId: number, toId: number): void {
     const a = this.settlement(fromId);
     const b = this.settlement(toId);
     if (!a || !b || this.routeBetween(fromId, toId)) return;
@@ -3985,7 +4003,7 @@ export class RegionSim {
    *  nearest one already wired into the faction backbone, so the network grows
    *  from one spine instead of each town sprouting its own roads. Falls back to
    *  the root when nothing is connected yet. */
-  private networkAnchor(town: Settlement): number {
+  networkAnchor(town: Settlement): number {
     const root = this.factionRoot(town.factionId);
     if (root < 0 || root === town.id) return root;
     const onBackbone = this.reachableFrom(root); // single BFS, not per-peer
@@ -4722,7 +4740,7 @@ export class RegionSim {
    *  selects the edge filter ('no-trail' excludes footpaths); paths are only ever
    *  consumed for length/connectivity/freight, so caching the (possibly reversed)
    *  path is sound. The reload-keeps-ticking determinism test guards correctness. */
-  private routePath(fromId: number, toId: number, mode: 'all' | 'no-trail' = 'all'): Route[] | null {
+  routePath(fromId: number, toId: number, mode: 'all' | 'no-trail' = 'all'): Route[] | null {
     if (fromId === toId) return [];
     const key = fromId + ':' + toId + ':' + mode;
     const cached = this._routePathCache.get(key);
@@ -4783,32 +4801,6 @@ export class RegionSim {
 
   /** Storms wear routes down; footfall keeps trails open, roads need £.
    *  M6c adds the washout: a big storm can take a whole crossing out. */
-  private weatherRoutes(): void {
-    const storm = this.weather.forDay(this.day).sky === 'storm';
-    for (const r of this.routes) {
-      if (storm) {
-        r.condition = Math.max(ROUTE_CONDITION_FLOOR, r.condition - (r.kind === 'trail' ? 2 : 0.5));
-      } else if (r.kind === 'trail') {
-        r.condition = Math.min(100, r.condition + 0.1);
-      }
-    }
-    // Washout odds rise with the thermometer (GDD §8.2): a warmer sky
-    // carries more water, and the storms that drop it hit harder.
-    const washoutChance = Math.min(0.3, 0.12 * (1 + this.warmingC * 0.3));
-    if (storm && this.routes.length > 0 && this.rng.chance(washoutChance)) {
-      const r = this.routes[this.rng.int(this.routes.length)];
-      if (r.kind !== 'trail' && r.condition > 40) {
-        r.condition = Math.max(ROUTE_CONDITION_FLOOR, r.condition - 45);
-        const a = this.settlement(r.a)?.name ?? '?';
-        const b = this.settlement(r.b)?.name ?? '?';
-        this.addLog(
-          `Storm washout: the ${r.kind} between ${a} and ${b} is cut — ` +
-          `${r.kind === 'rail' ? 'a trestle is down' : r.kind === 'maglev' ? 'a guideway pylon is down' : 'a bridge is out'}. Repairs would cost ` + formatCurrency(this.repairCost(r)) + `.`,
-          'bad',
-        );
-      }
-    }
-  }
 
   /** What a link's road gangs (or drone crews) bill per month — Automated
    *  Freight research swaps the work crews for machines at 60% the cost, and
@@ -5265,24 +5257,6 @@ export class RegionSim {
   // ---- Phase 17: Scenario Goal Checks ----
 
   /** Called monthly; checks each active scenario goal and marks completions. */
-  checkScenarioGoals(): void {
-    if (!this.activeScenario) return;
-    const scenario = SCENARIOS.find((s) => s.id === this.activeScenario);
-    if (!scenario) return;
-
-    for (const goal of scenario.startingGoals) {
-      if (this.scenarioGoalsCompleted.includes(goal.id)) continue;
-      const checkFn = (this as unknown as Record<string, () => boolean>)[goal.checkFn];
-      if (typeof checkFn === 'function' && checkFn.call(this)) {
-        this.scenarioGoalsCompleted.push(goal.id);
-        this.addLog(
-          `SCENARIO GOAL ACHIEVED: ${goal.description}`,
-          'good',
-        );
-      }
-    }
-  }
-
   // ---- Scenario goal check functions ----
 
   goalSurviveTo2000(): boolean {
@@ -5505,7 +5479,7 @@ export class RegionSim {
           (this.eraBranch === 'dystopia' ? 0.15 : 0); // the neon century simmers
         t.grievance = Math.max(0, Math.min(100, t.grievance + pressure));
       }
-      this.updateMarket(t);
+      updateMarket(this, t);
       // Starvation: every town draws a seasonal emergency grain purchase from its
       // OWNING faction's purse (the player's treasury, or a rival faction's) —
       // once per 30 days, scaled to population. Rival towns used to get no relief
@@ -5563,7 +5537,7 @@ export class RegionSim {
     } else if (!drought) {
       this.droughtAnnounced = false;
     }
-    this.weatherRoutes();
+    weatherRoutes(this);
     // The rail era arrives (M6c): one announcement, the year the gate opens
     if (!this.railAnnounced && this.railUnlocked()) {
       this.railAnnounced = true;
@@ -5601,7 +5575,7 @@ export class RegionSim {
     this.maxGrievance = mg;
 
     tickResearch(this);
-    this.checkElection();
+    checkElection(this);
     if (this.day % 30 === 0) this.monthlyUpdate();
     if (this.day >= this.nextEventDay) {
       this.fireEvent();
@@ -5609,10 +5583,10 @@ export class RegionSim {
       const eventGap = this.policyActive('isolationism') ? 7 + this.rng.int(8) : 4 + this.rng.int(5);
       this.nextEventDay = this.day + eventGap;
     }
-    this.updateExpeditions();
+    updateExpeditions(this); // (systems/expeditions.ts)
     updateCharter(this);
-    this.updateConstruction(); // Phase 2: scaffolding comes down, doors open
-    this.updateExploration(); // Phase 0: Update fog of war based on scouts and settlements
+    updateConstruction(this); // Phase 2: scaffolding comes down, doors open (systems/construction.ts)
+    updateExploration(this); // Phase 0: Update fog of war based on scouts and settlements (systems/exploration.ts)
     if (this.totalPop() <= 0) {
       this.gameOver = true;
       this.addLog('The last settlement is empty. (Failure state: depopulation.)', 'bad');
@@ -5689,9 +5663,9 @@ export class RegionSim {
     }
     for (const t of this.settlements) this.updateSectors(t); // Phase 1: labor follows the technology
     this.wageCache = new Map(this.settlements.map((t) => [t.id, this.avgWageOf(t)]));
-    this.tickRegionalEvents(); // Phase 4: disasters and windfalls
+    tickRegionalEvents(this); // Phase 4: disasters and windfalls (systems/events.ts)
     tickPollution(this);       // Phase 14: pollution diffusion (systems/pollution.ts)
-    this.tickUtilities();      // Phase 14: power/water/waste utilities
+    tickUtilities(this);      // Phase 14: power/water/waste utilities (systems/utilities.ts)
     tickServiceCoverage(this); // Phase 14: service coverage effects (systems/services.ts)
     // Phase 14: update land value for each player settlement
     for (const t of this.settlements) {
@@ -5700,10 +5674,10 @@ export class RegionSim {
       }
     }
     updateRouteCargo(this);   // Phase 6: cargo labels follow sector surplus (systems/trade.ts)
-    this.migrate();
-    this.caravans();
-    this.traders();
-    this.navalTradeIncome();
+    migrate(this);
+    caravans(this);
+    traders(this);
+    navalTradeIncome(this);
     tickNotableLifecycle(this);
     // The treasury runs even before the Charter: pre-statehood the Mayor still
     // taxes the towns and pays for services/militia, so the player has real
@@ -5711,10 +5685,10 @@ export class RegionSim {
     // (otherwise the only pre-State income is trade tolls and the books can only
     // sink). Nation-tier machinery (factions/diplomacy/central bank) stays gated.
     this.monthlyEconomy();
-    if (this.stateProclaimed) this.updateFactions();
-    if (this.stateProclaimed) this.updateSettlementFactions();
+    if (this.stateProclaimed) updateFactions(this);
+    if (this.stateProclaimed) updateSettlementFactions(this);
     updateDiplomacy(this);
-    this.applyProvincePolicyEffects(); // Phase 5: province governance effects
+    applyProvincePolicyEffects(this); // Phase 5: province governance effects (systems/statecraft.ts)
     updateArmyMovement(this);         // Phase 7: army marching, battles (systems/military.ts)
     tickRivalArmyAI(this);            // Phase 7: rival army planning
     consumeWarSupply(this); // deplete supply reserves based on army size and supply consumption rate
@@ -5722,19 +5696,19 @@ export class RegionSim {
     tickSupplyLines(this);            // Phase 16: supply line decay for army groups
     tickOccupation(this);             // Phase 16: occupation resistance
     if (this.playerWar) tickWarSupport(this); // Phase 16: war support
-    this.updateRivalAI(); // staggered AI updates for rivals (GDD §6.2)
-    this.updateScouts(); // update faction scouts: movement, spawning, expiry (GDD §6.2)
+    updateRivalAI(this); // staggered AI updates for rivals (GDD §6.2) (systems/rival-ai.ts)
+    updateScouts(this); // update faction scouts: movement, spawning, expiry (GDD §6.2) (systems/scouts.ts)
     tickClimate(this); // the ledger runs from the first decade (GDD §8.2)
     tickAutomation(this); // Phase 11: automation unemployment drift
     checkStrandedAssets(this); // Phase 11: fossil write-downs as clean energy arrives
     if (this.hasCentralBank()) tickMonetary(this);
     tickHistoricalAnchors(this); // scripted world-events that rhyme with history (systems/historical.ts, GDD §1)
     this.tickMedia(); // Phase 12: media reach, press freedom, misinformation era
-    this.checkScenarioGoals();   // Phase 17: check active scenario goals monthly
+    checkScenarioGoals(this);   // Phase 17: check active scenario goals monthly (systems/scenarios.ts)
     updateLoans(this); // process loan interest and check for defaults (systems/loans.ts)
-    if (this.stateProclaimed) this.collectVassalTribute();
-    this.checkProclamationGate();
-    this.checkWinConditions();
+    if (this.stateProclaimed) collectVassalTribute(this);
+    checkProclamationGate(this);
+    checkWinConditions(this);
     // Early solarpunk trigger: beaten the oil barons when renewables are cheap + available tech
     if (!this.beatOilBarons && this.year >= 1980 && this.year < EARLY_SOLARPUNK_YEAR) {
       const hasRenewables = this.has('solar_cells') || this.has('wind_power') || this.has('hydro_power');
@@ -5781,7 +5755,7 @@ export class RegionSim {
     // Push education coverage to lag buffer once a year (month 0 = January)
     if (this.month === 0) {
       tickEducationLag(this);
-      this.tickStatsHistory();
+      tickStatsHistory(this);
     }
 
     // Phase 15: Intermediate goods, arbitrage, and FX tick
@@ -5799,34 +5773,6 @@ export class RegionSim {
 
   /** Check all four victory paths; set winCondition on the first achieved.
    *  Sandbox continues after any win — the modal is informational, not a forced stop. */
-  private checkWinConditions(): void {
-    if (this.winCondition) return; // already won — don't overwrite
-
-    // Solarpunk: democratic + warm satisfaction + clean sky — can win from 2040 onward
-    if (this.eraBranch === 'solarpunk') {
-      this.winCondition = {
-        path: 'solarpunk',
-        year: this.year,
-        details: `The grid hums clean. ${Math.round(this.warmingC * 10) / 10}°C above baseline — the gardens hold.`,
-      };
-      this.addLog('VICTORY — THE GARDEN PATH: solarpunk conditions achieved. The century belongs to you.', 'good');
-      return;
-    }
-
-    // Unification: control 75%+ of region by 2070, or 90%+ at any point
-    if (this.nationProclaimed) {
-      const terr = this.playerTerritoryControl();
-      if ((terr >= 0.75 && this.year <= 2070) || terr >= 0.9) {
-        this.winCondition = {
-          path: 'unification',
-          year: this.year,
-          details: `${Math.round(terr * 100)}% of the region under one banner.`,
-        };
-        this.addLog('VICTORY — UNIFICATION: the region bends to your flag. The era of division is over.', 'good');
-        return;
-      }
-    }
-  }
 
   /** Check legacy and domination wins at century end; called from buildCenturyReport(). */
   private checkCenturyWins(): void {
@@ -5864,21 +5810,6 @@ export class RegionSim {
   }
 
   /** Vassals pay 5% of their treasury each month as tribute to the player. */
-  private collectVassalTribute(): void {
-    const playerFaction = this.faction(this.playerFactionId);
-    if (!playerFaction) return;
-    for (const vassalId of playerFaction.vassals) {
-      const vassal = this.faction(vassalId);
-      if (!vassal) continue;
-      const tribute = Math.floor(vassal.treasury * 0.05);
-      if (tribute <= 0) continue;
-      vassal.treasury -= tribute;
-      this.treasury += tribute;
-      if (tribute >= 10) {
-        this.addLog(`TRIBUTE: ${vassal.name} pays ${formatCurrency(tribute)} to your treasury.`, 'good');
-      }
-    }
-  }
 
   /** Post-2100 epilogue flavor events: era-specific achievements and narrative beats. */
   triggerEpilogueEvent(): void {
@@ -5948,49 +5879,23 @@ export class RegionSim {
   }
 
   /** One-time latch: set proclamationReady once player territory ≥50%, log the milestone. */
-  private checkProclamationGate(): void {
-    if (this.proclamationReady || !this.stateProclaimed) return;
-    if (this.playerTerritoryControl() >= 0.5) {
-      this.proclamationReady = true;
-      this.addLog(
-        'REGIONAL HEGEMON: Your state controls more than half the known territory. ' +
-        'The path to nationhood lies before you — open the State panel to Proclaim the Nation.',
-        'good',
-      );
-    }
-    // Phase 18: Advisor System Depth (GDD §8.7)
-    this.generateAdvisorBriefs();
-    tickAdvisorLoyalty(this);
-    tickAdvisorEvents(this);
-  }
 
   // ---- local markets & trade (GDD §5.2, first slice) ----
   /** A month's worth of demand: what this town wants on hand. */
-  private monthNeed(t: Settlement, g: TradeGood): number {
+  monthNeed(t: Settlement, g: TradeGood): number {
     const pop = this.popOf(t);
     return Math.max(1, g === 'food' ? pop * 0.75 * 30 : pop * 0.1 * 30);
   }
 
-  private stockOf(t: Settlement, g: TradeGood): number {
+  stockOf(t: Settlement, g: TradeGood): number {
     return g === 'food' ? t.food : t.wood;
   }
 
-  private addStock(t: Settlement, g: TradeGood, v: number): void {
+  addStock(t: Settlement, g: TradeGood, v: number): void {
     if (g === 'food') t.food += v;
     else t.wood += v;
   }
 
-  /** The GDD §5.2 price rule, verbatim at this altitude:
-   *  Δp = p × 0.05 × (demand − supply) / max(supply, ε), clamped ±2%/day. */
-  private updateMarket(t: Settlement): void {
-    for (const g of TRADE_GOODS) {
-      const supply = Math.max(1, this.stockOf(t, g));
-      const demand = this.monthNeed(t, g);
-      const raw = t.prices[g] * 0.05 * ((demand - supply) / supply);
-      const delta = Math.max(-t.prices[g] * 0.02, Math.min(t.prices[g] * 0.02, raw));
-      t.prices[g] = Math.max(BASE_PRICE[g] * 0.25, Math.min(BASE_PRICE[g] * 4, t.prices[g] + delta));
-    }
-  }
 
   /** Traders run the routes once a month, after the relief caravans: buy
    *  where a good is cheap, sell where it is dear, whenever the margin
@@ -5999,51 +5904,6 @@ export class RegionSim {
    *  run a trade season directly (same deal as caravans). */
   tradeValueLastMonth = 0;
 
-  traders(): void {
-    if (this.settlements.length < 2) return;
-    this._routePathCache.clear(); // fresh route memo: this is also a direct test entry point
-    let turnover = 0;
-    for (const g of TRADE_GOODS) {
-      // dearest market first: traders chase the widest margin
-      const dear = [...this.settlements].sort((a, b) => b.prices[g] - a.prices[g]);
-      for (const buyer of dear) {
-        // cheapest market that isn't the buyer — a linear scan, not a copy+sort per buyer
-        let seller: Settlement | undefined;
-        let sellerPrice = Infinity;
-        for (const s of this.settlements) {
-          if (s === buyer) continue;
-          if (s.prices[g] < sellerPrice) { sellerPrice = s.prices[g]; seller = s; }
-        }
-        if (!seller) continue;
-        const legs = this.routePath(seller.id, buyer.id);
-        if (!legs || legs.length === 0) continue; // traders need a route
-        const freightRate = 0.01 * legs.length; // £/unit per hop on the wagon
-        const margin = buyer.prices[g] - seller.prices[g];
-        if (margin <= freightRate * 1.5) continue; // not worth the trip
-        const surplus = this.stockOf(seller, g) - this.monthNeed(seller, g);
-        const capLeft = this.legCapacity(legs);
-        const volume = Math.min(surplus * 0.25, capLeft, 80);
-        if (volume < 1) continue;
-        this.addStock(seller, g, -volume);
-        this.addStock(buyer, g, volume * 0.95); // handling and spillage
-        for (const r of legs) r.freight += volume;
-        turnover += volume * (seller.prices[g] + buyer.prices[g]) / 2;
-        if (volume > 30 && this.rng.chance(0.25)) {
-          this.addLog(`${g === 'food' ? 'Grain' : 'Timber'} is dear in ${buyer.name} — traders run the route from ${seller.name}.`, 'info');
-        }
-      }
-    }
-    this.tradeValueLastMonth = turnover;
-    if (turnover > 0) {
-      // Free Trade policy removes the levy entirely; otherwise use the configured rate.
-      const baseRate = this.policyActive('free_trade') ? 0 : this.tradeLevyRate;
-      // Before the State exists the Mayor still collects market tolls on every
-      // caravan — at a gentler rate — so connecting and trading between towns
-      // visibly builds the treasury toward the Charter's economic gate.
-      const effectiveLevyRate = this.stateProclaimed ? baseRate : baseRate * 0.8;
-      this.treasury += turnover * effectiveLevyRate;
-    }
-  }
 
   /** True if the player has a Harbor built in any of their settlements. */
   hasHarbor(): boolean {
@@ -6054,71 +5914,7 @@ export class RegionSim {
 
   /** Monthly: harbors generate sea-trade income; warships add a naval-supremacy
    *  premium that also deters coastal rivals. */
-  private navalTradeIncome(): void {
-    const harborTowns = this.settlements.filter(
-      (t) => t.factionId === this.playerFactionId && t.buildings.includes('harbor'),
-    );
-    if (harborTowns.length === 0) return;
-    const warships = this.playerWar?.units.find((u) => u.type === 'warship')?.count ?? 0;
-    // Base income per harbor (£/month) plus a warship escort premium
-    const perHarbor = 12 + warships * 2;
-    const income = harborTowns.length * perHarbor;
-    this.treasury += income;
-    if (this.rng.chance(0.3)) {
-      const town = harborTowns[this.rng.int(harborTowns.length)];
-      this.addLog(
-        `Sea trade earns ${formatCurrency(income)} this month — ${town.name}'s harbor is busy.`,
-        'good',
-      );
-    }
-  }
 
-  /** Grain caravans ride the route network (M6b): surplus towns provision
-   *  hungry ones, but every leg clamps to its route's remaining capacity —
-   *  a famine behind a goat trail is now possible, and fixable with money.
-   *  Public so tests and the harness can run a caravan season directly. */
-  caravans(): void {
-    if (this.settlements.length < 2) return;
-    this._routePathCache.clear(); // fresh route memo: this is also a direct test entry point
-    for (const r of this.routes) r.freight = 0;
-    for (const needy of this.settlements) {
-      const need = this.popOf(needy) * 0.75 * 20 - needy.food; // 20-day buffer target
-      if (need <= 0) continue;
-      // fullest larder in the same faction — a linear scan, not a copy+filter+sort per needy town
-      let donor: Settlement | undefined;
-      let donorFood = -Infinity;
-      for (const t of this.settlements) {
-        if (t === needy || t.factionId !== needy.factionId) continue;
-        if (t.food <= this.popOf(t) * 0.75 * 60) continue;
-        if (t.food > donorFood) { donorFood = t.food; donor = t; }
-      }
-      if (!donor) continue;
-      const surplus = donor.food - this.popOf(donor) * 0.75 * 60;
-      const legs = this.routePath(donor.id, needy.id);
-      if (legs && legs.length > 0) {
-        const cap = this.legCapacity(legs);
-        const sent = Math.max(0, Math.min(need, surplus, cap));
-        if (sent <= 0) continue;
-        donor.food -= sent;
-        needy.food += sent * 0.9; // the road takes its tithe
-        for (const r of legs) r.freight += sent;
-        if (sent < Math.min(need, surplus) - 1 && this.rng.chance(0.4)) {
-          this.addLog(`The route to ${needy.name} is choked — wagons turn back with grain still wanted.`, 'bad');
-        } else if (sent > 40 && this.rng.chance(0.4)) {
-          this.addLog(`Grain caravans roll from ${donor.name} to ${needy.name}.`, 'info');
-        }
-      } else {
-        // No route at all: smugglers and peddlers move a trickle, at a price
-        const sent = Math.min(need, surplus);
-        if (sent <= 0) continue;
-        donor.food -= sent;
-        needy.food += sent * 0.3;
-        if (this.rng.chance(0.3)) {
-          this.addLog(`Peddlers carry what they can to ${needy.name} — no road reaches it.`, 'bad');
-        }
-      }
-    }
-  }
 
   /** The money layer that arrives with Statehood (GDD §2.5). */
   private monthlyEconomy(): void {
@@ -7081,24 +6877,6 @@ export class RegionSim {
   // ---- Phase 13: Monthly tick methods ----
 
   /** Sample annual stats for the Century Graph. Called each January from monthlyUpdate. */
-  private tickStatsHistory(): void {
-    const playerSettlements = this.settlements.filter((t) => t.factionId === this.playerFactionId);
-    const pop = playerSettlements.reduce((s, t) => s + this.popOf(t), 0);
-    const satisfaction =
-      playerSettlements.length > 0
-        ? playerSettlements.reduce((s, t) => s + t.satisfaction, 0) / playerSettlements.length
-        : 0;
-    this.statsHistory.push({
-      year: this.year,
-      gdp: this.gdpLastMonth * 12,
-      pop,
-      warmingC: this.warmingC,
-      treasury: this.treasury,
-      satisfaction,
-    });
-    if (this.statsHistory.length > STATS_HISTORY_MAX) this.statsHistory.shift();
-  }
-
   /** Player action: crackdown on protests (rung 3). Workers relations −10. */
   crackdownProtests(): void {
     const workers = this.factions.find((f) => f.id === 'workers');
@@ -7374,7 +7152,7 @@ export class RegionSim {
   /** Deterministically pick a worked-ring cell for an auto-sited building (AI /
    *  legacy / migration). Returns the nearest free legal cell, or -1 if the ring
    *  is full. No RNG — keeps the sim byte-deterministic. */
-  private autoPlaceCell(t: Settlement): number {
+  autoPlaceCell(t: Settlement): number {
     const cells = this.buildablePlacementCells(t.id);
     if (cells.length === 0) return -1;
     const c = this.map.coordToCell(t.x, t.y);
@@ -7976,7 +7754,7 @@ export class RegionSim {
   }
 
   /** Extra survey radius from this town's works (telegraph office). */
-  private buildingSight(t: Settlement): number {
+  buildingSight(t: Settlement): number {
     return t.buildings.reduce((s, id) => s + (REGION_BUILDINGS_MAP.get(id)?.sight ?? 0), 0);
   }
 
@@ -8060,71 +7838,7 @@ export class RegionSim {
 
   /** Update pollution levels monthly for all player settlements. */
   /** Update utilities (power, water, waste) monthly for all player settlements. */
-  private tickUtilities(): void {
-    for (const t of this.settlements) {
-      if (t.factionId !== this.playerFactionId) continue;
-      const pop = this.popOf(t);
-      // Power balance
-      const pb = this.computePowerBalance(t.id);
-      t.powerCapacity = pb.capacity;
-      t.powerDemand = pb.demand;
-      if (pb.demand > pb.capacity) {
-        // Brownout: log once per year
-        const lastBrownout = t.lastBrownoutYear ?? -999;
-        if (this.year > lastBrownout) {
-          t.lastBrownoutYear = this.year;
-          this.townEvent(t, `Power demand exceeds supply — brownouts rolling across ${t.name}.`, 'bad');
-        }
-        t.satisfaction = Math.max(0, t.satisfaction - 5);
-        // Industry output penalty applied via sector output mult (tracked via active event instead)
-        // We model it as a monthly satisfaction drag and log the event
-      }
-      // Water coverage
-      if (t.buildings.includes('waterworks')) {
-        t.waterCoverage = 1.0;
-      } else {
-        t.waterCoverage = Math.min(0.5, pop / 200);
-      }
-      // Waste coverage
-      if (t.buildings.includes('sanitation') || t.buildings.includes('market_hall')) {
-        t.wasteCoverage = 1.0;
-      } else {
-        t.wasteCoverage = Math.min(0.3, pop / 500);
-      }
-      // Disease event: waterCoverage < 0.5 and pop > 100: 5% chance/month
-      if ((t.waterCoverage ?? 0) < 0.5 && pop > 100 && this.rng.chance(0.05)) {
-        this.townEvent(t, `Poor water supply in ${t.name} — disease spreads among the population.`, 'bad');
-        t.satisfaction = Math.max(0, t.satisfaction - 3);
-      }
-    }
-  }
-
   /** Update service coverage monthly for all player settlements. */
-  // ---- Phase 4: Regional Events ----
-
-  /** Fire and expire settlement-level events monthly. */
-  private tickRegionalEvents(): void {
-    for (const t of this.settlements) {
-      // Expire events whose duration has run
-      t.activeEvents = t.activeEvents.filter((ev) => ev.untilDay > this.day);
-      // Roll each event definition per settlement
-      // Phase 17: scale event probability by crisisFrequency difficulty knob
-      const crisisScale = this.difficultySettings.crisisFrequency;
-      for (const def of REGION_EVENT_DEFS) {
-        if (def.minYear !== undefined && this.year < def.minYear) continue; // era-gated
-        if (!this.rng.chance(def.probability * crisisScale)) continue;
-        if (t.activeEvents.some((ev) => ev.kind === def.kind)) continue; // no stacking
-        t.activeEvents.push({ kind: def.kind, untilDay: this.day + def.durationDays, severity: 1 });
-        // events-depth: one-shot satisfaction/grievance swings (bounded, clamped)
-        if (def.satisfaction) t.satisfaction = Math.max(0, Math.min(100, t.satisfaction + def.satisfaction));
-        if (def.grievance) t.grievance = Math.max(0, Math.min(100, t.grievance + def.grievance));
-        const good = def.outputMult >= 1.0;
-        this.townEvent(t, `${def.name}: ${def.desc}`, good ? 'good' : 'bad');
-        this.addLog(`${def.name} strikes ${t.name} — ${def.desc}`, good ? 'good' : 'bad');
-      }
-    }
-  }
-
   // ---- Emergency Aid ----
 
   /** Spend treasury to send emergency grain to a starving player-owned town.
@@ -8360,24 +8074,6 @@ export class RegionSim {
   }
 
   /** Monthly: apply province policy effects (autonomy satisfaction, investment garrison, tax multipliers). */
-  private applyProvincePolicyEffects(): void {
-    if (!this.stateProclaimed) return;
-    for (const s of this.settlements) {
-      if (s.factionId !== this.playerFactionId) continue;
-      const pol = this.provincePolicies[s.id];
-      if (!pol) continue;
-      if (pol.autonomyLevel >= 2) {
-        s.satisfaction = Math.min(100, s.satisfaction + 0.3);
-        s.grievance = Math.max(0, s.grievance - 0.5);
-      } else if (pol.autonomyLevel === 0 && s.satisfaction > 40) {
-        s.satisfaction = Math.max(0, s.satisfaction - 0.1);
-      }
-      if (pol.investmentLevel >= 2 && this.treasury > 5) {
-        this.treasury -= 2;
-        s.garrisonStrength = Math.min(this.garrisonCap(s), s.garrisonStrength + 0.5);
-      }
-    }
-  }
 
   // ---- Phase 5: Local Policies ----
 
@@ -8418,58 +8114,7 @@ export class RegionSim {
   // ---- Phase 6: Trade Route Cargo ----
 
   /** Finish any construction whose day has come. */
-  private updateConstruction(): void {
-    for (const t of this.settlements) {
-      if (t.construction && this.day >= t.construction.doneDay) {
-        const def = REGION_BUILDINGS_MAP.get(t.construction!.id);
-        t.buildings.push(t.construction.id);
-        // Record where it sits (chosen cell, or auto-sited in the worked ring).
-        const cell = t.construction.cell !== undefined && this.canPlaceBuildingAt(t.id, t.construction.cell)
-          ? t.construction.cell
-          : this.autoPlaceCell(t);
-        if (cell >= 0) t.placedBuildings.push({ id: t.construction.id, cell });
-        t.construction = null;
-        if (def) {
-          // Phase D: a completed Wonder is claimed by its faction empire-wide
-          // (keyed on completion, so ownership holds even if the cell relocated).
-          if (def.unique) {
-            this.wonderOwner[def.id] = t.factionId;
-            if (t.factionId === this.playerFactionId) this.prestige += def.prestige ?? 0;
-          }
-          this.addLog(`The ${def.name} opens at ${t.name}.`, 'good');
-          this.townEvent(t, `The ${def.name} opens its doors.`, 'good');
-        }
-      }
-    }
-  }
 
-  private migrate(): void {
-    if (this.settlements.length < 2) return;
-    // People follow both contentment and pay (Phase 1): a booming mill town
-    // pulls labor off poor farms even when life there is pleasant enough.
-    const regionWage = this.settlements.reduce((s, t) => s + this.avgWageOf(t), 0) / this.settlements.length;
-    const score = (t: Settlement) => t.satisfaction + (this.avgWageOf(t) - regionWage) * 30;
-    // One pass for the magnet and the source — no full sort, and avgWageOf runs
-    // once per town instead of O(n log n) times through a comparator.
-    let best = this.settlements[0], worst = this.settlements[0];
-    let bestScore = score(best), worstScore = bestScore;
-    for (const t of this.settlements) {
-      const sc = score(t);
-      if (sc > bestScore) { bestScore = sc; best = t; }      // first max (matches stable sort [0])
-      if (sc <= worstScore) { worstScore = sc; worst = t; }  // last min (matches stable sort [last])
-    }
-    // Don't feed an already-overcrowded destination; cap the capital magnet effect.
-    const destFull = this.popOf(best) >= best.housing;
-    if (bestScore - worstScore > 15 && this.popOf(worst) > 10 && !destFull) {
-      // movers ride the network too: without a route, only a trickle walks out
-      const connected = this.routePath(worst.id, best.id) !== null;
-      // 1% per month (was 2%): urbanization is gradual, not a mass exodus
-      const movers = this.popOf(worst) * 0.01 * (connected ? 1 : 0.3);
-      this.removePop(worst, movers);
-      best.cohorts.bands[1] += movers * 0.7;
-      best.cohorts.bands[2] += movers * 0.3;
-    }
-  }
 
   /** New Notables rise from the cohorts when a role falls vacant (GDD §2.4). */
   /** Public for systems/notables.ts (heir birth / vacancy fill). */
@@ -8802,68 +8447,7 @@ export class RegionSim {
     return true;
   }
 
-  private updateExpeditions(): void {
-    for (const e of [...this.expeditions]) {
-      const totalDays = Math.max(1, e.arrivesDay - e.departDay);
-      const f = Math.min(1, (this.day - e.departDay) / totalDays);
-      e.x = e.x + (e.targetX - e.x) * Math.min(1, f * 0.5 + 0.1);
-      e.y = e.y + (e.targetY - e.y) * Math.min(1, f * 0.5 + 0.1);
-      if (this.day >= e.arrivesDay) {
-        const town: Settlement = {
-          id: this.nextId++,
-          name: e.name,
-          x: e.targetX,
-          y: e.targetY,
-          foundedDay: this.day,
-          cohorts: { bands: [e.pop * 0.1, e.pop * 0.55, e.pop * 0.35, 0, 0] },
-          food: e.food,
-          wood: e.wood,
-          satisfaction: 60,
-          housing: e.pop + 4,
-          landQuality: e.site.fertility,
-          site: e.site,
-          lastRaidDay: -99,
-          lastFloodDay: -99,
-          strikeUntil: -1,
-          grievance: 0,
-          prices: defaultPrices(),
-          recentEvents: [],
-          // Phase 0: Regional faction system
-          factionId: this.playerFactionId,
-          garrisonStrength: 2, // new towns have smaller garrisons
-          stationedUnits: [],
-          loyaltyToFaction: 100,
-          factionStrengths: new Map(activeFactions(this.year).map(f => [f.id, 50] as [NewFactionId, number])),
-          sectors: defaultSectors(),
-          buildings: [],
-          placedBuildings: [],
-          placedDistricts: [],
-          construction: null,
-          focus: 'balanced',
-          activeEvents: [],
-          policies: { ...DEFAULT_CITY_POLICIES },
-        };
-        this.settlements.push(town);
-        // Reveal the new settlement and surrounding area
-        this.revealTiles(town.x, town.y, 2, 'explored');
-        // Update player faction settlement list
-        const playerFaction = this.faction(this.playerFactionId);
-        if (playerFaction) {
-          playerFaction.settlementIds.push(town.id);
-        }
-        this.expeditions = this.expeditions.filter((o) => o !== e);
-        const flavor = e.site.river ? 'on the riverbank' : e.site.coastal ? 'by the sea' : e.site.fertility > 1 ? 'in good black soil' : 'on thin ground';
-        this.addLog(`${town.name} is founded ${flavor} — the ${this.ordinal(this.settlements.length)} town of the colony.`, 'good');
-        // graft the new town onto the central network: blaze its trail to the
-        // nearest town already on the faction backbone, not whoever sent the expedition
-        this.blazeTrail(this.networkAnchor(town), town.id);
-        // A founder steps up
-        this.mintNotable('Reeve', town.id);
-      }
-    }
-  }
-
-  private ordinal(n: number): string {
+  ordinal(n: number): string {
     return n === 2 ? 'second' : n === 3 ? 'third' : `${n}th`;
   }
 
@@ -8898,42 +8482,6 @@ export class RegionSim {
   // ---- Phase 0: Exploration & Fog of War ----
 
   /** Update exploration visibility based on settlements and caravan routes. */
-  private updateExploration(): void {
-    // The space age ends the fog for good: orbital survey sees everything.
-    if (this.has('computing')) {
-      for (let x = 0; x < 100; x++) {
-        for (let y = 0; y < 100; y++) {
-          this.explorationMap[x][y] = 'explored';
-        }
-      }
-      return;
-    }
-    // Settlements and routes automatically reveal tiles around them
-    let sightRadius = 2; // base sight radius
-    // Technology improvements to sight: wires, then wings
-    if (this.has('electrical_grid')) sightRadius += 1; // telegraph lines along every road
-    if (this.has('combustion_engine')) sightRadius += 2; // aerial survey
-    for (const settlement of this.settlements) {
-      // Phase 2: a telegraph office extends this town's survey reach
-      this.revealTiles(settlement.x, settlement.y, sightRadius + this.buildingSight(settlement), 'explored');
-    }
-
-    // Routes also reveal tiles (caravans passively explore)
-    for (const route of this.routes) {
-      const a = this.settlement(route.a);
-      const b = this.settlement(route.b);
-      if (!a || !b) continue;
-      // Reveal a corridor along the route (simplified: just endpoints)
-      this.revealTiles(a.x, a.y, 1, 'explored');
-      this.revealTiles(b.x, b.y, 1, 'explored');
-    }
-
-    // Scout units reveal tiles
-    for (const scout of this.scouts) {
-      this.revealTiles(scout.x, scout.y, 5, 'explored');
-    }
-  }
-
   /** The promotion-as-moment (GDD §2.2): the player names the State and sets its lean. */
   completeIncorporation(stateName: string, lean: GovLean): void {
     if (!this.ceremonyPending || this.stateProclaimed) return;
@@ -8969,71 +8517,9 @@ export class RegionSim {
   // ---- Faction system (GDD §5.3) ----
 
   /** Recompute faction power and support from current game state (called monthly). */
-  private updateFactions(): void {
-    const pop = this.totalPop();
-    const food = this.settlements.reduce((s, t) => s + t.food, 0);
-    const trade = this.tradeValueLastMonth;
-
-    const workerPower = Math.min(70, 30 + pop * 0.05);
-    const workerSupport = Math.max(0, Math.min(100,
-      50 + (this.servicesLevel - 1) * 20
-      - Math.max(0, this.taxRate - 0.15) * 100
-      + (this.passedLaws.has('workers_charter') ? 20 : 0)
-      - (this.passedLaws.has('conscription_act') ? 5 : 0)
-      + (this.passedLaws.has('estate_tax') ? 10 : 0)
-      + (this.passedLaws.has('progressive_tax') ? 15 : 0)
-      + (this.passedLaws.has('welfare_benefits') ? 10 : 0)
-      + (this.passedLaws.has('national_education_act') ? 10 : 0)
-      + (this.passedLaws.has('healthcare_act') ? 10 : 0)
-      + (this.passedLaws.has('land_reform') ? 20 : 0)
-      + (this.passedLaws.has('trade_unions_act') ? 20 : 0),
-    ));
-
-    const landownerPower = Math.min(50, 15 + food * 0.005);
-    const landownerSupport = Math.max(0, Math.min(100,
-      70 - this.taxRate * 160
-      - (this.passedLaws.has('estate_tax') ? 25 : 0)
-      - (this.passedLaws.has('workers_charter') ? 10 : 0)
-      - (this.passedLaws.has('progressive_tax') ? 10 : 0)
-      - (this.passedLaws.has('land_reform') ? 30 : 0)
-      - (this.passedLaws.has('trade_unions_act') ? 10 : 0)
-      + (this.passedLaws.has('tariff_act') ? 10 : 0),
-    ));
-
-    const merchantPower = Math.min(40, 10 + trade * 0.12);
-    const merchantSupport = Math.max(0, Math.min(100,
-      50 + trade * 0.05
-      + (this.passedLaws.has('merchants_charter') ? 25 : 0)
-      - (this.passedLaws.has('workers_charter') ? 10 : 0)
-      - (this.passedLaws.has('progressive_tax') ? 10 : 0)
-      + (this.passedLaws.has('press_freedom_act') ? 10 : 0)
-      - (this.passedLaws.has('tariff_act') ? 10 : 0),
-    ));
-
-    this.factions = [
-      {
-        id: 'workers', name: 'Workers', power: workerPower, support: workerSupport,
-        demand: workerSupport < 40 ? 'better services & lower taxes' : 'content',
-      },
-      {
-        id: 'landowners', name: 'Landowners', power: landownerPower, support: landownerSupport,
-        demand: landownerSupport < 40 ? 'tax cuts' : 'content',
-      },
-      {
-        id: 'merchants', name: 'Merchants', power: merchantPower, support: merchantSupport,
-        demand: merchantSupport < 40 ? 'open markets' : 'content',
-      },
-    ];
-
-    // Update regional faction economies: calculate production based on resource focus
-    this.updateRegionalTrade();
-
-    // Update faction alliances: compatible goals form pacts, incompatible ones break
-    this.updateFactionAlliances();
-  }
 
   /** Calculate regional trade dynamics: factions compete for market dominance by resource type. */
-  private updateRegionalTrade(): void {
+  updateRegionalTrade(): void {
     // Calculate resource production for each faction
     const factionResources: Record<number, Record<string, number>> = {};
 
@@ -9140,42 +8626,6 @@ export class RegionSim {
   // ---- Elections (GDD §5.3) ----
 
   /** Schedule the first election once universal suffrage + state both exist. */
-  private checkElection(): void {
-    if (!this.stateProclaimed || !this.has('universal_suffrage')) return;
-    // Non-democratic governments don't hold elections after proclamation
-    if (this.nationProclaimed && this.govType !== null) {
-      const def = GOV_TYPES.find((g) => g.id === this.govType)!;
-      if (!def.electionsRequired) return;
-    }
-    if (this.nextElectionDay < 0) {
-      this.nextElectionDay = this.day + 240; // ~4 game-years
-    }
-    if (this.day >= this.nextElectionDay) this.runElection();
-  }
-
-  /** Run an election: award political capital proportional to approval. */
-  private runElection(): void {
-    const n = this.settlements.length;
-    const avgSat = n > 0
-      ? this.settlements.reduce((s, t) => s + t.satisfaction, 0) / n
-      : 50;
-    const earned = Math.round(20 + (avgSat / 100) * 80);
-    this.politicalCapital = Math.min(200, this.politicalCapital + earned);
-    this.lastElectionYear = this.year;
-    this.nextElectionDay = this.day + 240;
-    const result = avgSat >= 65 ? 'LANDSLIDE' : avgSat >= 50 ? 'MAJORITY' : avgSat >= 35 ? 'MINORITY' : 'LOST';
-    this.addLog(
-      `ELECTION ${this.year}: ${result} (approval ${Math.round(avgSat)}%) — ${earned} political capital earned.` +
-      (result === 'LOST' ? ' The government limps on.' : ''),
-      avgSat >= 50 ? 'good' : 'bad',
-    );
-    // Democracy/Republic: legitimacy refreshed by elections (GDD §5.3)
-    if (this.nationProclaimed && (this.govType === 'democracy' || this.govType === 'republic')) {
-      const legBonus = result === 'LANDSLIDE' ? 20 : result === 'MAJORITY' ? 12 : result === 'MINORITY' ? 4 : -12;
-      this.legitimacy = Math.max(0, Math.min(100, this.legitimacy + legBonus));
-    }
-  }
-
   // ---- Law system (GDD §5.3) ----
 
   /** Laws available to be enacted: not yet passed, prereqs met, tier gates satisfied. */
@@ -12326,7 +11776,7 @@ export class RegionSim {
   }
 
   /** Push a per-town event (kept newest-first, capped at 12). */
-  private townEvent(t: Settlement, text: string, kind: 'good' | 'bad' | 'info'): void {
+  townEvent(t: Settlement, text: string, kind: 'good' | 'bad' | 'info'): void {
     t.recentEvents.unshift({ day: this.day, text, kind });
     if (t.recentEvents.length > 12) t.recentEvents.pop();
   }
@@ -12862,7 +12312,7 @@ export class RegionSim {
    *  treasury for the player, the faction treasury for a rival), so it can never drain
    *  the buffer that feeds the people (the same discipline as `rivalStateCost`).
    *  Intentional headless re-baseline. */
-  private maybeDevelopFactionTown(faction: RegionalFaction, knobs: typeof AI_DIFFICULTY[AiDifficulty], output: number): void {
+  maybeDevelopFactionTown(faction: RegionalFaction, knobs: typeof AI_DIFFICULTY[AiDifficulty], output: number): void {
     if (faction.settlementIds.length === 0) return;
     if (!this.aiRng.chance(RIVAL_BUILD_CHANCE * knobs.techMult)) return;
     // Only ever spend what sits ABOVE a famine floor — emergency grain is paid from
@@ -13274,7 +12724,7 @@ export class RegionSim {
   }
 
   /** Update faction alliance dynamics (Phase 3b: called during monthly faction update). */
-  private updateFactionAlliances(): void {
+  updateFactionAlliances(): void {
     for (let i = 0; i < this.regionalFactions.length; i++) {
       for (let j = i + 1; j < this.regionalFactions.length; j++) {
         const a = this.regionalFactions[i];
@@ -13295,106 +12745,14 @@ export class RegionSim {
 
   /** Update settlement-level faction strengths based on laws, policies, and economic conditions.
    *  Factions gain strength when the player enacts laws they support, and lose when blocked. */
-  private updateSettlementFactions(): void {
-    for (const settlement of this.settlements) {
-      // Get active factions for this year
-      const activeFacs = activeFactions(this.year);
-
-      for (const factionDef of activeFacs) {
-        const currentStrength = settlement.factionStrengths.get(factionDef.id) ?? 50;
-        let newStrength = currentStrength;
-
-        // Faction gains 20 strength when player passes a law they promote
-        for (const law of factionDef.promotes) {
-          if (this.passedLaws.has(law)) {
-            newStrength += 2;
-          }
-        }
-
-        // Faction loses 15 strength when player passes a law they oppose
-        for (const law of factionDef.opposes) {
-          if (this.passedLaws.has(law)) {
-            newStrength -= 2;
-          }
-        }
-
-        // Tech research boosts faction strength (if they have modifiers for that tech)
-        // Example: environmentalists boost when solar/wind researched
-        if (factionDef.id === 'environmentalists' && (this.has('solar_cells') || this.has('wind_power'))) {
-          newStrength += 1;
-        }
-        if (factionDef.id === 'oil_barons' && (this.has('coal_mining') || this.has('oil_refining'))) {
-          newStrength += 1;
-        }
-        if (factionDef.id === 'scientists' && (this.has('computing') || this.has('automation'))) {
-          newStrength += 1;
-        }
-
-        // Economic conditions affect factions
-        // Industrialists grow stronger during high GDP growth
-        if (factionDef.id === 'industrialists' && this.gdpLastMonth > 50000) {
-          newStrength += 0.5;
-        }
-        // Pacifists gain strength during peace
-        if (factionDef.id === 'pacifists' && !this.playerWar) {
-          newStrength += 0.5;
-        }
-        // Militarists gain during war
-        if (factionDef.id === 'militarists' && this.playerWar) {
-          newStrength += 0.5;
-        }
-
-        // Natural decay if faction goals are being ignored (very slow)
-        newStrength *= 0.99;
-
-        // Clamp to 0-100
-        newStrength = Math.max(0, Math.min(100, newStrength));
-
-        settlement.factionStrengths.set(factionDef.id, newStrength);
-      }
-    }
-  }
 
   /** Monthly update hook for faction AI: check if any faction is due for update.
    *  Staggered scheduling keeps this O(factions) but amortized O(1) per month. */
-  private updateRivalAI(): void {
-    // Nation-level rivals: staggered diplomatic cadence (peace, war, treaties).
-    // GDD §6.2: Personality-driven AI generates offers based on weights, relations, and situation.
-    for (const rival of this.rivals) {
-      if (this.day - rival.lastEnvoyDay >= 365) {
-        this.rivalDiplomaticRound(rival);
-        rival.lastEnvoyDay = this.day;
-      }
-    }
-
-    // Regional factions: staggered AI so not every faction acts each month.
-    // Runs from tick 1 — rivals expand and scout regardless of player statehood.
-    for (const faction of this.regionalFactions) {
-      if (faction.id === this.playerFactionId) {
-        // The player faction never runs the full rival AI (no procedural goals,
-        // expansion, military or diplomacy — those are the human's to drive). But
-        // in autoplay (flag-gated; OFF for live human play) it DOES exercise its
-        // own spatial path: develop the player's town(s) on the same cadence,
-        // funded from the national treasury and reserve-gated like a rival. This
-        // is what makes the headless balance signal reflect a player who actually
-        // builds, instead of one bare town carrying the whole economy on raw yields.
-        if (this.autoDevelopPlayer && this.day - faction.lastUpdateDay >= faction.updateFrequency) {
-          this.maybeDevelopFactionTown(faction, this.aiKnobs(), this.factionTownOutput(faction));
-          faction.lastUpdateDay = this.day;
-        }
-        continue;
-      }
-      if (this.day - faction.lastUpdateDay >= faction.updateFrequency) {
-        this.updateFactionAI(faction);
-        faction.lastUpdateDay = this.day;
-      }
-    }
-  }
 
   /** Total monthly sector output across a faction's towns — the reserve basis for
    *  `maybeDevelopFactionTown` (development spends only the surplus above a fraction
    *  of this). Mirrors the inline `rivalOutput` sum in `updateFactionAI`. */
-  private factionTownOutput(faction: RegionalFaction): number {
+  factionTownOutput(faction: RegionalFaction): number {
     let output = 0;
     for (const id of faction.settlementIds) {
       const t = this.settlement(id);
@@ -13404,7 +12762,7 @@ export class RegionSim {
   }
 
   /** Annual diplomatic round: AI initiates offers based on personality and relations. */
-  private rivalDiplomaticRound(rival: RivalNation): void {
+  rivalDiplomaticRound(rival: RivalNation): void {
     if (!this.stateProclaimed) return; // Player must be a nation to be courted
 
     // Clean up expired offers
@@ -13555,7 +12913,7 @@ export class RegionSim {
   // ---- Scout System (GDD §6.2: exploratory units for faction AI) ----
 
   /** Spawn scouts for a faction if it has budget and slots. Called during faction AI update. */
-  private spawnScout(faction: RegionalFaction): Scout | null {
+  spawnScout(faction: RegionalFaction): Scout | null {
     if (faction.settlementIds.length === 0) return null;
     const scoutCount = this.scouts.filter((s) => s.factionId === faction.id).length;
     if (scoutCount >= 2) return null; // max 2 scouts per faction
@@ -13587,7 +12945,7 @@ export class RegionSim {
   }
 
   /** Move a single scout by 2-3 cells toward objective or random direction. */
-  private moveScout(scout: Scout): void {
+  moveScout(scout: Scout): void {
     const oldX = scout.x, oldY = scout.y;
     const faction = this.faction(scout.factionId);
     if (!faction || !faction.currentGoal) {
@@ -13836,31 +13194,9 @@ export class RegionSim {
   }
 
   /** Update all scouts: move, age, expire. Called during monthly update. */
-  private updateScouts(): void {
-    for (const scout of this.scouts) {
-      if (this.day < scout.expireDay) {
-        const oldX = scout.x, oldY = scout.y;
-        // Player scouts use deterministic movement (no AI RNG consumed).
-        if (scout.factionId === this.playerFactionId) {
-          this.movePlayerScout(scout);
-        } else {
-          this.moveScout(scout);
-        }
-        if (Math.abs(scout.x - oldX) > 0.1 || Math.abs(scout.y - oldY) > 0.1) {
-          this.invalidateFactionVisibility(scout.factionId);
-        }
-      }
-    }
-    this.scouts = this.scouts.filter((s) => this.day < s.expireDay);
-    // Auto-spawn only for rival factions; player hires scouts manually.
-    for (const faction of this.regionalFactions) {
-      if (faction.id === this.playerFactionId) continue;
-      if (this.rng.chance(0.1)) this.spawnScout(faction);
-    }
-  }
 
   /** Deterministic movement for player scouts — no RNG consumed. */
-  private movePlayerScout(scout: Scout): void {
+  movePlayerScout(scout: Scout): void {
     // Manual waypoint: move toward it, clear when arrived.
     if (scout.manualTargetX !== undefined && scout.manualTargetY !== undefined) {
       const dx = scout.manualTargetX - scout.x;
@@ -13930,7 +13266,7 @@ export class RegionSim {
   }
 
   /** Mark faction visibility cache as dirty (rebuild on next check). */
-  private invalidateFactionVisibility(factionId: number): void {
+  invalidateFactionVisibility(factionId: number): void {
     this.lastVisibilityRebuild.set(factionId, -999); // force rebuild
   }
 

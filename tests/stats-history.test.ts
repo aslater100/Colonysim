@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { RegionSim, STATS_HISTORY_MAX } from '../src/sim/region';
+import { tickStatsHistory } from '../src/sim/systems/stats';
 import { DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
 
 /**
@@ -86,7 +87,7 @@ describe('annual stats history (Century Graph)', () => {
     const r = nation();
     // Manually push more than the cap
     for (let i = 0; i < STATS_HISTORY_MAX + 10; i++) {
-      (r as any).tickStatsHistory?.();
+      tickStatsHistory(r);
     }
     expect(r.statsHistory.length).toBeLessThanOrEqual(STATS_HISTORY_MAX);
   });

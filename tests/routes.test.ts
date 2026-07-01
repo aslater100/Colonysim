@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RegionSim, REGION_MINUTES_PER_TICK, ROUTE_SPECS, RAIL_ERA_YEAR, HIGHWAY_ERA_YEAR, MAGLEV_ERA_YEAR } from '../src/sim/region';
+import { caravans } from '../src/sim/systems/trade-season';
 import { RegionMap, CELL_SCALE } from '../src/sim/worldgen';
 import { MINUTES_PER_DAY, DAYS_PER_YEAR, START_YEAR } from '../src/sim/defs';
 import { hexNeighbors, hexDistance } from '../src/sim/hex';
@@ -148,7 +149,7 @@ describe('Caravan capacity (M6b)', () => {
     route.condition = 100;
     town2.food = 0;
     home.food = r.popOf(home) * 0.75 * 60 + 1000; // deep surplus
-    r.caravans();
+    caravans(r);
     const overTrail = town2.food;
     expect(overTrail).toBeGreaterThan(0);
     expect(overTrail).toBeLessThanOrEqual(ROUTE_SPECS.trail.capacity * 0.9 + 1e-9);
@@ -158,7 +159,7 @@ describe('Caravan capacity (M6b)', () => {
     route.condition = 100;
     town2.food = 0;
     home.food = r.popOf(home) * 0.75 * 60 + 1000;
-    r.caravans();
+    caravans(r);
     expect(town2.food).toBeGreaterThan(overTrail);
   });
 
@@ -169,7 +170,7 @@ describe('Caravan capacity (M6b)', () => {
     route.condition = 15; // the floor: a goat track
     town2.food = 0;
     home.food = r.popOf(home) * 0.75 * 60 + 1000;
-    r.caravans();
+    caravans(r);
     expect(town2.food).toBeLessThanOrEqual(ROUTE_SPECS.trail.capacity * 0.15 * 0.9 + 1e-9);
   });
 
@@ -180,7 +181,7 @@ describe('Caravan capacity (M6b)', () => {
     town2.food = 0;
     home.food = r.popOf(home) * 0.75 * 60 + 1000;
     const need = r.popOf(town2) * 0.75 * 20;
-    r.caravans();
+    caravans(r);
     expect(town2.food).toBeCloseTo(need * 0.3, 5);
   });
 });
@@ -278,13 +279,13 @@ describe('The rail era (M6c)', () => {
     route.condition = 100;
     town2.food = 0;
     home.food = r.popOf(home) * 0.75 * 60 + 100000; // deep surplus
-    r.caravans();
+    caravans(r);
     const overRoad = town2.food;
     expect(overRoad).toBeLessThanOrEqual(ROUTE_SPECS.road.capacity * 0.9 + 1e-9);
     route.kind = 'rail';
     town2.food = 0;
     home.food = r.popOf(home) * 0.75 * 60 + 100000;
-    r.caravans();
+    caravans(r);
     expect(town2.food).toBeGreaterThan(overRoad);
     expect(town2.food).toBeLessThanOrEqual(ROUTE_SPECS.rail.capacity * 0.9 + 1e-9);
   });
@@ -354,13 +355,13 @@ describe('The maglev era (transportation.md §5)', () => {
     route.condition = 100;
     town2.food = 0;
     home.food = r.popOf(home) * 0.75 * 60 + 1e6; // deep surplus
-    r.caravans();
+    caravans(r);
     const overRail = town2.food;
     expect(overRail).toBeLessThanOrEqual(ROUTE_SPECS.rail.capacity * 0.9 + 1e-9);
     route.kind = 'maglev';
     town2.food = 0;
     home.food = r.popOf(home) * 0.75 * 60 + 1e6;
-    r.caravans();
+    caravans(r);
     expect(town2.food).toBeGreaterThan(overRail);
     expect(town2.food).toBeLessThanOrEqual(ROUTE_SPECS.maglev.capacity * 0.9 + 1e-9);
   });

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { RegionSim, REGION_MINUTES_PER_TICK, REGION_LAWS, GOV_TYPES, POLICY_CARDS, POLICY_SWAP_COST, REGION_BUILDINGS, REGION_EVENT_DEFS, TECH_TREE } from '../src/sim/region';
 import { MINUTES_PER_DAY } from '../src/sim/defs';
 import { tickNotableLifecycle } from '../src/sim/systems/notables';
+import { tickRegionalEvents } from '../src/sim/systems/events';
 import { REGION_N } from '../src/sim/worldgen';
 
 const ticksPerDay = MINUTES_PER_DAY / REGION_MINUTES_PER_TICK;
@@ -313,7 +314,7 @@ describe('Region event variety', () => {
     const def = REGION_EVENT_DEFS.find((d) => d.kind === 'automation_surge')!;
     expect(def.minYear).toBe(2010);
     // tickRegionalEvents is private; reach in and run it many times at an early year
-    const tick = (sim: RegionSim) => (sim as unknown as { tickRegionalEvents(): void }).tickRegionalEvents();
+    const tick = (sim: RegionSim) => tickRegionalEvents(sim);
     expect(r.year).toBeLessThan(2010);
     for (let i = 0; i < 500; i++) tick(r);
     const fired = r.settlements.some((t) => t.activeEvents.some((e) => e.kind === 'automation_surge'));

@@ -22,6 +22,7 @@ import {
   SCENARIOS,
   DEFAULT_DIFFICULTY_SETTINGS,
 } from '../src/sim/region';
+import { checkScenarioGoals } from '../src/sim/systems/scenarios';
 import { RegionMap } from '../src/sim/worldgen';
 import { Weather } from '../src/sim/weather';
 import { Rng } from '../src/sim/rng';
@@ -265,7 +266,7 @@ describe('checkScenarioGoals()', () => {
     r.activeScenario = 'long_peace';
     r.scenarioGoalsCompleted = [];
     // goalSurviveTo2000 checks year >= 2000
-    r.checkScenarioGoals();
+    checkScenarioGoals(r);
     expect(r.scenarioGoalsCompleted).toContain('survive_to_2000');
   });
 
@@ -273,7 +274,7 @@ describe('checkScenarioGoals()', () => {
     const r = eraStart('2000');
     r.activeScenario = 'long_peace';
     r.scenarioGoalsCompleted = [];
-    r.checkScenarioGoals();
+    checkScenarioGoals(r);
     const achievedLog = r.log.find((l) => l.text.includes('SCENARIO GOAL ACHIEVED'));
     expect(achievedLog).toBeDefined();
   });
@@ -283,9 +284,9 @@ describe('checkScenarioGoals()', () => {
     const r = eraStart('2000');
     r.activeScenario = 'long_peace';
     r.scenarioGoalsCompleted = [];
-    r.checkScenarioGoals();
+    checkScenarioGoals(r);
     const firstCount = r.scenarioGoalsCompleted.filter((id) => id === 'survive_to_2000').length;
-    r.checkScenarioGoals(); // call again
+    checkScenarioGoals(r); // call again
     const secondCount = r.scenarioGoalsCompleted.filter((id) => id === 'survive_to_2000').length;
     expect(firstCount).toBe(1);
     expect(secondCount).toBe(1); // still only once
@@ -295,7 +296,7 @@ describe('checkScenarioGoals()', () => {
     const r = colony();
     r.activeScenario = null;
     r.scenarioGoalsCompleted = [];
-    r.checkScenarioGoals();
+    checkScenarioGoals(r);
     expect(r.scenarioGoalsCompleted.length).toBe(0);
   });
 });
