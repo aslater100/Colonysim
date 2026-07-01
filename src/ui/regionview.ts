@@ -14,6 +14,7 @@ import { hexNeighbors, hexNeighborDir, hexCenter, hexCorners, hexLayoutParams, s
 import { DesignScreen } from './designscreen';
 import { Minimap } from './minimap';
 import { sparklineGrid } from './sparklines';
+import { centuryGraphHtml } from './centuryGraph';
 import { AssetRegistry, townSpriteTier, TOWN_TIER_PX } from './assets/registry';
 import { buildPawnSprites } from './sprites';
 import { Backdrop, buildBackdropPalette, type Sky, type Branch } from './backdrop';
@@ -2623,6 +2624,7 @@ export class RegionView {
       `${rep.techs} discoveries · ${rep.laws} statutes · legitimacy ${rep.legitimacy}</p>` +
       `<p>stewardship <b>${g.stewardship}</b> · prosperity <b>${g.prosperity}</b> · ` +
       `liberty <b>${g.liberty}</b> · standing <b>${g.standing}</b></p>` +
+      centuryGraphHtml(this.region.statsHistory) +
       `<p class="insp-skills">Endings are graded, not won. The country is still yours.</p>` +
       dynastyHtml(this.region) +
       `<button id="century-close-btn">Carry on</button>` +
@@ -5193,6 +5195,7 @@ export class RegionView {
       `<p>treasury ` + formatCurrency(Math.floor(r.treasury)) + ` · GDP ` + formatCurrency(Math.floor(r.gdpLastMonth)) + `/mo</p>` +
       `<p>global tax ${Math.round(r.taxRate * 100)}% · trade ` + formatCurrency(Math.floor(r.tradeValueLastMonth)) + `/mo</p>` +
       sparklineGrid(r.gdpLastMonth, r.treasury, r.inflationRate * 100, gdpHist, treasuryHist, inflationHist) +
+      centuryGraphHtml(r.statsHistory) +
       (factionHtml ? `<p class="insp-skills">FACTION MOOD</p>${factionHtml}` : '') +
       actionsHtml;
     return (

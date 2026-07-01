@@ -2386,6 +2386,52 @@ body {
   font-size: 10px;
 }
 
+/* Century Graph — the long-horizon trend panel in the Century Report modal. */
+.cv-century-graph {
+  margin: 14px 0;
+}
+.cv-century-span {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  font-weight: 700;
+  font-size: 10px;
+  text-align: center;
+  margin-bottom: 6px;
+}
+.cv-century-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+  border: 1px solid rgba(90, 169, 216, 0.12);
+}
+.cv-century-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+}
+.cv-century-label {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.cv-century-svg {
+  width: 100%;
+  height: 40px;
+}
+.cv-century-value {
+  font-weight: 700;
+  font-family: ui-monospace, "SF Mono", monospace;
+  white-space: nowrap;
+}
+
 .cv-sparkline-label {
   color: var(--text-muted);
   text-transform: uppercase;
