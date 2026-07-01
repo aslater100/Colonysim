@@ -3315,6 +3315,20 @@ export class RegionSim {
    *  via the UI, and no player `aiRng` expansion draw fires); the headless sweep turns
    *  it on. Not serialized — a run-mode toggle, not game state. */
   autoExpandPlayer = false;
+  /** Autoplay-only STATEHOOD/governance director (see advanceAutoplayStatehood in
+   *  systems/rival-ai.ts). Without it the autoplay player grows to a multi-town COLONY
+   *  that never signs the Regional Charter, never researches a tech, and never charters
+   *  a central bank — so the whole statehood / tech-gated / monetary layer (incl. the
+   *  session-9/10 cost-push inflation, which needs hasCentralBank()) lies dormant in the
+   *  sweep. When on, the player walks up the natural code-enforced gates (charter →
+   *  research spine → Central Bank Charter) and cost-push inflation finally becomes
+   *  measurable. Kept SEPARATE and default OFF from `autoExpandPlayer`/`autoDevelopPlayer`
+   *  because state-tier income-tax revenue currently outruns the autoplayer's development
+   *  spend → an unbounded treasury (the default sweep's treas/GDP signal must stay clean
+   *  until an autoplay state-budget sink lands); opt in with SIM_AUTOPLAY_STATEHOOD to
+   *  study the monetary layer. Default OFF → live human play + the default sweep + the
+   *  determinism harness are byte-identical. Not serialized — a run-mode toggle. */
+  autoplayStatehood = false;
   /** Global-world leg 1 — the CONSUMER-DEMAND model (the structural fix that makes
    *  the world market able to TIGHTEN). The goods demand functions count only
    *  intermediate-INPUT demand (normalized to sector shares, O(1)/good) and have NO

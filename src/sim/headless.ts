@@ -27,8 +27,13 @@ const autoExpandPlayer = process.env.SIM_PLAYER_MANUAL !== '1';
 // default sweep stays comparable to the legacy stock baseline. When on, the world market
 // reads the flow signal and `wMkt%` shows live tightness instead of the structural 0.
 const consumerDemand = process.env.SIM_CONSUMER_DEMAND === '1';
+// Autoplay STATEHOOD/governance director (charter → research spine → central bank) —
+// OPT-IN (SIM_AUTOPLAY_STATEHOOD=1). Kept off the default sweep because state-tier
+// income-tax revenue currently outruns the autoplayer's development spend (unbounded
+// treasury); turn it on to study the monetary layer / measurable cost-push inflation.
+const autoplayStatehood = process.env.SIM_AUTOPLAY_STATEHOOD === '1';
 
-console.log(`headless sim: ${years} game-year(s) × ${runs} run(s)  [player spatial play: ${autoDevelopPlayer ? 'AUTO' : 'manual'}; consumer-demand: ${consumerDemand ? 'ON' : 'off'}]\n`);
+console.log(`headless sim: ${years} game-year(s) × ${runs} run(s)  [player spatial play: ${autoDevelopPlayer ? 'AUTO' : 'manual'}; consumer-demand: ${consumerDemand ? 'ON' : 'off'}; autoplay-statehood: ${autoplayStatehood ? 'ON' : 'off'}]\n`);
 console.log('seed |  year | towns | pTwn |    treasury |        GDP | treas/GDP(mo) | infl% |  pop   | sat | pBld | flows | lScar% | fShort% | wMkt% |  gpP% | ticks | outcome');
 console.log('-----+-------+-------+------+-------------+------------+---------------+-------+--------+-----+------+-------+--------+---------+-------+-------+-------+--------');
 
@@ -38,6 +43,7 @@ for (let run = 0; run < runs; run++) {
   r.autoDevelopPlayer = autoDevelopPlayer;
   r.autoExpandPlayer = autoExpandPlayer;
   r.consumerDemand = consumerDemand;
+  r.autoplayStatehood = autoplayStatehood;
   const target = r.year + years;
   let ticks = 0;
   while (r.year < target && !r.gameOver && ticks < TICK_CAP) { r.tick(); ticks++; }
