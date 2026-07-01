@@ -49,6 +49,7 @@ import { checkScenarioGoals } from './systems/scenarios';
 import { checkWinConditions, checkProclamationGate } from './systems/victory';
 import { tickUtilities } from './systems/utilities';
 import { tickRegionalEvents } from './systems/events';
+import { checkElection } from './systems/elections';
 import techTreeJson from '../data/techtree.json';
 import regionBuildingsJson from '../data/region_buildings.json';
 import rivalNationsJson from '../data/rival_nations.json';
@@ -5590,7 +5591,7 @@ export class RegionSim {
     this.maxGrievance = mg;
 
     tickResearch(this);
-    this.checkElection();
+    checkElection(this);
     if (this.day % 30 === 0) this.monthlyUpdate();
     if (this.day >= this.nextEventDay) {
       this.fireEvent();
@@ -8957,42 +8958,6 @@ export class RegionSim {
   // ---- Elections (GDD §5.3) ----
 
   /** Schedule the first election once universal suffrage + state both exist. */
-  private checkElection(): void {
-    if (!this.stateProclaimed || !this.has('universal_suffrage')) return;
-    // Non-democratic governments don't hold elections after proclamation
-    if (this.nationProclaimed && this.govType !== null) {
-      const def = GOV_TYPES.find((g) => g.id === this.govType)!;
-      if (!def.electionsRequired) return;
-    }
-    if (this.nextElectionDay < 0) {
-      this.nextElectionDay = this.day + 240; // ~4 game-years
-    }
-    if (this.day >= this.nextElectionDay) this.runElection();
-  }
-
-  /** Run an election: award political capital proportional to approval. */
-  private runElection(): void {
-    const n = this.settlements.length;
-    const avgSat = n > 0
-      ? this.settlements.reduce((s, t) => s + t.satisfaction, 0) / n
-      : 50;
-    const earned = Math.round(20 + (avgSat / 100) * 80);
-    this.politicalCapital = Math.min(200, this.politicalCapital + earned);
-    this.lastElectionYear = this.year;
-    this.nextElectionDay = this.day + 240;
-    const result = avgSat >= 65 ? 'LANDSLIDE' : avgSat >= 50 ? 'MAJORITY' : avgSat >= 35 ? 'MINORITY' : 'LOST';
-    this.addLog(
-      `ELECTION ${this.year}: ${result} (approval ${Math.round(avgSat)}%) — ${earned} political capital earned.` +
-      (result === 'LOST' ? ' The government limps on.' : ''),
-      avgSat >= 50 ? 'good' : 'bad',
-    );
-    // Democracy/Republic: legitimacy refreshed by elections (GDD §5.3)
-    if (this.nationProclaimed && (this.govType === 'democracy' || this.govType === 'republic')) {
-      const legBonus = result === 'LANDSLIDE' ? 20 : result === 'MAJORITY' ? 12 : result === 'MINORITY' ? 4 : -12;
-      this.legitimacy = Math.max(0, Math.min(100, this.legitimacy + legBonus));
-    }
-  }
-
   // ---- Law system (GDD §5.3) ----
 
   /** Laws available to be enacted: not yet passed, prereqs met, tier gates satisfied. */
