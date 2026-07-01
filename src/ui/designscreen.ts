@@ -5,6 +5,7 @@
  *  - Nation flip: national identity (economic system, military doctrine,
  *    alliances) — and the one sanctioned chance to re-pick the currency.
  */
+import './screens.css';
 import type { CurrencySymbol, RegionDesign, NationDesign } from '../sim/defs';
 import { CURRENCY_SYMBOLS } from '../sim/defs';
 
@@ -57,13 +58,8 @@ export class DesignScreen {
   constructor() {
     this.overlay = document.createElement('div');
     this.overlay.className = 'design-overlay';
-    this.overlay.style.cssText =
-      'position:fixed;inset:0;background:rgba(8,10,14,0.88);z-index:10000;' +
-      'display:flex;align-items:center;justify-content:center;font-family:monospace;';
     this.box = document.createElement('div');
-    this.box.style.cssText =
-      'background:#1a1d24;color:#cfd4e0;padding:28px 32px;max-width:620px;width:90%;' +
-      'max-height:90vh;overflow-y:auto;border:2px solid #5a6378;';
+    this.box.className = 'design-box';
     this.overlay.appendChild(this.box);
   }
 
@@ -79,30 +75,27 @@ export class DesignScreen {
   private choiceRow<T extends string>(title: string, choices: Choice<T>[], initial: T): { el: HTMLElement; get: () => T } {
     let selected = initial;
     const wrap = document.createElement('div');
-    wrap.style.cssText = 'margin:14px 0;';
+    wrap.className = 'design-row';
     const h = document.createElement('p');
     h.innerHTML = `<strong>${title}</strong>`;
-    h.style.cssText = 'margin:0 0 6px 0;';
+    h.className = 'design-row-title';
     wrap.appendChild(h);
     const row = document.createElement('div');
-    row.style.cssText = 'display:grid;gap:6px;';
+    row.className = 'design-choices';
     const buttons: HTMLButtonElement[] = [];
     const desc = document.createElement('p');
-    desc.style.cssText = 'margin:6px 0 0 0;font-size:11px;color:#8a93a6;min-height:14px;';
+    desc.className = 'design-desc';
     const paint = () => {
       buttons.forEach((b, i) => {
         const on = choices[i].value === selected;
-        b.style.background = on ? '#39435a' : '#242936';
-        b.style.borderColor = on ? '#7f8db0' : '#444c5e';
+        b.classList.toggle('design-choice-on', on);
         if (on) desc.textContent = choices[i].desc;
       });
     };
     for (const c of choices) {
       const b = document.createElement('button');
       b.textContent = c.label;
-      b.style.cssText =
-        'padding:8px 12px;color:#cfd4e0;border:1px solid #444c5e;cursor:pointer;' +
-        'text-align:left;font-family:monospace;font-size:13px;background:#242936;';
+      b.className = 'design-choice';
       b.addEventListener('click', () => { selected = c.value; paint(); });
       buttons.push(b);
       row.appendChild(b);
@@ -116,9 +109,7 @@ export class DesignScreen {
   private confirmButton(label: string, onClick: () => void): HTMLElement {
     const b = document.createElement('button');
     b.textContent = label;
-    b.style.cssText =
-      'width:100%;padding:12px;margin-top:20px;background:#39435a;color:#e8ecf4;' +
-      'border:1px solid #7f8db0;cursor:pointer;font-family:monospace;font-size:15px;';
+    b.className = 'design-confirm btn-gold';
     b.addEventListener('click', onClick);
     return b;
   }
@@ -127,10 +118,10 @@ export class DesignScreen {
     this.box.innerHTML = '';
     const h = document.createElement('h2');
     h.textContent = text;
-    h.style.cssText = 'text-align:center;margin:0 0 4px 0;letter-spacing:2px;';
+    h.className = 'design-heading';
     const p = document.createElement('p');
     p.textContent = sub;
-    p.style.cssText = 'text-align:center;margin:0 0 12px 0;font-size:12px;color:#8a93a6;';
+    p.className = 'design-sub';
     this.box.appendChild(h);
     this.box.appendChild(p);
   }
@@ -152,14 +143,14 @@ export class DesignScreen {
 
     let taxRate = 0.10;
     const taxWrap = document.createElement('div');
-    taxWrap.style.cssText = 'margin:14px 0;';
-    taxWrap.innerHTML = `<p style="margin:0 0 6px 0;"><strong>Tax Rate: <span id="ds-tax">10%</span></strong></p>`;
+    taxWrap.className = 'design-row';
+    taxWrap.innerHTML = `<p class="design-row-title"><strong>Tax Rate: <span id="ds-tax">10%</span></strong></p>`;
     const slider = document.createElement('input');
     slider.type = 'range';
     slider.min = '5';
     slider.max = '30';
     slider.value = '10';
-    slider.style.cssText = 'width:100%;';
+    slider.className = 'design-slider';
     slider.addEventListener('input', () => {
       taxRate = parseInt(slider.value) / 100;
       const span = taxWrap.querySelector('#ds-tax')!;
@@ -204,7 +195,7 @@ export class DesignScreen {
     const currency = this.choiceRow('Currency Standard', currencyChoices, KEEP);
 
     const warn = document.createElement('div');
-    warn.style.cssText = 'margin:14px 0;padding:10px 12px;background:#2a2230;border:1px solid #6a5a78;font-size:11px;color:#b0a0c0;';
+    warn.className = 'design-warn';
     warn.innerHTML =
       '<strong>⚠ Currency changes carry penalties.</strong> A switch without cause reads as caprice: ' +
       'expect 20–30% efficiency loss and 10–15% capital flight, recovering over 2–3 years. ' +

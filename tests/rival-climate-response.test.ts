@@ -282,12 +282,17 @@ describe('existential climate response — round-trips and stays out of the way 
     expect(loadedOld.rivalClimateBlocs).toEqual([]);
   });
 
-  it('the flag itself is not serialized — a fresh load always starts OFF (a run-mode toggle, not game state)', () => {
+  // INTENT CHANGE: this flag used to be a run-mode toggle (deliberately NOT
+  // serialized; this test asserted a fresh load always starts OFF). It is now a
+  // World Dynamism campaign option chosen at new game, so it persists through
+  // save/load. Old saves without the key still default OFF (see
+  // tests/world-dynamism.test.ts for the full matrix).
+  it('the flag is serialized — a campaign option survives save/load', () => {
     const r = RegionSim.create(1000);
     r.rivalClimateResponse = true;
     const saved = r.serialize();
     const loaded = RegionSim.deserialize(saved);
-    expect(loaded.rivalClimateResponse).toBe(false);
+    expect(loaded.rivalClimateResponse).toBe(true);
   });
 });
 

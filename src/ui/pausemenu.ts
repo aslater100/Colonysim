@@ -141,7 +141,7 @@ export class PauseMenu {
       <div class="pause-menu-content">
         <h1>Paused</h1>
         <div class="pause-menu-buttons">
-          <button data-action="resume" class="pause-btn">Resume Game</button>
+          <button data-action="resume" class="pause-btn btn-gold">Resume Game</button>
           <button data-action="save" class="pause-btn">Save Game</button>
           <button data-action="load" class="pause-btn" ${!hasSaves ? 'disabled' : ''}>Load Game</button>
           <button data-action="quit" class="pause-btn">Return to Menu</button>

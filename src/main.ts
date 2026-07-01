@@ -118,9 +118,19 @@ function showTitleScreen(): void {
   titleScreen.show(hasSave);
 }
 
+// World Dynamism campaign options: chosen on the scenario screen and applied to
+// every fresh sim. onNewColony has no scenario selection, so quick-start colonies
+// default both flags OFF (call with no `sel`) — the toggles live on the scenario
+// screen only. Once applied, the flags persist in the save (region serialize).
+function applyDynamism(r: RegionSim, sel?: ScenarioSelection): void {
+  r.consumerDemand = sel?.dynamism?.consumerDemand ?? false;
+  r.rivalClimateResponse = sel?.dynamism?.rivalClimateResponse ?? false;
+}
+
 titleScreen.onNewColony = () => {
   new DesignScreen().showRegionDesign((design) => {
     const r = RegionSim.create(Date.now() % 100000, design);
+    applyDynamism(r);
     enterRegionMode(r);
   });
 };
@@ -129,11 +139,13 @@ titleScreen.onBeginScenario = (sel: ScenarioSelection) => {
   if (sel.eraStart === '1919' && !sel.scenarioId) {
     // Sandbox 1919: standard new colony flow
     const r = RegionSim.create(seed, {});
+    applyDynamism(r, sel);
     enterRegionMode(r);
   } else if (sel.eraStart === '1919') {
     // 1919 scenario: standard colony but with scenario wired
     const r = RegionSim.create(seed, {});
     r.activeScenario = sel.scenarioId;
+    applyDynamism(r, sel);
     enterRegionMode(r);
   } else {
     // Era start: 1950 or 2000
@@ -141,6 +153,7 @@ titleScreen.onBeginScenario = (sel: ScenarioSelection) => {
       seed,
       scenarioId: sel.scenarioId ?? undefined,
     });
+    applyDynamism(r, sel);
     enterRegionMode(r);
   }
 };

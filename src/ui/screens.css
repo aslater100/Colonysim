@@ -1,0 +1,210 @@
+/* ============================================================
+   MENU SCREENS — "Gilded Century"
+   World Dynamism toggles (title/scenario screen) and the
+   design-screen modal. Every color comes from the design
+   tokens in src/style.css — never hardcode a hex here.
+   ============================================================ */
+
+/* ---- WORLD DYNAMISM section (scenario screen) ---- */
+.ts-dynamism {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 2px 0;
+  text-align: left;
+}
+.ts-dyn-title {
+  font-family: var(--serif);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gold-300);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-gold-soft);
+}
+
+/* Toggle row: hidden checkbox drives the switch via :checked */
+.ts-toggle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 9px 12px;
+  background: var(--surface-inset);
+  border: 1px solid var(--border-gold-soft);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.ts-toggle-row:hover {
+  border-color: var(--border-gold);
+  box-shadow: var(--glow-gold);
+}
+.ts-toggle-row input[type='checkbox'] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+/* The switch: navy inlaid track, brass knob, gold-lit when on */
+.ts-toggle-row .ts-toggle {
+  flex: 0 0 auto;
+  position: relative;
+  width: 40px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.65), var(--navy-800));
+  border: 1px solid rgba(0, 0, 0, 0.65);
+  box-shadow: 0 1px 0 var(--border-inner);
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+.ts-toggle-row .ts-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--gold-face);
+  border: 1px solid #8a6620;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+  transition: left 0.15s ease, box-shadow 0.15s ease;
+}
+.ts-toggle-row input:checked + .ts-toggle {
+  background: linear-gradient(180deg, var(--gold-600), var(--gold-500));
+  border-color: #8a6620;
+  box-shadow: var(--glow-gold), 0 1px 0 var(--border-inner);
+}
+.ts-toggle-row input:checked + .ts-toggle .ts-toggle-knob {
+  left: 22px;
+  background: var(--gold-face-hover);
+  box-shadow: var(--glow-gold), 0 1px 3px rgba(0, 0, 0, 0.55);
+}
+
+.ts-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ts-toggle-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-bright);
+}
+.ts-toggle-row input:checked ~ .ts-toggle-text .ts-toggle-label {
+  color: var(--gold-300);
+}
+.ts-toggle-desc {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+/* ---- DESIGN SCREEN modal (regional charter / constitutional convention) ---- */
+.design-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 10, 20, 0.82);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--sans);
+}
+.design-box {
+  background: var(--surface);
+  color: var(--text);
+  padding: 28px 32px;
+  max-width: 620px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  border: 1px solid var(--border-gold);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-modal);
+}
+.design-heading {
+  font-family: var(--serif);
+  text-align: center;
+  margin: 0 0 4px 0;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gold-300);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+.design-sub {
+  text-align: center;
+  margin: 0 0 12px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.design-row {
+  margin: 14px 0;
+}
+.design-row-title {
+  margin: 0 0 6px 0;
+  font-size: 13px;
+  color: var(--text-bright);
+}
+.design-choices {
+  display: grid;
+  gap: 6px;
+}
+.design-choice {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border-gold-soft);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+  box-shadow: 0 1px 0 var(--border-inner) inset, 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+.design-choice:hover {
+  border-color: var(--border-gold);
+  color: var(--text-bright);
+}
+.design-choice.design-choice-on {
+  border-color: var(--gold-400);
+  background: var(--navy-700);
+  color: var(--gold-300);
+  box-shadow: var(--glow-gold), 0 1px 0 var(--border-inner) inset;
+}
+.design-desc {
+  margin: 6px 0 0 0;
+  font-size: 11px;
+  color: var(--muted-2);
+  min-height: 14px;
+}
+.design-slider {
+  width: 100%;
+}
+.design-warn {
+  margin: 14px 0;
+  padding: 10px 12px;
+  background: var(--surface-inset);
+  border: 1px solid var(--border-gold-soft);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.design-confirm {
+  width: 100%;
+  padding: 12px;
+  margin-top: 20px;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  border-radius: var(--radius);
+  cursor: pointer;
+}

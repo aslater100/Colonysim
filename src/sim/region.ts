@@ -3523,7 +3523,9 @@ export class RegionSim {
    *  → the world-price anchor → arbitrage. Default OFF so live human play + the determinism
    *  harness stay byte-identical (every demand fn returns its legacy value, every world
    *  scarcity its legacy stock-based 0); the headless sweep turns it on (SIM_CONSUMER_DEMAND).
-   *  Not serialized — a run-mode toggle, not game state. */
+   *  A World Dynamism campaign option: chosen at new game ('Living World Market'),
+   *  serialized in saves, restored on load (?? false for old saves). Headless env
+   *  flags still override after construction. */
   consumerDemand = false;
   /** Existential climate response: rivals stop sitting still for the Drowned
    *  branch. Gates THREE effects, all previously entirely absent for rivals:
@@ -3536,9 +3538,11 @@ export class RegionSim {
    *  diplomatic/economic while a fossil-locked one's is military. Every new RNG
    *  draw and every changed probability is guarded behind this flag, so OFF
    *  is byte-identical (no draw fires, no probability changes) to every
-   *  session before this one. Not serialized — a run-mode toggle, not game
-   *  state (`rivalClimateBlocs` itself IS serialized — see below — since it's
-   *  real accumulating state once the flag is on, not a derived cache). */
+   *  session before this one. A World Dynamism campaign option: chosen at new
+   *  game ('A World That Fights Back'), serialized in saves, restored on load
+   *  (?? false for old saves); headless env flags still override after
+   *  construction (`rivalClimateBlocs` is also serialized — see below — since
+   *  it's real accumulating state once the flag is on, not a derived cache). */
   rivalClimateResponse = false;
   /** Transient per-good supply LEVEL (∈[0,1], Liebig min of input availability) cached
    *  by `tickIntermediateGoods` each month from the cascade solve, so the (consumer-demand)
@@ -11787,6 +11791,9 @@ export class RegionSim {
       scenarioGoalsCompleted: this.scenarioGoalsCompleted ?? [],
       govLockExpiry: this.govLockExpiry ?? null,
       difficultySettings: this.difficultySettings ?? { ...DEFAULT_DIFFICULTY_SETTINGS },
+      // World Dynamism campaign options (chosen at new game, restored on load)
+      consumerDemand: this.consumerDemand,
+      rivalClimateResponse: this.rivalClimateResponse,
       // Phase 15: Extended Economy & FX
       // Note: intermediate-goods stocks are now per-settlement and ride the
       // `settlements` spread above — no top-level field. Old saves that carry a
@@ -12153,6 +12160,9 @@ export class RegionSim {
     r.localGoodsScarcity = d.localGoodsScarcity ?? 0;      // no-shortage default
     r.wonderOwner = d.wonderOwner ?? {};                   // Phase D: no Wonders default
     r.prestige = d.prestige ?? 0;
+    // World Dynamism campaign options — old saves carry neither key → both OFF
+    r.consumerDemand = d.consumerDemand ?? false;
+    r.rivalClimateResponse = d.rivalClimateResponse ?? false;
     r._electronicsDisrupted = d.electronicsDisrupted ?? false;
     // Pre-transit-pipeline flows carried no pendingIncome — backfill to 0 (they
     // simply transit out without a payout); pre-cargo flows carried no physical

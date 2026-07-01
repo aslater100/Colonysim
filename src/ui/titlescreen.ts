@@ -1,3 +1,4 @@
+import './screens.css';
 import { SCENARIOS } from '../sim/region';
 
 interface AudioHandles {
@@ -8,11 +9,18 @@ interface AudioHandles {
 
 interface Cloud { x: number; y: number; r: number; speed: number; }
 
+/** World Dynamism campaign options: opt-in sim behaviors chosen at new game. */
+export interface DynamismSelection {
+  consumerDemand: boolean;
+  rivalClimateResponse: boolean;
+}
+
 /** Selection returned when the player begins a campaign from the scenario screen. */
 export interface ScenarioSelection {
   scenarioId: string | null; // null = sandbox
   eraStart: '1919' | '1950' | '2000';
   difficulty: 'standard' | 'hard' | 'brutal';
+  dynamism: DynamismSelection;
 }
 
 /** Pure HTML renderer for the scenario selection panel (can also be used headlessly). */
@@ -43,6 +51,8 @@ export class TitleScreen {
   private animFrame = 0;
   private clouds: Cloud[] = [];
   private selectedScenario: string | null = null; // null = sandbox
+  /** World Dynamism toggles (scenario screen). Both default OFF. */
+  private dynamism: DynamismSelection = { consumerDemand: false, rivalClimateResponse: false };
 
   onNewColony: (() => void) | null = null;
   /** Called when the player begins a scenario campaign. */
@@ -417,7 +427,7 @@ export class TitleScreen {
         </div>
         <div class="ts-panel">
           <nav class="ts-nav">
-            <button class="ts-btn ts-btn-primary" id="ts-new" title="The scale-engine colony sim on procedural terrain — paint walls, rooms, zones, and farms">New Colony</button>
+            <button class="ts-btn ts-btn-primary btn-gold" id="ts-new" title="The scale-engine colony sim on procedural terrain — paint walls, rooms, zones, and farms">New Colony</button>
             <button class="ts-btn" id="ts-scenarios">Historical Scenarios &nbsp;<span class="ts-arrow">›</span></button>
             <button class="ts-btn" id="ts-continue" ${this.hasSave ? '' : 'disabled'}>Continue</button>
             <div class="ts-sep"></div>
@@ -452,9 +462,34 @@ export class TitleScreen {
             <div class="ts-sep"></div>
             ${scenarioSelectHtml(sel)}
             <div class="ts-sep"></div>
-            <button class="ts-btn ts-btn-primary" id="ts-begin-scenario">&#9654; Begin Campaign</button>
+            ${this.dynamismHtml()}
+            <div class="ts-sep"></div>
+            <button class="ts-btn ts-btn-primary btn-gold" id="ts-begin-scenario">&#9654; Begin Campaign</button>
           </nav>
         </div>
+      </div>`;
+  }
+
+  /** WORLD DYNAMISM section: two switch rows. State lives in `this.dynamism`
+   *  (the innerHTML rebuild on every render() would wipe live checkbox state,
+   *  so — like the options-screen toggles — clicks flip the field and re-render). */
+  private dynamismHtml(): string {
+    const row = (key: keyof DynamismSelection, label: string, desc: string) => `
+      <label class="ts-toggle-row" data-dyn="${key}">
+        <input type="checkbox" ${this.dynamism[key] ? 'checked' : ''} tabindex="-1">
+        <span class="ts-toggle" aria-hidden="true"><span class="ts-toggle-knob"></span></span>
+        <span class="ts-toggle-text">
+          <span class="ts-toggle-label">${label}</span>
+          <span class="ts-toggle-desc">${desc}</span>
+        </span>
+      </label>`;
+    return `
+      <div class="ts-dynamism">
+        <div class="ts-dyn-title">World Dynamism</div>
+        ${row('consumerDemand', 'Living World Market',
+          'Goods obey supply and demand — shortages bite, gluts glut. The world market runs tight.')}
+        ${row('rivalClimateResponse', 'A World That Fights Back',
+          'As the planet warms, fossil-locked powers turn belligerent and green powers form coalitions. Wars are decided by industry.')}
       </div>`;
   }
 
@@ -505,6 +540,17 @@ export class TitleScreen {
       return;
     }
 
+    // Handle World Dynamism toggle rows: the checkbox is decorative (render()
+    // rebuilds innerHTML), so the source of truth is this.dynamism — flip + re-render.
+    const dynRow = (e.target as HTMLElement).closest<HTMLElement>('[data-dyn]');
+    if (dynRow) {
+      e.preventDefault();
+      const key = dynRow.dataset.dyn as keyof DynamismSelection;
+      this.dynamism[key] = !this.dynamism[key];
+      this.render();
+      return;
+    }
+
     const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button');
     if (!btn || btn.disabled) return;
     switch (btn.id) {
@@ -520,6 +566,7 @@ export class TitleScreen {
           scenarioId: this.selectedScenario,
           eraStart: scenario ? scenario.eraStart : '1919',
           difficulty: scenario ? scenario.difficulty : 'standard',
+          dynamism: { ...this.dynamism },
         };
         this.onBeginScenario?.(sel);
         break;
