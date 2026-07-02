@@ -2948,6 +2948,9 @@ export const ARCHETYPE_WAR_FREQ_MULT: Record<RivalArchetype, number> = {
   crusader_state:   1.2,  // expansion 6 + risk 6 → ideological mission justifies campaigns
   opportunist:      1.1,  // risk 9 but honorless; fights when the odds look good
 };
+/** Minimum years after a defeat before a rival is ready to seek revenge.
+ *  Time to rebuild army, rally grievance, and wait for the right moment. */
+export const REVANCHISM_BUILDUP_YEARS = 5;
 export const WORLD_GREEN_START_YEAR = 1972;  // the transition can begin as renewables become conceivable
 export const WORLD_GREEN_RAMP_YEARS = 38;    // years from the start to a full ramp (≈2010)
 export const WORLD_GREEN_MAX_CUT = 0.92;     // a fully-green world cuts this fraction of its emissions
@@ -10694,12 +10697,15 @@ export class RegionSim {
     }
     const nation = this.nationName || this.stateName || 'the nation';
     this.noteHistory(rv, defensive ? `Declared war on ${nation}, ${this.year}.` : `Attacked by ${nation}, ${this.year}.`);
-    this.addLog(
-      defensive
-        ? `WAR: ${rv.name} declares war on ${nation}! A defensive war — the home front rallies (support ${this.playerWar.support}).`
-        : `WAR DECLARED on ${rv.name} — casus belli: ${CASUS_BELLI_DEFS[cb].name.toLowerCase()} (support ${this.playerWar.support}).`,
-      'bad',
-    );
+    let warMsg: string;
+    if (defensive && cb === 'revanchism') {
+      warMsg = `WAR: ${rv.name} marches for revenge — they have not forgiven their defeat. The home front rallies (support ${this.playerWar.support}).`;
+    } else if (defensive) {
+      warMsg = `WAR: ${rv.name} declares war on ${nation}! A defensive war — the home front rallies (support ${this.playerWar.support}).`;
+    } else {
+      warMsg = `WAR DECLARED on ${rv.name} — casus belli: ${CASUS_BELLI_DEFS[cb].name.toLowerCase()} (support ${this.playerWar.support}).`;
+    }
+    this.addLog(warMsg, 'bad');
   }
 
   /** Recruit military units for the active war (GDD §7.1). Returns cost if successful, null if failed. */

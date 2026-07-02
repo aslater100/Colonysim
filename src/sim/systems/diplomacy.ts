@@ -17,7 +17,7 @@
  * `nextRivalBlocId` counter) were made public for this seam.
  */
 import type { RegionSim } from '../region';
-import type { ForeignWar, RivalNation, CasusBelli } from '../region';
+import type { ForeignWar, RivalNation, CasusBelli, WarScar } from '../region';
 import {
   blocAffinity,
   RIVAL_EMERGENCE_YEAR,
@@ -31,6 +31,7 @@ import {
   URGENCY_RELATIONS_DRAG,
   CLIMATE_BLOC_RELATIONS_THRESHOLD,
   CLIMATE_BLOC_GREEN_THRESHOLD,
+  REVANCHISM_BUILDUP_YEARS,
 } from '../region';
 import { formatCurrency } from '../defs';
 import { tickPlayerWar } from './military';
@@ -107,6 +108,26 @@ export function updateDiplomacy(r: RegionSim): void {
           r.treasury -= toll;
           r.addLog(`${rv.name}'s customs men shake down caravans at the frontier — ` + formatCurrency(toll) + ` in seized goods and bribes.`, 'bad');
         }
+      }
+      // Rival revanchism: a rival that lost a war to us remembers — and rebuilds.
+      // After REVANCHISM_BUILDUP_YEARS the grudge matures and they strike back.
+      // Never fires in headless (warScars always empty there) → byte-identical.
+      let latestVictory: WarScar | undefined;
+      for (const s of r.warScars) {
+        if (s.rivalId === rv.id && s.outcome === 'victory') {
+          if (!latestVictory || s.yearEnded > latestVictory.yearEnded) latestVictory = s;
+        }
+      }
+      if (
+        latestVictory &&
+        !r.playerWar && r.nationProclaimed &&
+        r.year - latestVictory.yearEnded >= REVANCHISM_BUILDUP_YEARS &&
+        rv.relations < -40 &&
+        !rv.treaties.includes('non_aggression') &&
+        r.rng.chance((0.015 + rv.weights.grudge * 0.004 + rv.weights.risk * 0.002) * ARCHETYPE_WAR_FREQ_MULT[rv.archetype])
+      ) {
+        r.startPlayerWar(rv, 'revanchism', true);
+        continue;
       }
       // Beyond mischief (GDD §7.1): an emboldened hostile power declares war outright.
       // Existential climate response: as warming urgency rises, an archetype NOT
