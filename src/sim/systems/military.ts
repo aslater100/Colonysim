@@ -22,6 +22,9 @@ import {
   MAX_OCCUPIED_MARCHES,
   WAR_SUPPORT_FLOOR,
   WAR_SUPPORT_DECAY_MULT,
+  frontPhase,
+  advanceFront,
+  FRONT_PHASE_LABEL,
   ROUTE_CONDITION_FLOOR,
   WAR_MATERIEL_GOODS,
   WAR_MATERIEL_PER_POWER,
@@ -412,7 +415,7 @@ export function tickPlayerWar(r: RegionSim): void {
     const rv = r.rival(w.rivalId);
     if (!rv) {
       // Rival no longer exists — inconclusive end (bookkeep with a placeholder name)
-      r.warScars.push({ rivalId: w.rivalId, rivalName: `rival#${w.rivalId}`, yearEnded: r.year, outcome: 'status_quo', occupied: w.occupied, casualties: w.casualties, durationMonths: Math.round((r.day - w.startedDay) / 30) });
+      r.warScars.push({ rivalId: w.rivalId, rivalName: `rival#${w.rivalId}`, yearEnded: r.year, outcome: 'status_quo', occupied: w.occupied, casualties: w.casualties, durationMonths: Math.round((r.day - w.startedDay) / 30), frontPeak: Math.round(w.front?.peak ?? w.score) });
       r.playerWar = null;
       return;
     }
@@ -425,8 +428,16 @@ export function tickPlayerWar(r: RegionSim): void {
       rv.pop *= 0.997; // the quays starve before the trenches do
       w.score = Math.min(100, w.score + 1.5);
     }
-    // Front stub: mirrors war score; future Front system will read this position.
-    w.front = { position: w.score };
+    // The front line (GDD §7.4): a lagging integrator of the war score, so the line
+    // carries inertia — a breakthrough is built over a run of good months, a rout
+    // over bad ones — instead of teleporting with each roll. Deterministic (no RNG).
+    // Narrate the posture only when it changes, so the log tracks the shape of the war.
+    const prevPhase = w.front?.phase ?? frontPhase(w.front?.position ?? w.score);
+    w.front = advanceFront(w.front, w.score);
+    if (w.front.phase !== prevPhase) {
+      const meta = FRONT_PHASE_LABEL[w.front.phase];
+      r.addLog(meta.line.replace('{0}', rv.name), meta.log);
+    }
     // Attrition (GDD §7.3): burns even on quiet fronts; the pyramid keeps the scar
     const lossRate =
       (w.mobilization === 'total' ? 0.006 : w.mobilization === 'partial' ? 0.004 : 0.003) +

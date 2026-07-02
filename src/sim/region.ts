@@ -2153,9 +2153,62 @@ export interface PlayerWar {
   units: ArmyUnit[];
   /** Food/ammunition reserve for the army (months of supply). */
   supplyReserve: number;
-  /** Front position mirroring war score: positive = we hold the initiative,
-   *  negative = we are pushed back. Write-only scaffold; future Front system reads it. */
-  front?: { position: number };
+  /** The front line (GDD §7.4). `position` is a lagging integrator of the war
+   *  score — it carries inertia, so the line advances and retreats as a coherent
+   *  front rather than teleporting with each lucky roll. `peak` is the deepest
+   *  advance reached (the high-water mark); `phase` is the derived posture the UI
+   *  and the war log read. Backfilled on the next tick for pre-front saves. */
+  front?: { position: number; peak: number; phase: FrontPhase };
+}
+
+/** The posture of a war's front line, derived from its integrated position. */
+export type FrontPhase = 'breakthrough' | 'advancing' | 'contested' | 'falling_back' | 'collapse';
+
+/** Monthly easing of the front toward the current war score (0..1). The front
+ *  closes ~35% of the gap each month, so a run of good rolls builds a breakthrough
+ *  and a single bad month dents but does not rout the line. Deterministic — no RNG. */
+export const FRONT_LAG = 0.35;
+
+/** Classify an integrated front position (−100..+100) into its posture. */
+export function frontPhase(position: number): FrontPhase {
+  if (position >= 60) return 'breakthrough';
+  if (position >= 20) return 'advancing';
+  if (position > -20) return 'contested';
+  if (position > -60) return 'falling_back';
+  return 'collapse';
+}
+
+/** Display + narration metadata per front posture. `bar` tones the UI meter;
+ *  `log` tones the event-log line; `line` is the dispatch narrating a transition
+ *  ({0} = the enemy's name). */
+export const FRONT_PHASE_LABEL: Record<
+  FrontPhase,
+  { label: string; bar: 'good' | 'warn' | 'bad'; log: LogEntry['kind']; line: string }
+> = {
+  breakthrough: { label: 'breakthrough', bar: 'good', log: 'good',
+    line: 'BREAKTHROUGH on the {0} front — the line gives way and the columns pour through.' },
+  advancing:    { label: 'advancing', bar: 'good', log: 'good',
+    line: 'The {0} front bends our way — the line advances.' },
+  contested:    { label: 'contested', bar: 'warn', log: 'info',
+    line: 'The {0} front congeals into stalemate — the line will not move.' },
+  falling_back: { label: 'falling back', bar: 'warn', log: 'bad',
+    line: 'Our line buckles on the {0} front — we are giving ground.' },
+  collapse:     { label: 'collapse', bar: 'bad', log: 'bad',
+    line: 'The {0} front COLLAPSES — the army streams back in rout.' },
+};
+
+/** Advance the front one month: ease the position toward the current war score by
+ *  FRONT_LAG (so the line lags the noisy month-to-month score), carry the deepest
+ *  advance as `peak`, and derive the posture. Pure and deterministic — no RNG.
+ *  `prev` undefined = the war's first resolved month: the line starts on the score. */
+export function advanceFront(
+  prev: { position: number; peak: number } | undefined,
+  score: number,
+): { position: number; peak: number; phase: FrontPhase } {
+  const prevPos = prev?.position ?? score;
+  const position = prevPos + (score - prevPos) * FRONT_LAG;
+  const peak = Math.max(prev?.peak ?? position, position);
+  return { position, peak, phase: frontPhase(position) };
 }
 
 /** Regime × war (GDD §7.5): below this floor the war eats the regime;
@@ -2167,8 +2220,6 @@ export const WAR_SUPPORT_FLOOR: Record<GovType, number> = {
   social_democracy: 48, autocracy: 20, one_party: 20, technocracy: 35,
 };
 
-/** Monthly war-support decay multiplier by regime — all 1.0 now (no-op scaffold);
- *  tune non-1.0 values to differentiate regimes without a re-baseline. */
 /** Per-government war-support decay multiplier. <1 = support decays slower (propaganda/control);
  *  >1 = support decays faster (public accountability). Tuned to regime accountability model. */
 export const WAR_SUPPORT_DECAY_MULT: Record<GovType, number> = {
@@ -2201,6 +2252,9 @@ export interface WarScar {
   occupied: number;
   casualties: number;
   durationMonths: number;
+  /** The front's high-water mark — the deepest the line ever advanced (−100..+100).
+   *  Optional for saves written before the front line was activated. */
+  frontPeak?: number;
 }
 
 const RIVAL_NAMES = [
@@ -10390,6 +10444,7 @@ export class RegionSim {
       occupied: w.occupied,
       casualties: w.casualties,
       durationMonths,
+      frontPeak: Math.round(w.front?.peak ?? w.score),
     });
     // Post-war relations shift: the loser resents, the winner grows confident.
     if (outcome === 'victory') {
