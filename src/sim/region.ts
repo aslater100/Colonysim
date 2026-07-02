@@ -2027,6 +2027,10 @@ export const OCCUPATION_DEFS: Record<OccupationPolicy, {
 export const MAX_OCCUPIED_MARCHES = 3;
 /** Each occupied march discounts the peace table: the flag already flies. */
 export const OCCUPATION_SCORE_DISCOUNT = 6;
+/** A deep advance at the front's peak earns diplomatic leverage even if the
+ *  line later retreats: £0.15 discount per front-peak point (positive only).
+ *  A peak of 80 (breakthrough) shaves ~12 off the ask alongside occupation. */
+export const FRONT_PEAK_LEVERAGE_SCALE = 0.15;
 /** Blockade upkeep: gunboats and requisitioned merchantmen, £/pop/month. */
 export const BLOCKADE_UPKEEP_PER_POP = 0.02;
 
@@ -11214,12 +11218,15 @@ export class RegionSim {
   }
 
   /** Combined ask for a basket of terms (GDD §7.4 priced with the §6.3
-   *  engine): scores sum, the grudge premium is charged once, and ground
-   *  the army already holds discounts the bill. */
+   *  engine): scores sum, the grudge premium is charged once, ground the
+   *  army holds discounts the bill, and a deep historical advance earns
+   *  diplomatic leverage even after the line retreats (front.peak). */
   peaceBasketAsk(rv: RivalNation, terms: PeaceTerm[]): number {
-    const occupied = this.playerWar?.occupied ?? 0;
+    const w = this.playerWar;
+    const occupied = w?.occupied ?? 0;
+    const peakLeverage = Math.floor(Math.max(0, w?.front?.peak ?? 0) * FRONT_PEAK_LEVERAGE_SCALE);
     const sum = terms.reduce((s, t) => s + PEACE_TERMS[t].score, 0);
-    return Math.max(0, Math.round(sum + rv.weights.grudge * 2 - occupied * OCCUPATION_SCORE_DISCOUNT));
+    return Math.max(0, Math.round(sum + rv.weights.grudge * 2 - occupied * OCCUPATION_SCORE_DISCOUNT - peakLeverage));
   }
 
   /** Station units at a settlement garrison (GDD §7.1: garrison management). */
