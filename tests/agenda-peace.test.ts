@@ -4,6 +4,7 @@ import {
   AgendaKind,
   ARCHETYPE_AGENDA,
   AGENDA_PEACE_RESISTANCE,
+  AGENDA_TABLE_COST,
   PEACE_TERMS,
   rivalAgendaKind,
   type RivalNation,
@@ -310,5 +311,56 @@ describe('peaceCounter — agenda-aware term shedding', () => {
     const counter2 = getCounter(r, rv, ['reparations', 'border_province']);
     expect(counter2).toContain('reparations');
     expect(counter2).not.toContain('border_province');
+  });
+});
+
+// ── AGENDA_TABLE_COST — deal table overhead by agenda kind ───────────────────
+
+describe('AGENDA_TABLE_COST', () => {
+  it('isolation has positive table cost (hermit kingdoms are hard to sit down with)', () => {
+    expect((AGENDA_TABLE_COST.isolation ?? 0)).toBeGreaterThan(0);
+  });
+
+  it('opportunism has negative table cost (opportunists deal with anyone)', () => {
+    expect((AGENDA_TABLE_COST.opportunism ?? 0)).toBeLessThan(0);
+  });
+});
+
+describe('evaluateDeal — agenda table-cost differentiation', () => {
+  function setRelations(rv: RivalNation, rel: number): void {
+    (rv as unknown as { relations: number }).relations = rel;
+  }
+
+  it('hermit_kingdom is harder to deal with than trading_republic at the same relations', () => {
+    const r = makeRegion();
+    const rv = ensureRival(r);
+    rv.weights.grudge = 0;
+    setRelations(rv, 20); // neutral-ish — above the walk threshold
+
+    // Same gold offer to both archetypes — hermit_kingdom should have higher cost
+    setArchetype(rv, 'trading_republic');
+    const tradeVerdict = r.evaluateDeal(rv, { treaties: [], goldToThem: 30, goldToYou: 0 });
+
+    setArchetype(rv, 'hermit_kingdom');
+    const hermitVerdict = r.evaluateDeal(rv, { treaties: [], goldToThem: 30, goldToYou: 0 });
+
+    // The hermit kingdom's cost is higher (harder to satisfy)
+    expect(hermitVerdict.cost).toBeGreaterThan(tradeVerdict.cost);
+  });
+
+  it('opportunist is easier to deal with than trading_republic at the same relations', () => {
+    const r = makeRegion();
+    const rv = ensureRival(r);
+    rv.weights.grudge = 0;
+    setRelations(rv, 20);
+
+    setArchetype(rv, 'trading_republic');
+    const tradeVerdict = r.evaluateDeal(rv, { treaties: [], goldToThem: 30, goldToYou: 0 });
+
+    setArchetype(rv, 'opportunist');
+    const oppVerdict = r.evaluateDeal(rv, { treaties: [], goldToThem: 30, goldToYou: 0 });
+
+    // The opportunist's cost is lower (easier to satisfy)
+    expect(oppVerdict.cost).toBeLessThanOrEqual(tradeVerdict.cost);
   });
 });

@@ -2030,6 +2030,14 @@ export function rivalAgendaKind(rv: Pick<RivalNation, 'archetype'>): AgendaKind 
   return ARCHETYPE_AGENDA[rv.archetype] ?? 'opportunism';
 }
 
+/** Flat adjustment to the deal table-cost by agenda kind.
+ *  Positive = rival is harder to sit down with (even at neutral relations);
+ *  negative = rival deals with anyone (opening move cheaper). */
+export const AGENDA_TABLE_COST: Partial<Record<AgendaKind, number>> = {
+  isolation:   10,  // hermit kingdoms hold the gates — any deal costs extra persuasion
+  opportunism: -5,  // opportunists will deal with anyone; the door is always open
+};
+
 /** Occupied marches are administered with a light hand or a heavy one —
  *  brutality is cheaper now, costlier forever (GDD §7.4). */
 export type OccupationPolicy = 'conciliatory' | 'brutal';
@@ -10059,9 +10067,10 @@ export class RegionSim {
     return Math.max(0.5, 1 + this.treatiesBroken * 0.3 + rv.weights.grudge * 0.03 - rv.relations / 150);
   }
 
-  /** Sitting down at all has a price when they hate you. */
+  /** Sitting down at all has a price when they hate you — and some never want to sit at all. */
   private tableCost(rv: RivalNation): number {
-    return Math.max(0, -rv.relations / 8) + this.treatiesBroken * 2 + rv.weights.grudge * 0.4;
+    const base = Math.max(0, -rv.relations / 8) + this.treatiesBroken * 2 + rv.weights.grudge * 0.4;
+    return Math.max(0, base + (AGENDA_TABLE_COST[rivalAgendaKind(rv)] ?? 0));
   }
 
   /** Strip a basket to the items that still mean anything. */
