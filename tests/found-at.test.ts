@@ -36,7 +36,10 @@ describe('canFoundAt — site validation', () => {
   it('rejects a site too close to an existing town', () => {
     const { r, homeId } = readyColony(42);
     const home = r.settlement(homeId)!;
-    const res = r.canFoundAt(homeId, home.x + 1, home.y); // well inside MIN_SETTLEMENT_SPACING (8)
+    // The home's own coordinates: guaranteed settleable land (it's a town) and
+    // distance 0 — well inside MIN_SETTLEMENT_SPACING (8), so the spacing gate is
+    // what fires. (home.x±1 can be sea on a coastal start, tripping the water gate.)
+    const res = r.canFoundAt(homeId, home.x, home.y);
     expect(res.ok).toBe(false);
     expect(res.reason).toMatch(/too close/);
   });

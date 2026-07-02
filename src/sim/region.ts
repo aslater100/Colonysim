@@ -2823,7 +2823,15 @@ export interface Route {
   freight: number; // food moved last caravan season (the overlay number)
   cargoType: SectorId | null; // Phase 6: dominant sector cargo flowing this route
   cargoPriority?: SectorId | null; // Phase A: governor's manual cargo pin (overrides the auto tag)
+  sea?: boolean; // a sea lane across open water — the maritime counterpart of a
+  // land trail. Laid when the two towns sit on different continents/islands, it
+  // can never be paved (no road on the ocean) but a hull carries more than a mule.
 }
+
+/** A sea lane carries more than a footpath — a single hull outhauls a mule
+ *  train — so a maritime trail moves this many food-equivalents/month. Still
+ *  well under a road: early boats are slow and few. */
+export const SEA_LANE_CAPACITY = 130;
 
 export const ROUTE_SPECS: Record<RouteKind, {
   capacity: number; // food-equivalent per month at condition 100
@@ -4294,9 +4302,11 @@ export class RegionSim {
     return this.routes.find((r) => (r.a === aId && r.b === bId) || (r.a === bId && r.b === aId));
   }
 
-  /** Throughput a route can actually carry: capacity scales with condition. */
+  /** Throughput a route can actually carry: capacity scales with condition. A
+   *  sea lane carries its shipping capacity, not the mule-train trail figure. */
   effectiveCapacity(r: Route): number {
-    return ROUTE_SPECS[r.kind].capacity * (r.condition / 100);
+    const base = r.sea ? SEA_LANE_CAPACITY : ROUTE_SPECS[r.kind].capacity;
+    return base * (r.condition / 100);
   }
 
   /** Spare capacity on the tightest leg of a path — the bottleneck a caravan
@@ -4311,19 +4321,47 @@ export class RegionSim {
     return min;
   }
 
-  /** A trail is blazed automatically when a settlement is founded. */
+  /** A trail is blazed automatically when a settlement is founded. Over land it
+   *  follows the A* corridor; when open water separates the towns (different
+   *  continents or an island hop) it becomes a real sea lane, pathfound across
+   *  the ocean instead of a straight chord. */
   blazeTrail(fromId: number, toId: number): void {
     const a = this.settlement(fromId);
     const b = this.settlement(toId);
     if (!a || !b || this.routeBetween(fromId, toId)) return;
     const c = this.corridorBetween(a, b);
-    // no land corridor (water between): the chord stands in — peddler boats
-    const path = c ? c.path : [this.map.coordToCell(a.x, a.y), this.map.coordToCell(b.x, b.y)];
-    this.routes.push({
-      a: fromId, b: toId, kind: 'trail', condition: 100,
-      path, terrainCost: c ? c.cost : path.length * 2, freight: 0, cargoType: null, cargoPriority: null,
-    });
+    if (c) {
+      this.routes.push({
+        a: fromId, b: toId, kind: 'trail', condition: 100,
+        path: c.path, terrainCost: c.cost, freight: 0, cargoType: null, cargoPriority: null,
+      });
+    } else {
+      // No land route — the sea carries it. Pathfind a lane through the water;
+      // fall back to a straight chord only if the ports share no navigable sea.
+      const s = this.seaLaneBetween(a, b);
+      const path = s ? s.path : [this.map.coordToCell(a.x, a.y), this.map.coordToCell(b.x, b.y)];
+      this.routes.push({
+        a: fromId, b: toId, kind: 'trail', condition: 100,
+        path, terrainCost: s ? s.cost : path.length * 2, freight: 0, cargoType: null, cargoPriority: null,
+        sea: true,
+      });
+    }
     this._routePathCache.clear(); // route graph changed
+  }
+
+  /** Sea lanes between fixed towns never change — cache them like corridors. */
+  private seaLaneCache = new Map<string, { path: { x: number; y: number }[]; cost: number } | null>();
+
+  private seaLaneBetween(a: Settlement, b: Settlement): { path: { x: number; y: number }[]; cost: number } | null {
+    const key = a.id < b.id ? `${a.id}:${b.id}` : `${b.id}:${a.id}`;
+    let c = this.seaLaneCache.get(key);
+    if (c === undefined) {
+      const ac = this.map.coordToCell(a.x, a.y);
+      const bc = this.map.coordToCell(b.x, b.y);
+      c = this.map.seaLane(ac.x, ac.y, bc.x, bc.y);
+      this.seaLaneCache.set(key, c);
+    }
+    return c;
   }
 
   /** Settlement ids reachable from `start` through the route graph (one BFS).
@@ -5986,6 +6024,14 @@ export class RegionSim {
     updateExpeditions(this); // (systems/expeditions.ts)
     updateCharter(this);
     updateConstruction(this); // Phase 2: scaffolding comes down, doors open (systems/construction.ts)
+    // Reconcile any building whose auto-siting was transiently blocked at
+    // completion (e.g. the just-finished construction still reserved its own
+    // cell) now that the ring has freed up — the SAME pass a reload runs on
+    // load (deserialize → ensurePlacements). Doing it live too keeps the
+    // playing economy byte-identical to a reloaded one: the placement bonus a
+    // building earns must not depend on whether the player saved and reloaded.
+    // Idempotent and cheap (early-returns once every building has a cell).
+    for (const t of this.settlements) this.ensurePlacements(t);
     updateExploration(this); // Phase 0: Update fog of war based on scouts and settlements (systems/exploration.ts)
     if (this.totalPop() <= 0) {
       this.gameOver = true;
@@ -13597,7 +13643,16 @@ export class RegionSim {
       // Noise for variety
       score += this.aiRng.int(11) - 5;
 
-      if (score > 0 && (!bestSite || score > bestSite.score)) {
+      // Reject unsettleable ground — open water, a bare peak, or an islet too
+      // small for a worked ring. The sea-heavy multi-continent map otherwise
+      // strands rival towns offshore (a settlement on a water cell that can
+      // never build). Checked AFTER every aiRng draw so the stream order — and
+      // thus determinism and every downstream rival roll — is untouched; only
+      // WHICH sampled cell wins changes.
+      const cell = this.map.coordToCell(x, y);
+      const settleable = this.map.siteScore(cell.x, cell.y) >= 0;
+
+      if (settleable && score > 0 && (!bestSite || score > bestSite.score)) {
         bestSite = { x: Math.round(x), y: Math.round(y), score };
       }
     }

@@ -52,6 +52,69 @@ describe('RegionMap (procedural world)', () => {
     expect(days).toBeGreaterThanOrEqual(2);
     expect(days).toBeLessThan(30);
   });
+
+  it('builds MULTIPLE continents separated by open sea, plus islands', () => {
+    for (const seed of [1, 42, 1234, 7, 9999]) {
+      const m = new RegionMap(seed);
+      // Several substantial landmasses (not one blob) — the whole point.
+      const majors = m.landmassSizes.filter((n) => n >= 500);
+      expect(majors.length, `seed ${seed} major continents`).toBeGreaterThanOrEqual(3);
+      // The heartland is big but never the ONLY land — real ocean splits the world.
+      const land = m.landmassSizes.reduce((a, b) => a + b, 0);
+      const largest = Math.max(...m.landmassSizes);
+      expect(largest / land, `seed ${seed} not a single dominant mass`).toBeLessThan(0.8);
+      // Islands: land too small to be a continent, dotting the open sea.
+      const islands = m.landmassSizes.filter((n) => n > 0 && n < 500);
+      expect(islands.length, `seed ${seed} islands`).toBeGreaterThan(0);
+      // A majority-ocean world (the sea the maritime system crosses).
+      const sea = m.cells.filter((c) => c.biome === 'sea' || c.biome === 'lake').length;
+      expect(sea / m.cells.length, `seed ${seed} ocean fraction`).toBeGreaterThan(0.4);
+    }
+  });
+
+  it('the start site sits on a real continent, never an islet', () => {
+    for (const seed of [1, 42, 1234, 7, 9999]) {
+      const m = new RegionMap(seed);
+      const s = m.startSite();
+      const lm = m.landmassAt(s.cellX, s.cellY);
+      expect(lm, `seed ${seed} start is on land`).toBeGreaterThanOrEqual(0);
+      expect(m.landmassSizes[lm], `seed ${seed} start continent size`).toBeGreaterThan(500);
+      // The worked ring has room to build/farm — never a bare speck.
+      expect(m.workableLand(s.cellX, s.cellY)).toBeGreaterThanOrEqual(RegionMap.MIN_WORKABLE_RING);
+    }
+  });
+
+  it('sea lanes link coastal cells across the ocean where no land corridor exists', () => {
+    for (const seed of [1, 42, 1234, 7]) {
+      const m = new RegionMap(seed);
+      const bySize = m.landmassSizes
+        .map((n, i) => ({ i, n }))
+        .sort((a, b) => b.n - a.n)
+        .slice(0, 2)
+        .map((o) => o.i);
+      const coastalOf = (lm: number): { x: number; y: number } | null => {
+        for (let y = 0; y < REGION_N; y++) {
+          for (let x = 0; x < REGION_N; x++) {
+            if (m.landmassAt(x, y) !== lm) continue;
+            if (m.at(x + 1, y).biome === 'sea' || m.at(x - 1, y).biome === 'sea'
+              || m.at(x, y + 1).biome === 'sea' || m.at(x, y - 1).biome === 'sea') return { x, y };
+          }
+        }
+        return null;
+      };
+      const a = coastalOf(bySize[0])!;
+      const b = coastalOf(bySize[1])!;
+      expect(a).toBeTruthy();
+      expect(b).toBeTruthy();
+      // Two different continents: no land corridor, but a navigable sea lane.
+      expect(m.corridor(a.x, a.y, b.x, b.y), `seed ${seed} no land bridge`).toBeNull();
+      const lane = m.seaLane(a.x, a.y, b.x, b.y);
+      expect(lane, `seed ${seed} sea lane exists`).not.toBeNull();
+      // The lane is (almost) all water — only its two port endpoints are land.
+      const landCells = lane!.path.filter((p) => !m.isWater(p.x, p.y)).length;
+      expect(landCells).toBeLessThanOrEqual(2);
+    }
+  });
 });
 
 describe('Weather', () => {

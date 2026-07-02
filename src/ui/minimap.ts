@@ -86,18 +86,27 @@ export class Minimap {
     ctx.translate((size - mapW * scale) / 2, (size - mapH * scale) / 2);
     ctx.scale(scale, scale);
 
-    // Simple terrain: light colors for land, dark for water
-    ctx.fillStyle = '#2a3a50'; // water
+    // Real terrain: sample the region map per logical cell so the continents,
+    // islands, and the seas between them read at a glance. Sea is dark; land is
+    // tinted by biome (green lowland, grey peaks, tan hills, blue rivers).
+    ctx.fillStyle = '#1c2a3c'; // open sea
     ctx.fillRect(0, 0, mapW, mapH);
-
-    // Explored tiles (show as lighter) — sample every N cells for performance
-    ctx.fillStyle = '#4a5a70';
-    const explorationMap = region.explorationMap;
-    for (let y = 0; y < explorationMap.length; y++) {
-      for (let x = 0; x < explorationMap[y].length; x++) {
-        if (explorationMap[x] && explorationMap[x][y] !== 'fogged') {
-          ctx.fillRect(x, y, 1, 1);
+    const map = region.map;
+    for (let y = 0; y < mapH; y++) {
+      for (let x = 0; x < mapW; x++) {
+        const c = map.atCoord(x, y);
+        let col: string | null = null;
+        switch (c.biome) {
+          case 'sea': col = c.elevation < 0.16 ? null : '#22384f'; break; // shallows shade
+          case 'lake': col = '#2e4a5c'; break;
+          case 'river': col = '#3a5f78'; break;
+          case 'marsh': col = '#4a5340'; break;
+          case 'forest': col = '#2e4826'; break;
+          case 'hills': col = '#5a5742'; break;
+          case 'mountains': col = c.elevation > 0.82 ? '#b8b4ac' : '#7a7060'; break;
+          default: col = '#4e5e40'; break; // plains
         }
+        if (col) { ctx.fillStyle = col; ctx.fillRect(x, y, 1, 1); }
       }
     }
 

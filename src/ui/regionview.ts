@@ -749,6 +749,12 @@ export class RegionView {
     const ss = region.settlements;
     for (const r of region.routes) {
       const alpha = 0.2 + 0.6 * (r.condition / 100);
+      if (r.sea) {
+        // A sea lane: a dashed teal wake across the water, with a small hull
+        // tracing it — the maritime counterpart of the dotted land trail.
+        this.drawSeaLane(r, alpha);
+        continue;
+      }
       if (r.kind === 'trail') {
         g.fillStyle = `rgba(220,210,170,${alpha})`;
         for (let i = 0; i < r.path.length; i += 2) {
@@ -2096,6 +2102,38 @@ export class RegionView {
     g.fillRect(Math.round(p.px) - 3, Math.round(p.py) - 3, 7, 3);
     g.fillStyle = '#6ec8d6';
     g.fillRect(Math.round(p.px) - 3, Math.round(p.py) - 1, 7, 1); // the field glow beneath
+  }
+
+  /** A sea lane: a dashed teal wake tracing the pathfound water route, with a
+   *  small hull working along it. The dashes flow so the ocean reads as a live
+   *  trade artery, not a border. */
+  private drawSeaLane(r: { path: { x: number; y: number }[]; condition: number }, alpha: number): void {
+    const pts = this.getRoutePts(r);
+    if (pts.length < 2) return;
+    const { g } = this;
+    // Flowing dashes: offset the dash pattern by the frame so the wake drifts.
+    g.save();
+    g.strokeStyle = `rgba(96,196,214,${Math.min(1, alpha + 0.15)})`;
+    g.lineWidth = 1.5;
+    g.setLineDash([5, 4]);
+    g.lineDashOffset = -(this.frame % 18);
+    g.beginPath();
+    for (let i = 0; i < pts.length; i++) {
+      if (i === 0) g.moveTo(pts[i].px, pts[i].py);
+      else g.lineTo(pts[i].px, pts[i].py);
+    }
+    g.stroke();
+    g.restore();
+    // The hull, shuttling out and back like the land vehicles.
+    if (r.condition <= 20) return; // a lane fallen out of use goes quiet
+    const span = (pts.length - 1) * 2;
+    const t = Math.floor(this.frame / 6) % span; // boats are the slowest of the fleet
+    const i = t < pts.length - 1 ? t : span - t;
+    const p = pts[Math.max(0, Math.min(pts.length - 1, i))];
+    g.fillStyle = '#3a2c20'; // a dark hull
+    g.fillRect(Math.round(p.px) - 3, Math.round(p.py) - 1, 6, 2);
+    g.fillStyle = '#e8e2d0'; // a pale sail
+    g.fillRect(Math.round(p.px) - 1, Math.round(p.py) - 4, 2, 3);
   }
 
   /** Pixel-art town sprite scaled by population tier:

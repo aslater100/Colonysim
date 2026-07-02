@@ -102,6 +102,12 @@ export function fbm01(x: number, y: number, seed: number, octaves = 4): number {
 export class RegionMap {
   cells: Cell[] = [];
   seaLevel = 0.3;
+  /** Per-cell landmass id (>=0 for land, -1 for water). Filled by
+   *  identifyLandmasses() after the biomes settle. */
+  landmass: Int32Array = new Int32Array(0);
+  /** Cell count of each landmass, indexed by id. The heartland the founding
+   *  site sits on is usually — but not always — the largest. */
+  landmassSizes: number[] = [];
 
   constructor(public seed: number) {
     this.generate();
@@ -118,22 +124,75 @@ export class RegionMap {
     return this.at(Math.floor((rx / 100) * REGION_N), Math.floor((ry / 100) * REGION_N));
   }
 
+  /**
+   * Seed the continental shelves. Continents sit on a well-spaced layout (a
+   * triangle of three, or the four quadrants) so open ocean always separates
+   * them — the gaps between the domes are the seas the sea lanes cross. Each is
+   * elongated into a jittered ellipse so it reads as land, not a bullseye.
+   * The first entry is the heartland (largest, tallest); the founding valley
+   * scores best on it. Everything is a pure function of the seed.
+   */
+  private continentCores(): { cx: number; cy: number; rx: number; ry: number; h: number }[] {
+    const s = this.seed;
+    // Two independent deterministic draws per core, salted so no two share a stream.
+    const rnd = (i: number, salt: number) =>
+      hash2(Math.imul(i + 1, 0x1f1f1f1f) ^ salt, Math.imul(i + 1, 0x2c9277b5) + salt * 0x9e37, s);
+    // Base layouts keep centres ≥ ~0.40 apart; with land radii ≤ 0.20 a moat of
+    // sea survives between every pair even after jitter and coastline noise.
+    const count = 3 + (s % 2); // 3 or 4 major continents
+    const bases: [number, number][] = count === 3
+      ? [[0.32, 0.36], [0.70, 0.33], [0.50, 0.72]]
+      : [[0.28, 0.30], [0.72, 0.29], [0.30, 0.71], [0.71, 0.72]];
+    return bases.map(([bx, by], i) => {
+      const heart = i === 0 ? 0.045 : 0; // the heartland runs a touch broader
+      return {
+        cx: Math.max(0.15, Math.min(0.85, bx + (rnd(i, 1) - 0.5) * 0.07)),
+        cy: Math.max(0.15, Math.min(0.85, by + (rnd(i, 2) - 0.5) * 0.07)),
+        rx: 0.145 + heart + rnd(i, 3) * 0.045,
+        ry: 0.135 + heart + rnd(i, 4) * 0.045,
+        h: i === 0 ? 0.95 : 0.82 + rnd(i, 5) * 0.12,
+      };
+    });
+  }
+
   private generate(): void {
     const s = this.seed;
-    // Elevation: fbm + a west-coast continental gradient (sea to the west,
-    // mountains rising eastward) so the region reads as one coherent place.
+    // Elevation: continental shelves (smooth domes at seeded cores) carry the
+    // land; the sea *between* the domes is what breaks the region into several
+    // continents. Relief noise shatters the domes into real terrain, a finer
+    // octave crenellates the coast, and an island belt dots the open ocean with
+    // isles worth a sea lane to reach. A deep-water rim frames the world so no
+    // continent runs off the edge.
+    const cores = this.continentCores();
     for (let y = 0; y < REGION_N; y++) {
       for (let x = 0; x < REGION_N; x++) {
         const nx = x / REGION_N;
         const ny = y / REGION_N;
-        let e = fbm01(nx * 4, ny * 4, s) * 0.62 + nx * 0.48 - 0.12;
-        e += (fbm01(nx * 9, ny * 9, s + 7) - 0.5) * 0.18;
-        const t = 1 - ny * 0.55 - Math.max(0, e - this.seaLevel) * 0.5; // north & heights are cold
+        let land = 0;
+        for (const core of cores) {
+          const dx = (nx - core.cx) / core.rx;
+          const dy = (ny - core.cy) / core.ry;
+          const t = dx * dx + dy * dy; // squared normalized distance within the ellipse
+          if (t < 1) land = Math.max(land, core.h * (1 - t)); // smooth paraboloid dome
+        }
+        const relief = fbm01(nx * 4.5, ny * 4.5, s);
+        const coast = fbm01(nx * 11, ny * 11, s + 7);
+        let e = land + (relief - 0.5) * 0.26 + (coast - 0.5) * 0.10;
+        // Island belt: land far from any shelf, so the open sea is never empty.
+        // Kept clear of the coasts (land < 0.11) so it dots the deep, never
+        // bridges two continents into one.
+        const isl = fbm01(nx * 16 + 3.1, ny * 16 + 5.7, s + 23);
+        if (land < 0.11 && isl > 0.68) e = Math.max(e, this.seaLevel + 0.01 + (isl - 0.68) * 0.9);
+        // The framing sea: pull elevation to zero in the outermost band.
+        const edge = Math.min(nx, ny, 1 - nx, 1 - ny);
+        if (edge < 0.055) e *= edge / 0.055;
+        const elevation = Math.max(0, Math.min(1, e));
+        const t2 = 1 - ny * 0.55 - Math.max(0, elevation - this.seaLevel) * 0.5; // north & heights are cold
         const m = fbm01(nx * 5, ny * 5, s + 31);
         this.cells.push({
-          elevation: Math.max(0, Math.min(1, e)),
+          elevation,
           moisture: m,
-          temperature: Math.max(0, Math.min(1, t)),
+          temperature: Math.max(0, Math.min(1, t2)),
           river: false,
           flow: 0,
           biome: 'plains',
@@ -147,6 +206,53 @@ export class RegionMap {
     this.carveRivers();
     this.classify();
     this.generateOre();
+    this.identifyLandmasses();
+  }
+
+  /** Flood-fill the land into connected components so the rest of the game can
+   *  ask "which continent is this?" — the basis for sea lanes and the fact that
+   *  there is now more than one continent to ask about. Water is id -1. */
+  private identifyLandmasses(): void {
+    const N = REGION_N;
+    this.landmass = new Int32Array(N * N).fill(-1);
+    this.landmassSizes = [];
+    const stack: number[] = [];
+    let next = 0;
+    for (let start = 0; start < N * N; start++) {
+      if (this.landmass[start] !== -1) continue;
+      if (this.isWater(start % N, Math.floor(start / N))) continue;
+      const id = next++;
+      let size = 0;
+      stack.push(start);
+      this.landmass[start] = id;
+      while (stack.length > 0) {
+        const k = stack.pop()!;
+        size++;
+        const cx = k % N;
+        const cy = Math.floor(k / N);
+        for (const [nx, ny] of hexNeighbors(cx, cy)) {
+          if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+          const nk = ny * N + nx;
+          if (this.landmass[nk] !== -1 || this.isWater(nx, ny)) continue;
+          this.landmass[nk] = id;
+          stack.push(nk);
+        }
+      }
+      this.landmassSizes.push(size);
+    }
+  }
+
+  /** Which continent a cell belongs to (-1 for open water/lake). */
+  landmassAt(x: number, y: number): number {
+    const cx = Math.max(0, Math.min(REGION_N - 1, x));
+    const cy = Math.max(0, Math.min(REGION_N - 1, y));
+    return this.landmass[cy * REGION_N + cx];
+  }
+
+  /** Count of continents big enough to matter (≥ `minCells`). Islands and
+   *  skerries below the threshold don't count as continents. */
+  continentCount(minCells = 40): number {
+    return this.landmassSizes.filter((n) => n >= minCells).length;
   }
 
   /** Rivers: descend from high wet cells to the sea, accumulating flow. */
@@ -270,10 +376,34 @@ export class RegionMap {
     return b === 'sea' || b === 'lake';
   }
 
+  /** Land (non-water) cells in the work ring (hex distance 1..radius) around a
+   *  cell — how much ground a town founded here would have to farm and build on.
+   *  A one-cell skerry in open ocean scores near zero; a continental site scores
+   *  the full ring. Mirrors the ring `tileYieldFor` / the placement code read. */
+  workableLand(x: number, y: number, radius = 2): number {
+    let n = 0;
+    for (let col = Math.max(0, x - radius); col <= Math.min(REGION_N - 1, x + radius); col++) {
+      for (let row = Math.max(0, y - radius); row <= Math.min(REGION_N - 1, y + radius); row++) {
+        const d = hexDistance(x, y, col, row);
+        if (d < 1 || d > radius) continue;
+        if (!this.isWater(col, row)) n++;
+      }
+    }
+    return n;
+  }
+
+  /** Fewer than this many land cells in the work ring and a town has nowhere to
+   *  build or farm — the multi-continent map scatters such specks across the sea,
+   *  and no founding path (start, expansion, click-to-found) should pick one. */
+  static readonly MIN_WORKABLE_RING = 5;
+
   /** How good is this cell to settle? Farms, wood, water, defense — minus swamp and stone. */
   siteScore(x: number, y: number): number {
     const c = this.at(x, y);
     if (this.isWater(x, y) || c.biome === 'mountains') return -1;
+    // An islet with no room for a worked ring is unsettleable, however fertile
+    // its single cell — otherwise expansion strands dead towns on the sea.
+    if (this.workableLand(x, y) < RegionMap.MIN_WORKABLE_RING) return -1;
     const coastal = this.neighbors(x, y).some((n) => n.biome === 'sea' || n.biome === 'lake');
     const nearRiver = c.river || this.neighbors(x, y).some((n) => n.river);
     return c.fertility * 2 + c.forest * 0.8 + (nearRiver ? 0.8 : 0) + (coastal ? 0.5 : 0) - c.roughness * 0.6;
@@ -351,12 +481,17 @@ export class RegionMap {
   }
 
   /**
-   * A* corridor between two cells — pass-finding through valleys emerges
-   * from the cost field rather than from script. Returns the full cell
-   * path (both ends included) and its summed terrain cost, or null when
-   * open water separates the endpoints.
+   * A* between two cells over an arbitrary cost field — pass-finding emerges
+   * from the field rather than from script. `stepCost(x,y)` is the price of
+   * entering a cell (Infinity = impassable). Returns the full cell path (both
+   * ends included) and its summed cost, or null when no route exists.
+   * The heuristic is plain hex distance, admissible whenever every finite step
+   * costs ≥ 1 (true for both the land corridor and the sea lane).
    */
-  corridor(ax: number, ay: number, bx: number, by: number): { path: { x: number; y: number }[]; cost: number } | null {
+  private aStar(
+    ax: number, ay: number, bx: number, by: number,
+    stepCost: (x: number, y: number) => number,
+  ): { path: { x: number; y: number }[]; cost: number } | null {
     const N = REGION_N;
     const key = (x: number, y: number) => y * N + x;
     const prev = new Int32Array(N * N).fill(-1);
@@ -367,7 +502,6 @@ export class RegionMap {
     const targetK = key(bx, by);
     dist[startK] = 0;
     prev[startK] = startK;
-    // admissible heuristic: hex distance × cheapest possible cell (plains = 1)
     const hCost = (k: number) => hexDistance(k % N, Math.floor(k / N), bx, by);
     const heap: { k: number; d: number; f: number }[] = [{ k: startK, d: 0, f: hCost(startK) }];
     const push = (item: { k: number; d: number; f: number }) => {
@@ -417,7 +551,7 @@ export class RegionMap {
       const cy = Math.floor(cur.k / N);
       for (const [nx, ny] of hexNeighbors(cx, cy)) {
         if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
-        const step = this.cellCost(nx, ny);
+        const step = stepCost(nx, ny);
         if (!isFinite(step)) continue;
         const nd = cur.d + step;
         const nk = key(nx, ny);
@@ -429,6 +563,34 @@ export class RegionMap {
       }
     }
     return null;
+  }
+
+  /**
+   * A* corridor over the land cost field. Returns the full cell path (both
+   * ends included) and its summed terrain cost, or null when open water
+   * separates the endpoints — that is the signal the link must go by sea.
+   */
+  corridor(ax: number, ay: number, bx: number, by: number): { path: { x: number; y: number }[]; cost: number } | null {
+    return this.aStar(ax, ay, bx, by, (x, y) => this.cellCost(x, y));
+  }
+
+  /**
+   * A* sea lane between two coastal cells — the water counterpart of
+   * `corridor`. Only open water is navigable; the two endpoints (coastal land
+   * where the harbours stand) are allowed so the lane can put in to port.
+   * Lakes cost a touch more than open sea so a lane prefers the true coast.
+   * Returns null when no continuous water connects the ports (a landlocked lake
+   * or towns walled off by land — in which case a land corridor exists anyway).
+   */
+  seaLane(ax: number, ay: number, bx: number, by: number): { path: { x: number; y: number }[]; cost: number } | null {
+    const seaCost = (x: number, y: number): number => {
+      if ((x === ax && y === ay) || (x === bx && y === by)) return 1; // put in to port
+      const b = this.at(x, y).biome;
+      if (b === 'sea') return 1;
+      if (b === 'lake') return 1.6;
+      return Infinity; // no sailing over land
+    };
+    return this.aStar(ax, ay, bx, by, seaCost);
   }
 
   /** Travel cost between two cells: rough country and water crossings are slow. */
