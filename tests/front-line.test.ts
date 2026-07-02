@@ -162,6 +162,21 @@ describe('front wired into tickPlayerWar', () => {
     expect(resolved).toBeGreaterThan(0); // the path was genuinely exercised
   });
 
+  it('records the front high-water mark into the WarScar at war-end', () => {
+    const r = RegionSim.create(11);
+    const id = injectRival(r);
+    forceWar(r, id, 50);
+    tickPlayerWar(r); // establishes the front while the rival exists
+    // The rival vanishes → tickPlayerWar takes the status_quo end path and records a scar.
+    (r as unknown as { rivals: unknown[] }).rivals = [];
+    tickPlayerWar(r);
+    expect((r as unknown as { playerWar: unknown }).playerWar).toBeNull();
+    const scar = (r as unknown as { warScars: Array<{ outcome: string; frontPeak?: number }> }).warScars.at(-1)!;
+    expect(scar.outcome).toBe('status_quo');
+    expect(typeof scar.frontPeak).toBe('number');
+    expect(Number.isFinite(scar.frontPeak)).toBe(true);
+  });
+
   it('survives a serialize round-trip (front persists in the save)', () => {
     const r = RegionSim.create(7);
     const id = injectRival(r);

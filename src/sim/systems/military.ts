@@ -415,7 +415,7 @@ export function tickPlayerWar(r: RegionSim): void {
     const rv = r.rival(w.rivalId);
     if (!rv) {
       // Rival no longer exists — inconclusive end (bookkeep with a placeholder name)
-      r.warScars.push({ rivalId: w.rivalId, rivalName: `rival#${w.rivalId}`, yearEnded: r.year, outcome: 'status_quo', occupied: w.occupied, casualties: w.casualties, durationMonths: Math.round((r.day - w.startedDay) / 30) });
+      r.warScars.push({ rivalId: w.rivalId, rivalName: `rival#${w.rivalId}`, yearEnded: r.year, outcome: 'status_quo', occupied: w.occupied, casualties: w.casualties, durationMonths: Math.round((r.day - w.startedDay) / 30), frontPeak: Math.round(w.front?.peak ?? w.score) });
       r.playerWar = null;
       return;
     }

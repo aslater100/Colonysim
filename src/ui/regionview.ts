@@ -3300,6 +3300,20 @@ export class RegionView {
           `title="${CASUS_BELLI_DEFS[cbs[0]].name}: ${CASUS_BELLI_DEFS[cbs[0]].desc} ` +
           `(war support starts at ${CASUS_BELLI_DEFS[cbs[0]].support})">⚔ war</button>`
         : '';
+      // The war record (GDD §7): the campaign history against this rival — a past
+      // defeat opens a revanchism casus belli, so surface it beside the war verb.
+      const wars = r.warScars.filter((s) => s.rivalId === rv.id);
+      const warRecordLine = (() => {
+        if (wars.length === 0) return '';
+        const wins = wars.filter((s) => s.outcome === 'victory').length;
+        const losses = wars.filter((s) => s.outcome === 'defeat').length;
+        const draws = wars.length - wins - losses;
+        const tally = [wins && `${wins}W`, losses && `${losses}L`, draws && `${draws}D`].filter(Boolean).join(' ');
+        const last = wars[wars.length - 1];
+        const peak = last.frontPeak != null ? `; deepest advance last war ${last.frontPeak}` : '';
+        const rev = losses > 0 && r.playerWar?.rivalId !== rv.id ? ` · <b>revanchism available</b>` : '';
+        return `<p class="insp-skills" title="Your campaign history against ${rv.name} (${wars.length} war${wars.length > 1 ? 's' : ''}${peak}). A past defeat opens a revanchism casus belli.">⚔ war record: ${tally}${rev}</p>`;
+      })();
       const verbs = r.playerWar?.rivalId === rv.id
         ? `<p class="insp-skills">⚔ AT WAR — terms are set at the peace table above</p>`
         : `<p><button class="mini dip-envoy-btn" data-rival="${rv.id}" ${canEnvoy ? '' : 'disabled'} ` +
@@ -3361,7 +3375,7 @@ export class RegionView {
         meterBar(pct, relTone as 'good' | 'warn' | 'bad') +
         `<span>${rel}</span></div>` +
         `<p class="insp-skills" title="${recentHistory}">${gov}${rv.borderSettled ? ' · border settled' : ''} · ${personalityInfo}${personalityInfo ? ' · ' : ''}${treaties}</p>` +
-        offerRow + counterRow +
+        offerRow + counterRow + warRecordLine +
         verbs + espionage + rivalIntel + armsIntel;
     }).join('');
     // World affairs: what the powers are doing to each other (GDD §6.4)

@@ -2252,6 +2252,9 @@ export interface WarScar {
   occupied: number;
   casualties: number;
   durationMonths: number;
+  /** The front's high-water mark — the deepest the line ever advanced (−100..+100).
+   *  Optional for saves written before the front line was activated. */
+  frontPeak?: number;
 }
 
 const RIVAL_NAMES = [
@@ -10441,6 +10444,7 @@ export class RegionSim {
       occupied: w.occupied,
       casualties: w.casualties,
       durationMonths,
+      frontPeak: Math.round(w.front?.peak ?? w.score),
     });
     // Post-war relations shift: the loser resents, the winner grows confident.
     if (outcome === 'victory') {
