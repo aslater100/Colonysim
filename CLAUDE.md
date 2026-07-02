@@ -115,7 +115,7 @@ Before saying "done", verify all of these:
 2. Tests pass (`npm test`)
 3. No type errors
 4. Every changed file listed
-5. If simulation logic changed: output validated against expected behavior (`npm run sim -- <days> <runs>`)
+5. If simulation logic changed: output validated against expected behavior (`npm run sim -- <years> <runs>`)
 6. No regressions in adjacent systems (check neighbors of anything touched)
 7. No new `any`, no schema mutations without approval
 
@@ -141,6 +141,6 @@ Centuria — a 4X civilization simulator (1919–2100). Vite + TypeScript, canva
 ```bash
 npm run dev      # play in the browser
 npm test         # simulation tests
-npm run sim      # headless tuning harness: npm run sim -- <days> <runs>
+npm run sim      # headless tuning harness: npm run sim -- <years> <runs>
 npm run build    # production build
 ```

@@ -770,6 +770,19 @@ const RIVAL_ADMIN_PER_TOWN = 5; // gold/settlement/month — mirrors the player'
 // headless sweep are byte-identical (the guard short-circuits when the flag is off).
 const AUTOPLAY_STATE_RESERVE_MONTHS = 1.5; // months of monthly GDP a proclaimed autoplay state keeps untouched
 const AUTOPLAY_STATE_GOV_SKIM = 0.5; // monthly fraction of the above-reserve surplus spent as gov consumption
+// ---- Size-scaling government outlays (economy-realism arc, inc 3). A large,
+// developed, income-tax state runs a real apparatus — ministries, pensions,
+// procurement — that grows with the nation, so a mature treasury no longer piles
+// income-tax revenue into an unbounded hoard. SPIRAL-SAFE by construction (the
+// session-12 deficit-death-spiral warning): the outlay spends ONLY the surplus
+// above a generous reserve (6 months of GDP), so it can never push the treasury
+// toward a service cut — a strained budget pays nothing. Gated on the income_tax
+// civic (the default sweep player never researches it → byte-identical in
+// headless), and composes with the autoplay sink above: the sink's tighter
+// reserve drains first, leaving nothing above this one's higher floor.
+export const GOV_OUTLAY_RESERVE_MONTHS = 6; // months of monthly GDP kept untouched — the spiral guard
+export const GOV_OUTLAY_SKIM = 0.2; // monthly fraction of the above-reserve surplus the apparatus consumes
+export const GOV_OUTLAY_TOWNS_FULL = 8; // town count at which the apparatus reaches full size
 // ---- Effect-scaled construction cost (economy-realism increment 1). Buildings and
 // districts now cost in proportion to their IMPACT: a University (+30% information +15%
 // research) or an empire-wide Wonder is a real investment; a Waterworks (+5% services)
@@ -2251,6 +2264,16 @@ export function advanceFront(
   return { position, peak, phase: frontPhase(position) };
 }
 
+/** Occupation gate (GDD §7.4): ground changes hands on the FRONT — the integrated
+ *  line, not the noisy monthly score — so a march is taken on a sustained advance,
+ *  never a single lucky roll while the front is still contested. The posture moves
+ *  the odds: a breakthrough overruns ground faster, a collapse cedes it faster. */
+export const FRONT_OCCUPY_THRESHOLD = 35;
+export const MARCH_TAKE_CHANCE = 0.3;
+export const MARCH_TAKE_CHANCE_BREAKTHROUGH = 0.5;
+export const MARCH_CEDE_CHANCE = 0.25;
+export const MARCH_CEDE_CHANCE_COLLAPSE = 0.45;
+
 /** Regime × war (GDD §7.5): below this floor the war eats the regime;
  *  15 below it, the home front breaks and the war ends on dictated terms. */
 export const WAR_SUPPORT_FLOOR: Record<GovType, number> = {
@@ -3448,6 +3471,10 @@ export class RegionSim {
   warBoomUntil = -1;
   /** Last month's trade-agreement export earnings (for the UI). */
   exportEarningsLastMonth = 0;
+  /** Last month's size-scaling government outlay (for the UI). TRANSIENT — not
+   *  serialized; recomputed every monthlyEconomy, so a reload shows 0 for at most
+   *  one month. Keeping it out of the save avoids a schema change. */
+  lastGovOutlay = 0;
   /** Pairwise relations between rivals, keyed `minId:maxId` — the world has
    *  its own ledger, and the player only reads about it (GDD §6.4). */
   rivalPairs: Record<string, number> = {};
@@ -6553,6 +6580,19 @@ export class RegionSim {
       const govReserve = Math.max(0, this.gdpLastMonth) * AUTOPLAY_STATE_RESERVE_MONTHS;
       const govConsumption = Math.max(0, this.treasury - govReserve) * AUTOPLAY_STATE_GOV_SKIM;
       this.treasury -= govConsumption;
+    }
+
+    // Size-scaling government outlays (see GOV_OUTLAY_* above): a large income-tax
+    // state runs a real apparatus. Surplus-aware — spends only above a 6-month
+    // reserve, so it can NEVER cause a service cut — and ramps with the size of the
+    // state (town count). Gated on the income_tax civic, which the default sweep
+    // player never researches → byte-identical in headless.
+    this.lastGovOutlay = 0;
+    if (this.has('income_tax')) {
+      const outlayReserve = Math.max(0, this.gdpLastMonth) * GOV_OUTLAY_RESERVE_MONTHS;
+      const sizeRamp = Math.min(1, this.settlements.length / GOV_OUTLAY_TOWNS_FULL);
+      this.lastGovOutlay = Math.max(0, this.treasury - outlayReserve) * GOV_OUTLAY_SKIM * sizeRamp;
+      this.treasury -= this.lastGovOutlay;
     }
 
     // Treasury milestone events (fire once per milestone, never on re-crossing)

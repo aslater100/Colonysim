@@ -5,7 +5,7 @@
  */
 import './panels.css';
 import type { Settlement, Scout, GovLean, GovType, MinisterRoleId, TreatyKind, CasusBelli, Mobilization, PeaceTerm, DealBasket, OccupationPolicy, MonetaryRegime, DepressionMeasure, TownFocus, WagePolicy, Route, SectorId, ArmyUnitType, TechNode, Province, DynastyNode, SectorBonusBreakdown } from '../sim/region';
-import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, DISTRICT_DEFS, INTERMEDIATE_GOODS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES, ESPIONAGE_OPS, BLOC_RELATIONS_FLOOR, DEPRESSION_MEASURES, SUPPLY_SHOCK_INFLATION, SUPPLY_SHOCK_EXPORT_DRAG, AGRI_CLIMATE_THRESHOLD, INDUSTRY_BROWNOUT_THRESHOLD, FRONT_PEAK_LEVERAGE_SCALE, frontPhase, FRONT_PHASE_LABEL, AGENDA_PEACE_RESISTANCE, AGENDA_TABLE_COST, rivalAgendaKind } from '../sim/region';
+import { RegionSim, AGE_BANDS, ROLE_BONUS_DESC, GOV_LEANS, GOV_TYPES, MINISTER_ROLES, RAIL_ERA_YEAR, SEA_WALL_YEAR, TECH_TREE, REGION_LAWS, POLICY_CARDS, POLICY_SWAP_COST, TREATY_DEFS, RIVAL_ARCHETYPES, ENVOY_COST, GIFT_COST, ENVOY_COOLDOWN_DAYS, GIFT_COOLDOWN_DAYS, CASUS_BELLI_DEFS, MOBILIZATION_DEFS, PEACE_TERMS, WAR_SUPPORT_FLOOR, OCCUPATION_DEFS, MAX_OCCUPIED_MARCHES, BLOCKADE_UPKEEP_PER_POP, ACCORD_DEFECT_THRESHOLD, GEOENGINEER_COOLING, MIN_POLICY_RATE, MAX_POLICY_RATE, REGION_BUILDINGS, DISTRICT_DEFS, INTERMEDIATE_GOODS, SECTOR_IDS, SECTOR_NAMES, FOCUS_CHANGE_COST, REGION_EVENT_DEFS, TAX_BAND_LABELS, TAX_BAND_RATES, DEFAULT_CITY_POLICIES, ROUTE_SPECS, RIVAL_REGIMES, BRANCH_YEAR, UNIT_TYPES, ESPIONAGE_OPS, BLOC_RELATIONS_FLOOR, DEPRESSION_MEASURES, SUPPLY_SHOCK_INFLATION, SUPPLY_SHOCK_EXPORT_DRAG, AGRI_CLIMATE_THRESHOLD, INDUSTRY_BROWNOUT_THRESHOLD, FRONT_PEAK_LEVERAGE_SCALE, FRONT_OCCUPY_THRESHOLD, GOV_OUTLAY_RESERVE_MONTHS, frontPhase, FRONT_PHASE_LABEL, AGENDA_PEACE_RESISTANCE, AGENDA_TABLE_COST, rivalAgendaKind } from '../sim/region';
 import type { EspionageOp } from '../sim/region';
 import { rivalArmsCapacity } from '../sim/region';
 import { formatCurrency, getCurrencySymbol, CURRENCY_SYMBOLS } from '../sim/defs';
@@ -2945,6 +2945,10 @@ export class RegionView {
           `${Math.max(1, Math.round((r.currencyTransition.endDay - r.day) / 30))}mo to stabilize</p>`
         : '') +
       `<p>GDP ` + formatCurrency(Math.floor(r.gdpLastMonth)) + `/mo · avg wage ${formatCurrency(r.avgDailyWage())}/d</p>` +
+      (r.lastGovOutlay > 0
+        ? `<p class="insp-skills" title="The mature state runs a real apparatus — ministries, pensions, procurement — that grows with the nation. It spends only the surplus above a ${GOV_OUTLAY_RESERVE_MONTHS}-month reserve, so a strained budget pays nothing.">` +
+          `state apparatus −${formatCurrency(Math.round(r.lastGovOutlay))}/mo</p>`
+        : '') +
       (() => {
         // Advisor forecast: project treasury 12 months out using last-month net cash flow
         const monthlyNet = r.gdpLastMonth * r.taxRate - (r.servicesLevel * 2 + r.militiaLevel * 3);
@@ -3555,6 +3559,7 @@ export class RegionView {
         `title="Call ${x.name} to the colors — honor decides whether the ink holds">call ${x.name}</button>`)
       .join(' ');
     // Occupation (GDD §7.4): the marches the army administers
+    const front = w.front ?? { position: w.score, peak: w.score, phase: frontPhase(w.score) };
     const occ = w.occupied > 0
       ? `<p class="insp-skills">occupied marches ${w.occupied}/${MAX_OCCUPIED_MARCHES} · ` +
         `yield ` + formatCurrency(w.occupied * (OCCUPATION_DEFS[w.occupationPolicy].yield - OCCUPATION_DEFS[w.occupationPolicy].garrison)) + `/mo net</p>` +
@@ -3567,7 +3572,7 @@ export class RegionView {
             `<button class="mini war-occ-btn" data-pol="${p}" ${p === w.occupationPolicy ? 'disabled' : ''} ` +
             `title="${OCCUPATION_DEFS[p].desc}">${OCCUPATION_DEFS[p].name}</button>`)
           .join(' ')}</p>`
-      : w.score >= 35
+      : front.position >= FRONT_OCCUPY_THRESHOLD
         ? `<p class="insp-skills">the front is deep enough to take ground — the columns probe their marches</p>`
         : '';
     // The peace table (GDD §7.4 priced with §6.3): tick terms into a basket
@@ -3590,7 +3595,6 @@ export class RegionView {
       .join(' ');
     const picks = [...this.peacePicks];
     const ask = picks.length > 0 ? r.peaceBasketAsk(rv, picks) : null;
-    const front = w.front ?? { position: w.score, peak: w.score, phase: frontPhase(w.score) };
     const peakLeverage = Math.floor(Math.max(0, front.peak) * FRONT_PEAK_LEVERAGE_SCALE);
     const leverageTip = w.occupied > 0 || peakLeverage > 0
       ? ` Discounts: ${w.occupied > 0 ? `${w.occupied} march${w.occupied > 1 ? 'es' : ''} held (−${w.occupied * 6})` : ''}${w.occupied > 0 && peakLeverage > 0 ? ', ' : ''}${peakLeverage > 0 ? `front peak ${Math.round(front.peak)} (−${peakLeverage})` : ''}.`

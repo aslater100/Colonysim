@@ -25,6 +25,11 @@ import {
   frontPhase,
   advanceFront,
   FRONT_PHASE_LABEL,
+  FRONT_OCCUPY_THRESHOLD,
+  MARCH_TAKE_CHANCE,
+  MARCH_TAKE_CHANCE_BREAKTHROUGH,
+  MARCH_CEDE_CHANCE,
+  MARCH_CEDE_CHANCE_COLLAPSE,
   ROUTE_CONDITION_FLOOR,
   WAR_MATERIEL_GOODS,
   WAR_MATERIEL_PER_POWER,
@@ -469,12 +474,21 @@ export function tickPlayerWar(r: RegionSim): void {
     w.support += delta > 4 ? 2 : delta < -4 ? -4 : -1.5;
     if (w.mobilization === 'total') w.support -= 1.5;
     w.support = Math.max(0, Math.min(100, w.support));
-    // Occupation (GDD §7.4): a winning front takes ground; a losing one cedes it
-    if (w.score >= 35 && w.occupied < MAX_OCCUPIED_MARCHES && r.rng.chance(0.3)) {
+    // Occupation (GDD §7.4): the FRONT takes and cedes ground — the sustained,
+    // integrated line, not the month's roll — and its posture moves the odds.
+    // Draw-then-decide: both rolls are drawn every month so the RNG draw count
+    // never depends on the front's state (the draw-order determinism trap).
+    const takeRoll = r.rng.chance(
+      w.front.phase === 'breakthrough' ? MARCH_TAKE_CHANCE_BREAKTHROUGH : MARCH_TAKE_CHANCE,
+    );
+    const cedeRoll = r.rng.chance(
+      w.front.phase === 'collapse' ? MARCH_CEDE_CHANCE_COLLAPSE : MARCH_CEDE_CHANCE,
+    );
+    if (w.front.position >= FRONT_OCCUPY_THRESHOLD && w.occupied < MAX_OCCUPIED_MARCHES && takeRoll) {
       w.occupied++;
       w.support = Math.min(100, w.support + 3); // the parade writes the headline
       r.addLog(`Our columns take one of ${rv.name}'s marches — military administration begins (${w.occupied} occupied).`, 'good');
-    } else if (w.score < 0 && w.occupied > 0 && r.rng.chance(0.25)) {
+    } else if (w.front.position < 0 && w.occupied > 0 && cedeRoll) {
       w.occupied--;
       if (w.occupied === 0) w.resistance = 0;
       r.addLog(`${rv.name}'s counterattack retakes its march — the garrison falls back (${w.occupied} occupied).`, 'bad');
